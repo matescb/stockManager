@@ -10,6 +10,7 @@ const NAV = [
   { to: "/parts", label: "Parts" },
   { to: "/storage", label: "Storage" },
   { to: "/projects", label: "Projects" },
+  { to: "/orders", label: "Orders" },
 ];
 
 type SearchData = {
@@ -17,6 +18,7 @@ type SearchData = {
   storage_locations: { id: string; name: string }[];
   projects: { id: string; name: string }[];
   lots: { id: string; name: string | null; part_id: string }[];
+  orders: { id: string; name: string; status: string }[];
 };
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -90,6 +92,7 @@ function SearchResults({ results, onPick }: { results: SearchData; onPick: (href
     ["Storage", results.storage_locations.map(s => ({ id: s.id, label: s.name, href: `/storage/${s.id}/info` }))],
     ["Projects", results.projects.map(p => ({ id: p.id, label: p.name, href: `/projects/${p.id}/data` }))],
     ["Lots", results.lots.map(l => ({ id: l.id, label: l.name || l.id, href: `/lots/${l.id}/info` }))],
+    ["Orders", results.orders.map(o => ({ id: o.id, label: `${o.name} · ${o.status}`, href: `/orders/${o.id}` }))],
   ];
   return (
     <div className="p-2 text-sm">

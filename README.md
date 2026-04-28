@@ -1,8 +1,11 @@
 # Parts Inventory & Production Manager
 
 Self-hosted web app for electronics parts, storage, stock, lots, BOMs and projects.
-Implements Phases 1–3 of the spec: auth + workspaces, parts/storage/stock with an
-append-only ledger, lots, projects with full CSV BOM import.
+
+Implemented phases:
+
+- **1–3** auth + workspaces; parts/storage with the append-only stock ledger; lots; projects with full CSV BOM import.
+- **4** purchase orders + line-level receive (creates `source_type='purchase'` lots, ledger rows tagged `order_id`/`order_entry_id`). See `docs/phases/04-orders.md`.
 
 The existing webcam barcode scanner (`barcodeReader/`) is integrated into `/parts/scan`.
 
@@ -23,6 +26,8 @@ Migrations run automatically when the backend container starts.
 ```bash
 docker compose exec backend pytest
 ```
+
+For running tests outside Docker, see [`docs/development.md`](docs/development.md).
 
 ## Layout
 

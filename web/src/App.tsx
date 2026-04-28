@@ -41,6 +41,10 @@ import {
   LotHistory,
 } from "@/routes/lots/LotDetail";
 
+import OrdersList from "@/routes/orders/OrdersList";
+import OrderCreate from "@/routes/orders/OrderCreate";
+import OrderDetail from "@/routes/orders/OrderDetail";
+
 import ProjectsList from "@/routes/projects/ProjectsList";
 import ProjectCreate from "@/routes/projects/ProjectCreate";
 import ProjectLayout from "@/routes/projects/detail/ProjectLayout";
@@ -107,6 +111,11 @@ export default function App() {
           <Route path="adjust" element={<LotAdjust />} />
           <Route path="history" element={<LotHistory />} />
         </Route>
+
+        <Route path="/orders" element={<Gate><OrdersList /></Gate>} />
+        <Route path="/orders/archived" element={<Gate><OrdersList archived /></Gate>} />
+        <Route path="/orders/create" element={<Gate><OrderCreate /></Gate>} />
+        <Route path="/orders/:orderId" element={<Gate><OrderDetail /></Gate>} />
 
         <Route path="/projects" element={<Gate><ProjectsList /></Gate>} />
         <Route path="/projects/archived" element={<Gate><ProjectsList archived /></Gate>} />

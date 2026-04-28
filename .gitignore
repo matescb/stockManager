@@ -1,3 +1,6 @@
+# TypeScript build info
+*.tsbuildinfo
+
 # Python
 __pycache__/
 *.pyc

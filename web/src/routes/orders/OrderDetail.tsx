@@ -1,0 +1,256 @@
+import { useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, ApiError } from "@/lib/api";
+import EntityHeader from "@/components/EntityHeader";
+import { DataTable } from "@/components/DataTable";
+import type { Order, OrderEntry, Part, StorageLocation } from "@/types";
+
+type DetailOut = { order: Order; entries: OrderEntry[] };
+
+export default function OrderDetail() {
+  const { orderId } = useParams<{ orderId: string }>();
+  const qc = useQueryClient();
+  const nav = useNavigate();
+
+  const { data } = useQuery({
+    queryKey: ["order", orderId],
+    queryFn: () => api.get<DetailOut>(`/orders/${orderId}`),
+    enabled: !!orderId,
+  });
+  const { data: parts } = useQuery({ queryKey: ["parts"], queryFn: () => api.get<Part[]>("/parts") });
+  const { data: storage } = useQuery({ queryKey: ["storage"], queryFn: () => api.get<StorageLocation[]>("/storage") });
+
+  const partsById = new Map(parts?.map(p => [p.id, p]) ?? []);
+  const storageById = new Map(storage?.map(s => [s.id, s]) ?? []);
+
+  const [adding, setAdding] = useState(false);
+  const [newPartId, setNewPartId] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newQty, setNewQty] = useState<number>(1);
+  const [newPrice, setNewPrice] = useState<string>("");
+
+  // Per-entry receive state
+  const [receiveLines, setReceiveLines] = useState<Record<string, { qty: number; storage: string }>>({});
+  const [receivedOn, setReceivedOn] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  if (!data) return <div className="text-muted">Loading…</div>;
+  const { order, entries } = data;
+  const isClosed = order.status === "received" || order.status === "cancelled" || !!order.archived_at;
+
+  async function addEntry() {
+    setErr(null);
+    try {
+      await api.post(`/orders/${orderId}/entries`, {
+        part_id: newPartId || undefined,
+        name: newName || undefined,
+        quantity_ordered: newQty,
+        unit_price: newPrice ? newPrice : undefined,
+        currency: order.currency || undefined,
+      });
+      setAdding(false);
+      setNewPartId("");
+      setNewName("");
+      setNewQty(1);
+      setNewPrice("");
+      qc.invalidateQueries({ queryKey: ["order", orderId] });
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Failed");
+    }
+  }
+
+  async function removeEntry(entryId: string) {
+    if (!confirm("Delete this entry?")) return;
+    try {
+      await api.delete(`/orders/${orderId}/entries/${entryId}`);
+      qc.invalidateQueries({ queryKey: ["order", orderId] });
+    } catch (e) {
+      alert(e instanceof ApiError ? e.message : "Failed");
+    }
+  }
+
+  async function doReceive() {
+    const lines = Object.entries(receiveLines)
+      .filter(([, v]) => v.qty > 0)
+      .map(([entryId, v]) => ({
+        order_entry_id: entryId,
+        quantity: v.qty,
+        storage_location_id: v.storage || undefined,
+      }));
+    if (lines.length === 0) {
+      setErr("Enter a quantity on at least one row.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.post(`/orders/${orderId}/receive`, {
+        received_on: receivedOn || undefined,
+        lines,
+      });
+      setReceiveLines({});
+      qc.invalidateQueries({ queryKey: ["order", orderId] });
+      qc.invalidateQueries({ queryKey: ["parts"] });
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doArchive() {
+    await api.post(`/orders/${orderId}/${order.archived_at ? "restore" : "archive"}`);
+    qc.invalidateQueries({ queryKey: ["order", orderId] });
+    qc.invalidateQueries({ queryKey: ["orders"] });
+    if (!order.archived_at) nav("/orders");
+  }
+
+  return (
+    <div>
+      <EntityHeader
+        title={order.name}
+        subtitle={
+          <span>
+            {order.supplier || "—"}
+            <span className="pill ml-2">{order.status}</span>
+            {order.archived_at && <span className="pill ml-2 bg-danger/20 text-danger">archived</span>}
+            <span className="ml-3 text-muted">
+              Received {order.totals.received} / {order.totals.ordered}
+            </span>
+          </span>
+        }
+        actions={
+          <button className="btn" onClick={doArchive}>
+            {order.archived_at ? "Restore" : "Archive"}
+          </button>
+        }
+      />
+
+      {err && <div className="card p-3 text-danger text-sm mb-3">{err}</div>}
+
+      <div className="card p-4 mb-4">
+        <div className="flex items-center mb-3">
+          <h3 className="text-md font-semibold">Lines</h3>
+          {!isClosed && (
+            <button className="btn ml-auto" onClick={() => setAdding(a => !a)}>
+              {adding ? "Cancel" : "+ Line"}
+            </button>
+          )}
+        </div>
+        {adding && (
+          <div className="grid grid-cols-5 gap-2 mb-3 items-end">
+            <div className="col-span-2">
+              <label className="label">Part</label>
+              <select className="input" value={newPartId} onChange={e => setNewPartId(e.target.value)}>
+                <option value="">— free text —</option>
+                {parts?.filter(p => !p.archived_at).map(p => (
+                  <option key={p.id} value={p.id}>{p.name}{p.mpn ? ` — ${p.mpn}` : ""}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">Free-text name</label>
+              <input className="input" value={newName} onChange={e => setNewName(e.target.value)} disabled={!!newPartId} />
+            </div>
+            <div>
+              <label className="label">Qty</label>
+              <input className="input" type="number" min={1} value={newQty} onChange={e => setNewQty(Number(e.target.value))} />
+            </div>
+            <div>
+              <label className="label">Unit price</label>
+              <input className="input" type="number" step="0.0001" value={newPrice} onChange={e => setNewPrice(e.target.value)} />
+            </div>
+            <div className="col-span-5">
+              <button className="btn-primary" onClick={addEntry}>Add</button>
+            </div>
+          </div>
+        )}
+        <DataTable
+          rows={entries}
+          rowKey={r => r.id}
+          empty="No lines yet."
+          columns={[
+            { key: "part", header: "Part", accessor: r => r.part_id ? (partsById.get(r.part_id)?.name ?? "") : (r.name ?? "") },
+            { key: "qty", header: "Ordered", accessor: r => r.quantity_ordered, width: "90px" },
+            { key: "got", header: "Received", accessor: r => r.quantity_received, width: "90px" },
+            {
+              key: "price", header: "Unit price",
+              accessor: r => r.unit_price ?? "",
+              render: r => r.unit_price != null ? <span className="tabular-nums">{r.unit_price.toFixed(4)} {r.currency || order.currency || ""}</span> : <span className="text-muted">—</span>,
+            },
+            {
+              key: "actions", header: "", accessor: () => "",
+              render: r => !isClosed && r.quantity_received === 0 ? (
+                <button className="btn-danger text-xs" onClick={() => removeEntry(r.id)}>Delete</button>
+              ) : null,
+            },
+          ]}
+        />
+      </div>
+
+      {!isClosed && entries.some(e => e.part_id && e.quantity_received < e.quantity_ordered) && (
+        <div className="card p-4">
+          <h3 className="text-md font-semibold mb-3">Receive</h3>
+          <div className="text-sm text-muted mb-2">
+            Enter a quantity per line and (optionally) a storage location. Lines with no part are skipped — match them first by editing the line.
+          </div>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Part</th>
+                <th className="w-24">Outstanding</th>
+                <th className="w-28">Receive</th>
+                <th className="w-64">Storage</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.filter(e => e.part_id && e.quantity_received < e.quantity_ordered).map(e => {
+                const outstanding = e.quantity_ordered - e.quantity_received;
+                const cur = receiveLines[e.id] ?? { qty: 0, storage: "" };
+                return (
+                  <tr key={e.id}>
+                    <td>{partsById.get(e.part_id!)?.name ?? e.part_id}</td>
+                    <td className="tabular-nums">{outstanding}</td>
+                    <td>
+                      <input
+                        className="input"
+                        type="number"
+                        min={0}
+                        max={outstanding}
+                        value={cur.qty || ""}
+                        onChange={ev => setReceiveLines(s => ({ ...s, [e.id]: { ...cur, qty: Number(ev.target.value) } }))}
+                      />
+                    </td>
+                    <td>
+                      <select
+                        className="input"
+                        value={cur.storage}
+                        onChange={ev => setReceiveLines(s => ({ ...s, [e.id]: { ...cur, storage: ev.target.value } }))}
+                      >
+                        <option value="">— none —</option>
+                        {storage?.filter(s => !s.archived_at && !s.is_full).map(s => (
+                          <option key={s.id} value={s.id}>{s.name}</option>
+                        ))}
+                      </select>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <div className="grid grid-cols-3 gap-2 mt-3 items-end">
+            <div>
+              <label className="label">Received on</label>
+              <input className="input" type="date" value={receivedOn} onChange={e => setReceivedOn(e.target.value)} />
+            </div>
+            <div className="col-span-2 flex justify-end">
+              <button className="btn-primary" onClick={doReceive} disabled={busy}>{busy ? "Receiving…" : "Receive"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

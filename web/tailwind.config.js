@@ -12,6 +12,8 @@ export default {
         accent: "#4ade80",
         accentHover: "#22c55e",
         danger: "#f87171",
+        warning: "#fbbf24",
+        success: "#34d399",
       },
       fontFamily: {
         sans: ["ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"],

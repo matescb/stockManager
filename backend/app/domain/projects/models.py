@@ -28,7 +28,14 @@ class Project(WorkspaceOwned, Base):
     description = Column(Text, nullable=True)
     notes_markdown = Column(Text, nullable=True)
     associated_subassembly_part_id = Column(
-        UUID(as_uuid=True), ForeignKey("parts.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=True),
+        ForeignKey(
+            "parts.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_projects_associated_subassembly_part",
+        ),
+        nullable=True,
     )
 
 

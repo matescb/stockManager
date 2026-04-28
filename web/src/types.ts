@@ -69,6 +69,36 @@ export type Project = {
   updated_at: string;
 };
 
+export type Order = {
+  id: string;
+  name: string;
+  order_type: "purchase" | "sales";
+  supplier: string | null;
+  status: "draft" | "open" | "partial" | "received" | "cancelled";
+  ordered_on: string | null;
+  expected_on: string | null;
+  received_on: string | null;
+  currency: string | null;
+  comments: string | null;
+  archived_at: string | null;
+  totals: { ordered: number; received: number };
+  created_at: string;
+  updated_at: string;
+};
+
+export type OrderEntry = {
+  id: string;
+  order_id: string;
+  part_id: string | null;
+  name: string | null;
+  quantity_ordered: number;
+  quantity_received: number;
+  unit_price: number | null;
+  currency: string | null;
+  comments: string | null;
+  order_index: number;
+};
+
 export type ProjectEntry = {
   id: string;
   project_id: string;
