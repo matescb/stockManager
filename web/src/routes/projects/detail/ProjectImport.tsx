@@ -186,14 +186,17 @@ export default function ProjectImport() {
 
   if (step === "done") {
     return (
-      <div className="card p-4 max-w-xl space-y-3">
-        <h3 className="text-md font-semibold">Import complete</h3>
-        <div className="text-sm">Inserted: <span className="tabular-nums">{result?.inserted}</span></div>
-        <div className="text-sm">Matched: <span className="tabular-nums text-accent">{result?.matched}</span></div>
-        <div className="text-sm">Unmatched: <span className="tabular-nums text-danger">{result?.unmatched}</span></div>
-        <div className="flex gap-2">
-          <button className="btn-primary" onClick={() => nav(`/projects/${projectId}/bom`)}>Open BOM</button>
-          <button className="btn" onClick={() => { setStep("upload"); setPreview(null); setResult(null); }}>Import another</button>
+      <div className="space-y-4">
+        <StepIndicator step={step} />
+        <div className="card p-4 max-w-xl space-y-3">
+          <h3 className="text-md font-semibold">Import complete</h3>
+          <div className="text-sm">Inserted: <span className="tabular-nums">{result?.inserted}</span></div>
+          <div className="text-sm">Matched: <span className="tabular-nums text-accent">{result?.matched}</span></div>
+          <div className="text-sm">Unmatched: <span className="tabular-nums text-danger">{result?.unmatched}</span></div>
+          <div className="flex gap-2">
+            <button className="btn-primary" onClick={() => nav(`/projects/${projectId}/bom`)}>Open BOM</button>
+            <button className="btn" onClick={() => { setStep("upload"); setPreview(null); setResult(null); }}>Import another</button>
+          </div>
         </div>
       </div>
     );
@@ -201,6 +204,7 @@ export default function ProjectImport() {
 
   return (
     <div className="space-y-4">
+      <StepIndicator step={step} />
       {err && <div className="card p-3 text-danger text-sm">{err}</div>}
       {step === "upload" && (
         <div className="card p-4 space-y-3 max-w-xl">
@@ -312,5 +316,45 @@ export default function ProjectImport() {
         </div>
       )}
     </div>
+  );
+}
+
+const STEPS: { id: "upload" | "mapping" | "done"; label: string }[] = [
+  { id: "upload",  label: "Upload" },
+  { id: "mapping", label: "Map columns" },
+  { id: "done",    label: "Done" },
+];
+
+function StepIndicator({ step }: { step: "upload" | "mapping" | "done" }) {
+  const currentIdx = STEPS.findIndex(s => s.id === step);
+  return (
+    <ol className="flex items-center gap-2 text-sm">
+      {STEPS.map((s, i) => {
+        const state = i < currentIdx ? "done" : i === currentIdx ? "current" : "pending";
+        const circle =
+          state === "done"
+            ? "bg-accent text-bg border-accent"
+            : state === "current"
+              ? "bg-accent/15 text-accent border-accent/50"
+              : "bg-panel2 text-muted border-border";
+        const label =
+          state === "done"
+            ? "text-muted"
+            : state === "current"
+              ? "text-text font-medium"
+              : "text-muted";
+        return (
+          <li key={s.id} className="flex items-center gap-2">
+            <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full border text-xs tabular-nums ${circle}`}>
+              {state === "done" ? "✓" : i + 1}
+            </span>
+            <span className={label}>{s.label}</span>
+            {i < STEPS.length - 1 && (
+              <span className={`mx-1 h-px w-8 ${state === "done" ? "bg-accent" : "bg-border"}`} />
+            )}
+          </li>
+        );
+      })}
+    </ol>
   );
 }
