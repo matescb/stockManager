@@ -1,5 +1,8 @@
-import { ReactNode, useMemo, useState } from "react";
+import { ReactNode, useEffect, useMemo, useState } from "react";
+import { Rows3, Rows4 } from "lucide-react";
 import { cn } from "@/lib/cn";
+
+export type Align = "left" | "right" | "center";
 
 export type Column<T> = {
   key: string;
@@ -8,7 +11,10 @@ export type Column<T> = {
   accessor?: (row: T) => string | number | boolean | null | undefined;
   width?: string;
   hidden?: boolean;
+  align?: Align;
 };
+
+type Density = "comfortable" | "compact";
 
 type Props<T> = {
   rows: T[];
@@ -19,7 +25,32 @@ type Props<T> = {
   initialSearch?: string;
   empty?: ReactNode;
   exportFilename?: string;
+  /** Persists hidden columns + density to localStorage. */
+  tableId?: string;
 };
+
+type Persisted = { hidden?: Record<string, boolean>; density?: Density };
+
+function loadPersisted(tableId: string | undefined): Persisted {
+  if (!tableId) return {};
+  try {
+    return JSON.parse(localStorage.getItem(`dt:${tableId}`) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function savePersisted(tableId: string | undefined, p: Persisted) {
+  if (!tableId) return;
+  localStorage.setItem(`dt:${tableId}`, JSON.stringify(p));
+}
+
+function defaultAlignFor<T>(col: Column<T>, sample: T | undefined): Align {
+  if (col.align) return col.align;
+  if (!sample || !col.accessor) return "left";
+  const v = col.accessor(sample);
+  return typeof v === "number" ? "right" : "left";
+}
 
 export function DataTable<T>({
   rows,
@@ -29,12 +60,22 @@ export function DataTable<T>({
   searchPlaceholder,
   empty,
   exportFilename,
+  tableId,
 }: Props<T>) {
+  const persisted = useMemo(() => loadPersisted(tableId), [tableId]);
+
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
   const [hidden, setHidden] = useState<Record<string, boolean>>(
-    Object.fromEntries(columns.filter(c => c.hidden).map(c => [c.key, true]))
+    () =>
+      persisted.hidden ??
+      Object.fromEntries(columns.filter(c => c.hidden).map(c => [c.key, true]))
   );
+  const [density, setDensity] = useState<Density>(() => persisted.density ?? "comfortable");
+
+  useEffect(() => {
+    savePersisted(tableId, { hidden, density });
+  }, [tableId, hidden, density]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -62,11 +103,16 @@ export function DataTable<T>({
     });
   }, [filtered, sort, columns]);
 
+  const visibleCols = useMemo(() => columns.filter(c => !hidden[c.key]), [columns, hidden]);
+  const sample = rows[0];
+
+  const padCls = density === "compact" ? "py-1" : "py-2";
+  const textCls = density === "compact" ? "text-[13px]" : "text-sm";
+
   function exportCsv() {
-    const visible = columns.filter(c => !hidden[c.key]);
-    const head = visible.map(c => `"${c.header.replaceAll('"', '""')}"`).join(",");
+    const head = visibleCols.map(c => `"${c.header.replaceAll('"', '""')}"`).join(",");
     const lines = sorted.map(r =>
-      visible
+      visibleCols
         .map(c => {
           const v = c.accessor ? c.accessor(r) : (r as any)[c.key];
           return `"${String(v ?? "").replaceAll('"', '""')}"`;
@@ -80,8 +126,6 @@ export function DataTable<T>({
     a.click();
   }
 
-  const visibleCols = columns.filter(c => !hidden[c.key]);
-
   return (
     <div className="card overflow-hidden">
       <div className="flex items-center gap-2 p-2 border-b border-border">
@@ -91,7 +135,16 @@ export function DataTable<T>({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <details className="ml-auto relative">
+        <button
+          type="button"
+          className="btn-ghost btn-sm ml-auto"
+          title={density === "compact" ? "Switch to comfortable density" : "Switch to compact density"}
+          aria-label="Toggle density"
+          onClick={() => setDensity(d => (d === "compact" ? "comfortable" : "compact"))}
+        >
+          {density === "compact" ? <Rows4 size={14} /> : <Rows3 size={14} />}
+        </button>
+        <details className="relative">
           <summary className="btn cursor-pointer list-none">Columns</summary>
           <div className="absolute right-0 top-full mt-1 z-20 card p-2 min-w-[200px]">
             {columns.map(c => (
@@ -109,26 +162,36 @@ export function DataTable<T>({
         <button className="btn" onClick={exportCsv}>Export CSV</button>
       </div>
       <div className="overflow-auto">
-        <table className="table">
+        <table className={cn("table", textCls)}>
           <thead>
             <tr>
-              {visibleCols.map(c => (
-                <th
-                  key={c.key}
-                  style={{ width: c.width }}
-                  onClick={() =>
-                    setSort(s =>
-                      s?.key === c.key
-                        ? { key: c.key, dir: s.dir === "asc" ? "desc" : "asc" }
-                        : { key: c.key, dir: "asc" }
-                    )
-                  }
-                  className="cursor-pointer select-none"
-                >
-                  {c.header}
-                  {sort?.key === c.key && (sort.dir === "asc" ? " ▲" : " ▼")}
-                </th>
-              ))}
+              {visibleCols.map(c => {
+                const align = defaultAlignFor(c, sample);
+                return (
+                  <th
+                    key={c.key}
+                    style={{ width: c.width }}
+                    onClick={() =>
+                      setSort(s =>
+                        s?.key === c.key
+                          ? { key: c.key, dir: s.dir === "asc" ? "desc" : "asc" }
+                          : { key: c.key, dir: "asc" }
+                      )
+                    }
+                    className={cn(
+                      "cursor-pointer select-none",
+                      padCls,
+                      align === "right" && "text-right",
+                      align === "center" && "text-center",
+                    )}
+                  >
+                    {c.header}
+                    {sort?.key === c.key && (
+                      <span className="text-muted">{sort.dir === "asc" ? " ▲" : " ▼"}</span>
+                    )}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
@@ -139,21 +202,51 @@ export function DataTable<T>({
                 </td>
               </tr>
             )}
-            {sorted.map(r => (
+            {sorted.map((r, i) => (
               <tr
                 key={rowKey(r)}
                 onClick={() => onRowClick?.(r)}
-                className={cn(onRowClick && "cursor-pointer")}
+                className={cn(
+                  onRowClick && "cursor-pointer",
+                  // Subtle zebra striping — only odd rows pick up panel2.
+                  i % 2 === 1 && "bg-panel2/40",
+                )}
               >
-                {visibleCols.map(c => (
-                  <td key={c.key}>
-                    {c.render ? c.render(r) : String((c.accessor ? c.accessor(r) : (r as any)[c.key]) ?? "")}
-                  </td>
-                ))}
+                {visibleCols.map(c => {
+                  const align = defaultAlignFor(c, sample);
+                  return (
+                    <td
+                      key={c.key}
+                      className={cn(
+                        padCls,
+                        align === "right" && "text-right tabular-nums",
+                        align === "center" && "text-center",
+                      )}
+                    >
+                      {c.render ? c.render(r) : String((c.accessor ? c.accessor(r) : (r as any)[c.key]) ?? "")}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
         </table>
+      </div>
+      <div className="flex items-center justify-between gap-2 px-3 py-2 border-t border-border text-xs text-muted">
+        <span>
+          {sorted.length === rows.length
+            ? `${rows.length} row${rows.length === 1 ? "" : "s"}`
+            : `${sorted.length} of ${rows.length} rows`}
+        </span>
+        {sort && (
+          <button
+            type="button"
+            className="hover:text-text"
+            onClick={() => setSort(null)}
+          >
+            Clear sort
+          </button>
+        )}
       </div>
     </div>
   );
