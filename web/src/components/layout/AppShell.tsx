@@ -37,7 +37,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-full flex flex-col">
-      <header className="border-b border-[#1f2229] bg-panel">
+      <header className="border-b border-border bg-panel">
         <div className="px-4 h-12 flex items-center gap-6">
           <Link to="/parts" className="font-semibold text-accent">stockmgr</Link>
           <nav className="flex items-center gap-1">
@@ -46,7 +46,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 key={n.to}
                 to={n.to}
                 className={({ isActive }) =>
-                  cn("px-3 py-1.5 rounded-md text-sm", isActive ? "bg-[#1c1f25] text-text" : "text-muted hover:text-text")
+                  cn("px-3 py-1.5 rounded-md text-sm", isActive ? "bg-panel2 text-text" : "text-muted hover:text-text")
                 }
               >
                 {n.label}
@@ -106,7 +106,7 @@ function SearchResults({ results, onPick }: { results: SearchData; onPick: (href
               <button
                 key={it.id}
                 onClick={() => onPick(it.href)}
-                className="w-full text-left px-2 py-1 rounded hover:bg-[#1c1f25]"
+                className="w-full text-left px-2 py-1 rounded hover:bg-panel2"
               >
                 {it.label}
               </button>

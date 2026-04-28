@@ -14,7 +14,7 @@ export default function EntityHeader({ title, subtitle, idCode, actions }: Props
         <div className="text-lg font-semibold">{title}</div>
         {subtitle && <div className="text-sm text-muted mt-0.5">{subtitle}</div>}
         {idCode && (
-          <div className="mt-2 inline-block font-mono text-xs px-2 py-0.5 rounded bg-[#1f2229] text-muted">
+          <div className="mt-2 inline-block font-mono text-xs px-2 py-0.5 rounded bg-panel2 text-muted">
             {idCode}
           </div>
         )}

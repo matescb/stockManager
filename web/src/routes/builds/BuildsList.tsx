@@ -5,7 +5,7 @@ import { DataTable } from "@/components/DataTable";
 import type { Build, Project } from "@/types";
 
 const STATUS_BADGES: Record<Build["status"], string> = {
-  planned: "bg-[#1c1f25] text-muted",
+  planned: "bg-panel2 text-muted",
   in_progress: "bg-warning/20 text-warning",
   complete: "bg-success/20 text-success",
   cancelled: "bg-danger/20 text-danger",

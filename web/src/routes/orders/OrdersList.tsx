@@ -5,7 +5,7 @@ import { DataTable } from "@/components/DataTable";
 import type { Order } from "@/types";
 
 const STATUS_BADGES: Record<Order["status"], string> = {
-  draft: "bg-[#1c1f25] text-muted",
+  draft: "bg-panel2 text-muted",
   open: "bg-accent/20 text-accent",
   partial: "bg-warning/20 text-warning",
   received: "bg-success/20 text-success",

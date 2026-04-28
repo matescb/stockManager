@@ -14,7 +14,7 @@ export default function SubNav({ items }: { items: Item[] }) {
           className={({ isActive }) =>
             cn(
               "px-3 py-1 rounded-md text-sm",
-              isActive ? "bg-[#1c1f25] text-text" : "text-muted hover:text-text"
+              isActive ? "bg-panel2 text-text" : "text-muted hover:text-text"
             )
           }
         >

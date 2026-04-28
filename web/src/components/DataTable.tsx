@@ -84,7 +84,7 @@ export function DataTable<T>({
 
   return (
     <div className="card overflow-hidden">
-      <div className="flex items-center gap-2 p-2 border-b border-[#1f2229]">
+      <div className="flex items-center gap-2 p-2 border-b border-border">
         <input
           className="input max-w-xs"
           placeholder={searchPlaceholder || "Search…"}

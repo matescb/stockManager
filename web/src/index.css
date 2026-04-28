@@ -2,49 +2,93 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  color-scheme: dark;
-}
+@layer base {
+  :root {
+    /* Light theme (default). */
+    --c-bg:           248 250 252;
+    --c-panel:        255 255 255;
+    --c-panel2:       241 245 249;
+    --c-border:       226 232 240;
+    --c-borderStrong: 203 213 225;
+    --c-rowHover:     248 250 252;
+    --c-panelHover:   226 232 240;
+    --c-text:          15  23  42;
+    --c-muted:        100 116 139;
+    --c-accent:        22 163  74;
+    --c-accentHover:   21 128  61;
+    --c-danger:       220  38  38;
+    --c-warning:      217 119   6;
+    --c-success:       22 163  74;
+  }
+  :root.dark {
+    --c-bg:            11  12  15;
+    --c-panel:         20  22  27;
+    --c-panel2:        28  31  37;
+    --c-border:        31  34  41;
+    --c-borderStrong:  42  45  52;
+    --c-rowHover:      21  24  31;
+    --c-panelHover:    38  42  50;
+    --c-text:         230 230 230;
+    --c-muted:        154 160 172;
+    --c-accent:        74 222 128;
+    --c-accentHover:   34 197  94;
+    --c-danger:       248 113 113;
+    --c-warning:      251 191  36;
+    --c-success:       52 211 153;
+  }
 
-html, body, #root { height: 100%; }
-body {
-  background: #0b0c0f;
-  color: #e6e6e6;
-  font-feature-settings: "tnum";
+  html, body, #root { height: 100%; }
+  body {
+    background: rgb(var(--c-bg));
+    color: rgb(var(--c-text));
+    font-feature-settings: "tnum";
+  }
 }
 
 @layer components {
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-md border border-[#2a2d34] bg-[#1c1f25] px-3 py-1.5 text-sm text-text hover:bg-[#262a32] focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 rounded-md border border-borderStrong bg-panel2 px-3 py-1.5 text-sm text-text hover:bg-panelHover focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors;
   }
   .btn-primary {
-    @apply btn border-accent/50 bg-accent/20 text-accent hover:bg-accent/30;
+    @apply btn border-accent/50 bg-accent/15 text-accent hover:bg-accent/25;
   }
   .btn-danger {
     @apply btn border-danger/50 bg-danger/10 text-danger hover:bg-danger/20;
   }
+  .btn-ghost {
+    @apply btn border-transparent bg-transparent hover:bg-panel2;
+  }
+  .btn-sm {
+    @apply px-2 py-1 text-xs;
+  }
   .input {
-    @apply w-full rounded-md border border-[#2a2d34] bg-[#0f1217] px-3 py-1.5 text-sm placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-accent;
+    @apply w-full rounded-md border border-border bg-bg px-3 py-1.5 text-sm placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-accent/40 transition-colors;
   }
   .label {
     @apply block text-xs uppercase tracking-wider text-muted mb-1;
   }
   .card {
-    @apply rounded-lg border border-[#1f2229] bg-panel;
+    @apply rounded-lg border border-border bg-panel;
+  }
+  .section-title {
+    @apply text-xs uppercase tracking-wider text-muted;
+  }
+  .kbd {
+    @apply inline-flex items-center rounded border border-border bg-panel2 px-1.5 py-0.5 font-mono text-[10px] text-muted;
   }
   .table {
     @apply w-full text-sm;
   }
   .table thead th {
-    @apply text-left text-xs uppercase tracking-wider text-muted px-3 py-2 border-b border-[#1f2229];
+    @apply text-left text-xs uppercase tracking-wider text-muted px-3 py-2 border-b border-border;
   }
   .table tbody td {
-    @apply px-3 py-2 border-b border-[#16181d];
+    @apply px-3 py-2 border-b border-border;
   }
   .table tbody tr:hover {
-    @apply bg-[#15181f];
+    @apply bg-rowHover;
   }
   .pill {
-    @apply inline-block rounded-full px-2 py-0.5 text-xs bg-[#1f2229] text-muted;
+    @apply inline-block rounded-full px-2 py-0.5 text-xs bg-panel2 text-muted;
   }
 }
