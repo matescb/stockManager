@@ -35,6 +35,24 @@ class WorkspaceMember(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    role = Column(String(40), nullable=False, default="member")  # placeholder; RBAC deferred
+    role = Column(String(40), nullable=False, default="member")  # owner | admin | member | viewer
     status = Column(String(20), nullable=False, default="active")  # invited | active | disabled
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+
+
+class WorkspaceInvitation(Base):
+    __tablename__ = "workspace_invitations"
+    __table_args__ = (
+        UniqueConstraint("token", name="uq_workspace_invitation_token"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    email = Column(String(320), nullable=False, index=True)
+    role = Column(String(40), nullable=False, default="member")
+    token = Column(String(120), nullable=False)
+    status = Column(String(20), nullable=False, default="pending")  # pending | accepted | revoked
+    invited_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    accepted_at = Column(DateTime(timezone=True), nullable=True)
+    accepted_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

@@ -12,6 +12,7 @@ from app.api.routes import (
     bom_presets,
     builds,
     custom_fields,
+    invitations,
     lots,
     orders,
     parts,
@@ -52,6 +53,7 @@ app.include_router(orders.router, prefix="/api/orders", tags=["orders"])
 app.include_router(builds.router, prefix="/api/builds", tags=["builds"])
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(bom_presets.router, prefix="/api/bom-presets", tags=["bom_presets"])
+app.include_router(invitations.router, prefix="/api/invitations", tags=["invitations"])
 app.include_router(attachments.router, prefix="/api/attachments", tags=["attachments"])
 app.include_router(custom_fields.router, prefix="/api/custom-fields", tags=["custom_fields"])
 app.include_router(tags.router, prefix="/api/tags", tags=["tags"])

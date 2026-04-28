@@ -11,6 +11,7 @@ Implemented phases:
 - **7** BOM import presets — save / recall column mappings in the import wizard. See `docs/phases/07-bom-presets.md`.
 - **8** meta-part members — manage `PartMetaMember` rows; build engine pulls stock from any member when consuming a meta-part BOM line. See `docs/phases/08-meta-parts.md`.
 - **9** serial tracking — workspace + per-part flags enforce qty=1 + `serial_number` on add-stock and order-receive. See `docs/phases/09-serial-tracking.md`.
+- **10** RBAC (owner/admin/member/viewer) + workspace invitations with token-based accept. See `docs/phases/10-rbac-invitations.md`.
 
 The existing webcam barcode scanner (`barcodeReader/`) is integrated into `/parts/scan`.
 

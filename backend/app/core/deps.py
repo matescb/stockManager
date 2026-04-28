@@ -76,3 +76,36 @@ def get_current_workspace(
 
 
 CurrentWorkspace = Annotated[Workspace, Depends(get_current_workspace)]
+
+
+_ROLE_RANK = {"viewer": 0, "member": 1, "admin": 2, "owner": 3}
+
+
+def _membership_role(db: Session, user: User, ws: Workspace) -> str:
+    m = (
+        db.query(WorkspaceMember)
+        .filter(
+            WorkspaceMember.user_id == user.id,
+            WorkspaceMember.workspace_id == ws.id,
+            WorkspaceMember.status == "active",
+        )
+        .first()
+    )
+    return m.role if m else "viewer"
+
+
+def require_role(min_role: str):
+    """Dependency factory: 403 unless the current user's membership in
+    the current workspace is >= min_role in the {viewer, member, admin,
+    owner} hierarchy."""
+    floor = _ROLE_RANK[min_role]
+
+    def _dep(user: CurrentUser, ws: CurrentWorkspace, db: DbSession) -> None:
+        rank = _ROLE_RANK.get(_membership_role(db, user, ws), 0)
+        if rank < floor:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"requires role {min_role}+",
+            )
+
+    return _dep

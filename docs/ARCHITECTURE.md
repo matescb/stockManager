@@ -201,9 +201,11 @@ membership in one transaction; then issues a session by writing a
 validates the cookie's token and the row's `expires_at` on every
 request. Logout deletes the row and clears the cookie.
 
-There is no RBAC yet — `WorkspaceMember.role` is a free string with
-the `"placeholder; RBAC deferred"` comment. Any active member of a
-workspace can do anything within it.
+RBAC arrived in Phase 10. `WorkspaceMember.role` is now one of
+`{owner, admin, member, viewer}`. The `core/deps.py::require_role`
+dependency factory enforces it on member-management and workspace-
+settings endpoints. Mutating data endpoints (parts/stock/projects/…)
+are not yet viewer-gated; that's a deliberate follow-up.
 
 ## Future work (not implemented)
 
@@ -211,9 +213,11 @@ workspace can do anything within it.
   `part_type='linked'` exist, plus `WebFetch(domain:www.trustedparts.com)`
   is allow-listed in `.claude/settings.local.json`. Importing part
   attributes from TrustedParts by MPN is a natural next step.
-- **RBAC + invitations** — `WorkspaceMember.status='invited'` is
-  modeled but no invite flow exists. Roles need to gate write
-  operations once teams larger than one share a workspace.
+- **Per-endpoint RBAC tightening** — Phase 10 introduced roles and
+  invitations and gates the member-management surface. Every other
+  mutation endpoint should also gate on `member+`, with
+  read-only endpoints opening up to `viewer+`. This is mechanical
+  but sweeping; do it together with a router-level test pass.
 - **Catalog publishing** — `Part.published` is unused.
 - **Reports** — costs are summed using `Lot.purchase_unit_cost`. A
   proper "weighted average cost" or "FIFO/LIFO valuation" report
