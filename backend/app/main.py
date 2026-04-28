@@ -11,6 +11,7 @@ from app.api.routes import (
     auth,
     bom_presets,
     builds,
+    catalog,
     custom_fields,
     invitations,
     lots,
@@ -68,6 +69,10 @@ app.include_router(
     tags=["trustedparts"],
     dependencies=_member_gate,
 )
+
+# Public, token-gated read-only catalog. Mounted AFTER the /api routers and
+# intentionally without a member-gate dependency.
+app.include_router(catalog.router, prefix="/catalog", tags=["catalog"])
 
 
 @app.get("/api/health")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 from typing import Literal
 from uuid import UUID
 
@@ -47,18 +48,28 @@ def create_workspace(payload: WorkspaceCreateIn, user: CurrentUser, db: DbSessio
     return ok({"id": str(ws.id), "name": ws.name})
 
 
+def _catalog_url(ws: Workspace) -> str | None:
+    if ws.catalog_enabled and ws.catalog_token:
+        return f"/catalog/{ws.catalog_token}"
+    return None
+
+
+def _serialize_workspace(ws: Workspace) -> dict:
+    return {
+        "id": str(ws.id),
+        "name": ws.name,
+        "kind": ws.kind,
+        "currency_default": ws.currency_default,
+        "lot_control_enabled": ws.lot_control_enabled,
+        "serial_tracking_enabled": ws.serial_tracking_enabled,
+        "catalog_enabled": bool(ws.catalog_enabled),
+        "catalog_url": _catalog_url(ws),
+    }
+
+
 @router.get("/current")
 def current(ws: CurrentWorkspace):
-    return ok(
-        {
-            "id": str(ws.id),
-            "name": ws.name,
-            "kind": ws.kind,
-            "currency_default": ws.currency_default,
-            "lot_control_enabled": ws.lot_control_enabled,
-            "serial_tracking_enabled": ws.serial_tracking_enabled,
-        }
-    )
+    return ok(_serialize_workspace(ws))
 
 
 class WorkspacePatch(BaseModel):
@@ -68,23 +79,25 @@ class WorkspacePatch(BaseModel):
     currency_default: str | None = Field(default=None, min_length=3, max_length=3)
     lot_control_enabled: bool | None = None
     serial_tracking_enabled: bool | None = None
+    catalog_enabled: bool | None = None
+    # Write-only command flag: when true (and the catalog stays enabled), the
+    # route mints a fresh secrets.token_urlsafe(32) and stores it.
+    regenerate_catalog_token: bool | None = None
 
 
 @router.patch("/current", dependencies=[Depends(require_role("admin"))])
 def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace):
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    regenerate = bool(data.pop("regenerate_catalog_token", False))
+    was_enabled = bool(ws.catalog_enabled)
+    for k, v in data.items():
         setattr(ws, k, v)
+    # Mint a token when enabling the catalog for the first time, or when the
+    # caller explicitly asks for a fresh one while it's enabled.
+    if ws.catalog_enabled and (regenerate or not ws.catalog_token or not was_enabled):
+        ws.catalog_token = secrets.token_urlsafe(32)
     db.commit()
-    return ok(
-        {
-            "id": str(ws.id),
-            "name": ws.name,
-            "kind": ws.kind,
-            "currency_default": ws.currency_default,
-            "lot_control_enabled": ws.lot_control_enabled,
-            "serial_tracking_enabled": ws.serial_tracking_enabled,
-        }
-    )
+    return ok(_serialize_workspace(ws))
 
 
 @router.get("/members")

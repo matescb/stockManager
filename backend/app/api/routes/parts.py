@@ -54,6 +54,7 @@ class PartPatch(BaseModel):
     default_storage_location_id: UUID | None = None
     default_storage_mandatory: bool | None = None
     serialized: bool | None = None
+    published: bool | None = None
 
 
 def _serialize(
@@ -83,6 +84,7 @@ def _serialize(
         "default_storage_location_id": str(p.default_storage_location_id) if p.default_storage_location_id else None,
         "default_storage_mandatory": p.default_storage_mandatory,
         "serialized": p.serialized,
+        "published": bool(p.published),
         "archived_at": p.archived_at.isoformat() if p.archived_at else None,
         "on_hand": on_hand,
         "reserved": reserved,

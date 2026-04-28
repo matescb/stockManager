@@ -23,6 +23,8 @@ class Workspace(Base):
     currency_default = Column(String(3), nullable=False, default="USD")
     lot_control_enabled = Column(Boolean, nullable=False, default=True)
     serial_tracking_enabled = Column(Boolean, nullable=False, default=False)
+    catalog_token = Column(String(64), nullable=True)
+    catalog_enabled = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
 
 
