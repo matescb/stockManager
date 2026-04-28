@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
+import { ScrollText } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Part, StockEntry, StorageLocation } from "@/types";
 import { DataTable } from "@/components/DataTable";
+import EmptyState from "@/components/EmptyState";
 import { Link } from "react-router-dom";
 
 export default function StockHistory() {
@@ -16,7 +18,14 @@ export default function StockHistory() {
       <DataTable
         rows={data ?? []}
         rowKey={r => r.id}
-        empty="No stock activity yet."
+        tableId="stock-history"
+        empty={
+          <EmptyState
+            icon={ScrollText}
+            title="No stock activity yet"
+            description="Stock movements (add, remove, transfer) will show up here."
+          />
+        }
         exportFilename="stock-history"
         columns={[
           { key: "occurred_at", header: "Date", accessor: r => r.occurred_at, render: r => new Date(r.occurred_at).toLocaleString() },

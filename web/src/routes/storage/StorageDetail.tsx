@@ -82,6 +82,7 @@ export function StorageHistory() {
     <DataTable
       rows={data ?? []}
       rowKey={r => r.id}
+      tableId="storage-history"
       empty="No history."
       columns={[
         { key: "occurred_at", header: "Date", accessor: r => r.occurred_at, render: r => new Date(r.occurred_at).toLocaleString() },

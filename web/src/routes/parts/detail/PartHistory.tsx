@@ -20,6 +20,7 @@ export default function PartHistory() {
     <DataTable
       rows={data ?? []}
       rowKey={r => r.id}
+      tableId="part-history"
       empty="No stock history."
       exportFilename="stock-history"
       columns={[

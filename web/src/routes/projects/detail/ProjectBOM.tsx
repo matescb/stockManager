@@ -1,9 +1,11 @@
 import { useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { FolderKanban } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Part, ProjectEntry } from "@/types";
 import { useState } from "react";
 import { DataTable } from "@/components/DataTable";
+import EmptyState from "@/components/EmptyState";
 
 export default function ProjectBOM() {
   const { projectId } = useParams();
@@ -33,7 +35,14 @@ export default function ProjectBOM() {
       <DataTable
         rows={entries ?? []}
         rowKey={r => r.id}
-        empty="No BOM entries yet. Use the Import BOM tab."
+        tableId="project-bom"
+        empty={
+          <EmptyState
+            icon={FolderKanban}
+            title="BOM is empty"
+            description="Use the Import BOM tab to load a CSV/TSV."
+          />
+        }
         exportFilename="bom"
         columns={[
           { key: "qty", header: "Qty", accessor: r => r.quantity, width: "60px" },

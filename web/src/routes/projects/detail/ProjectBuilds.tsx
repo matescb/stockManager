@@ -1,7 +1,9 @@
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { Hammer } from "lucide-react";
 import { api } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
+import EmptyState from "@/components/EmptyState";
 import type { Build } from "@/types";
 
 export default function ProjectBuilds() {
@@ -21,7 +23,15 @@ export default function ProjectBuilds() {
       <DataTable
         rows={data ?? []}
         rowKey={r => r.id}
-        empty="No builds yet."
+        tableId="project-builds"
+        empty={
+          <EmptyState
+            icon={Hammer}
+            title="No builds against this project yet"
+            description="Plan a build to reserve stock and track consumption."
+            action={{ label: "+ Build", to: `/builds/create?project_id=${projectId}` }}
+          />
+        }
         columns={[
           { key: "name", header: "Name", accessor: r => r.name, render: r => <Link className="text-accent" to={`/builds/${r.id}`}>{r.name}</Link> },
           { key: "qty", header: "Qty", accessor: r => r.quantity, width: "60px" },

@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
+import { Package } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Lot, Part } from "@/types";
 import { DataTable } from "@/components/DataTable";
+import EmptyState from "@/components/EmptyState";
 
 export default function LotsList() {
   const { data } = useQuery({ queryKey: ["lots"], queryFn: () => api.get<Lot[]>("/lots") });
@@ -16,7 +18,14 @@ export default function LotsList() {
       <DataTable
         rows={data ?? []}
         rowKey={r => r.id}
-        empty="No lots yet."
+        tableId="lots"
+        empty={
+          <EmptyState
+            icon={Package}
+            title="No lots yet"
+            description="Lots are created when you add stock with a price or a name."
+          />
+        }
         exportFilename="lots"
         onRowClick={r => nav(`/lots/${r.id}/info`)}
         columns={[

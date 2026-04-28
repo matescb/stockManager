@@ -1,7 +1,9 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { Boxes } from "lucide-react";
 import { api } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
+import EmptyState from "@/components/EmptyState";
 import type { Part } from "@/types";
 
 export default function PartsList({ archived = false }: { archived?: boolean }) {
@@ -29,8 +31,24 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
         <DataTable
           rows={data ?? []}
           rowKey={(r) => r.id}
+          tableId="parts"
           searchPlaceholder="Search parts…"
-          empty="No parts. Create one to get started."
+          empty={
+            archived ? (
+              <EmptyState
+                icon={Boxes}
+                title="No archived parts"
+                description="Archived parts will appear here."
+              />
+            ) : (
+              <EmptyState
+                icon={Boxes}
+                title="No parts yet"
+                description="Create your first part to start tracking stock."
+                action={{ label: "+ Part", to: "/parts/create" }}
+              />
+            )
+          }
           exportFilename="parts"
           onRowClick={(r) => nav(`/parts/${r.id}/info`)}
           columns={[

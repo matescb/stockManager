@@ -1,7 +1,9 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { Hammer } from "lucide-react";
 import { api } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
+import EmptyState from "@/components/EmptyState";
 import type { Build, Project } from "@/types";
 
 const STATUS_BADGES: Record<Build["status"], string> = {
@@ -33,7 +35,23 @@ export default function BuildsList({ archived = false }: { archived?: boolean })
       <DataTable
         rows={data ?? []}
         rowKey={r => r.id}
-        empty="No builds yet."
+        tableId="builds"
+        empty={
+          archived ? (
+            <EmptyState
+              icon={Hammer}
+              title="No archived builds"
+              description="Archived builds will appear here."
+            />
+          ) : (
+            <EmptyState
+              icon={Hammer}
+              title="No builds yet"
+              description="Plan a build against a project to reserve and consume parts."
+              action={{ label: "+ Build", to: "/builds/create" }}
+            />
+          )
+        }
         exportFilename="builds"
         onRowClick={r => nav(`/builds/${r.id}`)}
         columns={[

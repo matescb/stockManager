@@ -1,7 +1,9 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { Warehouse } from "lucide-react";
 import { api } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
+import EmptyState from "@/components/EmptyState";
 import type { StorageLocation } from "@/types";
 
 export default function StorageList({ archived = false }: { archived?: boolean }) {
@@ -20,7 +22,23 @@ export default function StorageList({ archived = false }: { archived?: boolean }
       <DataTable
         rows={data ?? []}
         rowKey={r => r.id}
-        empty="No storage locations. Create one."
+        tableId="storage"
+        empty={
+          archived ? (
+            <EmptyState
+              icon={Warehouse}
+              title="No archived storage"
+              description="Archived storage locations will appear here."
+            />
+          ) : (
+            <EmptyState
+              icon={Warehouse}
+              title="No storage locations yet"
+              description="Add a shelf, bin, or reel to organise your inventory."
+              action={{ label: "+ Storage", to: "/storage/create" }}
+            />
+          )
+        }
         exportFilename="storage"
         onRowClick={r => nav(`/storage/${r.id}/info`)}
         columns={[

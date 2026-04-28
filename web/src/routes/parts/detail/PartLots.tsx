@@ -12,6 +12,7 @@ export default function PartLots() {
     <DataTable
       rows={data ?? []}
       rowKey={r => r.id}
+      tableId="part-lots"
       empty="No lots."
       onRowClick={r => nav(`/lots/${r.id}/info`)}
       exportFilename="lots"

@@ -1,7 +1,9 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { FolderKanban } from "lucide-react";
 import { api } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
+import EmptyState from "@/components/EmptyState";
 import type { Project } from "@/types";
 
 export default function ProjectsList({ archived = false }: { archived?: boolean }) {
@@ -20,7 +22,23 @@ export default function ProjectsList({ archived = false }: { archived?: boolean 
       <DataTable
         rows={data ?? []}
         rowKey={r => r.id}
-        empty="No projects yet."
+        tableId="projects"
+        empty={
+          archived ? (
+            <EmptyState
+              icon={FolderKanban}
+              title="No archived projects"
+              description="Archived projects will appear here."
+            />
+          ) : (
+            <EmptyState
+              icon={FolderKanban}
+              title="No projects yet"
+              description="Create a project to track its BOM and builds."
+              action={{ label: "+ Project", to: "/projects/create" }}
+            />
+          )
+        }
         exportFilename="projects"
         onRowClick={r => nav(`/projects/${r.id}/data`)}
         columns={[

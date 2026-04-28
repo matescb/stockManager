@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { Link, NavLink, Outlet } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { BarChart3 } from "lucide-react";
 import { api } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
+import EmptyState from "@/components/EmptyState";
 import type { Project } from "@/types";
 
 type LowStockRow = {
@@ -154,7 +156,14 @@ export function LowStockReport() {
     <DataTable
       rows={data ?? []}
       rowKey={r => r.part_id}
-      empty="No parts below their threshold."
+      tableId="report-low-stock"
+      empty={
+        <EmptyState
+          icon={BarChart3}
+          title="All clear"
+          description="All threshold-tagged parts are stocked."
+        />
+      }
       exportFilename="low-stock"
       columns={[
         { key: "name", header: "Part", accessor: r => r.name, render: r => <Link className="text-accent" to={`/parts/${r.part_id}/info`}>{r.name}</Link> },
@@ -198,7 +207,14 @@ export function StockValueReport() {
       <DataTable
         rows={data.by_part}
         rowKey={r => r.part_id}
-        empty="No purchase-cost-tagged stock yet. Add stock with a price to populate this report."
+        tableId="report-stock-value-by-part"
+        empty={
+          <EmptyState
+            icon={BarChart3}
+            title="No data"
+            description="No purchase-cost-tagged stock yet. Add stock with a price to populate this report."
+          />
+        }
         exportFilename="stock-value-by-part"
         columns={[
           { key: "name", header: "Part", accessor: r => r.name, render: r => <Link className="text-accent" to={`/parts/${r.part_id}/info`}>{r.name}</Link> },
@@ -240,7 +256,14 @@ export function BomShortageReport() {
         <DataTable
           rows={data.rows}
           rowKey={r => r.part_id}
-          empty="No consumable BOM lines."
+          tableId="report-bom-shortage"
+          empty={
+            <EmptyState
+              icon={BarChart3}
+              title="No data"
+              description="No consumable BOM lines."
+            />
+          }
           exportFilename="bom-shortage"
           columns={[
             { key: "name", header: "Part", accessor: r => r.part_name, render: r => <Link className="text-accent" to={`/parts/${r.part_id}/info`}>{r.part_name}</Link> },
@@ -272,7 +295,14 @@ export function ExpiringLotsReport() {
       <DataTable
         rows={data ?? []}
         rowKey={r => r.lot_id}
-        empty="No lots expiring in this window."
+        tableId="report-expiring-lots"
+        empty={
+          <EmptyState
+            icon={BarChart3}
+            title="All clear"
+            description="No lots expiring in this window."
+          />
+        }
         exportFilename="expiring-lots"
         columns={[
           { key: "lot", header: "Lot", accessor: r => r.name ?? r.lot_id, render: r => <Link className="text-accent" to={`/lots/${r.lot_id}/info`}>{r.name ?? r.lot_id}</Link> },

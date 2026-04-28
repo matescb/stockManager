@@ -186,6 +186,7 @@ export default function OrderDetail() {
         <DataTable
           rows={entries}
           rowKey={r => r.id}
+          tableId="order-lines"
           empty="No lines yet."
           columns={[
             { key: "part", header: "Part", accessor: r => r.part_id ? (partsById.get(r.part_id)?.name ?? "") : (r.name ?? "") },

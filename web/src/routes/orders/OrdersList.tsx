@@ -1,7 +1,9 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { ShoppingCart } from "lucide-react";
 import { api } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
+import EmptyState from "@/components/EmptyState";
 import type { Order } from "@/types";
 
 const STATUS_BADGES: Record<Order["status"], string> = {
@@ -29,7 +31,23 @@ export default function OrdersList({ archived = false }: { archived?: boolean })
       <DataTable
         rows={data ?? []}
         rowKey={r => r.id}
-        empty="No orders yet."
+        tableId="orders"
+        empty={
+          archived ? (
+            <EmptyState
+              icon={ShoppingCart}
+              title="No archived orders"
+              description="Archived orders will appear here."
+            />
+          ) : (
+            <EmptyState
+              icon={ShoppingCart}
+              title="No orders yet"
+              description="Create a purchase order to track expected stock."
+              action={{ label: "+ Order", to: "/orders/create" }}
+            />
+          )
+        }
         exportFilename="orders"
         onRowClick={r => nav(`/orders/${r.id}`)}
         columns={[
