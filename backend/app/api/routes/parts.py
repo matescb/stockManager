@@ -32,6 +32,7 @@ class PartIn(BaseModel):
     attrition_min_quantity: int = 0
     default_storage_location_id: UUID | None = None
     default_storage_mandatory: bool = False
+    serialized: bool = False
 
 
 class PartPatch(BaseModel):
@@ -47,6 +48,7 @@ class PartPatch(BaseModel):
     attrition_min_quantity: int | None = None
     default_storage_location_id: UUID | None = None
     default_storage_mandatory: bool | None = None
+    serialized: bool | None = None
 
 
 def _serialize(p: Part, *, on_hand: int | None = None) -> dict:
@@ -65,6 +67,7 @@ def _serialize(p: Part, *, on_hand: int | None = None) -> dict:
         "attrition_min_quantity": p.attrition_min_quantity or 0,
         "default_storage_location_id": str(p.default_storage_location_id) if p.default_storage_location_id else None,
         "default_storage_mandatory": p.default_storage_mandatory,
+        "serialized": p.serialized,
         "archived_at": p.archived_at.isoformat() if p.archived_at else None,
         "on_hand": on_hand,
     }
@@ -120,6 +123,7 @@ def create_part(payload: PartIn, db: DbSession, ws: CurrentWorkspace, user: Curr
         attrition_min_quantity=payload.attrition_min_quantity,
         default_storage_location_id=payload.default_storage_location_id,
         default_storage_mandatory=payload.default_storage_mandatory,
+        serialized=payload.serialized,
         created_by=user.id,
         updated_by=user.id,
     )
@@ -202,6 +206,7 @@ def part_lots(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
             {
                 "id": str(l.id),
                 "name": l.name,
+                "serial_number": l.serial_number,
                 "purchase_quantity": l.purchase_quantity,
                 "purchase_unit_cost": float(l.purchase_unit_cost) if l.purchase_unit_cost is not None else None,
                 "purchase_currency": l.purchase_currency,

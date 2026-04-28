@@ -53,6 +53,7 @@ class ReceiveLineIn(BaseModel):
     quantity: int = Field(gt=0)
     storage_location_id: UUID | None = None
     lot_name: str | None = None
+    serial_number: str | None = None
 
 
 class ReceiveIn(BaseModel):

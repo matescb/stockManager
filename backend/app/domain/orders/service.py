@@ -14,6 +14,7 @@ from app.domain.orders.schemas import ReceiveIn
 from app.domain.parts.models import Part
 from app.domain.stock.models import StockEntry
 from app.domain.storage.models import StorageLocation
+from app.domain.workspaces.models import Workspace
 
 
 class OrderError(Exception):
@@ -60,6 +61,9 @@ def receive(
     created_lots: list[Lot] = []
     created_entries: list[StockEntry] = []
 
+    ws = db.get(Workspace, workspace_id)
+    serial_tracking_on = bool(ws and ws.serial_tracking_enabled)
+
     for line in payload.lines:
         oe = entries_by_id.get(line.order_entry_id)
         if oe is None:
@@ -75,6 +79,16 @@ def receive(
         part = db.get(Part, oe.part_id)
         if part is None or part.workspace_id != workspace_id:
             raise OrderError("part not in workspace")
+
+        if serial_tracking_on and part.serialized:
+            if line.quantity != 1:
+                raise OrderError(
+                    f"serialized part {part.name} must be received one unit per line"
+                )
+            if not (line.serial_number or "").strip():
+                raise OrderError(
+                    f"serialized part {part.name} requires a serial_number on the receive line"
+                )
 
         storage = None
         if line.storage_location_id is not None:
@@ -94,6 +108,7 @@ def receive(
             workspace_id=workspace_id,
             part_id=part.id,
             name=lot_name,
+            serial_number=line.serial_number,
             source_type="purchase",
             source_order_id=order.id,
             purchase_quantity=line.quantity,

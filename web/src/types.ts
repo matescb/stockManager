@@ -13,6 +13,7 @@ export type Part = {
   attrition_min_quantity: number;
   default_storage_location_id: string | null;
   default_storage_mandatory: boolean;
+  serialized: boolean;
   archived_at: string | null;
   on_hand: number | null;
 };

@@ -19,6 +19,7 @@ from app.domain.stock.schemas import (
     RemoveStockIn,
 )
 from app.domain.storage.models import StorageLocation
+from app.domain.workspaces.models import Workspace
 
 
 class StockError(Exception):
@@ -131,6 +132,16 @@ def add_stock(
     ):
         raise StockError("part requires default storage location")
 
+    # Serial-tracking enforcement: when the workspace has serial tracking on
+    # AND the part is flagged serialized, every stock addition must produce
+    # exactly one serialized lot (quantity=1, serial_number required).
+    ws = db.get(Workspace, workspace_id)
+    if ws is not None and ws.serial_tracking_enabled and part.serialized:
+        if payload.quantity != 1:
+            raise StockError("serialized parts must be added one at a time (quantity=1)")
+        if not payload.lot or not (payload.lot.serial_number or "").strip():
+            raise StockError("serialized parts require lot.serial_number")
+
     unit_price: Decimal | None = None
     currency: str | None = None
     if payload.price and payload.price.mode != "none":
@@ -154,6 +165,7 @@ def add_stock(
             name=(payload.lot.name if payload.lot else None),
             comments=(payload.lot.comments if payload.lot else None),
             expiration_date=exp,
+            serial_number=(payload.lot.serial_number if payload.lot else None),
             source_type="manual",
             purchase_quantity=payload.quantity,
             purchase_unit_cost=unit_price,

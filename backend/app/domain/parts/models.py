@@ -45,6 +45,7 @@ class Part(WorkspaceOwned, Base):
         UUID(as_uuid=True), ForeignKey("storage_locations.id", ondelete="SET NULL"), nullable=True
     )
     default_storage_mandatory = Column(Boolean, nullable=False, default=False)
+    serialized = Column(Boolean, nullable=False, default=False)
     published = Column(Boolean, nullable=False, default=False)
 
 

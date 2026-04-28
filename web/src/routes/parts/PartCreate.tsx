@@ -15,6 +15,7 @@ export default function PartCreate() {
     description: "",
     footprint: "",
     default_storage_location_id: "",
+    serialized: false,
   });
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -81,6 +82,10 @@ export default function PartCreate() {
         <label className="label">Description</label>
         <textarea className="input" rows={3} value={form.description} onChange={e => set("description", e.target.value)} />
       </div>
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={form.serialized} onChange={e => set("serialized", e.target.checked)} />
+        Serialized (one unit per lot, requires serial number — only enforced when the workspace has serial tracking on)
+      </label>
       <div>
         <label className="label">Default storage location</label>
         <select className="input" value={form.default_storage_location_id} onChange={e => set("default_storage_location_id", e.target.value)}>

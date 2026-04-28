@@ -19,6 +19,7 @@ class LotInput(BaseModel):
     name: str | None = None
     comments: str | None = None
     expiration_date: str | None = None  # ISO date
+    serial_number: str | None = None
 
 
 class AddStockIn(BaseModel):

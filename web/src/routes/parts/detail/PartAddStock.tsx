@@ -16,6 +16,7 @@ export default function PartAddStock() {
   const [totalPrice, setTotalPrice] = useState<string>("");
   const [currency, setCurrency] = useState("USD");
   const [lotName, setLotName] = useState("");
+  const [serial, setSerial] = useState("");
   const [comments, setComments] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -39,7 +40,7 @@ export default function PartAddStock() {
           total_price: priceMode === "entire_lot" ? Number(totalPrice) : undefined,
         };
       }
-      if (lotName) payload.lot = { name: lotName };
+      if (lotName || serial) payload.lot = { name: lotName || undefined, serial_number: serial || undefined };
       await api.post("/stock/add", payload);
       qc.invalidateQueries({ queryKey: ["part", partId] });
       qc.invalidateQueries({ queryKey: ["parts"] });
@@ -96,9 +97,15 @@ export default function PartAddStock() {
           </div>
         )}
       </div>
-      <div>
-        <label className="label">Lot name (optional)</label>
-        <input className="input" value={lotName} onChange={e => setLotName(e.target.value)} placeholder="LOT-2026-001" />
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="label">Lot name (optional)</label>
+          <input className="input" value={lotName} onChange={e => setLotName(e.target.value)} placeholder="LOT-2026-001" />
+        </div>
+        <div>
+          <label className="label">Serial number (optional)</label>
+          <input className="input" value={serial} onChange={e => setSerial(e.target.value)} placeholder="SN-…" />
+        </div>
       </div>
       <div>
         <label className="label">Comments</label>

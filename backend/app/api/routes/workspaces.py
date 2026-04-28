@@ -54,6 +54,30 @@ def current(ws: CurrentWorkspace):
     )
 
 
+class WorkspacePatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    currency_default: str | None = Field(default=None, min_length=3, max_length=3)
+    lot_control_enabled: bool | None = None
+    serial_tracking_enabled: bool | None = None
+
+
+@router.patch("/current")
+def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace):
+    for k, v in payload.model_dump(exclude_unset=True).items():
+        setattr(ws, k, v)
+    db.commit()
+    return ok(
+        {
+            "id": str(ws.id),
+            "name": ws.name,
+            "kind": ws.kind,
+            "currency_default": ws.currency_default,
+            "lot_control_enabled": ws.lot_control_enabled,
+            "serial_tracking_enabled": ws.serial_tracking_enabled,
+        }
+    )
+
+
 @router.post("/{workspace_id}/switch")
 def switch_workspace(workspace_id: str, response: Response):
     response.set_cookie(
