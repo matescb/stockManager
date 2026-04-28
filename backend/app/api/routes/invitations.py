@@ -6,7 +6,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy import select
 
 from app.core.deps import (
@@ -23,6 +23,8 @@ router = APIRouter()
 
 
 class InviteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     email: EmailStr
     role: Literal["admin", "member", "viewer"] = "member"
 
@@ -118,6 +120,8 @@ def revoke_invitation(invitation_id: UUID, db: DbSession, ws: CurrentWorkspace):
 
 
 class AcceptIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     token: str
 
 

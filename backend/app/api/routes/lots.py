@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
@@ -70,6 +70,8 @@ def get_lot(lot_id: UUID, db: DbSession, ws: CurrentWorkspace):
 
 
 class LotPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = None
     description: str | None = None
     comments: str | None = None
@@ -109,6 +111,8 @@ def move_lot(lot_id: UUID, payload: MoveStockIn, db: DbSession, ws: CurrentWorks
 
 
 class LotAdjustIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     actual_quantity: int
     storage_location_id: UUID | None = None
     comments: str | None = None

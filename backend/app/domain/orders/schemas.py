@@ -5,10 +5,12 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class OrderEntryIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     part_id: UUID | None = None
     name: str | None = None
     quantity_ordered: int = Field(ge=0)
@@ -18,6 +20,8 @@ class OrderEntryIn(BaseModel):
 
 
 class OrderEntryPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     part_id: UUID | None = None
     name: str | None = None
     quantity_ordered: int | None = None
@@ -27,6 +31,8 @@ class OrderEntryPatch(BaseModel):
 
 
 class OrderCreateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=200)
     order_type: Literal["purchase", "sales"] = "purchase"
     supplier: str | None = None
@@ -38,6 +44,8 @@ class OrderCreateIn(BaseModel):
 
 
 class OrderPatchIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = None
     supplier: str | None = None
     status: Literal["draft", "open", "partial", "received", "cancelled"] | None = None
@@ -49,6 +57,8 @@ class OrderPatchIn(BaseModel):
 
 
 class ReceiveLineIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     order_entry_id: UUID
     quantity: int = Field(gt=0)
     storage_location_id: UUID | None = None
@@ -57,5 +67,7 @@ class ReceiveLineIn(BaseModel):
 
 
 class ReceiveIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     received_on: date | None = None
     lines: list[ReceiveLineIn] = Field(min_length=1)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
@@ -14,6 +14,8 @@ router = APIRouter()
 
 
 class TagIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str
     color: str | None = None
 
@@ -33,6 +35,8 @@ def create(payload: TagIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUse
 
 
 class TagLinkIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     tag_id: UUID
     object_type: str
     object_id: UUID

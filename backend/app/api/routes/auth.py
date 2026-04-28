@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.core.auth import (
     create_session_row,
@@ -21,6 +21,8 @@ router = APIRouter()
 
 
 class SignupIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     email: EmailStr
     name: str = Field(min_length=1, max_length=200)
     password: str = Field(min_length=8, max_length=200)
@@ -28,6 +30,8 @@ class SignupIn(BaseModel):
 
 
 class LoginIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     email: EmailStr
     password: str
 

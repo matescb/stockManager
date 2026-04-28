@@ -4,7 +4,7 @@ import json
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
@@ -15,11 +15,15 @@ router = APIRouter()
 
 
 class PresetIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=200)
     config: dict
 
 
 class PresetPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = None
     config: dict | None = None
 

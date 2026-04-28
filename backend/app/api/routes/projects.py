@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import or_, select
 
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
@@ -208,6 +208,8 @@ def commit_bom(project_id: UUID, payload: BomImportCommitIn, db: DbSession, ws: 
 
 
 class MatchEntryIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     part_id: UUID
 
 

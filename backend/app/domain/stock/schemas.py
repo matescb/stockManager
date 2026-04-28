@@ -5,10 +5,12 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PriceInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     mode: Literal["none", "per_component", "entire_lot"] = "none"
     unit_price: Decimal | None = None
     total_price: Decimal | None = None
@@ -16,6 +18,8 @@ class PriceInput(BaseModel):
 
 
 class LotInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = None
     comments: str | None = None
     expiration_date: str | None = None  # ISO date
@@ -23,6 +27,8 @@ class LotInput(BaseModel):
 
 
 class AddStockIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     part_id: UUID
     quantity: int = Field(gt=0)
     storage_location_id: UUID | None = None
@@ -32,6 +38,8 @@ class AddStockIn(BaseModel):
 
 
 class RemoveStockIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     part_id: UUID
     quantity: int = Field(gt=0)
     storage_location_id: UUID | None = None
@@ -40,6 +48,8 @@ class RemoveStockIn(BaseModel):
 
 
 class MoveStockIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     part_id: UUID
     source_storage_location_id: UUID | None = None
     source_lot_id: UUID | None = None
@@ -50,6 +60,8 @@ class MoveStockIn(BaseModel):
 
 
 class AdjustStockIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     part_id: UUID
     storage_location_id: UUID | None = None
     lot_id: UUID | None = None

@@ -4,7 +4,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
@@ -16,6 +16,8 @@ router = APIRouter()
 
 
 class WorkspaceCreateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=200)
     currency_default: str = "USD"
 
@@ -60,6 +62,8 @@ def current(ws: CurrentWorkspace):
 
 
 class WorkspacePatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = Field(default=None, min_length=1, max_length=200)
     currency_default: str | None = Field(default=None, min_length=3, max_length=3)
     lot_control_enabled: bool | None = None
@@ -109,6 +113,8 @@ def list_members(db: DbSession, ws: CurrentWorkspace):
 
 
 class MemberPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     role: Literal["owner", "admin", "member", "viewer"] | None = None
     status: Literal["active", "disabled"] | None = None
 

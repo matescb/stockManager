@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import or_, select
 
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
@@ -19,6 +19,8 @@ router = APIRouter()
 
 
 class StorageIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=200)
     description: str | None = None
     single_part_only: bool = False
@@ -27,6 +29,8 @@ class StorageIn(BaseModel):
 
 
 class StoragePatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = None
     description: str | None = None
     single_part_only: bool | None = None

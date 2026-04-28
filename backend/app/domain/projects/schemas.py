@@ -3,16 +3,20 @@ from __future__ import annotations
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ProjectCreateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=300)
     description: str | None = None
     notes_markdown: str | None = None
 
 
 class ProjectPatchIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = None
     description: str | None = None
     notes_markdown: str | None = None
@@ -31,6 +35,8 @@ class ProjectOut(BaseModel):
 
 # BOM
 class BomEntryIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     entry_type: Literal["part", "meta_part", "non_part", "unmatched"] = "part"
     part_id: UUID | None = None
     meta_part_id: UUID | None = None
@@ -44,6 +50,8 @@ class BomEntryIn(BaseModel):
 
 
 class BomEntryPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     entry_type: Literal["part", "meta_part", "non_part", "unmatched"] | None = None
     part_id: UUID | None = None
     meta_part_id: UUID | None = None
@@ -58,6 +66,8 @@ class BomEntryPatch(BaseModel):
 
 class BomImportPreviewIn(BaseModel):
     """Step 1: parse the upload, return preview rows + suggested separator."""
+    model_config = ConfigDict(extra="forbid")
+
     text_b64: str
     separator: str | None = None  # auto-detect if None
     encoding: str | None = None
@@ -65,6 +75,8 @@ class BomImportPreviewIn(BaseModel):
 
 
 class BomMappingField(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     column_index: int
     target: Literal[
         "ignore",
@@ -83,6 +95,8 @@ class BomMappingField(BaseModel):
 
 
 class BomImportCommitIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     text_b64: str
     separator: str
     encoding: str

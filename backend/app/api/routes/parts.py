@@ -4,7 +4,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import or_, select
 
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
@@ -19,6 +19,8 @@ router = APIRouter()
 
 
 class PartIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     part_type: Literal["linked", "local", "meta", "sub_assembly"] = "local"
     name: str = Field(min_length=1, max_length=300)
     manufacturer: str | None = None
@@ -36,6 +38,8 @@ class PartIn(BaseModel):
 
 
 class PartPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = None
     manufacturer: str | None = None
     mpn: str | None = None
@@ -222,6 +226,8 @@ def part_lots(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
 
 
 class SubstituteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     substitute_part_id: UUID
     direction: Literal["one_way", "bidirectional"] = "bidirectional"
 
@@ -256,6 +262,8 @@ def del_substitute(part_id: UUID, substitute_id: UUID, db: DbSession, ws: Curren
 
 
 class MetaMemberIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     member_part_id: UUID
 
 
