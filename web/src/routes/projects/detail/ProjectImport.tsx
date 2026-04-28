@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 
 type Preset = {
@@ -112,8 +113,9 @@ export default function ProjectImport() {
         },
       });
       refetchPresets();
+      toast.success(`Preset "${name}" saved.`);
     } catch (e) {
-      alert(e instanceof ApiError ? e.message : "Failed");
+      toast.error(e instanceof ApiError ? e.message : "Failed to save preset");
     }
   }
 
@@ -121,6 +123,7 @@ export default function ProjectImport() {
     if (!confirm("Delete this preset?")) return;
     await api.delete(`/bom-presets/${id}`);
     refetchPresets();
+    toast.success("Preset deleted.");
   }
 
   async function onFile(f: File) {

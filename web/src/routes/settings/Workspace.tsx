@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
@@ -60,8 +61,11 @@ export default function WorkspaceSettings() {
     try {
       await api.patch("/workspaces/current", body);
       qc.invalidateQueries({ queryKey: ["ws", "current"] });
+      toast.success("Workspace settings saved.");
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Failed");
+      const m = e instanceof ApiError ? e.message : "Failed";
+      setErr(m);
+      toast.error(m);
     }
   }
 
@@ -70,10 +74,14 @@ export default function WorkspaceSettings() {
     setErr(null);
     try {
       await api.post("/invitations", { email: inviteEmail.trim(), role: inviteRole });
+      const sent = inviteEmail.trim();
       setInviteEmail("");
       refetchInvites();
+      toast.success(`Invitation sent to ${sent}.`);
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Failed");
+      const m = e instanceof ApiError ? e.message : "Failed";
+      setErr(m);
+      toast.error(m);
     }
   }
 
@@ -82,8 +90,11 @@ export default function WorkspaceSettings() {
     try {
       await api.patch(`/workspaces/members/${id}`, body);
       refetchMembers();
+      toast.success("Member updated.");
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Failed");
+      const m = e instanceof ApiError ? e.message : "Failed";
+      setErr(m);
+      toast.error(m);
     }
   }
 
@@ -93,8 +104,11 @@ export default function WorkspaceSettings() {
     try {
       await api.delete(`/workspaces/members/${id}`);
       refetchMembers();
+      toast.success("Member removed.");
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Failed");
+      const m = e instanceof ApiError ? e.message : "Failed";
+      setErr(m);
+      toast.error(m);
     }
   }
 
@@ -102,6 +116,7 @@ export default function WorkspaceSettings() {
     if (!confirm("Revoke this invitation?")) return;
     await api.delete(`/invitations/${id}`);
     refetchInvites();
+    toast.success("Invitation revoked.");
   }
 
   return (

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import EntityHeader from "@/components/EntityHeader";
 import { DataTable } from "@/components/DataTable";
@@ -66,8 +67,9 @@ export default function OrderDetail() {
     try {
       await api.delete(`/orders/${orderId}/entries/${entryId}`);
       qc.invalidateQueries({ queryKey: ["order", orderId] });
+      toast.success("Entry deleted.");
     } catch (e) {
-      alert(e instanceof ApiError ? e.message : "Failed");
+      toast.error(e instanceof ApiError ? e.message : "Delete failed");
     }
   }
 
@@ -87,6 +89,7 @@ export default function OrderDetail() {
     setBusy(true);
     setErr(null);
     try {
+      const totalQty = lines.reduce((s, l) => s + l.quantity, 0);
       await api.post(`/orders/${orderId}/receive`, {
         received_on: receivedOn || undefined,
         lines,
@@ -94,17 +97,22 @@ export default function OrderDetail() {
       setReceiveLines({});
       qc.invalidateQueries({ queryKey: ["order", orderId] });
       qc.invalidateQueries({ queryKey: ["parts"] });
+      toast.success(`Received ${totalQty} unit${totalQty === 1 ? "" : "s"}.`);
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Failed");
+      const msg = e instanceof ApiError ? e.message : "Receive failed";
+      setErr(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }
   }
 
   async function doArchive() {
-    await api.post(`/orders/${orderId}/${order.archived_at ? "restore" : "archive"}`);
+    const wasArchived = !!order.archived_at;
+    await api.post(`/orders/${orderId}/${wasArchived ? "restore" : "archive"}`);
     qc.invalidateQueries({ queryKey: ["order", orderId] });
     qc.invalidateQueries({ queryKey: ["orders"] });
+    toast.success(wasArchived ? "Order restored." : "Order archived.");
     if (!order.archived_at) nav("/orders");
   }
 

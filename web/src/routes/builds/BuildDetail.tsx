@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import EntityHeader from "@/components/EntityHeader";
 import type { Build, BuildShortageRow, Part, Project, ProjectEntry, StorageLocation } from "@/types";
@@ -81,8 +82,11 @@ export default function BuildDetail() {
       await api.post(`/builds/${buildId}/consume`, { lines });
       qc.invalidateQueries({ queryKey: ["build", buildId] });
       qc.invalidateQueries({ queryKey: ["parts"] });
+      toast.success("Build complete — stock decremented.");
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Failed");
+      const m = e instanceof ApiError ? e.message : "Build failed";
+      setErr(m);
+      toast.error(m);
     } finally {
       setBusy(false);
     }
