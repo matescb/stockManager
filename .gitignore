@@ -20,7 +20,12 @@ dist/
 
 # Local env
 .env
+.env.prod
 !.env.example
+!deploy/.env.prod.example
+
+# TLS material for the production proxy (see docs/deployment.md)
+deploy/certs/
 
 # Local uploads (mounted volume)
 uploads/

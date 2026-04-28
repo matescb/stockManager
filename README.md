@@ -35,6 +35,10 @@ docker compose exec backend pytest
 
 For running tests outside Docker, see [`docs/development.md`](docs/development.md).
 
+## Production
+
+For a single-host TLS-terminated deploy via `docker-compose.prod.yml`, see [`docs/deployment.md`](docs/deployment.md).
+
 ## Layout
 
 - `backend/` — FastAPI + SQLAlchemy 2 + Alembic
