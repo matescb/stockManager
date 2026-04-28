@@ -25,7 +25,7 @@ from app.api.routes import (
     workspaces,
 )
 from app.core.config import settings
-from app.core.deps import require_role
+from app.core.deps import require_member_for_writes
 from app.core.responses import http_exception_handler, validation_exception_handler
 
 app = FastAPI(title="Parts Inventory & Production Manager", version="0.1.0")
@@ -43,7 +43,7 @@ app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
 os.makedirs(settings().UPLOAD_DIR, exist_ok=True)
 
-_member_gate = [Depends(require_role("member"))]
+_member_gate = [Depends(require_member_for_writes)]
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(workspaces.router, prefix="/api/workspaces", tags=["workspaces"])

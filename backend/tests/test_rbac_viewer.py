@@ -51,14 +51,37 @@ def owner_and_viewer():
     return owner, viewer
 
 
-def test_viewer_blocked_by_router_level_gate(owner_and_viewer):
-    """The data routers are gated at member+ (router-level); viewers hit
-    403 on reads as well as writes. A viewer role isn't currently wired
-    to any read-only surface — the gate is the contract."""
+def test_viewer_can_read_data(owner_and_viewer):
+    """Viewers can read every workspace-scoped data surface — that's the
+    point of the role. Writes are gated at member+ via the
+    require_member_for_writes router-level dep."""
     owner, viewer = owner_and_viewer
-    owner.post("/api/parts", json={"name": "Cap", "part_type": "local"})
-    r = viewer.get("/api/parts")
-    assert r.status_code == 403, r.text
+    part_id = owner.post(
+        "/api/parts", json={"name": "Cap", "part_type": "local"}
+    ).json()["data"]["id"]
+    proj_id = owner.post(
+        "/api/projects", json={"name": "Proj"}
+    ).json()["data"]["id"]
+
+    # GET endpoints across the data routers all 200.
+    for path in (
+        "/api/parts",
+        f"/api/parts/{part_id}",
+        "/api/storage",
+        "/api/lots",
+        "/api/projects",
+        f"/api/projects/{proj_id}",
+        "/api/orders",
+        "/api/builds",
+        "/api/reports/low-stock",
+        "/api/reports/stock-value",
+        "/api/reports/expiring-lots",
+        "/api/bom-presets",
+        "/api/tags",
+        "/api/search?q=cap",
+    ):
+        r = viewer.get(path)
+        assert r.status_code == 200, f"GET {path} → {r.status_code}: {r.text}"
 
 
 def test_viewer_cannot_create_part(owner_and_viewer):

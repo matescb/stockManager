@@ -109,3 +109,25 @@ def require_role(min_role: str):
             )
 
     return _dep
+
+
+_READ_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def require_member_for_writes(
+    request: Request,
+    user: CurrentUser,
+    ws: CurrentWorkspace,
+    db: DbSession,
+) -> None:
+    """Router-level gate: any active member can read; viewer is blocked
+    from writes. Use as `dependencies=[Depends(require_member_for_writes)]`
+    on routers that mix read and write endpoints."""
+    if request.method in _READ_METHODS:
+        return
+    rank = _ROLE_RANK.get(_membership_role(db, user, ws), 0)
+    if rank < _ROLE_RANK["member"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="requires role member+ for write operations",
+        )
