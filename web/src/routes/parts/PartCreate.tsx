@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
-import type { StorageLocation } from "@/types";
+import type { StorageLocation, TrustedPartsResult } from "@/types";
+import MpnLookup from "@/components/MpnLookup";
 
 export default function PartCreate() {
   const nav = useNavigate();
@@ -19,10 +20,23 @@ export default function PartCreate() {
   });
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Datasheet URL discovered via TrustedParts lookup; persisted as a
+  // custom_field after the part is created (see submit()).
+  const [datasheetUrl, setDatasheetUrl] = useState<string | null>(null);
   const { data: storage } = useQuery({ queryKey: ["storage"], queryFn: () => api.get<StorageLocation[]>("/storage") });
 
   function set<K extends keyof typeof form>(k: K, v: (typeof form)[K]) {
     setForm(f => ({ ...f, [k]: v }));
+  }
+
+  function applyLookup(r: NonNullable<TrustedPartsResult["result"]>) {
+    setForm(f => ({
+      ...f,
+      manufacturer: r.manufacturer ?? f.manufacturer,
+      description: r.description ?? f.description,
+      footprint: r.footprint ?? f.footprint,
+    }));
+    setDatasheetUrl(r.datasheet_url ?? null);
   }
 
   async function submit(e: React.FormEvent) {
@@ -33,6 +47,21 @@ export default function PartCreate() {
       const payload: any = { ...form };
       if (!payload.default_storage_location_id) delete payload.default_storage_location_id;
       const res = await api.post<{ id: string }>("/parts", payload);
+      // If the lookup found a datasheet URL, store it as a custom_field
+      // on the new part. We swallow failures here — the part is already
+      // created and the user shouldn't be blocked on a metadata side-effect.
+      if (datasheetUrl) {
+        try {
+          await api.post("/custom-fields", {
+            object_type: "part",
+            object_id: res.id,
+            key: "datasheet_url",
+            value: datasheetUrl,
+          });
+        } catch {
+          /* non-fatal */
+        }
+      }
       nav(`/parts/${res.id}/info`);
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Failed");
@@ -71,7 +100,15 @@ export default function PartCreate() {
         </div>
         <div>
           <label className="label">MPN</label>
-          <input className="input" value={form.mpn} onChange={e => set("mpn", e.target.value)} />
+          <div className="flex items-end gap-2">
+            <input className="input flex-1" value={form.mpn} onChange={e => set("mpn", e.target.value)} />
+            {form.part_type === "linked" && <MpnLookup mpn={form.mpn} onResult={applyLookup} />}
+          </div>
+          {datasheetUrl && (
+            <div className="text-xs text-muted mt-1">
+              Datasheet: <a className="underline" href={datasheetUrl} target="_blank" rel="noreferrer">{datasheetUrl}</a>
+            </div>
+          )}
         </div>
       </div>
       <div>

@@ -22,6 +22,7 @@ from app.api.routes import (
     stock,
     storage,
     tags,
+    trustedparts,
     workspaces,
 )
 from app.core.config import settings
@@ -61,6 +62,12 @@ app.include_router(attachments.router, prefix="/api/attachments", tags=["attachm
 app.include_router(custom_fields.router, prefix="/api/custom-fields", tags=["custom_fields"], dependencies=_member_gate)
 app.include_router(tags.router, prefix="/api/tags", tags=["tags"], dependencies=_member_gate)
 app.include_router(search.router, prefix="/api/search", tags=["search"], dependencies=_member_gate)
+app.include_router(
+    trustedparts.router,
+    prefix="/api/trustedparts",
+    tags=["trustedparts"],
+    dependencies=_member_gate,
+)
 
 
 @app.get("/api/health")

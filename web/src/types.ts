@@ -126,6 +126,20 @@ export type BuildShortageRow = {
   short_by: number;
 };
 
+export type TrustedPartsResult = {
+  found: boolean;
+  result: {
+    mpn: string;
+    manufacturer: string | null;
+    description: string | null;
+    category: string | null;
+    footprint: string | null;
+    datasheet_url: string | null;
+    source_url: string;
+  } | null;
+  message: string | null;
+};
+
 export type ProjectEntry = {
   id: string;
   project_id: string;
