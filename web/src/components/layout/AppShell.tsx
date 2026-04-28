@@ -18,6 +18,7 @@ import {
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 import Brand from "@/components/Brand";
+import CommandPalette from "@/components/CommandPalette";
 import ThemeToggle from "@/components/ThemeToggle";
 
 type NavItem = { to: string; label: string; icon: typeof Boxes };
@@ -56,6 +57,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-full flex bg-bg text-text">
+      <CommandPalette />
       <Sidebar mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
 
       <div className="flex-1 min-w-0 flex flex-col">
