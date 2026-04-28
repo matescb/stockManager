@@ -11,6 +11,8 @@ type Ws = {
   currency_default: string;
   lot_control_enabled: boolean;
   serial_tracking_enabled: boolean;
+  catalog_enabled: boolean;
+  catalog_url: string | null;
 };
 
 type Member = {
@@ -56,7 +58,7 @@ export default function WorkspaceSettings() {
     window.location.reload();
   }
 
-  async function patch(body: Partial<Ws>) {
+  async function patch(body: Partial<Ws> & { regenerate_catalog_token?: boolean }) {
     setErr(null);
     try {
       await api.patch("/workspaces/current", body);
@@ -66,6 +68,16 @@ export default function WorkspaceSettings() {
       const m = e instanceof ApiError ? e.message : "Failed";
       setErr(m);
       toast.error(m);
+    }
+  }
+
+  async function copyCatalogUrl(url: string) {
+    const full = `${window.location.origin}${url}`;
+    try {
+      await navigator.clipboard.writeText(full);
+      toast.success("Catalog URL copied to clipboard.");
+    } catch {
+      toast.error("Could not copy — your browser may not support clipboard access.");
     }
   }
 
@@ -172,6 +184,56 @@ export default function WorkspaceSettings() {
             </div>
           )}
           <div><span className="text-muted">Kind:</span> {cur.kind}</div>
+        </div>
+      )}
+
+      {cur && (
+        <div className="card p-4 mb-4 space-y-3 text-sm">
+          <div className="flex items-center justify-between">
+            <h2 className="text-md font-semibold">Public catalog</h2>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={cur.catalog_enabled}
+                onChange={e => patch({ catalog_enabled: e.target.checked })}
+              />
+              Enabled
+            </label>
+          </div>
+          {cur.catalog_enabled && cur.catalog_url ? (
+            <>
+              <div className="text-xs text-muted">
+                Anyone with this link can browse parts you've marked as <em>published</em>.
+                No login required. Regenerating the token immediately invalidates the old URL.
+              </div>
+              <div className="flex gap-2 items-center">
+                <input
+                  className="input flex-1 font-mono text-xs"
+                  readOnly
+                  value={`${window.location.origin}${cur.catalog_url}`}
+                />
+                <button
+                  className="btn-primary"
+                  onClick={() => copyCatalogUrl(cur.catalog_url!)}
+                  type="button"
+                >
+                  Copy
+                </button>
+                <button
+                  className="btn-ghost"
+                  onClick={() => {
+                    if (!confirm("Regenerate the catalog token? The current URL will stop working immediately.")) return;
+                    patch({ regenerate_catalog_token: true, catalog_enabled: true });
+                  }}
+                  type="button"
+                >
+                  Regenerate
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="text-xs text-muted">Public catalog is off.</div>
+          )}
         </div>
       )}
 

@@ -15,6 +15,7 @@ export default function PartSettings() {
   const [defStorage, setDefStorage] = useState(part.default_storage_location_id ?? "");
   const [mandatory, setMandatory] = useState(part.default_storage_mandatory);
   const [serialized, setSerialized] = useState(part.serialized);
+  const [published, setPublished] = useState(!!part.published);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -29,6 +30,7 @@ export default function PartSettings() {
         default_storage_location_id: defStorage || null,
         default_storage_mandatory: mandatory,
         serialized,
+        published,
       });
       qc.invalidateQueries({ queryKey: ["part", partId] });
     } catch (e) {
@@ -70,6 +72,10 @@ export default function PartSettings() {
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={serialized} onChange={e => setSerialized(e.target.checked)} />
         Serialized (one unit per lot — enforced when workspace has serial tracking on)
+      </label>
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={published} onChange={e => setPublished(e.target.checked)} />
+        Published (show in the workspace's public catalog when enabled)
       </label>
       <button className="btn-primary" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</button>
     </div>

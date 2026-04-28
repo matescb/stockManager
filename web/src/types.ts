@@ -14,6 +14,7 @@ export type Part = {
   default_storage_location_id: string | null;
   default_storage_mandatory: boolean;
   serialized: boolean;
+  published?: boolean;
   archived_at: string | null;
   on_hand: number | null;
   reserved: number;
