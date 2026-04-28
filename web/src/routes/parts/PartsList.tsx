@@ -40,6 +40,7 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
             { key: "manufacturer", header: "Manufacturer", accessor: r => r.manufacturer ?? "" },
             { key: "footprint", header: "Footprint", accessor: r => r.footprint ?? "" },
             { key: "on_hand", header: "Stock", accessor: r => r.on_hand ?? 0, width: "80px" },
+            { key: "reserved", header: "Reserved", accessor: r => r.reserved ?? 0, width: "100px", hidden: true },
           ]}
         />
       )}

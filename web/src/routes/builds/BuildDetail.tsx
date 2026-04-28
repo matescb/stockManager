@@ -45,6 +45,11 @@ export default function BuildDetail() {
   const { build, shortage } = data;
   const isEditable = build.status === "planned" || build.status === "in_progress";
   const shortageByEntry = new Map(shortage.map(s => [s.project_entry_id, s]));
+  const reservationsActive = isEditable && !build.archived_at;
+  const totalReserved = reservationsActive
+    ? shortage.reduce((sum, s) => sum + s.required, 0)
+    : 0;
+  const reservedLines = reservationsActive ? shortage.length : 0;
 
   function suggestedFill(s: BuildShortageRow): ConsumeRow[] {
     if (s.required <= s.available) {
@@ -125,6 +130,11 @@ export default function BuildDetail() {
           <span>
             <span className="pill">{build.status}</span>
             {build.archived_at && <span className="pill ml-2 bg-danger/20 text-danger">archived</span>}
+            {reservationsActive && reservedLines > 0 && (
+              <span className="ml-2 text-xs text-muted">
+                {totalReserved} parts reserved across {reservedLines} line{reservedLines === 1 ? "" : "s"}
+              </span>
+            )}
           </span>
         }
         stats={[

@@ -11,6 +11,8 @@ type LowStockRow = {
   manufacturer: string | null;
   mpn: string | null;
   on_hand: number;
+  reserved: number;
+  available: number;
   threshold: number;
   short_by: number;
 };
@@ -159,6 +161,9 @@ export function LowStockReport() {
         { key: "mpn", header: "MPN", accessor: r => r.mpn ?? "" },
         { key: "manufacturer", header: "Manufacturer", accessor: r => r.manufacturer ?? "" },
         { key: "on_hand", header: "On hand", accessor: r => r.on_hand, width: "80px" },
+        { key: "reserved", header: "Reserved", accessor: r => r.reserved ?? 0, width: "90px",
+          render: r => <span className="tabular-nums text-muted">{r.reserved ?? 0}</span> },
+        { key: "available", header: "Available", accessor: r => r.available ?? r.on_hand, width: "90px" },
         { key: "threshold", header: "Threshold", accessor: r => r.threshold, width: "100px" },
         { key: "short_by", header: "Short by", accessor: r => r.short_by, width: "100px",
           render: r => <span className="tabular-nums text-danger">{r.short_by}</span> },

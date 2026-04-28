@@ -16,6 +16,8 @@ export type Part = {
   serialized: boolean;
   archived_at: string | null;
   on_hand: number | null;
+  reserved: number;
+  available: number;
 };
 
 export type StorageLocation = {

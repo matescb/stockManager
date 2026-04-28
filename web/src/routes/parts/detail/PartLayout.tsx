@@ -29,6 +29,8 @@ export default function PartLayout() {
   ];
   const lowThreshold = part.low_stock_report_quantity;
   const onHand = part.on_hand ?? 0;
+  const reserved = part.reserved ?? 0;
+  const available = part.available ?? onHand - reserved;
   const stats: { label: string; value: number; tone?: "danger" | "warning" | "success" | "default" }[] = [
     {
       label: "On hand",
@@ -43,6 +45,19 @@ export default function PartLayout() {
           : "default",
     },
   ];
+  if (reserved > 0) {
+    stats.push({ label: "Reserved", value: reserved, tone: "warning" });
+    stats.push({
+      label: "Available",
+      value: available,
+      tone:
+        lowThreshold != null
+          ? available < lowThreshold
+            ? "warning"
+            : "success"
+          : "default",
+    });
+  }
   if (lowThreshold != null) stats.push({ label: "Threshold", value: lowThreshold });
 
   return (
