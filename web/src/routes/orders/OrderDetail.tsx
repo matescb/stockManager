@@ -125,11 +125,18 @@ export default function OrderDetail() {
             {order.supplier || "—"}
             <span className="pill ml-2">{order.status}</span>
             {order.archived_at && <span className="pill ml-2 bg-danger/20 text-danger">archived</span>}
-            <span className="ml-3 text-muted">
-              Received {order.totals.received} / {order.totals.ordered}
-            </span>
           </span>
         }
+        stats={[
+          { label: "Ordered",     value: order.totals.ordered },
+          { label: "Received",    value: order.totals.received, tone: order.status === "received" ? "success" : "default" },
+          {
+            label: "Outstanding",
+            value: order.totals.ordered - order.totals.received,
+            tone: order.totals.received < order.totals.ordered ? "warning" : "default",
+          },
+          ...(order.currency ? [{ label: "Currency", value: order.currency } as const] : []),
+        ]}
         actions={
           <button className="btn" onClick={doArchive}>
             {order.archived_at ? "Restore" : "Archive"}

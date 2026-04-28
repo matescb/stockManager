@@ -27,6 +27,24 @@ export default function PartLayout() {
     { to: `/parts/${part.id}/settings`, label: "Settings" },
     { to: `/parts/${part.id}/other`, label: "Other" },
   ];
+  const lowThreshold = part.low_stock_report_quantity;
+  const onHand = part.on_hand ?? 0;
+  const stats: { label: string; value: number; tone?: "danger" | "warning" | "success" | "default" }[] = [
+    {
+      label: "On hand",
+      value: onHand,
+      tone:
+        lowThreshold != null
+          ? onHand < lowThreshold
+            ? "danger"
+            : onHand < lowThreshold * 1.25
+              ? "warning"
+              : "success"
+          : "default",
+    },
+  ];
+  if (lowThreshold != null) stats.push({ label: "Threshold", value: lowThreshold });
+
   return (
     <div>
       <EntityHeader
@@ -39,6 +57,7 @@ export default function PartLayout() {
           </span>
         }
         idCode={part.id}
+        stats={stats}
       />
       <SubNav items={items} />
       <Outlet context={{ part }} />

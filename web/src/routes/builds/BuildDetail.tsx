@@ -114,13 +114,35 @@ export default function BuildDetail() {
     <div>
       <EntityHeader
         title={build.name}
+        breadcrumb={
+          project ? (
+            <span>
+              Projects · <span className="text-text">{project.name}</span> · Build
+            </span>
+          ) : undefined
+        }
         subtitle={
           <span>
-            {project?.name && <span className="mr-2">{project.name}</span>}
             <span className="pill">{build.status}</span>
-            <span className="ml-2 text-muted">qty {build.quantity}</span>
+            {build.archived_at && <span className="pill ml-2 bg-danger/20 text-danger">archived</span>}
           </span>
         }
+        stats={[
+          { label: "Quantity", value: build.quantity },
+          {
+            label: "Total short",
+            value: shortage.reduce((s, r) => s + r.short_by, 0),
+            tone: shortage.some(r => r.short_by > 0) ? "danger" : "success",
+          },
+          {
+            label: "Status",
+            value: build.status,
+            tone: build.status === "complete" ? "success" : build.status === "cancelled" ? "danger" : "default",
+          },
+          ...(build.completed_at
+            ? [{ label: "Completed", value: new Date(build.completed_at).toLocaleString() } as const]
+            : []),
+        ]}
         actions={
           <div className="flex gap-2">
             {isEditable && (
