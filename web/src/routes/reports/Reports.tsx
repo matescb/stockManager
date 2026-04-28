@@ -40,14 +40,104 @@ type Expiring = {
 
 export default function ReportsLayout() {
   return (
-    <div>
-      <div className="flex items-center gap-1 mb-3">
+    <div className="space-y-4">
+      <KpiStrip />
+      <div className="flex items-center gap-1">
         <NavLink end to="/reports" className={({ isActive }) => "btn " + (isActive ? "border-accent/50 text-accent" : "")}>Low stock</NavLink>
         <NavLink to="/reports/value" className={({ isActive }) => "btn " + (isActive ? "border-accent/50 text-accent" : "")}>Stock value</NavLink>
         <NavLink to="/reports/bom" className={({ isActive }) => "btn " + (isActive ? "border-accent/50 text-accent" : "")}>BOM shortage</NavLink>
         <NavLink to="/reports/expiring" className={({ isActive }) => "btn " + (isActive ? "border-accent/50 text-accent" : "")}>Expiring lots</NavLink>
       </div>
       <Outlet />
+    </div>
+  );
+}
+
+type KpiTone = "default" | "danger" | "warning" | "success";
+
+function KpiCard({
+  label,
+  value,
+  hint,
+  to,
+  tone = "default",
+}: {
+  label: string;
+  value: string | number;
+  hint?: string;
+  to: string;
+  tone?: KpiTone;
+}) {
+  const toneCls =
+    tone === "danger"
+      ? "text-danger"
+      : tone === "warning"
+        ? "text-warning"
+        : tone === "success"
+          ? "text-success"
+          : "text-text";
+  return (
+    <Link
+      to={to}
+      className="card p-4 flex flex-col gap-1 hover:bg-panel2/60 transition-colors"
+    >
+      <div className="section-title">{label}</div>
+      <div className={`text-2xl font-semibold tabular-nums ${toneCls}`}>{value}</div>
+      {hint && <div className="text-xs text-muted">{hint}</div>}
+    </Link>
+  );
+}
+
+function KpiStrip() {
+  const { data: lowStock } = useQuery({
+    queryKey: ["report", "low-stock"],
+    queryFn: () => api.get<LowStockRow[]>("/reports/low-stock"),
+  });
+  const { data: stockValue } = useQuery({
+    queryKey: ["report", "stock-value"],
+    queryFn: () => api.get<StockValue>("/reports/stock-value"),
+  });
+  const { data: expiring } = useQuery({
+    queryKey: ["report", "expiring", 30],
+    queryFn: () => api.get<Expiring>("/reports/expiring-lots?days=30"),
+  });
+
+  const lowCount = lowStock?.length ?? 0;
+  const valueByCurrency = stockValue?.by_currency
+    ?.filter(c => c.value > 0)
+    .map(c => `${c.value.toFixed(2)} ${c.currency ?? "?"}`)
+    .join(" · ") ?? "—";
+  const expiringCount = expiring?.length ?? 0;
+  const expiredCount = expiring?.filter(l => l.expired).length ?? 0;
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      <KpiCard
+        label="Low-stock items"
+        value={lowCount}
+        hint={lowCount === 0 ? "All threshold-tagged parts are stocked." : "below their report threshold"}
+        to="/reports"
+        tone={lowCount > 0 ? "danger" : "success"}
+      />
+      <KpiCard
+        label="Stock value"
+        value={valueByCurrency}
+        hint={stockValue?.by_part?.length ? `across ${stockValue.by_part.length} part${stockValue.by_part.length === 1 ? "" : "s"}` : "no purchase-cost-tagged stock"}
+        to="/reports/value"
+      />
+      <KpiCard
+        label="Expiring < 30 days"
+        value={expiringCount}
+        hint={
+          expiredCount > 0
+            ? `${expiredCount} already expired`
+            : expiringCount === 0
+              ? "no lots expire in the next 30 days"
+              : "lots with on-hand stock"
+        }
+        to="/reports/expiring"
+        tone={expiredCount > 0 ? "danger" : expiringCount > 0 ? "warning" : "success"}
+      />
     </div>
   );
 }
