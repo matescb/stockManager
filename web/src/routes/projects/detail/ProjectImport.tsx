@@ -1,7 +1,19 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
+
+type Preset = {
+  id: string;
+  name: string;
+  config: {
+    separator?: string;
+    encoding?: string;
+    has_header?: boolean;
+    designator_separator?: string;
+    mapping?: Mapping[];
+  };
+};
 
 type PreviewOut = {
   detected_separator: string;
@@ -72,6 +84,44 @@ export default function ProjectImport() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ inserted: number; matched: number; unmatched: number } | null>(null);
+  const { data: presets, refetch: refetchPresets } = useQuery({
+    queryKey: ["bom-presets"],
+    queryFn: () => api.get<Preset[]>("/bom-presets"),
+  });
+
+  function applyPreset(p: Preset) {
+    if (p.config.separator) setSeparator(p.config.separator);
+    if (p.config.encoding) setEncoding(p.config.encoding);
+    if (p.config.has_header !== undefined) setHasHeader(!!p.config.has_header);
+    if (p.config.designator_separator) setDesignatorSep(p.config.designator_separator);
+    if (p.config.mapping) setMapping(p.config.mapping);
+  }
+
+  async function savePreset() {
+    const name = prompt("Save current mapping as preset — name?");
+    if (!name) return;
+    try {
+      await api.post("/bom-presets", {
+        name,
+        config: {
+          separator,
+          encoding,
+          has_header: hasHeader,
+          designator_separator: designatorSep,
+          mapping,
+        },
+      });
+      refetchPresets();
+    } catch (e) {
+      alert(e instanceof ApiError ? e.message : "Failed");
+    }
+  }
+
+  async function deletePreset(id: string) {
+    if (!confirm("Delete this preset?")) return;
+    await api.delete(`/bom-presets/${id}`);
+    refetchPresets();
+  }
 
   async function onFile(f: File) {
     setBusy(true);
@@ -192,8 +242,33 @@ export default function ProjectImport() {
               <input className="input" value={designatorSep} onChange={e => setDesignatorSep(e.target.value)} />
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
             <button className="btn" onClick={reparse} disabled={busy}>Re-parse</button>
+            <select
+              className="input max-w-xs ml-auto"
+              value=""
+              onChange={(e) => {
+                const p = presets?.find(x => x.id === e.target.value);
+                if (p) applyPreset(p);
+              }}
+            >
+              <option value="">Load preset…</option>
+              {presets?.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <button type="button" className="btn" onClick={savePreset}>Save preset</button>
+            {presets && presets.length > 0 && (
+              <details className="relative">
+                <summary className="btn list-none">Manage</summary>
+                <div className="card absolute right-0 top-full mt-1 z-10 p-2 min-w-[220px] space-y-1">
+                  {presets.map(p => (
+                    <div key={p.id} className="flex items-center text-sm">
+                      <span className="flex-1">{p.name}</span>
+                      <button type="button" className="btn-danger text-xs" onClick={() => deletePreset(p.id)}>Delete</button>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
           </div>
 
           <div className="overflow-auto">
