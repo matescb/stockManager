@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -25,6 +25,7 @@ from app.api.routes import (
     workspaces,
 )
 from app.core.config import settings
+from app.core.deps import require_role
 from app.core.responses import http_exception_handler, validation_exception_handler
 
 app = FastAPI(title="Parts Inventory & Production Manager", version="0.1.0")
@@ -42,22 +43,24 @@ app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
 os.makedirs(settings().UPLOAD_DIR, exist_ok=True)
 
+_member_gate = [Depends(require_role("member"))]
+
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(workspaces.router, prefix="/api/workspaces", tags=["workspaces"])
-app.include_router(parts.router, prefix="/api/parts", tags=["parts"])
-app.include_router(storage.router, prefix="/api/storage", tags=["storage"])
-app.include_router(stock.router, prefix="/api/stock", tags=["stock"])
-app.include_router(lots.router, prefix="/api/lots", tags=["lots"])
-app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
-app.include_router(orders.router, prefix="/api/orders", tags=["orders"])
-app.include_router(builds.router, prefix="/api/builds", tags=["builds"])
-app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
-app.include_router(bom_presets.router, prefix="/api/bom-presets", tags=["bom_presets"])
+app.include_router(parts.router, prefix="/api/parts", tags=["parts"], dependencies=_member_gate)
+app.include_router(storage.router, prefix="/api/storage", tags=["storage"], dependencies=_member_gate)
+app.include_router(stock.router, prefix="/api/stock", tags=["stock"], dependencies=_member_gate)
+app.include_router(lots.router, prefix="/api/lots", tags=["lots"], dependencies=_member_gate)
+app.include_router(projects.router, prefix="/api/projects", tags=["projects"], dependencies=_member_gate)
+app.include_router(orders.router, prefix="/api/orders", tags=["orders"], dependencies=_member_gate)
+app.include_router(builds.router, prefix="/api/builds", tags=["builds"], dependencies=_member_gate)
+app.include_router(reports.router, prefix="/api/reports", tags=["reports"], dependencies=_member_gate)
+app.include_router(bom_presets.router, prefix="/api/bom-presets", tags=["bom_presets"], dependencies=_member_gate)
 app.include_router(invitations.router, prefix="/api/invitations", tags=["invitations"])
-app.include_router(attachments.router, prefix="/api/attachments", tags=["attachments"])
-app.include_router(custom_fields.router, prefix="/api/custom-fields", tags=["custom_fields"])
-app.include_router(tags.router, prefix="/api/tags", tags=["tags"])
-app.include_router(search.router, prefix="/api/search", tags=["search"])
+app.include_router(attachments.router, prefix="/api/attachments", tags=["attachments"], dependencies=_member_gate)
+app.include_router(custom_fields.router, prefix="/api/custom-fields", tags=["custom_fields"], dependencies=_member_gate)
+app.include_router(tags.router, prefix="/api/tags", tags=["tags"], dependencies=_member_gate)
+app.include_router(search.router, prefix="/api/search", tags=["search"], dependencies=_member_gate)
 
 
 @app.get("/api/health")
