@@ -5,7 +5,10 @@ type Item = { to: string; label: string };
 
 export default function SubNav({ items }: { items: Item[] }) {
   return (
-    <nav className="card p-2 mb-4 flex flex-wrap gap-1">
+    <nav
+      className="mb-4 inline-flex max-w-full overflow-x-auto rounded-md border border-border bg-panel2 p-1"
+      aria-label="Section navigation"
+    >
       {items.map(i => (
         <NavLink
           key={i.to}
@@ -13,8 +16,10 @@ export default function SubNav({ items }: { items: Item[] }) {
           end
           className={({ isActive }) =>
             cn(
-              "px-3 py-1 rounded-md text-sm",
-              isActive ? "bg-panel2 text-text" : "text-muted hover:text-text"
+              "px-3 py-1 rounded-[4px] text-sm whitespace-nowrap transition-colors",
+              isActive
+                ? "bg-panel text-text shadow-[0_1px_0_rgb(0_0_0_/_0.04)]"
+                : "text-muted hover:text-text"
             )
           }
         >
