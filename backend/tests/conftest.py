@@ -29,7 +29,7 @@ def _reset_schema(eng) -> None:
         conn.exec_driver_sql("CREATE SCHEMA public")
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session", autouse=True)
 def engine():
     eng = create_engine(settings().DATABASE_URL, future=True)
     # ensure DB exists by trying a connection; if it fails, create it via maintenance DB
