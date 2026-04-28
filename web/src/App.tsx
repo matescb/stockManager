@@ -23,6 +23,8 @@ import PartSubstitutes from "@/routes/parts/detail/PartSubstitutes";
 import PartMembers from "@/routes/parts/detail/PartMembers";
 import PartSettings from "@/routes/parts/detail/PartSettings";
 import PartOther from "@/routes/parts/detail/PartOther";
+import PartAttachments from "@/routes/parts/detail/PartAttachments";
+import PartActivity from "@/routes/parts/detail/PartActivity";
 
 import StorageListPage from "@/routes/storage/StorageList";
 import StorageCreate from "@/routes/storage/StorageCreate";
@@ -105,6 +107,8 @@ export default function App() {
           <Route path="members" element={<PartMembers />} />
           <Route path="settings" element={<PartSettings />} />
           <Route path="other" element={<PartOther />} />
+          <Route path="attachments" element={<PartAttachments />} />
+          <Route path="activity" element={<PartActivity />} />
         </Route>
 
         <Route path="/storage" element={<Gate><StorageListPage /></Gate>} />

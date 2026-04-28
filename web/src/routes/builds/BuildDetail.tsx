@@ -4,6 +4,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import EntityHeader from "@/components/EntityHeader";
+import AttachmentsPanel from "@/components/AttachmentsPanel";
+import ActivityTimeline from "@/components/ActivityTimeline";
 import type { Build, BuildShortageRow, Part, Project, ProjectEntry, StorageLocation } from "@/types";
 
 type DetailOut = { build: Build; shortage: BuildShortageRow[] };
@@ -288,6 +290,11 @@ export default function BuildDetail() {
           </div>
         </div>
       )}
+
+      <div className="grid lg:grid-cols-2 gap-4 mt-4">
+        <AttachmentsPanel objectType="build" objectId={build.id} canWrite />
+        <ActivityTimeline endpoint={`/builds/${build.id}/activity`} />
+      </div>
     </div>
   );
 }

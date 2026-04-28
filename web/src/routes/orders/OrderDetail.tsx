@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import EntityHeader from "@/components/EntityHeader";
 import { DataTable } from "@/components/DataTable";
+import AttachmentsPanel from "@/components/AttachmentsPanel";
+import ActivityTimeline from "@/components/ActivityTimeline";
 import type { Order, OrderEntry, Part, StorageLocation } from "@/types";
 
 type DetailOut = { order: Order; entries: OrderEntry[] };
@@ -281,6 +283,11 @@ export default function OrderDetail() {
           </div>
         </div>
       )}
+
+      <div className="grid lg:grid-cols-2 gap-4 mt-4">
+        <AttachmentsPanel objectType="order" objectId={order.id} canWrite={!order.archived_at} />
+        <ActivityTimeline endpoint={`/orders/${order.id}/activity`} />
+      </div>
     </div>
   );
 }
