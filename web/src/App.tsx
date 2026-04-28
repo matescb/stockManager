@@ -49,6 +49,13 @@ import BuildsList from "@/routes/builds/BuildsList";
 import BuildCreate from "@/routes/builds/BuildCreate";
 import BuildDetail from "@/routes/builds/BuildDetail";
 
+import ReportsLayout, {
+  LowStockReport,
+  StockValueReport,
+  BomShortageReport,
+  ExpiringLotsReport,
+} from "@/routes/reports/Reports";
+
 import ProjectsList from "@/routes/projects/ProjectsList";
 import ProjectCreate from "@/routes/projects/ProjectCreate";
 import ProjectLayout from "@/routes/projects/detail/ProjectLayout";
@@ -126,6 +133,13 @@ export default function App() {
         <Route path="/builds/archived" element={<Gate><BuildsList archived /></Gate>} />
         <Route path="/builds/create" element={<Gate><BuildCreate /></Gate>} />
         <Route path="/builds/:buildId" element={<Gate><BuildDetail /></Gate>} />
+
+        <Route path="/reports" element={<Gate><ReportsLayout /></Gate>}>
+          <Route index element={<LowStockReport />} />
+          <Route path="value" element={<StockValueReport />} />
+          <Route path="bom" element={<BomShortageReport />} />
+          <Route path="expiring" element={<ExpiringLotsReport />} />
+        </Route>
 
         <Route path="/projects" element={<Gate><ProjectsList /></Gate>} />
         <Route path="/projects/archived" element={<Gate><ProjectsList archived /></Gate>} />

@@ -12,6 +12,7 @@ const NAV = [
   { to: "/projects", label: "Projects" },
   { to: "/orders", label: "Orders" },
   { to: "/builds", label: "Builds" },
+  { to: "/reports", label: "Reports" },
 ];
 
 type SearchData = {

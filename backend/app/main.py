@@ -15,6 +15,7 @@ from app.api.routes import (
     orders,
     parts,
     projects,
+    reports,
     search,
     stock,
     storage,
@@ -48,6 +49,7 @@ app.include_router(lots.router, prefix="/api/lots", tags=["lots"])
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
 app.include_router(orders.router, prefix="/api/orders", tags=["orders"])
 app.include_router(builds.router, prefix="/api/builds", tags=["builds"])
+app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(attachments.router, prefix="/api/attachments", tags=["attachments"])
 app.include_router(custom_fields.router, prefix="/api/custom-fields", tags=["custom_fields"])
 app.include_router(tags.router, prefix="/api/tags", tags=["tags"])
