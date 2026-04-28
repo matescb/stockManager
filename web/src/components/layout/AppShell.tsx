@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { Search } from "lucide-react";
+import ThemeToggle from "@/components/ThemeToggle";
 
 const NAV = [
   { to: "/parts", label: "Parts" },
@@ -79,6 +80,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           >
             {me?.workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
+          <ThemeToggle />
           <Link to="/settings/account" className="text-muted text-sm hover:text-text">{me?.user.name}</Link>
           <button onClick={logout} className="btn">Logout</button>
         </div>
