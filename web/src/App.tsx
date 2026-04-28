@@ -20,6 +20,7 @@ import PartMoveStock from "@/routes/parts/detail/PartMoveStock";
 import PartHistory from "@/routes/parts/detail/PartHistory";
 import PartLots from "@/routes/parts/detail/PartLots";
 import PartSubstitutes from "@/routes/parts/detail/PartSubstitutes";
+import PartMembers from "@/routes/parts/detail/PartMembers";
 import PartSettings from "@/routes/parts/detail/PartSettings";
 import PartOther from "@/routes/parts/detail/PartOther";
 
@@ -101,6 +102,7 @@ export default function App() {
           <Route path="history" element={<PartHistory />} />
           <Route path="lots" element={<PartLots />} />
           <Route path="substitutes" element={<PartSubstitutes />} />
+          <Route path="members" element={<PartMembers />} />
           <Route path="settings" element={<PartSettings />} />
           <Route path="other" element={<PartOther />} />
         </Route>

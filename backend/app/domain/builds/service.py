@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.domain.builds.models import Build
 from app.domain.builds.schemas import ConsumeIn
 from app.domain.lots.models import Lot
-from app.domain.parts.models import Part, PartSubstitute
+from app.domain.parts.models import Part, PartMetaMember, PartSubstitute
 from app.domain.projects.models import Project, ProjectEntry
 from app.domain.stock.models import StockEntry
 from app.domain.stock.service import current_quantity
@@ -44,11 +44,43 @@ def _required(entry: ProjectEntry, part: Part | None, build_qty: int) -> int:
     return int(ceil(target))
 
 
+def _candidate_part_ids(db: Session, *, part: Part) -> list[UUID]:
+    """Parts that may be used in place of `part` for build consumption.
+    For a meta-part: its registered members. For a regular part:
+    registered substitutes (one-way main→sub or bidirectional)."""
+    if part.part_type == "meta":
+        rows = list(
+            db.execute(
+                select(PartMetaMember.part_id).where(PartMetaMember.meta_part_id == part.id)
+            ).scalars()
+        )
+        return [r for r in rows if r != part.id]
+
+    sub_rows = list(
+        db.execute(
+            select(PartSubstitute).where(
+                (PartSubstitute.part_id == part.id)
+                | (
+                    (PartSubstitute.substitute_part_id == part.id)
+                    & (PartSubstitute.direction == "bidirectional")
+                )
+            )
+        ).scalars()
+    )
+    out: list[UUID] = []
+    for s in sub_rows:
+        sub_id = s.substitute_part_id if s.part_id == part.id else s.part_id
+        if sub_id != part.id:
+            out.append(sub_id)
+    return out
+
+
 def shortage_analysis(
     db: Session, *, workspace_id: UUID, project: Project, build_quantity: int
 ) -> list[dict]:
     """Per-entry analysis of needed vs. available stock. Considers main part
-    + any registered bidirectional or one_way substitutes."""
+    + any registered bidirectional or one_way substitutes (for regular
+    parts) or meta-part members (for meta parts)."""
     entries = list(
         db.execute(
             select(ProjectEntry)
@@ -69,25 +101,12 @@ def shortage_analysis(
         if part is None:
             continue
         required = _required(e, part, build_quantity)
+        # For meta-parts there's typically no on-hand of the meta itself —
+        # all stock lives in the member parts. Still report the meta's
+        # own on-hand for completeness.
         available = current_quantity(db, workspace_id=workspace_id, part_id=part.id)
 
-        # Substitutes (both directions count)
-        sub_rows = list(
-            db.execute(
-                select(PartSubstitute).where(
-                    (PartSubstitute.part_id == part.id)
-                    | (
-                        (PartSubstitute.substitute_part_id == part.id)
-                        & (PartSubstitute.direction == "bidirectional")
-                    )
-                )
-            ).scalars()
-        )
-        sub_ids: list[UUID] = []
-        for s in sub_rows:
-            sub_id = s.substitute_part_id if s.part_id == part.id else s.part_id
-            if sub_id != part.id:
-                sub_ids.append(sub_id)
+        sub_ids = _candidate_part_ids(db, part=part)
         sub_avail = sum(
             current_quantity(db, workspace_id=workspace_id, part_id=sid) for sid in sub_ids
         )
@@ -141,23 +160,19 @@ def consume(
         if e.dnp:
             raise BuildError(f"project entry {e.id} is DNP")
 
-        # Validate the chosen part is the entry's main part or a registered substitute
+        # Validate the chosen part is the entry's main part, a registered
+        # substitute, or (for meta-part entries) a meta member.
         if line.part_id != e.part_id:
-            ok = db.execute(
-                select(PartSubstitute).where(
-                    (
-                        (PartSubstitute.part_id == e.part_id)
-                        & (PartSubstitute.substitute_part_id == line.part_id)
-                    )
-                    | (
-                        (PartSubstitute.substitute_part_id == e.part_id)
-                        & (PartSubstitute.part_id == line.part_id)
-                        & (PartSubstitute.direction == "bidirectional")
-                    )
+            entry_part = db.get(Part, e.part_id)
+            if entry_part is None:
+                raise BuildError(f"entry {e.id} has missing part")
+            if line.part_id not in _candidate_part_ids(db, part=entry_part):
+                kind = (
+                    "a meta-part member"
+                    if entry_part.part_type == "meta"
+                    else "a substitute"
                 )
-            ).scalars().first()
-            if not ok:
-                raise BuildError(f"part {line.part_id} is not a substitute for entry {e.id}")
+                raise BuildError(f"part {line.part_id} is not {kind} for entry {e.id}")
 
         # Verify stock available
         avail = current_quantity(

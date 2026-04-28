@@ -1,0 +1,72 @@
+import { useState } from "react";
+import { useParams } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, ApiError } from "@/lib/api";
+import type { Part } from "@/types";
+
+type Member = { id: string; member_part_id: string };
+
+export default function PartMembers() {
+  const { partId } = useParams();
+  const qc = useQueryClient();
+  const { data: members } = useQuery({
+    queryKey: ["part", partId, "members"],
+    queryFn: () => api.get<Member[]>(`/parts/${partId}/members`),
+  });
+  const { data: parts } = useQuery({ queryKey: ["parts"], queryFn: () => api.get<Part[]>("/parts") });
+  const partsById = new Map(parts?.map(p => [p.id, p]) ?? []);
+
+  const [pick, setPick] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+
+  async function add() {
+    if (!pick) return;
+    setErr(null);
+    try {
+      await api.post(`/parts/${partId}/members`, { member_part_id: pick });
+      setPick("");
+      qc.invalidateQueries({ queryKey: ["part", partId, "members"] });
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Failed");
+    }
+  }
+  async function remove(mid: string) {
+    await api.delete(`/parts/${partId}/members/${mid}`);
+    qc.invalidateQueries({ queryKey: ["part", partId, "members"] });
+  }
+
+  return (
+    <div className="card p-4 max-w-2xl">
+      <h3 className="text-md font-semibold mb-2">Meta-part members</h3>
+      <p className="text-sm text-muted mb-3">
+        A meta-part stands for any of its members. When a BOM line uses this meta-part,
+        a build can consume from any member's stock.
+      </p>
+      {err && <div className="text-danger text-sm mb-2">{err}</div>}
+      <ul className="space-y-1 mb-3">
+        {(members ?? []).map(m => {
+          const p = partsById.get(m.member_part_id);
+          return (
+            <li key={m.id} className="text-sm flex items-center justify-between">
+              <span>
+                {p?.name ?? m.member_part_id}
+                {p?.mpn && <span className="text-muted ml-2">{p.mpn}</span>}
+              </span>
+              <button className="btn-danger text-xs" onClick={() => remove(m.member_part_id)}>Remove</button>
+            </li>
+          );
+        })}
+        {(!members || members.length === 0) && <li className="text-muted text-sm">No members yet.</li>}
+      </ul>
+      <div className="flex gap-2">
+        <select className="input" value={pick} onChange={e => setPick(e.target.value)}>
+          <option value="">Pick a part…</option>
+          {parts?.filter(p => p.id !== partId && p.part_type !== "meta").map(p => (
+            <option key={p.id} value={p.id}>{p.name}{p.mpn ? ` — ${p.mpn}` : ""}</option>
+          ))}
+        </select>
+        <button className="btn-primary" onClick={add}>Add</button>
+      </div>
+    </div>
+  );
+}

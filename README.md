@@ -9,6 +9,7 @@ Implemented phases:
 - **5** builds + consume-from-BOM with substitute fallback, optional sub-assembly output lot. See `docs/phases/05-builds.md`.
 - **6** read-only reports: low-stock, stock-value (by currency), BOM shortage, expiring lots. See `docs/phases/06-reports.md`.
 - **7** BOM import presets — save / recall column mappings in the import wizard. See `docs/phases/07-bom-presets.md`.
+- **8** meta-part members — manage `PartMetaMember` rows; build engine pulls stock from any member when consuming a meta-part BOM line. See `docs/phases/08-meta-parts.md`.
 
 The existing webcam barcode scanner (`barcodeReader/`) is integrated into `/parts/scan`.
 

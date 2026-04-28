@@ -245,3 +245,58 @@ def del_substitute(part_id: UUID, substitute_id: UUID, db: DbSession, ws: Curren
     ).delete()
     db.commit()
     return ok(None)
+
+
+# ---- Meta-part members ----------------------------------------------------
+
+
+class MetaMemberIn(BaseModel):
+    member_part_id: UUID
+
+
+@router.get("/{meta_id}/members")
+def list_members(meta_id: UUID, db: DbSession, ws: CurrentWorkspace):
+    meta = _get_part(db, ws.id, meta_id)
+    rows = list(
+        db.execute(
+            select(PartMetaMember).where(PartMetaMember.meta_part_id == meta.id)
+        ).scalars()
+    )
+    return ok([{"id": str(r.id), "member_part_id": str(r.part_id)} for r in rows])
+
+
+@router.post("/{meta_id}/members", status_code=status.HTTP_201_CREATED)
+def add_member(meta_id: UUID, payload: MetaMemberIn, db: DbSession, ws: CurrentWorkspace):
+    meta = _get_part(db, ws.id, meta_id)
+    if meta.part_type != "meta":
+        raise HTTPException(status_code=400, detail="part is not a meta-part")
+    member = _get_part(db, ws.id, payload.member_part_id)
+    if member.id == meta.id:
+        raise HTTPException(status_code=400, detail="meta-part cannot include itself")
+    if member.part_type == "meta":
+        raise HTTPException(status_code=400, detail="meta-part members cannot themselves be meta")
+    existing = (
+        db.execute(
+            select(PartMetaMember)
+            .where(PartMetaMember.meta_part_id == meta.id)
+            .where(PartMetaMember.part_id == member.id)
+        )
+        .scalars()
+        .first()
+    )
+    if existing:
+        return ok({"id": str(existing.id), "member_part_id": str(existing.part_id)})
+    row = PartMetaMember(meta_part_id=meta.id, part_id=member.id)
+    db.add(row)
+    db.commit()
+    return ok({"id": str(row.id), "member_part_id": str(row.part_id)})
+
+
+@router.delete("/{meta_id}/members/{member_id}")
+def del_member(meta_id: UUID, member_id: UUID, db: DbSession, ws: CurrentWorkspace):
+    meta = _get_part(db, ws.id, meta_id)
+    db.query(PartMetaMember).filter(
+        PartMetaMember.meta_part_id == meta.id, PartMetaMember.part_id == member_id
+    ).delete()
+    db.commit()
+    return ok(None, "deleted")

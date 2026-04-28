@@ -7,7 +7,7 @@ import type { StorageLocation } from "@/types";
 export default function PartCreate() {
   const nav = useNavigate();
   const [form, setForm] = useState({
-    part_type: "local" as "linked" | "local" | "meta",
+    part_type: "local" as "linked" | "local" | "meta" | "sub_assembly",
     name: "",
     manufacturer: "",
     mpn: "",
@@ -51,6 +51,7 @@ export default function PartCreate() {
             <option value="local">Local</option>
             <option value="linked">Linked (MPN)</option>
             <option value="meta">Meta-part</option>
+            <option value="sub_assembly">Sub-assembly</option>
           </select>
         </div>
         <div>

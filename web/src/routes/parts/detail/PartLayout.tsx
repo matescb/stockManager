@@ -23,6 +23,7 @@ export default function PartLayout() {
     { to: `/parts/${part.id}/history`, label: "History" },
     { to: `/parts/${part.id}/lots`, label: "Lots" },
     { to: `/parts/${part.id}/substitutes`, label: "Substitutes" },
+    ...(part.part_type === "meta" ? [{ to: `/parts/${part.id}/members`, label: "Members" }] : []),
     { to: `/parts/${part.id}/settings`, label: "Settings" },
     { to: `/parts/${part.id}/other`, label: "Other" },
   ];
