@@ -1,120 +1,254 @@
-import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
+import { Link, NavLink, useLocation } from "react-router-dom";
+import {
+  BarChart3,
+  Boxes,
+  ChevronDown,
+  FolderKanban,
+  Hammer,
+  LogOut,
+  Menu,
+  Search,
+  Settings,
+  ShoppingCart,
+  User,
+  Warehouse,
+  X,
+} from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { Search } from "lucide-react";
+import Brand from "@/components/Brand";
 import ThemeToggle from "@/components/ThemeToggle";
 
-const NAV = [
-  { to: "/parts", label: "Parts" },
-  { to: "/storage", label: "Storage" },
-  { to: "/projects", label: "Projects" },
-  { to: "/orders", label: "Orders" },
-  { to: "/builds", label: "Builds" },
-  { to: "/reports", label: "Reports" },
+type NavItem = { to: string; label: string; icon: typeof Boxes };
+
+const NAV: NavItem[] = [
+  { to: "/parts",    label: "Parts",    icon: Boxes },
+  { to: "/storage",  label: "Storage",  icon: Warehouse },
+  { to: "/projects", label: "Projects", icon: FolderKanban },
+  { to: "/orders",   label: "Orders",   icon: ShoppingCart },
+  { to: "/builds",   label: "Builds",   icon: Hammer },
+  { to: "/reports",  label: "Reports",  icon: BarChart3 },
 ];
 
-type SearchData = {
-  parts: { id: string; name: string; mpn: string | null }[];
-  storage_locations: { id: string; name: string }[];
-  projects: { id: string; name: string }[];
-  lots: { id: string; name: string | null; part_id: string }[];
-  orders: { id: string; name: string; status: string }[];
-};
+function pageTitleFor(pathname: string): string {
+  // Strip leading slash, take the first segment, prettify.
+  const seg = pathname.split("/").filter(Boolean)[0] ?? "";
+  if (!seg) return "Home";
+  if (seg === "settings") {
+    const sub = pathname.split("/").filter(Boolean)[1] ?? "";
+    return sub === "account" ? "Account" : "Workspace";
+  }
+  return seg.charAt(0).toUpperCase() + seg.slice(1);
+}
 
-export default function AppShell({ children }: { children: React.ReactNode }) {
+export default function AppShell({ children }: { children: ReactNode }) {
   const { me, workspaceId, switchWorkspace, logout } = useAuth();
-  const nav = useNavigate();
   const loc = useLocation();
-  const [q, setQ] = useState("");
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [userOpen, setUserOpen] = useState(false);
 
-  const { data: results } = useQuery({
-    queryKey: ["search", q],
-    queryFn: () => api.get<SearchData>(`/search?q=${encodeURIComponent(q)}`),
-    enabled: q.trim().length >= 2,
-  });
+  // Close any drawer/menu on route change.
+  useEffect(() => {
+    setMobileOpen(false);
+    setUserOpen(false);
+  }, [loc.pathname]);
 
   return (
-    <div className="min-h-full flex flex-col">
-      <header className="border-b border-border bg-panel">
-        <div className="px-4 h-12 flex items-center gap-6">
-          <Link to="/parts" className="font-semibold text-accent">stockmgr</Link>
-          <nav className="flex items-center gap-1">
-            {NAV.map(n => (
-              <NavLink
-                key={n.to}
-                to={n.to}
-                className={({ isActive }) =>
-                  cn("px-3 py-1.5 rounded-md text-sm", isActive ? "bg-panel2 text-text" : "text-muted hover:text-text")
-                }
+    <div className="min-h-full flex bg-bg text-text">
+      <Sidebar mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
+
+      <div className="flex-1 min-w-0 flex flex-col">
+        <header className="sticky top-0 z-20 border-b border-border bg-panel/80 backdrop-blur">
+          <div className="px-4 h-12 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setMobileOpen(true)}
+              className="btn-ghost btn-sm lg:hidden"
+              aria-label="Open menu"
+            >
+              <Menu size={16} />
+            </button>
+
+            <h1 className="text-sm font-semibold tracking-tight">
+              {pageTitleFor(loc.pathname)}
+            </h1>
+
+            <div className="ml-auto flex items-center gap-2">
+              <select
+                className="input max-w-[200px]"
+                value={workspaceId ?? ""}
+                onChange={(e) => switchWorkspace(e.target.value)}
+                aria-label="Switch workspace"
               >
-                {n.label}
-              </NavLink>
-            ))}
-          </nav>
-          <div className="flex-1 max-w-xl relative">
-            <div className="relative">
-              <Search size={14} className="absolute left-2.5 top-2.5 text-muted" />
-              <input
-                className="input pl-8"
-                placeholder="Search parts, storage, projects, lots…"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
+                {me?.workspaces.map(w => (
+                  <option key={w.id} value={w.id}>{w.name}</option>
+                ))}
+              </select>
+              <ThemeToggle />
+              <UserMenu
+                open={userOpen}
+                onToggle={() => setUserOpen(o => !o)}
+                onLogout={logout}
+                name={me?.user.name ?? ""}
               />
             </div>
-            {q.trim().length >= 2 && results && (
-              <div className="absolute left-0 right-0 top-full mt-1 z-30 card max-h-96 overflow-auto">
-                <SearchResults
-                  results={results}
-                  onPick={(href) => { setQ(""); nav(href); }}
-                />
-              </div>
-            )}
           </div>
-          <select
-            className="input max-w-[180px]"
-            value={workspaceId ?? ""}
-            onChange={(e) => switchWorkspace(e.target.value)}
-          >
-            {me?.workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-          </select>
-          <ThemeToggle />
-          <Link to="/settings/account" className="text-muted text-sm hover:text-text">{me?.user.name}</Link>
-          <button onClick={logout} className="btn">Logout</button>
-        </div>
-      </header>
-      <main className="flex-1 px-4 py-4">{children}</main>
+        </header>
+
+        <main className="flex-1 px-4 py-4 min-w-0">{children}</main>
+      </div>
     </div>
   );
 }
 
-function SearchResults({ results, onPick }: { results: SearchData; onPick: (href: string) => void }) {
-  const sections: [string, { id: string; label: string; href: string }[]][] = [
-    ["Parts", results.parts.map(p => ({ id: p.id, label: p.name + (p.mpn ? ` — ${p.mpn}` : ""), href: `/parts/${p.id}/info` }))],
-    ["Storage", results.storage_locations.map(s => ({ id: s.id, label: s.name, href: `/storage/${s.id}/info` }))],
-    ["Projects", results.projects.map(p => ({ id: p.id, label: p.name, href: `/projects/${p.id}/data` }))],
-    ["Lots", results.lots.map(l => ({ id: l.id, label: l.name || l.id, href: `/lots/${l.id}/info` }))],
-    ["Orders", results.orders.map(o => ({ id: o.id, label: `${o.name} · ${o.status}`, href: `/orders/${o.id}` }))],
-  ];
+function Sidebar({
+  mobileOpen,
+  onClose,
+}: {
+  mobileOpen: boolean;
+  onClose: () => void;
+}) {
   return (
-    <div className="p-2 text-sm">
-      {sections.map(([title, items]) =>
-        items.length ? (
-          <div key={title} className="mb-2">
-            <div className="text-xs uppercase tracking-wider text-muted px-2 mb-1">{title}</div>
-            {items.slice(0, 8).map(it => (
-              <button
-                key={it.id}
-                onClick={() => onPick(it.href)}
-                className="w-full text-left px-2 py-1 rounded hover:bg-panel2"
-              >
-                {it.label}
-              </button>
-            ))}
-          </div>
-        ) : null
+    <>
+      {/* Mobile backdrop */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/50 lg:hidden"
+          onClick={onClose}
+          aria-hidden
+        />
+      )}
+
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-40 w-60 shrink-0 border-r border-border bg-panel flex flex-col",
+          "transition-transform duration-150",
+          "lg:sticky lg:top-0 lg:h-screen lg:translate-x-0",
+          mobileOpen ? "translate-x-0" : "-translate-x-full"
+        )}
+        aria-label="Primary navigation"
+      >
+        <div className="h-12 px-4 flex items-center justify-between border-b border-border">
+          <Link to="/parts"><Brand /></Link>
+          <button
+            type="button"
+            onClick={onClose}
+            className="btn-ghost btn-sm lg:hidden"
+            aria-label="Close menu"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <SearchTrigger />
+
+        <nav className="flex-1 px-2 pt-1 space-y-0.5 overflow-y-auto">
+          {NAV.map(item => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) =>
+                cn(
+                  "flex items-center gap-2.5 px-3 py-1.5 rounded-md text-sm transition-colors",
+                  isActive
+                    ? "bg-accent/15 text-accent"
+                    : "text-muted hover:text-text hover:bg-panel2"
+                )
+              }
+            >
+              <item.icon size={16} />
+              {item.label}
+            </NavLink>
+          ))}
+        </nav>
+
+        <div className="px-2 py-2 border-t border-border">
+          <NavLink
+            to="/settings/workspace"
+            className={({ isActive }) =>
+              cn(
+                "flex items-center gap-2.5 px-3 py-1.5 rounded-md text-sm transition-colors",
+                isActive
+                  ? "bg-accent/15 text-accent"
+                  : "text-muted hover:text-text hover:bg-panel2"
+              )
+            }
+          >
+            <Settings size={16} />
+            Settings
+          </NavLink>
+        </div>
+      </aside>
+    </>
+  );
+}
+
+function SearchTrigger() {
+  // The actual command palette lands in step 4; this is the trigger surface.
+  return (
+    <div className="px-2 pt-2 pb-1">
+      <button
+        type="button"
+        onClick={() =>
+          window.dispatchEvent(new CustomEvent("stockmgr:openCommandPalette"))
+        }
+        className="w-full inline-flex items-center gap-2 rounded-md border border-border bg-bg px-3 py-1.5 text-left text-sm text-muted hover:bg-panel2 transition-colors"
+      >
+        <Search size={14} />
+        <span className="flex-1 truncate">Search…</span>
+        <span className="kbd">⌘K</span>
+      </button>
+    </div>
+  );
+}
+
+function UserMenu({
+  open,
+  onToggle,
+  onLogout,
+  name,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  onLogout: () => void;
+  name: string;
+}) {
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="btn-ghost btn-sm"
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <span className="hidden sm:inline max-w-[120px] truncate">{name}</span>
+        <ChevronDown size={14} className={cn("transition-transform", open && "rotate-180")} />
+      </button>
+      {open && (
+        <div
+          className="absolute right-0 top-full mt-1 z-30 card p-1 min-w-[180px]"
+          role="menu"
+        >
+          <Link
+            to="/settings/account"
+            className="flex items-center gap-2 px-3 py-1.5 rounded text-sm text-text hover:bg-panel2"
+            role="menuitem"
+          >
+            <User size={14} />
+            Account
+          </Link>
+          <button
+            type="button"
+            onClick={onLogout}
+            className="w-full flex items-center gap-2 px-3 py-1.5 rounded text-sm text-text hover:bg-panel2"
+            role="menuitem"
+          >
+            <LogOut size={14} />
+            Log out
+          </button>
+        </div>
       )}
     </div>
   );
