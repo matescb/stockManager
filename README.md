@@ -39,3 +39,4 @@ For running tests outside Docker, see [`docs/development.md`](docs/development.m
 - `backend/` — FastAPI + SQLAlchemy 2 + Alembic
 - `web/` — Vite + React + TypeScript + Tailwind
 - `barcodeReader/` — original Scandit assets (source for `web/public/scandit/`)
+- `docs/` — [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) (the cold-start doc), [`development.md`](docs/development.md), per-phase notes under `docs/phases/`

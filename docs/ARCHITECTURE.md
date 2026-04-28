@@ -1,0 +1,220 @@
+# Architecture
+
+This document is for someone landing in the codebase cold. It explains
+how the pieces fit together; per-phase docs (`docs/phases/`) explain
+what each feature does.
+
+## Stack
+
+- **Backend**: Python 3.12, FastAPI, SQLAlchemy 2 (Declarative + Core),
+  Alembic, psycopg 3, Pydantic 2 / pydantic-settings, argon2-cffi,
+  itsdangerous, chardet.
+- **Database**: Postgres 16. The schema uses Postgres-specific types
+  (`UUID`, `ARRAY`, `Numeric`); SQLite is not a viable substitute.
+- **Frontend**: Vite 5 + React 18 + TypeScript 5 + Tailwind 3 +
+  TanStack Query 5 + react-router 6 + react-hook-form + zod.
+- **Auth**: opaque session token in a httpOnly cookie; argon2 password
+  hashes; sessions persisted in `user_sessions`.
+
+## Repo layout
+
+```
+backend/
+  app/
+    api/routes/         FastAPI routers, one per resource
+    core/               config, deps, auth helpers, response shape
+    domain/<bounded>/   models.py, schemas.py, service.py
+    infra/db.py         Base, engine, SessionLocal, get_db()
+    main.py             FastAPI app, router include
+  alembic/              migrations (one per phase)
+  tests/                pytest, integration-flavoured (real Postgres)
+
+web/
+  src/
+    components/         shared UI (DataTable, EntityHeader, SubNav, …)
+    components/layout/  AppShell — global nav, search, workspace switcher
+    lib/api.ts          minimal fetch wrapper (credentials: "include")
+    lib/auth.tsx        AuthContext + Gate
+    routes/<area>/      one folder per domain (parts, orders, builds, …)
+    types.ts            shared TS types matching backend serializers
+    App.tsx             react-router config
+docs/
+  ARCHITECTURE.md       this file
+  development.md        local-test setup
+  phases/NN-<name>.md   per-phase rationale + API + UI + tests
+```
+
+## The ledger model
+
+Stock is **append-only**. `stock_entries` is a sequential log; the
+"current quantity" of any (part, lot, storage) tuple is always
+`SUM(quantity_delta)` over the matching rows with `status='on_hand'`.
+
+There is no `inventory.qty` column anywhere — all quantity reads go
+through `domain/stock/service.py::current_quantity` (or one of the
+roll-ups built on top of it).
+
+### Why this matters
+
+- Add stock → one positive row.
+- Remove stock → one negative row.
+- Move stock → one negative row at the source + one positive row at
+  the destination, linked by `related_entry_id`.
+- Adjust count → one row whose delta is `actual_qty − current_qty`.
+- Receive a PO line → one positive row with `operation_type='receive'`,
+  `order_id` and `order_entry_id` set, and a fresh `Lot` with
+  `source_type='purchase'`.
+- Build consume → one negative row per consumed line with
+  `operation_type='build_consume'` and `build_id` set; if the project
+  has an associated sub-assembly, an extra positive row with
+  `operation_type='build_produce'` and a `Lot` with
+  `source_type='build'`.
+
+Operations are the unit of audit. Reading the full ledger for a part
+gives the entire stock history; aggregating the ledger gives any
+current view.
+
+### Lot lifecycle
+
+A `Lot` is a *batch* of a part with a particular provenance:
+
+| `source_type` | Created by | Notes |
+|---------------|------------|-------|
+| `manual`      | Add-stock with no order context | Optional |
+| `split`       | Move-stock with `split_lot=true` | `parent_lot_id` set |
+| `purchase`    | Order receive | `source_order_id` set |
+| `build`       | Build consume that produces an output sub-assembly | `source_build_id` set |
+
+`Lot.serial_number` carries the per-unit serial when the workspace +
+part have serial tracking on (Phase 9).
+
+## Workspace isolation
+
+Every domain table inherits the `WorkspaceOwned` mixin (in
+`domain/_mixins.py`):
+
+```python
+id, workspace_id (FK CASCADE), created_at, updated_at,
+created_by/updated_by (FK SET NULL on users), archived_at
+```
+
+`workspace_id` is enforced at the **service layer**: every query
+filters by `ws.id`, and every cross-table FK lookup is followed by a
+`workspace_id` equality check. There is no row-level security in the
+database — the protection is the consistent code pattern. The
+`tests/test_workspace_isolation.py` test pins this contract for the
+parts router; new endpoints should add equivalent coverage.
+
+`get_current_workspace()` reads the workspace from the
+`X-Workspace-Id` header or the `stockmgr_workspace` cookie, validates
+membership, and falls back to the user's first active membership.
+
+## API conventions
+
+Every JSON response wraps the payload in `{ data, status }`:
+
+```json
+{ "data": { … }, "status": { "category": "ok", "message": "OK" } }
+```
+
+`category` is `ok` for 2xx and otherwise one of:
+`unauthenticated | forbidden | not_found | conflict | validation_error | server_error`.
+
+The frontend's `lib/api.ts` unwraps `data` automatically and throws
+`ApiError(status, body, msg)` on non-2xx. Helpers `responses.ok()` /
+`responses.err()` produce these envelopes server-side. The two
+`add_exception_handler` calls in `main.py` translate FastAPI's
+`HTTPException` and Pydantic `ValidationError` into them.
+
+## Domain decomposition
+
+| Domain | Tables | Service / endpoints |
+|--------|--------|---------------------|
+| users + workspaces | users, user_sessions, workspaces, workspace_members | auth (signup/login/logout/me), workspaces |
+| parts | parts, part_cad_keys, part_meta_members, part_substitutes | parts (CRUD, archive, scan, substitutes, members) |
+| storage | storage_locations | storage (CRUD, archive, history) |
+| stock | stock_entries (ledger), lots | stock (add/remove/move/adjust/history), lots |
+| projects | projects, project_entries, bom_import_presets | projects (CRUD, BOM CRUD + import wizard), bom_presets |
+| orders | orders, order_entries | orders (CRUD, archive, receive) |
+| builds | builds | builds (CRUD, consume) |
+| cross-cutting | attachments, custom_fields, tags, tag_links | attachments, custom_fields, tags |
+| reports | (read-only over the above) | reports (low-stock, stock-value, bom-shortage, expiring-lots) |
+
+Each domain folder contains:
+- `models.py` — SQLAlchemy declarative classes
+- `schemas.py` — Pydantic request/response DTOs *(only when used by the routes; small domains skip it)*
+- `service.py` — pure DB-touching logic that the route layer wraps in
+  HTTPException-mapping try/excepts *(only for non-trivial flows like stock, orders, builds)*
+
+## Migrations
+
+`backend/alembic/versions/` holds one revision per phase, named
+`NNNN_short_description.py`. Each file has a stable two-digit revision
+ID (`'0001'`, `'0002'`, …) and a `down_revision` pointing at the
+previous one.
+
+The first migration is autogenerated from the full Phase 1–3 schema
+and uses an explicit `op.create_foreign_key(use_alter=True)` after the
+last `create_table` to set up the `parts ↔ projects` cycle. Each
+later migration is a delta autogenerated against the metadata at the
+time, then renamed and reviewed.
+
+To autogenerate a new revision after a model change:
+
+```bash
+DATABASE_URL=… alembic revision --autogenerate -m "what changed"
+```
+
+Review carefully — alembic's autogen has known gaps:
+
+- `use_alter` FKs are emitted as a separate `op.create_foreign_key` at
+  the end of `upgrade()`, not as part of the `create_table`. If a new
+  cycle appears, you may need to add this manually.
+- Adding a NOT NULL column to a non-empty table needs a
+  `server_default` (and an `op.alter_column(server_default=None)`
+  after — see `0004_part_serialized.py` for the pattern).
+- New tables use the autogen-chosen name suffix; rename to
+  `NNNN_<descriptive>.py`.
+
+## Frontend conventions
+
+- All requests go through `api.{get|post|patch|delete|upload}` in
+  `lib/api.ts`. It sets `credentials: "include"` so the session cookie
+  rides along automatically.
+- Server state is owned by TanStack Query; queryKeys follow the form
+  `[<resource>, <id?>, <sub?>]`. Mutations invalidate by key prefix.
+- Routing is plain react-router with a top-level `<Gate>` that hands
+  the user off to `/login` if `useAuth().me` is null.
+- `DataTable` (in `components/`) provides search-filter, column
+  sorting, hidden columns, and CSV export. New list pages should
+  reach for it before rolling their own table.
+- Tailwind + a tiny set of utility classes (`btn`, `btn-primary`,
+  `btn-danger`, `card`, `pill`, `input`, `label`, `table`) keep the
+  visual language consistent — those classes are defined in
+  `src/index.css`.
+
+## Auth and sessions
+
+`/api/auth/signup` creates the user, a personal workspace, and a
+membership in one transaction; then issues a session by writing a
+`user_sessions` row and setting an httpOnly cookie. `get_current_user`
+validates the cookie's token and the row's `expires_at` on every
+request. Logout deletes the row and clears the cookie.
+
+There is no RBAC yet — `WorkspaceMember.role` is a free string with
+the `"placeholder; RBAC deferred"` comment. Any active member of a
+workspace can do anything within it.
+
+## Future work (not implemented)
+
+- **External part linking** — the `Part.linked_external_id` column and
+  `part_type='linked'` exist, plus `WebFetch(domain:www.trustedparts.com)`
+  is allow-listed in `.claude/settings.local.json`. Importing part
+  attributes from TrustedParts by MPN is a natural next step.
+- **RBAC + invitations** — `WorkspaceMember.status='invited'` is
+  modeled but no invite flow exists. Roles need to gate write
+  operations once teams larger than one share a workspace.
+- **Catalog publishing** — `Part.published` is unused.
+- **Reports** — costs are summed using `Lot.purchase_unit_cost`. A
+  proper "weighted average cost" or "FIFO/LIFO valuation" report
+  would be a real next step. Same for shortage-aware order-suggestion.
