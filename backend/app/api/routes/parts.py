@@ -7,9 +7,11 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import or_, select
 
+from app.api.routes._activity import build_activity
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.domain.parts.models import Part, PartMetaMember, PartSubstitute
+from app.domain.stock.models import StockEntry
 from app.domain.stock.service import (
     reserved_quantity,
     stock_summary_for_part,
@@ -336,3 +338,28 @@ def del_member(meta_id: UUID, member_id: UUID, db: DbSession, ws: CurrentWorkspa
     ).delete()
     db.commit()
     return ok(None, "deleted")
+
+
+@router.get("/{part_id}/activity")
+def part_activity(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
+    p = _get_part(db, ws.id, part_id)
+    stock_rows = list(
+        db.execute(
+            select(StockEntry)
+            .where(StockEntry.workspace_id == ws.id)
+            .where(StockEntry.part_id == p.id)
+            .order_by(StockEntry.occurred_at.desc())
+            .limit(200)
+        ).scalars()
+    )
+    events = build_activity(
+        db,
+        stock_rows=stock_rows,
+        created_at=p.created_at,
+        updated_at=p.updated_at,
+        created_by=p.created_by,
+        updated_by=p.updated_by,
+        created_kind="part_created",
+        updated_kind="part_updated",
+    )
+    return ok(events)

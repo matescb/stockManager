@@ -6,9 +6,11 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import or_, select
 
+from app.api.routes._activity import build_activity
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.domain.orders.models import Order, OrderEntry
+from app.domain.stock.models import StockEntry
 from app.domain.orders.schemas import (
     OrderCreateIn,
     OrderEntryIn,
@@ -254,3 +256,28 @@ def receive_order(order_id: UUID, payload: ReceiveIn, db: DbSession, ws: Current
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
     return ok(result)
+
+
+@router.get("/{order_id}/activity")
+def order_activity(order_id: UUID, db: DbSession, ws: CurrentWorkspace):
+    o = _get_order(db, ws.id, order_id)
+    stock_rows = list(
+        db.execute(
+            select(StockEntry)
+            .where(StockEntry.workspace_id == ws.id)
+            .where(StockEntry.order_id == o.id)
+            .order_by(StockEntry.occurred_at.desc())
+            .limit(200)
+        ).scalars()
+    )
+    events = build_activity(
+        db,
+        stock_rows=stock_rows,
+        created_at=o.created_at,
+        updated_at=o.updated_at,
+        created_by=o.created_by,
+        updated_by=o.updated_by,
+        created_kind="order_created",
+        updated_kind="order_updated",
+    )
+    return ok(events)

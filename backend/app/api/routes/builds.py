@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
+from app.api.routes._activity import build_activity
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.domain.builds.models import Build
@@ -18,6 +19,7 @@ from app.domain.builds.service import (
     shortage_analysis,
 )
 from app.domain.projects.models import Project
+from app.domain.stock.models import StockEntry
 
 router = APIRouter()
 
@@ -161,3 +163,28 @@ def consume_build(
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
     return ok(result)
+
+
+@router.get("/{build_id}/activity")
+def build_activity_route(build_id: UUID, db: DbSession, ws: CurrentWorkspace):
+    b = _get_build(db, ws.id, build_id)
+    stock_rows = list(
+        db.execute(
+            select(StockEntry)
+            .where(StockEntry.workspace_id == ws.id)
+            .where(StockEntry.build_id == b.id)
+            .order_by(StockEntry.occurred_at.desc())
+            .limit(200)
+        ).scalars()
+    )
+    events = build_activity(
+        db,
+        stock_rows=stock_rows,
+        created_at=b.created_at,
+        updated_at=b.updated_at,
+        created_by=b.created_by,
+        updated_by=b.updated_by,
+        created_kind="build_created",
+        updated_kind="build_updated",
+    )
+    return ok(events)
