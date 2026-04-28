@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import AuthShell from "./AuthShell";
 
 export default function Login() {
   const nav = useNavigate();
@@ -27,21 +28,42 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-full flex items-center justify-center bg-bg">
-      <form onSubmit={submit} className="card p-6 w-full max-w-sm space-y-4">
-        <h1 className="text-xl font-semibold">Sign in</h1>
-        {err && <div className="text-danger text-sm">{err}</div>}
+    <AuthShell title="Sign in">
+      <form onSubmit={submit} className="space-y-4">
+        {err && (
+          <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-danger text-sm">
+            {err}
+          </div>
+        )}
         <div>
           <label className="label">Email</label>
-          <input className="input" type="email" required value={email} onChange={e => setEmail(e.target.value)} />
+          <input
+            className="input"
+            type="email"
+            autoComplete="email"
+            required
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+          />
         </div>
         <div>
           <label className="label">Password</label>
-          <input className="input" type="password" required value={password} onChange={e => setPassword(e.target.value)} />
+          <input
+            className="input"
+            type="password"
+            autoComplete="current-password"
+            required
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+          />
         </div>
-        <button className="btn-primary w-full" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
-        <p className="text-sm text-muted">No account? <Link to="/signup" className="text-accent">Sign up</Link></p>
+        <button className="btn-primary w-full" disabled={busy}>
+          {busy ? "Signing in…" : "Sign in"}
+        </button>
+        <p className="text-sm text-muted">
+          No account? <Link to="/signup" className="text-accent hover:underline">Sign up</Link>
+        </p>
       </form>
-    </div>
+    </AuthShell>
   );
 }

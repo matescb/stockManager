@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import AuthShell from "./AuthShell";
 
 export default function Signup() {
   const nav = useNavigate();
@@ -18,7 +19,12 @@ export default function Signup() {
     setErr(null);
     setBusy(true);
     try {
-      await api.post("/auth/signup", { name, email, password, workspace_name: workspaceName || undefined });
+      await api.post("/auth/signup", {
+        name,
+        email,
+        password,
+        workspace_name: workspaceName || undefined,
+      });
       await refresh();
       nav("/parts");
     } catch (e) {
@@ -29,29 +35,63 @@ export default function Signup() {
   }
 
   return (
-    <div className="min-h-full flex items-center justify-center bg-bg">
-      <form onSubmit={submit} className="card p-6 w-full max-w-sm space-y-4">
-        <h1 className="text-xl font-semibold">Create account</h1>
-        {err && <div className="text-danger text-sm">{err}</div>}
+    <AuthShell title="Create account">
+      <form onSubmit={submit} className="space-y-4">
+        {err && (
+          <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-danger text-sm">
+            {err}
+          </div>
+        )}
         <div>
           <label className="label">Name</label>
-          <input className="input" required value={name} onChange={e => setName(e.target.value)} />
+          <input
+            className="input"
+            required
+            value={name}
+            onChange={e => setName(e.target.value)}
+            autoComplete="name"
+          />
         </div>
         <div>
           <label className="label">Email</label>
-          <input className="input" type="email" required value={email} onChange={e => setEmail(e.target.value)} />
+          <input
+            className="input"
+            type="email"
+            required
+            autoComplete="email"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+          />
         </div>
         <div>
           <label className="label">Password (min 8)</label>
-          <input className="input" type="password" required minLength={8} value={password} onChange={e => setPassword(e.target.value)} />
+          <input
+            className="input"
+            type="password"
+            required
+            minLength={8}
+            autoComplete="new-password"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+          />
         </div>
         <div>
           <label className="label">Workspace name (optional)</label>
-          <input className="input" value={workspaceName} onChange={e => setWorkspaceName(e.target.value)} placeholder="My Workspace" />
+          <input
+            className="input"
+            value={workspaceName}
+            onChange={e => setWorkspaceName(e.target.value)}
+            placeholder="My Workspace"
+          />
         </div>
-        <button className="btn-primary w-full" disabled={busy}>{busy ? "Creating…" : "Create account"}</button>
-        <p className="text-sm text-muted">Already have an account? <Link to="/login" className="text-accent">Sign in</Link></p>
+        <button className="btn-primary w-full" disabled={busy}>
+          {busy ? "Creating…" : "Create account"}
+        </button>
+        <p className="text-sm text-muted">
+          Already have an account?{" "}
+          <Link to="/login" className="text-accent hover:underline">Sign in</Link>
+        </p>
       </form>
-    </div>
+    </AuthShell>
   );
 }
