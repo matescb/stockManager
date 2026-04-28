@@ -45,12 +45,17 @@ import OrdersList from "@/routes/orders/OrdersList";
 import OrderCreate from "@/routes/orders/OrderCreate";
 import OrderDetail from "@/routes/orders/OrderDetail";
 
+import BuildsList from "@/routes/builds/BuildsList";
+import BuildCreate from "@/routes/builds/BuildCreate";
+import BuildDetail from "@/routes/builds/BuildDetail";
+
 import ProjectsList from "@/routes/projects/ProjectsList";
 import ProjectCreate from "@/routes/projects/ProjectCreate";
 import ProjectLayout from "@/routes/projects/detail/ProjectLayout";
 import ProjectData from "@/routes/projects/detail/ProjectData";
 import ProjectBOM from "@/routes/projects/detail/ProjectBOM";
 import ProjectImport from "@/routes/projects/detail/ProjectImport";
+import ProjectBuilds from "@/routes/projects/detail/ProjectBuilds";
 import ProjectOther from "@/routes/projects/detail/ProjectOther";
 
 import Account from "@/routes/settings/Account";
@@ -117,6 +122,11 @@ export default function App() {
         <Route path="/orders/create" element={<Gate><OrderCreate /></Gate>} />
         <Route path="/orders/:orderId" element={<Gate><OrderDetail /></Gate>} />
 
+        <Route path="/builds" element={<Gate><BuildsList /></Gate>} />
+        <Route path="/builds/archived" element={<Gate><BuildsList archived /></Gate>} />
+        <Route path="/builds/create" element={<Gate><BuildCreate /></Gate>} />
+        <Route path="/builds/:buildId" element={<Gate><BuildDetail /></Gate>} />
+
         <Route path="/projects" element={<Gate><ProjectsList /></Gate>} />
         <Route path="/projects/archived" element={<Gate><ProjectsList archived /></Gate>} />
         <Route path="/projects/create" element={<Gate><ProjectCreate /></Gate>} />
@@ -125,6 +135,7 @@ export default function App() {
           <Route path="data" element={<ProjectData />} />
           <Route path="bom" element={<ProjectBOM />} />
           <Route path="import" element={<ProjectImport />} />
+          <Route path="builds" element={<ProjectBuilds />} />
           <Route path="other" element={<ProjectOther />} />
         </Route>
 

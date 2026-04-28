@@ -6,6 +6,7 @@ Implemented phases:
 
 - **1–3** auth + workspaces; parts/storage with the append-only stock ledger; lots; projects with full CSV BOM import.
 - **4** purchase orders + line-level receive (creates `source_type='purchase'` lots, ledger rows tagged `order_id`/`order_entry_id`). See `docs/phases/04-orders.md`.
+- **5** builds + consume-from-BOM with substitute fallback, optional sub-assembly output lot. See `docs/phases/05-builds.md`.
 
 The existing webcam barcode scanner (`barcodeReader/`) is integrated into `/parts/scan`.
 

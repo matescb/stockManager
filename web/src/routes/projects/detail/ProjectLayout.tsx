@@ -13,6 +13,7 @@ export default function ProjectLayout() {
     { to: `/projects/${data.id}/data`, label: "Project info" },
     { to: `/projects/${data.id}/bom`, label: "BOM" },
     { to: `/projects/${data.id}/import`, label: "Import BOM" },
+    { to: `/projects/${data.id}/builds`, label: "Builds" },
     { to: `/projects/${data.id}/other`, label: "Other" },
   ];
   return (

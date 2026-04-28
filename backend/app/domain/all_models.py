@@ -1,6 +1,7 @@
 """Single import to ensure every SQLAlchemy model is registered with Base.metadata."""
 
 from app.domain.attachments.models import Attachment  # noqa: F401
+from app.domain.builds.models import Build  # noqa: F401
 from app.domain.custom_fields.models import CustomField  # noqa: F401
 from app.domain.lots.models import Lot  # noqa: F401
 from app.domain.orders.models import Order, OrderEntry  # noqa: F401

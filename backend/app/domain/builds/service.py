@@ -1,0 +1,265 @@
+"""Build / consume-from-BOM service.
+
+A build runs against a project's BOM. Consuming the build emits
+'build_consume' ledger rows for each input line and, if the project has
+an associated sub-assembly part, a 'build_produce' row + a Lot tagged
+source_type='build', source_build_id=build.id."""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from decimal import Decimal
+from math import ceil
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.domain.builds.models import Build
+from app.domain.builds.schemas import ConsumeIn
+from app.domain.lots.models import Lot
+from app.domain.parts.models import Part, PartSubstitute
+from app.domain.projects.models import Project, ProjectEntry
+from app.domain.stock.models import StockEntry
+from app.domain.stock.service import current_quantity
+from app.domain.storage.models import StorageLocation
+
+
+class BuildError(Exception):
+    pass
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _required(entry: ProjectEntry, part: Part | None, build_qty: int) -> int:
+    """Required quantity for one entry across `build_qty` builds, including
+    attrition. Spec §19.3: ``ceil(qty * builds * (1 + attrition%))`` but at
+    least ``qty * builds + attrition_min_quantity``."""
+    base = float(entry.quantity) * build_qty
+    pct = float(part.attrition_percentage) if part else 0.0
+    floor_extra = part.attrition_min_quantity if part else 0
+    target = base * (1 + pct / 100.0)
+    target = max(target, base + floor_extra)
+    return int(ceil(target))
+
+
+def shortage_analysis(
+    db: Session, *, workspace_id: UUID, project: Project, build_quantity: int
+) -> list[dict]:
+    """Per-entry analysis of needed vs. available stock. Considers main part
+    + any registered bidirectional or one_way substitutes."""
+    entries = list(
+        db.execute(
+            select(ProjectEntry)
+            .where(ProjectEntry.workspace_id == workspace_id)
+            .where(ProjectEntry.project_id == project.id)
+            .order_by(ProjectEntry.order_index)
+        ).scalars()
+    )
+    out: list[dict] = []
+    for e in entries:
+        if e.dnp:
+            continue
+        if e.entry_type not in ("part", "meta_part"):
+            continue
+        if e.part_id is None:
+            continue  # unmatched / non_part
+        part = db.get(Part, e.part_id)
+        if part is None:
+            continue
+        required = _required(e, part, build_quantity)
+        available = current_quantity(db, workspace_id=workspace_id, part_id=part.id)
+
+        # Substitutes (both directions count)
+        sub_rows = list(
+            db.execute(
+                select(PartSubstitute).where(
+                    (PartSubstitute.part_id == part.id)
+                    | (
+                        (PartSubstitute.substitute_part_id == part.id)
+                        & (PartSubstitute.direction == "bidirectional")
+                    )
+                )
+            ).scalars()
+        )
+        sub_ids: list[UUID] = []
+        for s in sub_rows:
+            sub_id = s.substitute_part_id if s.part_id == part.id else s.part_id
+            if sub_id != part.id:
+                sub_ids.append(sub_id)
+        sub_avail = sum(
+            current_quantity(db, workspace_id=workspace_id, part_id=sid) for sid in sub_ids
+        )
+
+        out.append(
+            {
+                "project_entry_id": str(e.id),
+                "part_id": str(part.id),
+                "part_name": part.name,
+                "required": required,
+                "available": available,
+                "substitute_ids": [str(s) for s in sub_ids],
+                "substitute_available": sub_avail,
+                "short_by": max(0, required - (available + sub_avail)),
+            }
+        )
+    return out
+
+
+def consume(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    user_id: UUID | None,
+    build: Build,
+    project: Project,
+    payload: ConsumeIn,
+) -> dict:
+    """Apply a build's consumption plan. All-or-nothing within the request."""
+    if build.status not in ("planned", "in_progress"):
+        raise BuildError(f"build is {build.status}")
+
+    entries_by_id: dict[UUID, ProjectEntry] = {
+        e.id: e
+        for e in db.query(ProjectEntry)
+        .filter(ProjectEntry.workspace_id == workspace_id, ProjectEntry.project_id == project.id)
+        .all()
+    }
+
+    # Sum requested quantity per (entry, part) so we can validate against required
+    requested_by_entry: dict[UUID, int] = {}
+    consumed_entries: list[StockEntry] = []
+    now = _now()
+
+    for line in payload.lines:
+        e = entries_by_id.get(line.project_entry_id)
+        if e is None:
+            raise BuildError(f"project entry {line.project_entry_id} not in this project")
+        if e.entry_type not in ("part", "meta_part") or e.part_id is None:
+            raise BuildError(f"project entry {e.id} has no part to consume")
+        if e.dnp:
+            raise BuildError(f"project entry {e.id} is DNP")
+
+        # Validate the chosen part is the entry's main part or a registered substitute
+        if line.part_id != e.part_id:
+            ok = db.execute(
+                select(PartSubstitute).where(
+                    (
+                        (PartSubstitute.part_id == e.part_id)
+                        & (PartSubstitute.substitute_part_id == line.part_id)
+                    )
+                    | (
+                        (PartSubstitute.substitute_part_id == e.part_id)
+                        & (PartSubstitute.part_id == line.part_id)
+                        & (PartSubstitute.direction == "bidirectional")
+                    )
+                )
+            ).scalars().first()
+            if not ok:
+                raise BuildError(f"part {line.part_id} is not a substitute for entry {e.id}")
+
+        # Verify stock available
+        avail = current_quantity(
+            db,
+            workspace_id=workspace_id,
+            part_id=line.part_id,
+            storage_location_id=line.storage_location_id,
+            lot_id=line.lot_id,
+        )
+        if line.quantity > avail:
+            raise BuildError(
+                f"insufficient stock for part {line.part_id} (have {avail}, want {line.quantity})"
+            )
+
+        entry_row = StockEntry(
+            workspace_id=workspace_id,
+            part_id=line.part_id,
+            lot_id=line.lot_id,
+            storage_location_id=line.storage_location_id,
+            quantity_delta=-line.quantity,
+            status="on_hand",
+            operation_type="build_consume",
+            build_id=build.id,
+            project_id=project.id,
+            occurred_at=now,
+            created_by=user_id,
+        )
+        db.add(entry_row)
+        db.flush()
+        consumed_entries.append(entry_row)
+        requested_by_entry[e.id] = requested_by_entry.get(e.id, 0) + line.quantity
+
+    # Required-coverage check: every non-DNP/part entry in the project must be
+    # covered to at least its required quantity.
+    for e in entries_by_id.values():
+        if e.dnp or e.entry_type not in ("part", "meta_part") or e.part_id is None:
+            continue
+        part = db.get(Part, e.part_id)
+        if part is None:
+            continue
+        req = _required(e, part, build.quantity)
+        got = requested_by_entry.get(e.id, 0)
+        if got < req:
+            raise BuildError(
+                f"entry {e.id} ({part.name}) under-consumed (need {req}, supplied {got})"
+            )
+
+    # Optional output: produce sub-assembly lot if the project has one
+    output_lot: Lot | None = None
+    output_entry: StockEntry | None = None
+    if project.associated_subassembly_part_id is not None:
+        sub_part = db.get(Part, project.associated_subassembly_part_id)
+        if sub_part is None or sub_part.workspace_id != workspace_id:
+            raise BuildError("project's sub-assembly part not in workspace")
+
+        storage = None
+        if payload.output_storage_location_id is not None:
+            storage = db.get(StorageLocation, payload.output_storage_location_id)
+            if storage is None or storage.workspace_id != workspace_id:
+                raise BuildError("output storage not in workspace")
+            if storage.archived_at is not None or storage.is_full:
+                raise BuildError("output storage archived or full")
+
+        output_lot = Lot(
+            workspace_id=workspace_id,
+            part_id=sub_part.id,
+            name=payload.output_lot_name or f"{build.name}-out",
+            source_type="build",
+            source_build_id=build.id,
+            purchase_quantity=build.quantity,
+            created_by=user_id,
+            updated_by=user_id,
+        )
+        db.add(output_lot)
+        db.flush()
+
+        output_entry = StockEntry(
+            workspace_id=workspace_id,
+            part_id=sub_part.id,
+            lot_id=output_lot.id,
+            storage_location_id=storage.id if storage else None,
+            quantity_delta=build.quantity,
+            status="on_hand",
+            operation_type="build_produce",
+            build_id=build.id,
+            project_id=project.id,
+            occurred_at=now,
+            created_by=user_id,
+        )
+        db.add(output_entry)
+        db.flush()
+
+    build.status = "complete"
+    build.started_at = build.started_at or now
+    build.completed_at = now
+    build.output_lot_id = output_lot.id if output_lot else None
+    build.updated_by = user_id
+
+    return {
+        "build_id": str(build.id),
+        "status": build.status,
+        "consumed_entries": [str(s.id) for s in consumed_entries],
+        "output_lot_id": str(output_lot.id) if output_lot else None,
+        "output_stock_entry_id": str(output_entry.id) if output_entry else None,
+    }

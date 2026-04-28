@@ -99,6 +99,32 @@ export type OrderEntry = {
   order_index: number;
 };
 
+export type Build = {
+  id: string;
+  name: string;
+  project_id: string;
+  quantity: number;
+  status: "planned" | "in_progress" | "complete" | "cancelled";
+  started_at: string | null;
+  completed_at: string | null;
+  output_lot_id: string | null;
+  comments: string | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BuildShortageRow = {
+  project_entry_id: string;
+  part_id: string;
+  part_name: string;
+  required: number;
+  available: number;
+  substitute_ids: string[];
+  substitute_available: number;
+  short_by: number;
+};
+
 export type ProjectEntry = {
   id: string;
   project_id: string;
