@@ -1,0 +1,32 @@
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+import type { Part, StockEntry, StorageLocation } from "@/types";
+import { DataTable } from "@/components/DataTable";
+import { Link } from "react-router-dom";
+
+export default function StockHistory() {
+  const { data } = useQuery({ queryKey: ["stock-history"], queryFn: () => api.get<StockEntry[]>("/stock/history?limit=500") });
+  const { data: parts } = useQuery({ queryKey: ["parts"], queryFn: () => api.get<Part[]>("/parts") });
+  const { data: storage } = useQuery({ queryKey: ["storage"], queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const partName = new Map(parts?.map(p => [p.id, p.name]) ?? []);
+  const sName = new Map(storage?.map(s => [s.id, s.name]) ?? []);
+  return (
+    <div>
+      <h1 className="text-xl font-semibold mb-3">Global stock history</h1>
+      <DataTable
+        rows={data ?? []}
+        rowKey={r => r.id}
+        empty="No stock activity yet."
+        exportFilename="stock-history"
+        columns={[
+          { key: "occurred_at", header: "Date", accessor: r => r.occurred_at, render: r => new Date(r.occurred_at).toLocaleString() },
+          { key: "operation_type", header: "Op", accessor: r => r.operation_type },
+          { key: "part", header: "Part", accessor: r => partName.get(r.part_id) || r.part_id, render: r => <Link className="text-accent" to={`/parts/${r.part_id}/info`}>{partName.get(r.part_id) || r.part_id}</Link> },
+          { key: "qty", header: "Δ", accessor: r => r.quantity_delta },
+          { key: "storage", header: "Storage", accessor: r => r.storage_location_id ? (sName.get(r.storage_location_id) || r.storage_location_id) : "" },
+          { key: "comments", header: "Comments", accessor: r => r.comments ?? "" },
+        ]}
+      />
+    </div>
+  );
+}

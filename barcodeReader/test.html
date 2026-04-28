@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Scandit barcode test</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #0b0c0f; color: #e6e6e6;
+               font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+  #scanner { flex: 1 1 auto; position: relative; background: #000; min-height: 0; overflow: hidden; }
+  #results { flex: 0 0 38vh; border-top: 1px solid #222; display: flex; flex-direction: column;
+             min-height: 0; position: relative; z-index: 5; background: #0b0c0f; }
+  #status-bar { padding: 8px 12px; background: #14161b; border-bottom: 1px solid #222;
+                display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  #status-dot { width: 10px; height: 10px; border-radius: 50%; background: #888; flex: 0 0 auto; }
+  #status-dot.ready { background: #4ade80; box-shadow: 0 0 8px #4ade80; }
+  #status-dot.err   { background: #f87171; box-shadow: 0 0 8px #f87171; }
+  #status-text { flex: 1; min-width: 200px; }
+  #count { opacity: .7; font-variant-numeric: tabular-nums; }
+  button.btn { background: #222; color: #ddd; border: 1px solid #333; border-radius: 6px;
+               padding: 4px 10px; cursor: pointer; font: inherit; }
+  button.btn:hover { background: #2a2d34; }
+
+  #sym-details { flex: 0 0 auto; }
+  #sym-details > summary { cursor: pointer; list-style: none; padding: 4px 10px;
+                           border: 1px solid #333; border-radius: 6px; background: #222; user-select: none; }
+  #sym-details > summary::-webkit-details-marker { display: none; }
+  #sym-details[open] > summary { background: #2a2d34; }
+
+  #sym-panel { position: fixed; z-index: 1000; right: 12px; bottom: calc(38vh + 8px);
+               background: #14161b; border: 1px solid #2a2d34; border-radius: 8px;
+               padding: 12px; max-width: min(720px, calc(100vw - 24px));
+               max-height: calc(62vh - 24px); overflow: auto;
+               box-shadow: 0 20px 50px rgba(0,0,0,.4); display: none; }
+  #sym-panel.open { display: block; }
+  #sym-panel .actions { display: flex; gap: 6px; margin-bottom: 10px; }
+  #sym-panel .hint { font-size: 12px; color: #9aa0ac; margin-bottom: 10px; line-height: 1.35; }
+  #sym-panel h4 { margin: 8px 0 6px; font-size: 12px; letter-spacing: .08em;
+                  text-transform: uppercase; color: #9aa0ac; font-weight: 600; }
+  #sym-panel .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 12px; }
+  #sym-panel label { display: flex; align-items: center; gap: 8px; padding: 2px 0;
+                     font-size: 13px; cursor: pointer; }
+  #sym-panel label input { accent-color: #4ade80; }
+
+  #list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
+  #list li { display: grid; grid-template-columns: 80px 150px 1fr; gap: 10px;
+             padding: 6px 12px; border-bottom: 1px solid #1a1c21; }
+  #list li .t { color: #8ab4ff; font-variant-numeric: tabular-nums; }
+  #list li .s { color: #9ae6b4; }
+  #list li .d { word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #list li:first-child { background: #151821; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="scanner"></div>
+  <div id="sym-panel">
+    <div class="actions">
+      <button type="button" class="btn" data-action="all">All</button>
+      <button type="button" class="btn" data-action="none">None</button>
+      <button type="button" class="btn" data-action="common">Common</button>
+    </div>
+    <div class="hint">Your license may not cover every symbology. Enabling an unlicensed one logs a warning in the console; licensed ones keep decoding normally.</div>
+    <div id="sym-groups"></div>
+  </div>
+  <div id="results">
+    <div id="status-bar">
+      <span id="status-dot"></span>
+      <span id="status-text">Initializing…</span>
+      <span id="count">0 scans</span>
+      <details id="sym-details"><summary id="sym-summary">Symbologies (0/0)</summary></details>
+      <button id="clear" type="button" class="btn">Clear</button>
+    </div>
+    <ul id="list"></ul>
+  </div>
+</div>
+
+<script type="module">
+// ── Paste your extracted Scandit license key here ─────────────────────────────
+const LICENSE_KEY = "ARqyj56BCn1qC4rajxmvbwY8FsD5CN4jq0T+kURLRlAAej9Rrmc8K6YypikELDzmRkxWEa5x8IXzKgKw4FJ5WIVbzzyCb4uY02OlGv0cmxs2TZUhUFar0a52fOs+JMK28wXcYKkRdF5TBJNA8Rnheb8RDK55Ib01/CYq8rrqxQSgCjtVmd/wBbVrpnT9lINbgIp8DSYgH9y5yIp515dPGnuOIms4P0bKICJmSu5qboptMDfqV+xzTWHJZA/d52cVc1dzIAPoZFd7/hUKmVv35+7uh+xVy6Rfa+NEs4SqyMM3LyskVW0VxgA6CJl9mFuO1RMGmoiPdok71U5EE/9039wlXuh74G52TsZWolPKmqGUOqNwqWi+eO5TEd1pwgc20TI8XqzfATKQMC4gCdhHMMG1/iU3Z9nNvbaPpzmPjzHv8MeAq3l73LawxtbQ5FaO2pnIUrJPWkJBxyyiTVCCZ1YGEv3UafNr1OHL6goOF/kg1ALs1Z1w/Lb2poSU5kPRw50PyV6sYRqlYQqcF3H8UdSgfNO4k2tpxqpneyJhlV0b57E2+YE2uuAmCDEoD3pl6MhchsUOCd58Ep4zqQN/3fBDpD9fQ19Anqt3pzHXMhG7bvfQXDcmcgncbz3dwJG9ZhcG7X95OnSxcpeDO52laacIY+qAhqet+Nspl4lg6O6uQLMJzecDfM2c1p8X2PGZI5UujpKXBT1kkpYCmUE3gVqkOLj/y2T+KqChMx9ViBHJp7P5urh4SOYpkyVRdpZljQApUtF0+MifO25Htg/9Zt+HZL56c34aShjrujkX6YKHlE8LVoAEGPHy7Vb/6iOu2aafKRch";
+// ──────────────────────────────────────────────────────────────────────────────
+
+import {
+  DataCaptureContext,
+  DataCaptureView,
+  Camera,
+  FrameSourceState,
+} from "https://esm.sh/@scandit/web-datacapture-core@8.1.1";
+
+import {
+  barcodeCaptureLoader,
+  BarcodeCapture,
+  BarcodeCaptureOverlay,
+  BarcodeCaptureSettings,
+  Symbology,
+} from "https://esm.sh/@scandit/web-datacapture-barcode@8.1.1";
+
+const SYMBOLOGIES = [
+  // 1D
+  { key: "EAN13UPCA",           label: "EAN-13 / UPC-A",      group: "1D" },
+  { key: "UPCE",                label: "UPC-E",               group: "1D" },
+  { key: "EAN8",                label: "EAN-8",               group: "1D" },
+  { key: "Code128",             label: "Code 128",            group: "1D" },
+  { key: "Code39",              label: "Code 39",             group: "1D" },
+  { key: "Code93",              label: "Code 93",             group: "1D" },
+  { key: "Code11",              label: "Code 11",             group: "1D" },
+  { key: "Code25",              label: "Code 25",             group: "1D" },
+  { key: "Code32",              label: "Code 32",             group: "1D" },
+  { key: "Codabar",             label: "Codabar",             group: "1D" },
+  { key: "InterleavedTwoOfFive",label: "Interleaved 2 of 5",  group: "1D" },
+  { key: "MatrixTwoOfFive",     label: "Matrix 2 of 5",       group: "1D" },
+  { key: "IATATwoOfFive",       label: "IATA 2 of 5",         group: "1D" },
+  { key: "MSIPlessey",          label: "MSI Plessey",         group: "1D" },
+  { key: "GS1Databar",          label: "GS1 DataBar",         group: "1D" },
+  { key: "GS1DatabarExpanded",  label: "GS1 DataBar Exp.",    group: "1D" },
+  { key: "GS1DatabarLimited",   label: "GS1 DataBar Ltd.",    group: "1D" },
+  { key: "USPSIntelligentMail", label: "USPS Intell. Mail",   group: "Postal" },
+  { key: "KIX",                 label: "KIX",                 group: "Postal" },
+  { key: "Lapa4SC",             label: "LAPA 4SC",            group: "Postal" },
+  // 2D
+  { key: "QR",                  label: "QR",                  group: "2D" },
+  { key: "MicroQR",             label: "Micro QR",            group: "2D" },
+  { key: "DataMatrix",          label: "DataMatrix",          group: "2D" },
+  { key: "Aztec",               label: "Aztec",               group: "2D" },
+  { key: "MaxiCode",            label: "MaxiCode",            group: "2D" },
+  { key: "DotCode",             label: "DotCode",             group: "2D" },
+  { key: "PDF417",              label: "PDF417",              group: "2D" },
+  { key: "MicroPDF417",         label: "Micro PDF417",        group: "2D" },
+  { key: "ArUco",               label: "ArUco",               group: "2D" },
+];
+
+// The symbologies actually covered by the extracted PartsBox license.
+// Enabling anything outside this set triggers a code-24 warning from the
+// decoder worker (licensed ones keep decoding normally).
+const LICENSED = new Set(["Code128", "Code39", "QR", "DataMatrix", "PDF417"]);
+
+// "Common" preset = the licensed set (quick way back after clicking All/None).
+const COMMON = LICENSED;
+
+const AVAILABLE = SYMBOLOGIES.filter(s => Symbology[s.key] !== undefined);
+const enabled = new Set(LICENSED);
+
+const statusDot  = document.getElementById("status-dot");
+const statusText = document.getElementById("status-text");
+const countEl    = document.getElementById("count");
+const listEl     = document.getElementById("list");
+const symSummary = document.getElementById("sym-summary");
+const symDetails = document.getElementById("sym-details");
+const symPanel   = document.getElementById("sym-panel");
+const symGroups  = document.getElementById("sym-groups");
+
+document.getElementById("clear").addEventListener("click", () => {
+  listEl.innerHTML = "";
+  scanCount = 0;
+  countEl.textContent = "0 scans";
+});
+
+// The <details> controls the panel's visibility (positioned absolutely over the video).
+symDetails.addEventListener("toggle", () => {
+  symPanel.classList.toggle("open", symDetails.open);
+});
+
+let scanCount = 0;
+let capture = null;   // set after init
+
+function setStatus(text, kind) {
+  statusText.textContent = text;
+  statusDot.classList.remove("ready", "err");
+  if (kind) statusDot.classList.add(kind);
+}
+
+function appendResult(barcode) {
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  const ss = String(now.getSeconds()).padStart(2, "0");
+
+  const li = document.createElement("li");
+  const t = document.createElement("span"); t.className = "t"; t.textContent = `${hh}:${mm}:${ss}`;
+  const s = document.createElement("span"); s.className = "s"; s.textContent = barcode.symbology ?? "?";
+  const d = document.createElement("span"); d.className = "d"; d.textContent = barcode.data ?? "(no data)";
+  li.append(t, s, d);
+  listEl.prepend(li);
+
+  scanCount += 1;
+  countEl.textContent = `${scanCount} scan${scanCount === 1 ? "" : "s"}`;
+}
+
+function updateSummary() {
+  symSummary.textContent = `Symbologies (${enabled.size}/${AVAILABLE.length})`;
+}
+
+function buildSettings() {
+  const s = new BarcodeCaptureSettings();
+  for (const sym of AVAILABLE) {
+    s.enableSymbology(Symbology[sym.key], enabled.has(sym.key));
+  }
+  return s;
+}
+
+async function applyCurrent() {
+  updateSummary();
+  if (!capture) return;
+  try {
+    await capture.applySettings(buildSettings());
+  } catch (err) {
+    console.error("applySettings failed:", err);
+  }
+}
+
+function renderSymPanel() {
+  const groups = new Map();
+  for (const sym of AVAILABLE) {
+    if (!groups.has(sym.group)) groups.set(sym.group, []);
+    groups.get(sym.group).push(sym);
+  }
+
+  symGroups.innerHTML = "";
+  for (const [group, syms] of groups) {
+    const h = document.createElement("h4"); h.textContent = group;
+    const grid = document.createElement("div"); grid.className = "grid";
+    for (const sym of syms) {
+      const label = document.createElement("label");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = enabled.has(sym.key);
+      cb.dataset.key = sym.key;
+      cb.addEventListener("change", () => {
+        if (cb.checked) enabled.add(sym.key);
+        else enabled.delete(sym.key);
+        applyCurrent();
+      });
+      const span = document.createElement("span"); span.textContent = sym.label;
+      label.append(cb, span);
+      grid.appendChild(label);
+    }
+    symGroups.append(h, grid);
+  }
+
+  symPanel.querySelectorAll("button[data-action]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (btn.dataset.action === "all")    enabled.clear(), AVAILABLE.forEach(s => enabled.add(s.key));
+      if (btn.dataset.action === "none")   enabled.clear();
+      if (btn.dataset.action === "common") { enabled.clear(); COMMON.forEach(k => enabled.add(k)); }
+      symPanel.querySelectorAll("input[type=checkbox]").forEach(cb => {
+        cb.checked = enabled.has(cb.dataset.key);
+      });
+      applyCurrent();
+    });
+  });
+
+  updateSummary();
+}
+
+(async function main() {
+  try {
+    if (!window.isSecureContext) {
+      throw new Error(
+        `Not a secure context (${location.origin}). Scandit's worker needs crypto.subtle — open via http://localhost:8000 or http://127.0.0.1:8000, not 0.0.0.0.`
+      );
+    }
+
+    renderSymPanel();
+    setStatus("Loading engine…");
+
+    // libraryLocation points the SDK at the locally-downloaded WASM/JS sitting
+    // alongside this HTML, so the downloaded binary is what decodes frames.
+    const context = await DataCaptureContext.forLicenseKey(LICENSE_KEY, {
+      libraryLocation: new URL("./", window.location.href).toString(),
+      moduleLoaders: [barcodeCaptureLoader({ highEndBlurryRecognition: false })],
+    });
+
+    setStatus("Starting camera…");
+
+    const camera = Camera.pickBestGuess();
+    if (!camera) throw new Error("No camera available (Camera.pickBestGuess returned nothing)");
+    await camera.setMirrorImageEnabled(false);
+    await context.setFrameSource(camera);
+
+    capture = await BarcodeCapture.forContext(context, buildSettings());
+    capture.addListener({
+      didScan: (_mode, session) => {
+        if (session.newlyRecognizedBarcode) appendResult(session.newlyRecognizedBarcode);
+      },
+    });
+
+    const view = await DataCaptureView.forContext(context);
+    view.connectToElement(document.getElementById("scanner"));
+
+    // Live overlay: SDK draws a brush around every recognized barcode in the preview.
+    const overlay = await BarcodeCaptureOverlay.withBarcodeCapture(capture);
+    await view.addOverlay(overlay);
+
+    await camera.switchToDesiredState(FrameSourceState.On);
+
+    setStatus("Ready — point the camera at any enabled barcode", "ready");
+  } catch (err) {
+    console.error(err);
+    setStatus(`Error: ${err?.message ?? err}`, "err");
+  }
+})();
+</script>
+</body>
+</html>

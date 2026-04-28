@@ -1,0 +1,88 @@
+from __future__ import annotations
+
+from fastapi import APIRouter, HTTPException, Query, status
+
+from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
+from app.core.responses import ok
+from app.domain.stock.schemas import (
+    AddStockIn,
+    AdjustStockIn,
+    MoveStockIn,
+    RemoveStockIn,
+)
+from app.domain.stock.service import (
+    StockError,
+    add_stock,
+    adjust_stock,
+    history_global,
+    move_stock,
+    remove_stock,
+)
+
+router = APIRouter()
+
+
+def _serialize_entry(e):
+    return {
+        "id": str(e.id),
+        "part_id": str(e.part_id),
+        "lot_id": str(e.lot_id) if e.lot_id else None,
+        "storage_location_id": str(e.storage_location_id) if e.storage_location_id else None,
+        "quantity_delta": e.quantity_delta,
+        "status": e.status,
+        "unit_price": float(e.unit_price) if e.unit_price is not None else None,
+        "currency": e.currency,
+        "operation_type": e.operation_type,
+        "comments": e.comments,
+        "occurred_at": e.occurred_at.isoformat(),
+    }
+
+
+@router.post("/add")
+def add(payload: AddStockIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+    try:
+        e = add_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
+        db.commit()
+    except StockError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return ok(_serialize_entry(e))
+
+
+@router.post("/remove")
+def remove(payload: RemoveStockIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+    try:
+        e = remove_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
+        db.commit()
+    except StockError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return ok(_serialize_entry(e))
+
+
+@router.post("/move")
+def move(payload: MoveStockIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+    try:
+        out_e, in_e = move_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
+        db.commit()
+    except StockError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return ok({"out": _serialize_entry(out_e), "in": _serialize_entry(in_e)})
+
+
+@router.post("/adjust")
+def adjust(payload: AdjustStockIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+    try:
+        e = adjust_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
+        db.commit()
+    except StockError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return ok(_serialize_entry(e) if e is not None else None, "no change" if e is None else "OK")
+
+
+@router.get("/history")
+def history(db: DbSession, ws: CurrentWorkspace, limit: int = Query(default=200, le=1000)):
+    rows = history_global(db, workspace_id=ws.id, limit=limit)
+    return ok([_serialize_entry(e) for e in rows])
