@@ -21,8 +21,8 @@ router = APIRouter()
 
 @router.get("/low-stock")
 def low_stock(db: DbSession, ws: CurrentWorkspace):
-    """Parts whose on-hand is below their `low_stock_report_quantity`.
-    Parts without a threshold are skipped."""
+    """Parts whose *available* (on-hand minus reserved) is below their
+    `low_stock_report_quantity`. Parts without a threshold are skipped."""
     parts = list(
         db.execute(
             select(Part)
@@ -38,12 +38,21 @@ def low_stock(db: DbSession, ws: CurrentWorkspace):
         .group_by(StockEntry.part_id)
     ).all()
     on_hand = {row[0]: int(row[1]) for row in on_hand_rows}
+    reserved_rows = db.execute(
+        select(StockEntry.part_id, func.coalesce(func.sum(StockEntry.quantity_delta), 0))
+        .where(StockEntry.workspace_id == ws.id)
+        .where(StockEntry.status == "reserved")
+        .group_by(StockEntry.part_id)
+    ).all()
+    reserved = {row[0]: int(row[1]) for row in reserved_rows}
 
     out = []
     for p in parts:
         cur = on_hand.get(p.id, 0)
+        res = reserved.get(p.id, 0)
+        avail = cur - res
         threshold = p.low_stock_report_quantity or 0
-        if cur < threshold:
+        if avail < threshold:
             out.append(
                 {
                     "part_id": str(p.id),
@@ -51,8 +60,10 @@ def low_stock(db: DbSession, ws: CurrentWorkspace):
                     "manufacturer": p.manufacturer,
                     "mpn": p.mpn,
                     "on_hand": cur,
+                    "reserved": res,
+                    "available": avail,
                     "threshold": threshold,
-                    "short_by": threshold - cur,
+                    "short_by": threshold - avail,
                 }
             )
     out.sort(key=lambda r: r["short_by"], reverse=True)

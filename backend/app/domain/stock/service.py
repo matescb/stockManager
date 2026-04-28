@@ -82,6 +82,27 @@ def total_for_part(db: Session, *, workspace_id: UUID, part_id: UUID, status: st
     return current_quantity(db, workspace_id=workspace_id, part_id=part_id, status=status)
 
 
+def reserved_quantity(db: Session, *, workspace_id: UUID, part_id: UUID) -> int:
+    """Net quantity reserved (planned but not consumed) for a part. Reserve
+    rows add positive deltas; release rows add negatives so an equivalent
+    release brings the total back to zero."""
+    q = (
+        select(func.coalesce(func.sum(StockEntry.quantity_delta), 0))
+        .where(StockEntry.workspace_id == workspace_id)
+        .where(StockEntry.part_id == part_id)
+        .where(StockEntry.status == "reserved")
+    )
+    return int(db.execute(q).scalar_one() or 0)
+
+
+def available_quantity(db: Session, *, workspace_id: UUID, part_id: UUID) -> int:
+    """On-hand stock minus what is reserved for planned builds."""
+    return (
+        current_quantity(db, workspace_id=workspace_id, part_id=part_id)
+        - reserved_quantity(db, workspace_id=workspace_id, part_id=part_id)
+    )
+
+
 def stock_for_storage(
     db: Session, *, workspace_id: UUID, storage_location_id: UUID, status: str = "on_hand"
 ) -> list[dict]:

@@ -11,6 +11,7 @@ from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.domain.parts.models import Part, PartMetaMember, PartSubstitute
 from app.domain.stock.service import (
+    reserved_quantity,
     stock_summary_for_part,
     total_for_part,
 )
@@ -55,7 +56,17 @@ class PartPatch(BaseModel):
     serialized: bool | None = None
 
 
-def _serialize(p: Part, *, on_hand: int | None = None) -> dict:
+def _serialize(
+    p: Part,
+    *,
+    on_hand: int | None = None,
+    reserved: int | None = None,
+    available: int | None = None,
+) -> dict:
+    if reserved is None:
+        reserved = 0
+    if available is None and on_hand is not None:
+        available = on_hand - reserved
     return {
         "id": str(p.id),
         "part_type": p.part_type,
@@ -74,6 +85,8 @@ def _serialize(p: Part, *, on_hand: int | None = None) -> dict:
         "serialized": p.serialized,
         "archived_at": p.archived_at.isoformat() if p.archived_at else None,
         "on_hand": on_hand,
+        "reserved": reserved,
+        "available": available if available is not None else 0,
     }
 
 
@@ -106,7 +119,8 @@ def list_parts(
     out = []
     for p in parts:
         on_hand = total_for_part(db, workspace_id=ws.id, part_id=p.id)
-        out.append(_serialize(p, on_hand=on_hand))
+        reserved = reserved_quantity(db, workspace_id=ws.id, part_id=p.id)
+        out.append(_serialize(p, on_hand=on_hand, reserved=reserved))
     return ok(out)
 
 
@@ -133,7 +147,7 @@ def create_part(payload: PartIn, db: DbSession, ws: CurrentWorkspace, user: Curr
     )
     db.add(p)
     db.commit()
-    return ok(_serialize(p, on_hand=0))
+    return ok(_serialize(p, on_hand=0, reserved=0))
 
 
 def _get_part(db, ws_id, part_id) -> Part:
@@ -147,7 +161,8 @@ def _get_part(db, ws_id, part_id) -> Part:
 def get_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
     p = _get_part(db, ws.id, part_id)
     on_hand = total_for_part(db, workspace_id=ws.id, part_id=p.id)
-    return ok(_serialize(p, on_hand=on_hand))
+    reserved = reserved_quantity(db, workspace_id=ws.id, part_id=p.id)
+    return ok(_serialize(p, on_hand=on_hand, reserved=reserved))
 
 
 @router.patch("/{part_id}")
@@ -157,7 +172,13 @@ def patch_part(part_id: UUID, payload: PartPatch, db: DbSession, ws: CurrentWork
         setattr(p, k, v)
     p.updated_by = user.id
     db.commit()
-    return ok(_serialize(p, on_hand=total_for_part(db, workspace_id=ws.id, part_id=p.id)))
+    return ok(
+        _serialize(
+            p,
+            on_hand=total_for_part(db, workspace_id=ws.id, part_id=p.id),
+            reserved=reserved_quantity(db, workspace_id=ws.id, part_id=p.id),
+        )
+    )
 
 
 @router.post("/{part_id}/archive")

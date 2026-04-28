@@ -126,6 +126,121 @@ def shortage_analysis(
     return out
 
 
+def _consumable_entries(
+    db: Session, *, workspace_id: UUID, project: Project
+) -> list[ProjectEntry]:
+    """BOM entries that should reserve stock — same filter as shortage_analysis."""
+    entries = list(
+        db.execute(
+            select(ProjectEntry)
+            .where(ProjectEntry.workspace_id == workspace_id)
+            .where(ProjectEntry.project_id == project.id)
+            .order_by(ProjectEntry.order_index)
+        ).scalars()
+    )
+    return [
+        e
+        for e in entries
+        if not e.dnp and e.entry_type in ("part", "meta_part") and e.part_id is not None
+    ]
+
+
+def apply_reservations(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    user_id: UUID | None,
+    build: Build,
+    project: Project,
+) -> int:
+    """Write one `status='reserved'` row per consumable BOM entry.
+
+    Returns the number of reservation rows written. A reservation is keyed
+    only by (build_id, part_id, project_id, entry quantity) — no storage
+    location or lot is bound, since the consumer picks those at consume-time.
+    """
+    now = _now()
+    written = 0
+    for e in _consumable_entries(db, workspace_id=workspace_id, project=project):
+        part = db.get(Part, e.part_id)
+        if part is None:
+            continue
+        qty = _required(e, part, build.quantity)
+        if qty <= 0:
+            continue
+        row = StockEntry(
+            workspace_id=workspace_id,
+            part_id=part.id,
+            quantity_delta=qty,
+            status="reserved",
+            operation_type="reserve",
+            build_id=build.id,
+            project_id=project.id,
+            occurred_at=now,
+            created_by=user_id,
+        )
+        db.add(row)
+        written += 1
+    if written:
+        db.flush()
+    return written
+
+
+def release_reservations(
+    db: Session, *, workspace_id: UUID, user_id: UUID | None, build: Build
+) -> int:
+    """Write a counter-row for every outstanding reserve row tied to `build`.
+
+    "Outstanding" = a reserve row whose net contribution is still positive,
+    i.e. a row with `operation_type='reserve'` for which no matching
+    `operation_type='release'` (`related_entry_id == reserve.id`) yet exists.
+    Idempotent: returns 0 if there is nothing to release.
+    """
+    reserve_rows = list(
+        db.execute(
+            select(StockEntry)
+            .where(StockEntry.workspace_id == workspace_id)
+            .where(StockEntry.build_id == build.id)
+            .where(StockEntry.status == "reserved")
+            .where(StockEntry.operation_type == "reserve")
+        ).scalars()
+    )
+    if not reserve_rows:
+        return 0
+    released_ids = set(
+        db.execute(
+            select(StockEntry.related_entry_id)
+            .where(StockEntry.workspace_id == workspace_id)
+            .where(StockEntry.build_id == build.id)
+            .where(StockEntry.status == "reserved")
+            .where(StockEntry.operation_type == "release")
+            .where(StockEntry.related_entry_id.is_not(None))
+        ).scalars()
+    )
+    now = _now()
+    written = 0
+    for r in reserve_rows:
+        if r.id in released_ids:
+            continue
+        counter = StockEntry(
+            workspace_id=workspace_id,
+            part_id=r.part_id,
+            quantity_delta=-r.quantity_delta,
+            status="reserved",
+            operation_type="release",
+            related_entry_id=r.id,
+            build_id=build.id,
+            project_id=r.project_id,
+            occurred_at=now,
+            created_by=user_id,
+        )
+        db.add(counter)
+        written += 1
+    if written:
+        db.flush()
+    return written
+
+
 def consume(
     db: Session,
     *,
@@ -138,6 +253,10 @@ def consume(
     """Apply a build's consumption plan. All-or-nothing within the request."""
     if build.status not in ("planned", "in_progress"):
         raise BuildError(f"build is {build.status}")
+
+    # Release any outstanding reservations first so the consumption itself
+    # doesn't get double-counted against on_hand+reserved.
+    release_reservations(db, workspace_id=workspace_id, user_id=user_id, build=build)
 
     entries_by_id: dict[UUID, ProjectEntry] = {
         e.id: e

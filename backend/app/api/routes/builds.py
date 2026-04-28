@@ -10,7 +10,13 @@ from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.domain.builds.models import Build
 from app.domain.builds.schemas import BuildCreateIn, BuildPatchIn, ConsumeIn
-from app.domain.builds.service import BuildError, consume, shortage_analysis
+from app.domain.builds.service import (
+    BuildError,
+    apply_reservations,
+    consume,
+    release_reservations,
+    shortage_analysis,
+)
 from app.domain.projects.models import Project
 
 router = APIRouter()
@@ -70,6 +76,14 @@ def create_build(payload: BuildCreateIn, db: DbSession, ws: CurrentWorkspace, us
         updated_by=user.id,
     )
     db.add(b)
+    db.flush()
+    try:
+        apply_reservations(
+            db, workspace_id=ws.id, user_id=user.id, build=b, project=project
+        )
+    except Exception:
+        db.rollback()
+        raise
     db.commit()
     return ok(_serialize(b))
 
@@ -93,16 +107,32 @@ def patch_build(build_id: UUID, payload: BuildPatchIn, db: DbSession, ws: Curren
     b = _get_build(db, ws.id, build_id)
     if b.status == "complete" and payload.status != "cancelled":
         raise HTTPException(status_code=400, detail="completed builds are read-only")
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    patch_data = payload.model_dump(exclude_unset=True)
+    quantity_changed = "quantity" in patch_data and patch_data["quantity"] != b.quantity
+    cancelling = patch_data.get("status") == "cancelled" and b.status != "cancelled"
+    was_planned_or_in_progress = b.status in ("planned", "in_progress")
+    for k, v in patch_data.items():
         setattr(b, k, v)
     b.updated_by = user.id
+    db.flush()
+
+    if cancelling:
+        release_reservations(db, workspace_id=ws.id, user_id=user.id, build=b)
+    elif quantity_changed and was_planned_or_in_progress and b.status in ("planned", "in_progress"):
+        project = _get_project(db, ws.id, b.project_id)
+        release_reservations(db, workspace_id=ws.id, user_id=user.id, build=b)
+        apply_reservations(
+            db, workspace_id=ws.id, user_id=user.id, build=b, project=project
+        )
+
     db.commit()
     return ok(_serialize(b))
 
 
 @router.post("/{build_id}/archive")
-def archive_build(build_id: UUID, db: DbSession, ws: CurrentWorkspace):
+def archive_build(build_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     b = _get_build(db, ws.id, build_id)
+    release_reservations(db, workspace_id=ws.id, user_id=user.id, build=b)
     b.archived_at = datetime.now(timezone.utc)
     db.commit()
     return ok(None, "archived")
