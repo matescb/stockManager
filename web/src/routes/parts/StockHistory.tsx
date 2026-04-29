@@ -4,6 +4,7 @@ import { api } from "@/lib/api";
 import type { Part, StockEntry, StorageLocation } from "@/types";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
+import PartsTopNav from "@/components/PartsTopNav";
 import { Link } from "react-router-dom";
 
 export default function StockHistory() {
@@ -14,7 +15,7 @@ export default function StockHistory() {
   const sName = new Map(storage?.map(s => [s.id, s.name]) ?? []);
   return (
     <div>
-      <h1 className="text-xl font-semibold mb-3">Global stock history</h1>
+      <PartsTopNav />
       <DataTable
         rows={data ?? []}
         rowKey={r => r.id}

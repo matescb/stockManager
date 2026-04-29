@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import type { Lot, Part } from "@/types";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
+import PartsTopNav from "@/components/PartsTopNav";
 
 export default function LotsList() {
   const { data } = useQuery({ queryKey: ["lots"], queryFn: () => api.get<Lot[]>("/lots") });
@@ -14,7 +15,7 @@ export default function LotsList() {
 
   return (
     <div>
-      <h1 className="text-xl font-semibold mb-3">All lots</h1>
+      <PartsTopNav />
       <DataTable
         rows={data ?? []}
         rowKey={r => r.id}

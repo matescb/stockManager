@@ -1,9 +1,10 @@
-import { Link, NavLink, useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Boxes } from "lucide-react";
 import { api } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
+import PartsTopNav from "@/components/PartsTopNav";
 import type { Part } from "@/types";
 
 export default function PartsList({ archived = false }: { archived?: boolean }) {
@@ -15,16 +16,14 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
 
   return (
     <div>
-      <div className="flex items-center gap-1 mb-3">
-        <NavLink to="/parts" end className={({ isActive }) => "btn " + (isActive ? "border-accent/50 text-accent" : "")}>Parts</NavLink>
-        <NavLink to="/parts/lots" className={({ isActive }) => "btn " + (isActive ? "border-accent/50 text-accent" : "")}>Lots</NavLink>
-        <NavLink to="/parts/stock/history" className={({ isActive }) => "btn " + (isActive ? "border-accent/50 text-accent" : "")}>Stock history</NavLink>
-        <NavLink to="/parts/archived" className={({ isActive }) => "btn " + (isActive ? "border-accent/50 text-accent" : "")}>Archived</NavLink>
-        <div className="ml-auto flex gap-1">
-          <Link to="/parts/scan" className="btn">Scan</Link>
-          <Link to="/parts/create" className="btn-primary">+ Part</Link>
-        </div>
-      </div>
+      <PartsTopNav
+        rightAccessory={
+          <>
+            <Link to="/parts/scan" className="btn">Scan</Link>
+            <Link to="/parts/create" className="btn-primary">+ Part</Link>
+          </>
+        }
+      />
       {isLoading ? (
         <div className="text-muted">Loading…</div>
       ) : (
