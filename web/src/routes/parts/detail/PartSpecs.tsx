@@ -22,6 +22,10 @@ const SOURCE_LABEL: Record<SpecSource, string> = {
   override: "Override",
 };
 
+const PROVIDER_LABEL: Record<string, string> = {
+  mouser: "Mouser",
+};
+
 /**
  * The "Specs" tab on a part. Provider-supplied rows (from the
  * configured MPN provider) carry source='provider'; user-typed rows
@@ -107,6 +111,9 @@ export default function PartSpecs() {
   }
 
   const rows = (data ?? []).filter(r => !RESERVED.has(r.key));
+  const providerCount = rows.filter(r => r.source === "provider").length;
+  const showSparseHint =
+    !!part.linked_provider && providerCount > 0 && providerCount < 4;
 
   return (
     <div className="card p-4 max-w-3xl">
@@ -114,6 +121,24 @@ export default function PartSpecs() {
         <h3 className="text-md font-semibold">Specifications</h3>
         <span className="ml-2 text-xs text-muted">{rows.length} {rows.length === 1 ? "row" : "rows"}</span>
       </div>
+
+      {showSparseHint && (
+        <div className="rounded-md border border-border bg-panel2/50 p-3 mb-3 text-xs text-muted">
+          {PROVIDER_LABEL[part.linked_provider!] ?? part.linked_provider}'s
+          API doesn't always expose the full parametric table — what's
+          shown above is what we could pull. Add specs below, or copy
+          remaining ones from the
+          {" "}
+          <a
+            className="text-accent hover:underline"
+            href={`https://www.mouser.com/c/?q=${encodeURIComponent(part.mpn ?? "")}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            product page
+          </a>.
+        </div>
+      )}
 
       {isLoading ? (
         <div className="text-muted text-sm">Loading…</div>
