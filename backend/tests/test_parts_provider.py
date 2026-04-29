@@ -110,7 +110,17 @@ def test_lookup_mouser_success_path(authed, monkeypatch):
                     "Description": "Thick Film Resistors - SMD 0R 1/16W 5% 0402",
                     "Category": "Resistors",
                     "DataSheetUrl": "https://example.com/datasheet.pdf",
+                    "ImagePath": "https://example.com/image.jpg",
                     "ProductDetailUrl": "https://www.mouser.com/ProductDetail/...",
+                    "ProductAttributes": [
+                        {"AttributeName": "Resistance", "AttributeValue": "0 Ohms"},
+                        {"AttributeName": "Tolerance", "AttributeValue": "5 %"},
+                        {"AttributeName": "Power Rating", "AttributeValue": "1/16 W"},
+                        {"AttributeName": "Package / Case", "AttributeValue": "0402 (1005 Metric)"},
+                        # malformed rows should be skipped
+                        {"AttributeName": "", "AttributeValue": "skip"},
+                        {"AttributeName": "Empty", "AttributeValue": ""},
+                    ],
                 }
             ],
         },
@@ -135,7 +145,18 @@ def test_lookup_mouser_success_path(authed, monkeypatch):
     assert body["result"]["mpn"] == "RC0402JR-070R"
     assert body["result"]["manufacturer"] == "Yageo"
     assert body["result"]["datasheet_url"] == "https://example.com/datasheet.pdf"
+    assert body["result"]["image_url"] == "https://example.com/image.jpg"
     assert body["result"]["category"] == "Resistors"
+    # ProductAttributes flow through as specs[]; malformed rows are dropped.
+    spec_keys = [s["key"] for s in body["result"]["specs"]]
+    assert "Resistance" in spec_keys
+    assert "Tolerance" in spec_keys
+    assert "Power Rating" in spec_keys
+    assert "Package / Case" in spec_keys
+    assert "" not in spec_keys
+    assert "Empty" not in spec_keys
+    # Footprint is auto-extracted from the matching attribute name.
+    assert body["result"]["footprint"] == "0402 (1005 Metric)"
     # API key must travel in the URL we POST to, not anywhere else
     assert "fake-key" in captured["url"]
     assert captured["payload"]["SearchByPartRequest"]["mouserPartNumber"] == "RC0402JR-070R"

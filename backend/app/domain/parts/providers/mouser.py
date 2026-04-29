@@ -56,9 +56,46 @@ class MouserProvider:
         if not parts:
             return {"found": False, "result": None, "message": "no match for MPN"}
 
-        # Take the first match — the API is asked for `Exact` so this is
-        # almost always 0 or 1.
+        # Take the first match — for partial-match search this is the
+        # closest stocked variant.
         p = parts[0]
+
+        # ProductAttributes is a list like
+        #   [{"AttributeName": "Resistance", "AttributeValue": "1 kOhms"}, ...]
+        # Mouser frequently emits duplicate keys (e.g. three "Packaging"
+        # rows for cut-tape / reel / MouseReel) — we collapse them into a
+        # single row whose value is the unique values joined with " / ",
+        # because custom_fields has a UNIQUE (workspace, object, key)
+        # constraint and the user only cares about the union anyway.
+        raw_attrs = p.get("ProductAttributes") or []
+        specs_by_key: dict[str, list[str]] = {}
+        spec_order: list[str] = []
+        # Pull a few attribute names out as first-class fields when present.
+        footprint: str | None = None
+        for a in raw_attrs:
+            name = (a.get("AttributeName") or "").strip()
+            value = (a.get("AttributeValue") or "").strip()
+            if not name or not value:
+                continue
+            if name not in specs_by_key:
+                spec_order.append(name)
+                specs_by_key[name] = []
+            if value not in specs_by_key[name]:
+                specs_by_key[name].append(value)
+            # Mouser uses variable label naming for package — match the
+            # most common variants.
+            if footprint is None and name.lower() in (
+                "package / case",
+                "package",
+                "case",
+                "package/case",
+                "footprint",
+            ):
+                footprint = value
+        specs: list[dict[str, str]] = [
+            {"key": k, "value": " / ".join(specs_by_key[k])} for k in spec_order
+        ]
+
         return {
             "found": True,
             "result": {
@@ -66,11 +103,11 @@ class MouserProvider:
                 "manufacturer": p.get("Manufacturer") or None,
                 "description": p.get("Description") or None,
                 "category": p.get("Category") or None,
-                # Mouser exposes package via ProductAttributes (variable shape).
-                # Skip for v1 — better to leave blank than to mislabel.
-                "footprint": None,
+                "footprint": footprint,
                 "datasheet_url": p.get("DataSheetUrl") or None,
+                "image_url": p.get("ImagePath") or None,
                 "source_url": p.get("ProductDetailUrl") or "",
+                "specs": specs,
             },
             "message": None,
         }

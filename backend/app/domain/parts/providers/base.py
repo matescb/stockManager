@@ -24,8 +24,15 @@ class MpnLookupResult(TypedDict, total=False):
 #     "category":       str | None,
 #     "footprint":      str | None,
 #     "datasheet_url":  str | None,
+#     "image_url":      str | None,
 #     "source_url":     str,
+#     "specs":          [{ "key": str, "value": str }, ...],
 #   }
+#
+# `specs` is an ordered list of free-form key/value pairs; the names
+# come straight from the upstream provider (e.g. Mouser's
+# ProductAttributes) and vary by part type. The frontend persists
+# each row as a custom_fields entry on the new part.
 
 
 class PartsProvider(Protocol):
