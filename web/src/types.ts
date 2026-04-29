@@ -129,7 +129,9 @@ export type BuildShortageRow = {
   short_by: number;
 };
 
-export type TrustedPartsResult = {
+export type PartsProviderName = "none" | "mouser";
+
+export type MpnLookupResult = {
   found: boolean;
   result: {
     mpn: string;
@@ -141,6 +143,8 @@ export type TrustedPartsResult = {
     source_url: string;
   } | null;
   message: string | null;
+  /** Which provider produced this response (or "none" when unconfigured). */
+  provider: PartsProviderName;
 };
 
 export type ProjectEntry = {

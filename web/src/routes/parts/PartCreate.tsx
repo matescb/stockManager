@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
-import type { StorageLocation, TrustedPartsResult } from "@/types";
+import type { MpnLookupResult, StorageLocation } from "@/types";
 import MpnLookup from "@/components/MpnLookup";
 
 export default function PartCreate() {
@@ -20,8 +20,8 @@ export default function PartCreate() {
   });
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // Datasheet URL discovered via TrustedParts lookup; persisted as a
-  // custom_field after the part is created (see submit()).
+  // Datasheet URL discovered via the configured parts provider; persisted
+  // as a custom_field after the part is created (see submit()).
   const [datasheetUrl, setDatasheetUrl] = useState<string | null>(null);
   const { data: storage } = useQuery({ queryKey: ["storage"], queryFn: () => api.get<StorageLocation[]>("/storage") });
 
@@ -29,7 +29,7 @@ export default function PartCreate() {
     setForm(f => ({ ...f, [k]: v }));
   }
 
-  function applyLookup(r: NonNullable<TrustedPartsResult["result"]>) {
+  function applyLookup(r: NonNullable<MpnLookupResult["result"]>) {
     setForm(f => ({
       ...f,
       manufacturer: r.manufacturer ?? f.manufacturer,

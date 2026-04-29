@@ -13,6 +13,8 @@ type Ws = {
   serial_tracking_enabled: boolean;
   catalog_enabled: boolean;
   catalog_url: string | null;
+  parts_provider: "none" | "mouser";
+  has_parts_provider_api_key: boolean;
 };
 
 type Member = {
@@ -48,6 +50,8 @@ export default function WorkspaceSettings() {
   const [newName, setNewName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"admin" | "member" | "viewer">("member");
+  const [providerKey, setProviderKey] = useState("");
+  const [providerKeyBusy, setProviderKeyBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   async function createWs() {
@@ -233,6 +237,70 @@ export default function WorkspaceSettings() {
             </>
           ) : (
             <div className="text-xs text-muted">Public catalog is off.</div>
+          )}
+        </div>
+      )}
+
+      {cur && (
+        <div className="card p-4 mb-4 space-y-3 text-sm">
+          <div className="flex items-center justify-between">
+            <h2 className="text-md font-semibold">Parts data provider</h2>
+            <select
+              className="input max-w-[160px]"
+              value={cur.parts_provider}
+              onChange={e => patch({ parts_provider: e.target.value as Ws["parts_provider"] })}
+            >
+              <option value="none">None</option>
+              <option value="mouser">Mouser</option>
+            </select>
+          </div>
+          {cur.parts_provider === "none" ? (
+            <div className="text-xs text-muted">
+              No external lookup. Pick a provider above to enable the
+              <strong className="ml-1">Lookup</strong> button on linked-type parts.
+            </div>
+          ) : (
+            <>
+              <div className="text-xs text-muted">
+                {cur.has_parts_provider_api_key ? (
+                  <>API key is set. Paste a new value below to replace it, or empty to clear.</>
+                ) : (
+                  <>Paste your <strong className="text-text">{cur.parts_provider}</strong> Search API key.</>
+                )}
+              </div>
+              <div className="flex gap-2 items-center">
+                <input
+                  className="input flex-1 font-mono text-xs"
+                  type="password"
+                  autoComplete="off"
+                  value={providerKey}
+                  onChange={e => setProviderKey(e.target.value)}
+                  placeholder={cur.has_parts_provider_api_key ? "•••••••• (set)" : "API key"}
+                />
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={providerKeyBusy}
+                  onClick={async () => {
+                    setProviderKeyBusy(true);
+                    try {
+                      await api.patch("/workspaces/current", {
+                        parts_provider_api_key: providerKey,
+                      });
+                      qc.invalidateQueries({ queryKey: ["ws", "current"] });
+                      setProviderKey("");
+                      toast.success(providerKey ? "API key saved." : "API key cleared.");
+                    } catch (e) {
+                      toast.error(e instanceof ApiError ? e.message : "Failed");
+                    } finally {
+                      setProviderKeyBusy(false);
+                    }
+                  }}
+                >
+                  {providerKey ? "Save" : (cur.has_parts_provider_api_key ? "Clear" : "Save")}
+                </button>
+              </div>
+            </>
           )}
         </div>
       )}
