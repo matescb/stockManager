@@ -1,220 +1,136 @@
 # Production deployment
 
-This guide walks through a single-host deployment of the parts-inventory app
-using `docker-compose.prod.yml`. The dev compose (`docker-compose.yml`) is
-unsuitable for production: it ships uvicorn `--reload`, vite dev server, a
-self-signed cert, and a placeholder session secret.
+This guide documents how `parts.matescb.cz` is deployed: a docker-compose stack
+behind the host's existing Apache 2.4 reverse proxy, with TLS issued + renewed
+by `certbot --apache`. Day-to-day deploys are automated by GitHub Actions
+(see `.github/workflows/ci.yml`); this document covers the **one-time**
+bootstrap and the architectural shape so you can re-create or migrate it.
 
-The prod stack:
+The dev compose (`docker-compose.yml`) is unsuitable for production: it ships
+uvicorn `--reload`, the Vite dev server, and a placeholder session secret.
+
+## Architecture
 
 ```
-  internet → :80/:443 (proxy: nginx)
-                        ├─ /api/*  → backend (uvicorn, no reload, 2 workers)
-                        └─ /*      → web (nginx serving Vite `dist/`)
-                                  backend → db (postgres:16-alpine)
+  internet → :80/:443 (host Apache)
+                       ├─ parts.matescb.cz → 127.0.0.1:8091
+                       │                    │
+                       │                    ▼
+                       │              docker compose:
+                       │                ├─ web   (nginx + Vite dist/)
+                       │                │   └─ /api/* → backend
+                       │                ├─ backend (uvicorn, 2 workers)
+                       │                └─ db (postgres:16-alpine)
+                       └─ … (other vhosts on this host)
 ```
 
-Only the `proxy` service publishes host ports. `backend`, `web`, and `db`
-talk to each other over the docker network.
-
----
+Only the `web` container publishes a host port, and only on loopback. Apache
+fronts the public side. The web container's nginx handles the `/api/*` →
+backend split internally so Apache only needs one ProxyPass per app — matching
+the convention every other vhost on this VPS already uses.
 
 ## Prerequisites
 
 - Docker Engine 24+ with the compose plugin (`docker compose version`).
-- A DNS A/AAAA record pointing your domain at this host.
-- Inbound TCP 80 and 443 open to the internet (80 is needed for HTTP→HTTPS
-  redirect and for HTTP-01 ACME challenges if you use Let's Encrypt).
-- A place to put TLS material: either a sidecar that obtains it for you, or
-  files you drop into `./deploy/certs/`.
+- Apache 2.4 with `mod_proxy`, `mod_proxy_http`, `mod_rewrite`, `mod_ssl`.
+- `certbot` with the `python3-certbot-apache` plugin.
+- A DNS A record for the domain pointing at this host. For
+  `parts.matescb.cz` this is `37.205.15.171`.
 
----
+## One-time bootstrap
 
-## Step 1 — Configure environment
+Done from a root shell on the VPS. The CI pipeline takes over for every
+subsequent deploy.
 
-```bash
-git clone <your-fork-or-this-repo>
-cd stockManager
+1. **Create the deploy user with docker access.** CI logs in as this user
+   and runs `docker compose up`; nothing else should run as them.
 
-cp deploy/.env.prod.example .env.prod
-$EDITOR .env.prod
-```
+   ```bash
+   useradd -m -s /bin/bash deploy
+   usermod -aG docker deploy
+   install -d -o deploy -g deploy -m 0755 /srv/stockmanager
+   ```
 
-Things you must change in `.env.prod`:
+2. **Clone the repo.**
 
-- `SESSION_SECRET` — rotate it. The default placeholder is not a secret.
+   ```bash
+   sudo -u deploy git clone https://github.com/matescb/stockManager.git /srv/stockmanager
+   ```
 
-  ```bash
-  openssl rand -hex 32
-  ```
+3. **Generate a CI keypair.** The public key authorizes the deploy user;
+   the private key goes into a GitHub Actions secret (`DEPLOY_SSH_KEY`).
 
-- `POSTGRES_PASSWORD` — strong random value. Once the `db_data` volume is
-  initialized this cannot be changed without rotating the role inside
-  Postgres, so pick well the first time:
+   ```bash
+   sudo -u deploy install -d -m 0700 /home/deploy/.ssh
+   sudo -u deploy ssh-keygen -t ed25519 -f /home/deploy/.ssh/id_ed25519 \
+       -N "" -C "github-actions@stockmanager"
+   sudo -u deploy bash -c 'cat /home/deploy/.ssh/id_ed25519.pub \
+       >> /home/deploy/.ssh/authorized_keys && \
+       chmod 600 /home/deploy/.ssh/authorized_keys'
+   ```
 
-  ```bash
-  openssl rand -base64 24
-  ```
+4. **Seed `.env.prod`.** Fill in real secrets — these never enter CI.
 
-- `CORS_ORIGINS` — set this to the public origin(s) that will host the SPA,
-  e.g. `https://parts.example.com`. Multiple origins are comma-separated.
+   ```bash
+   sudo -u deploy cp /srv/stockmanager/deploy/.env.prod.example \
+                    /srv/stockmanager/.env.prod
+   sudo -u deploy chmod 600 /srv/stockmanager/.env.prod
+   # Rotate POSTGRES_PASSWORD (openssl rand -base64 24) and SESSION_SECRET
+   # (openssl rand -hex 32). CORS_ORIGINS is preset to the public domain.
+   ```
 
-`POSTGRES_USER` / `POSTGRES_DB` can stay at their defaults.
+5. **Bring up the stack.** The backend container runs `alembic upgrade head`
+   on every boot, so a fresh DB migrates itself.
 
----
+   ```bash
+   cd /srv/stockmanager
+   sudo -u deploy docker compose -f docker-compose.prod.yml \
+       --env-file .env.prod up -d --build
+   curl -fsS http://127.0.0.1:8091/api/health
+   ```
 
-## Step 2 — TLS certificates
+6. **Add the Apache vhost.** Copy the canonical template from the repo.
 
-Pick one of the two paths below. The proxy expects the cert and key at
-`/etc/nginx/certs/fullchain.pem` and `/etc/nginx/certs/privkey.pem`, which is
-bind-mounted from `./deploy/certs/` by `docker-compose.prod.yml`.
+   ```bash
+   cp /srv/stockmanager/deploy/parts.matescb.cz.conf \
+      /etc/apache2/sites-available/parts.matescb.cz.conf
+   a2ensite parts.matescb.cz
+   apache2ctl configtest && systemctl reload apache2
+   curl -fsS -H "Host: parts.matescb.cz" http://127.0.0.1/api/health
+   ```
 
-### Option A — bring your own certs (simplest)
+7. **Issue the TLS cert.** Certbot edits the vhost in place to add the
+   redirect and writes a sibling `parts.matescb.cz-le-ssl.conf` for :443.
 
-If you already have a wildcard cert, an internal CA, or you generated certs
-out-of-band:
+   ```bash
+   certbot --apache -d parts.matescb.cz \
+       --non-interactive --agree-tos -m matyas.skvor@gmail.com --redirect
+   curl -fsS https://parts.matescb.cz/api/health
+   ```
 
-```bash
-mkdir -p deploy/certs
-cp /path/to/fullchain.pem deploy/certs/fullchain.pem
-cp /path/to/privkey.pem  deploy/certs/privkey.pem
-chmod 600 deploy/certs/privkey.pem
-```
+Renewal is automated by the certbot systemd timer that ships with the Debian
+package — verify with `systemctl list-timers | grep certbot`.
 
-Renewal is on you; reload nginx after replacing the files:
+## CI/CD
 
-```bash
-docker compose -f docker-compose.prod.yml exec proxy nginx -s reload
-```
+`.github/workflows/ci.yml` defines three jobs:
 
-### Option B — Let's Encrypt via a sidecar
+- **`backend-tests`** — pytest against a postgres:16-alpine service container.
+- **`web-build`** — `npm ci && npm run build` (also catches type errors).
+- **`deploy`** — runs only on `push` to `main`, only after the two test jobs
+  pass. SSH'es to the VPS as `deploy`, `git fetch`/`reset --hard origin/main`,
+  then `docker compose ... up -d --build`. Concurrency-grouped so consecutive
+  pushes queue rather than cancel.
 
-Two lightweight options, neither prescribed:
+Required repo secrets (Settings → Secrets and variables → Actions):
 
-- **`nginx-proxy/acme-companion`** — pairs with `nginx-proxy/nginx-proxy` and
-  obtains/renews certs based on container labels. Replace the `proxy` service
-  entirely with the `nginx-proxy` + `acme-companion` pair, drop this repo's
-  `deploy/nginx.conf`, and label `web` / `backend` with `VIRTUAL_HOST`,
-  `LETSENCRYPT_HOST`, etc. Lightest setup if you don't want to manage nginx.
+| Secret           | Value                                                |
+|------------------|------------------------------------------------------|
+| `DEPLOY_HOST`    | `37.205.15.171`                                      |
+| `DEPLOY_USER`    | `deploy`                                             |
+| `DEPLOY_SSH_KEY` | private key from bootstrap step 3 (full ED25519 PEM) |
 
-- **Caddy** — single binary that handles TLS issuance + renewal automatically
-  with one short Caddyfile. Replace the `proxy` service with `caddy:alpine`
-  and a Caddyfile that proxies `/api/*` to `backend:8000` and `/*` to
-  `web:80`. Easiest to write; you lose the explicit nginx config.
-
-Either way, you'll typically remove the bind-mount of `./deploy/certs/` and
-replace it with a named volume that the ACME container writes into.
-
----
-
-## Step 3 — Bring it up
-
-```bash
-docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
-```
-
-What this does:
-
-- Builds the `backend` image (`backend/Dockerfile`).
-- Builds the `web` image as a multi-stage Vite build → nginx:alpine
-  (`web/Dockerfile.prod`).
-- Pulls `postgres:16-alpine` and `nginx:alpine`.
-- Starts the stack detached, with `restart: unless-stopped` on every service.
-- The `backend` container runs `alembic upgrade head` before booting uvicorn,
-  so a fresh DB will be migrated on first start.
-
-Check status:
-
-```bash
-docker compose -f docker-compose.prod.yml ps
-docker compose -f docker-compose.prod.yml logs -f backend
-```
-
----
-
-## Step 4 — Verify
-
-```bash
-curl -fsS https://<your-domain>/api/health
-```
-
-You should get a 2xx JSON response. If you used a self-signed cert, add `-k`
-just to confirm the proxy is reachable, then fix the cert chain. From a
-browser, visit `https://<your-domain>/` and sign up; the SPA should load and
-the session cookie should round-trip.
-
----
-
-## Postgres backup & restore
-
-Backups are your responsibility. The simplest, no-extra-deps approach:
-
-```bash
-docker compose -f docker-compose.prod.yml --env-file .env.prod exec db \
-    pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" \
-    | gzip > "backup-$(date +%F).sql.gz"
-```
-
-Restore (DESTRUCTIVE — confirms over the existing DB):
-
-```bash
-gunzip -c backup-2026-04-28.sql.gz \
-    | docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T db \
-        psql -U "$POSTGRES_USER" "$POSTGRES_DB"
-```
-
-For anything more serious — point-in-time recovery, retention policies,
-off-site replication — look at `pgBackRest` or `barman`. They're proper
-tools for the job; this guide does not prescribe a particular one.
-
-Don't forget the `uploads` volume — `pg_dump` doesn't cover the lot photos /
-attachments stored on disk under `/data/uploads`. A periodic
-`docker run --rm -v stockmanager_uploads:/u -v "$PWD":/out alpine \
-    tar czf /out/uploads-$(date +%F).tar.gz -C /u .` handles it.
-
----
-
-## Upgrades
-
-```bash
-git pull
-docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
-```
-
-Alembic runs automatically on backend container boot, so any new revisions
-under `backend/alembic/versions/` are applied before uvicorn starts. There is
-no separate migration step.
-
-If a release introduces a destructive migration, take a `pg_dump` first.
-
----
-
-## Known gap: session cookie `secure` flag
-
-The auth cookie set by the backend (see
-`backend/app/api/routes/auth.py::_set_session_cookie`) is currently created
-**without** `secure=True`. In dev that's fine — there is no TLS. In prod the
-proxy terminates TLS and forwards plain HTTP to the backend, so the backend
-itself never sees an HTTPS connection and won't set `secure` on its own.
-
-The cookie is already `httpOnly` and `samesite=lax`, so the most common
-attack surface (JS exfiltration, third-party CSRF) is mitigated. The
-remaining risk is a man-in-the-middle on a non-HTTPS network surface — for
-which TLS termination at the proxy already protects every transit hop you
-control.
-
-To close the gap fully, either:
-
-1. Add an env var (e.g. `SESSION_COOKIE_SECURE=1`) read by
-   `_set_session_cookie` and set it in `.env.prod`, or
-2. Hardcode `secure=True` when `APP_ENV=prod`.
-
-Both are small follow-up patches in the backend; this deployment guide
-intentionally treats the gap as documentation, not a code change.
-
----
-
-## Useful one-liners
+## Routine operations
 
 Tail backend logs:
 
@@ -229,16 +145,42 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod exec db \
     psql -U "$POSTGRES_USER" "$POSTGRES_DB"
 ```
 
-Reload nginx after editing `deploy/nginx.conf`:
-
-```bash
-docker compose -f docker-compose.prod.yml exec proxy nginx -t \
-    && docker compose -f docker-compose.prod.yml exec proxy nginx -s reload
-```
-
 Run an ad-hoc alembic command:
 
 ```bash
 docker compose -f docker-compose.prod.yml --env-file .env.prod exec backend \
     alembic current
 ```
+
+## Backups
+
+Backups are your responsibility. Two volumes need covering:
+
+- `db_data` — postgres. `pg_dump` is sufficient for a single-host setup.
+- `uploads` — lot photos / datasheets. `pg_dump` does not cover this.
+
+```bash
+# Postgres dump.
+docker compose -f docker-compose.prod.yml --env-file .env.prod exec db \
+    pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" \
+    | gzip > "backup-$(date +%F).sql.gz"
+
+# Uploads dump.
+docker run --rm \
+    -v stockmanager_uploads:/u \
+    -v "$PWD":/out \
+    alpine \
+    tar czf /out/uploads-$(date +%F).tar.gz -C /u .
+```
+
+Restore the DB (DESTRUCTIVE — overwrites the existing one):
+
+```bash
+gunzip -c backup-2026-04-29.sql.gz \
+    | docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T db \
+        psql -U "$POSTGRES_USER" "$POSTGRES_DB"
+```
+
+For point-in-time recovery, off-site replication, or retention policies look
+at `pgBackRest` or `barman` — proper tools for that job; this guide does not
+prescribe one.

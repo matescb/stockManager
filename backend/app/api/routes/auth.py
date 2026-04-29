@@ -41,7 +41,10 @@ def _set_session_cookie(response: Response, token: str) -> None:
         key=settings().SESSION_COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=False,  # set True behind HTTPS in prod
+        # Mark Secure in prod where the proxy terminates TLS, so browsers
+        # never re-send the cookie over plaintext. Stays off in dev where
+        # we serve plain HTTP on localhost.
+        secure=settings().APP_ENV == "prod",
         samesite="lax",
         max_age=settings().SESSION_LIFETIME_DAYS * 24 * 3600,
         path="/",
