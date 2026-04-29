@@ -20,7 +20,11 @@ class LookupIn(BaseModel):
 
 @router.post("/lookup-mpn")
 def lookup_mpn(payload: LookupIn, ws: CurrentWorkspace):
-    provider = make_provider(ws.parts_provider, ws.parts_provider_api_key)
+    provider = make_provider(
+        ws.parts_provider,
+        ws.parts_provider_api_key,
+        ws.parts_provider_api_secret,
+    )
     if provider is None:
         return ok({
             "found": False,

@@ -15,7 +15,7 @@ export type Part = {
   default_storage_mandatory: boolean;
   serialized: boolean;
   published?: boolean;
-  linked_provider: "mouser" | null;
+  linked_provider: "mouser" | "digikey" | null;
   linked_external_id: string | null;
   last_refresh_at: string | null;
   description_locally_edited: boolean;
@@ -143,7 +143,7 @@ export type BuildShortageRow = {
   short_by: number;
 };
 
-export type PartsProviderName = "none" | "mouser";
+export type PartsProviderName = "none" | "mouser" | "digikey";
 
 export type ProviderSpec = { key: string; value: string };
 

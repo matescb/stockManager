@@ -11,6 +11,7 @@ type Props = {
 const PROVIDER_LABEL: Record<string, string> = {
   none: "no provider",
   mouser: "Mouser",
+  digikey: "DigiKey",
 };
 
 /**

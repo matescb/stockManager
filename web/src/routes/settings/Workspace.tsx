@@ -13,8 +13,9 @@ type Ws = {
   serial_tracking_enabled: boolean;
   catalog_enabled: boolean;
   catalog_url: string | null;
-  parts_provider: "none" | "mouser";
+  parts_provider: "none" | "mouser" | "digikey";
   has_parts_provider_api_key: boolean;
+  has_parts_provider_api_secret: boolean;
 };
 
 type Member = {
@@ -51,6 +52,7 @@ export default function WorkspaceSettings() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"admin" | "member" | "viewer">("member");
   const [providerKey, setProviderKey] = useState("");
+  const [providerSecret, setProviderSecret] = useState("");
   const [providerKeyBusy, setProviderKeyBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -252,6 +254,7 @@ export default function WorkspaceSettings() {
             >
               <option value="none">None</option>
               <option value="mouser">Mouser</option>
+              <option value="digikey">DigiKey</option>
             </select>
           </div>
           {cur.parts_provider === "none" ? (
@@ -259,6 +262,83 @@ export default function WorkspaceSettings() {
               No external lookup. Pick a provider above to enable the
               <strong className="ml-1">Lookup</strong> button on linked-type parts.
             </div>
+          ) : cur.parts_provider === "digikey" ? (
+            <>
+              <div className="text-xs text-muted">
+                Paste your DigiKey <strong className="text-text">Client ID</strong> and{" "}
+                <strong className="text-text">Client Secret</strong> from the DigiKey
+                developer portal. Both are required. Empty either field to clear it.
+              </div>
+              <div className="flex gap-2 items-center">
+                <input
+                  className="input flex-1 font-mono text-xs"
+                  type="password"
+                  autoComplete="off"
+                  value={providerKey}
+                  onChange={e => setProviderKey(e.target.value)}
+                  placeholder={cur.has_parts_provider_api_key ? "•••••••• (Client ID set)" : "Client ID"}
+                />
+                <input
+                  className="input flex-1 font-mono text-xs"
+                  type="password"
+                  autoComplete="off"
+                  value={providerSecret}
+                  onChange={e => setProviderSecret(e.target.value)}
+                  placeholder={cur.has_parts_provider_api_secret ? "•••••••• (Secret set)" : "Client Secret"}
+                />
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={providerKeyBusy || (!providerKey && !providerSecret)}
+                  onClick={async () => {
+                    setProviderKeyBusy(true);
+                    try {
+                      const body: Record<string, string> = {};
+                      // Only send fields the user actually changed (the
+                      // backend leaves omitted fields alone).
+                      if (providerKey) body.parts_provider_api_key = providerKey;
+                      if (providerSecret) body.parts_provider_api_secret = providerSecret;
+                      await api.patch("/workspaces/current", body);
+                      qc.invalidateQueries({ queryKey: ["ws", "current"] });
+                      setProviderKey("");
+                      setProviderSecret("");
+                      toast.success("Credentials saved.");
+                    } catch (e) {
+                      toast.error(e instanceof ApiError ? e.message : "Failed");
+                    } finally {
+                      setProviderKeyBusy(false);
+                    }
+                  }}
+                >
+                  Save
+                </button>
+                {(cur.has_parts_provider_api_key || cur.has_parts_provider_api_secret) && (
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={providerKeyBusy}
+                    onClick={async () => {
+                      if (!confirm("Clear both DigiKey credentials?")) return;
+                      setProviderKeyBusy(true);
+                      try {
+                        await api.patch("/workspaces/current", {
+                          parts_provider_api_key: "",
+                          parts_provider_api_secret: "",
+                        });
+                        qc.invalidateQueries({ queryKey: ["ws", "current"] });
+                        toast.success("Credentials cleared.");
+                      } catch (e) {
+                        toast.error(e instanceof ApiError ? e.message : "Failed");
+                      } finally {
+                        setProviderKeyBusy(false);
+                      }
+                    }}
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </>
           ) : (
             <>
               <div className="text-xs text-muted">

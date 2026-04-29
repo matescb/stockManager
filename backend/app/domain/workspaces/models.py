@@ -25,8 +25,10 @@ class Workspace(Base):
     serial_tracking_enabled = Column(Boolean, nullable=False, default=False)
     catalog_token = Column(String(64), nullable=True)
     catalog_enabled = Column(Boolean, nullable=False, default=False)
-    parts_provider = Column(String(40), nullable=False, default="none")  # none | mouser
+    parts_provider = Column(String(40), nullable=False, default="none")  # none | mouser | digikey
     parts_provider_api_key = Column(String(255), nullable=True)
+    # DigiKey needs a second credential (client_secret). Mouser leaves this NULL.
+    parts_provider_api_secret = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
 
 

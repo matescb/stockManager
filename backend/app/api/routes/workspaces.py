@@ -65,8 +65,9 @@ def _serialize_workspace(ws: Workspace) -> dict:
         "catalog_enabled": bool(ws.catalog_enabled),
         "catalog_url": _catalog_url(ws),
         "parts_provider": ws.parts_provider or "none",
-        # Never echo the API key. Just say whether one is set.
+        # Never echo the API key/secret. Just say whether each is set.
         "has_parts_provider_api_key": bool(ws.parts_provider_api_key),
+        "has_parts_provider_api_secret": bool(ws.parts_provider_api_secret),
     }
 
 
@@ -86,10 +87,13 @@ class WorkspacePatch(BaseModel):
     # Write-only command flag: when true (and the catalog stays enabled), the
     # route mints a fresh secrets.token_urlsafe(32) and stores it.
     regenerate_catalog_token: bool | None = None
-    parts_provider: Literal["none", "mouser"] | None = None
+    parts_provider: Literal["none", "mouser", "digikey"] | None = None
     # Empty string clears the stored key; any other non-None value replaces it.
     # None (omitted) leaves whatever's already stored alone.
     parts_provider_api_key: str | None = None
+    # Same semantics as parts_provider_api_key. Used as DigiKey's
+    # client_secret; Mouser doesn't need it.
+    parts_provider_api_secret: str | None = None
 
 
 @router.patch("/current", dependencies=[Depends(require_role("admin"))])
@@ -98,10 +102,14 @@ def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace):
     regenerate = bool(data.pop("regenerate_catalog_token", False))
     was_enabled = bool(ws.catalog_enabled)
 
-    # parts_provider_api_key needs special handling so '' actually clears.
+    # parts_provider_api_key / _api_secret need special handling so ''
+    # actually clears (rather than being stored as an empty string).
     if "parts_provider_api_key" in data:
         new_key = data.pop("parts_provider_api_key")
         ws.parts_provider_api_key = new_key if new_key else None
+    if "parts_provider_api_secret" in data:
+        new_secret = data.pop("parts_provider_api_secret")
+        ws.parts_provider_api_secret = new_secret if new_secret else None
 
     for k, v in data.items():
         setattr(ws, k, v)

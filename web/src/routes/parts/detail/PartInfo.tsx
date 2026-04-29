@@ -8,6 +8,7 @@ import type { CustomFieldRow, Part } from "@/types";
 
 const PROVIDER_LABEL: Record<string, string> = {
   mouser: "Mouser",
+  digikey: "DigiKey",
 };
 
 const STALE_DAYS = 30;

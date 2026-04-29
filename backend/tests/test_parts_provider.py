@@ -70,9 +70,9 @@ def test_workspace_patch_empty_string_clears_key(authed):
 def test_workspace_patch_rejects_unknown_provider(authed):
     r = authed.patch(
         "/api/workspaces/current",
-        json={"parts_provider": "digikey"},
+        json={"parts_provider": "octopart"},
     )
-    assert r.status_code == 422  # Literal["none","mouser"] rejects digikey
+    assert r.status_code == 422  # Literal["none","mouser","digikey"] rejects octopart
 
 
 # ---------------------------------------------------------------------------

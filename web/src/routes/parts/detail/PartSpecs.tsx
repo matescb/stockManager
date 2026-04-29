@@ -24,6 +24,14 @@ const SOURCE_LABEL: Record<SpecSource, string> = {
 
 const PROVIDER_LABEL: Record<string, string> = {
   mouser: "Mouser",
+  digikey: "DigiKey",
+};
+
+// Per-provider deep link to the catalog search for an MPN. Used as a
+// fallback when we don't have a stored canonical product URL.
+const PROVIDER_SEARCH_URL: Record<string, (mpn: string) => string> = {
+  mouser: mpn => `https://www.mouser.com/c/?q=${encodeURIComponent(mpn)}`,
+  digikey: mpn => `https://www.digikey.com/en/products/result?keywords=${encodeURIComponent(mpn)}`,
 };
 
 /**
@@ -131,7 +139,7 @@ export default function PartSpecs() {
           {" "}
           <a
             className="text-accent hover:underline"
-            href={`https://www.mouser.com/c/?q=${encodeURIComponent(part.mpn ?? "")}`}
+            href={(PROVIDER_SEARCH_URL[part.linked_provider!] ?? PROVIDER_SEARCH_URL.mouser)(part.mpn ?? "")}
             target="_blank"
             rel="noreferrer"
           >
