@@ -2,6 +2,9 @@
 
 Self-hosted web app for electronics parts, storage, stock, lots, BOMs and projects.
 
+Live: <https://parts.matescb.cz/>. `main` auto-deploys via GitHub Actions —
+see [`docs/deployment.md`](docs/deployment.md) for the full pipeline.
+
 Implemented phases:
 
 - **1–3** auth + workspaces; parts/storage with the append-only stock ledger; lots; projects with full CSV BOM import.
@@ -37,7 +40,11 @@ For running tests outside Docker, see [`docs/development.md`](docs/development.m
 
 ## Production
 
-For a single-host TLS-terminated deploy via `docker-compose.prod.yml`, see [`docs/deployment.md`](docs/deployment.md).
+A push to `main` runs the test suite, then SSHes into the VPS and rebuilds
+the docker-compose stack. The VPS's Apache 2.4 fronts everything and certbot
+handles TLS. See [`docs/deployment.md`](docs/deployment.md) for the full
+flow: architecture, one-time bootstrap, CI/CD details, day-to-day ops, and
+backups.
 
 ## Layout
 
