@@ -2,22 +2,36 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Scanner, { ScanResult } from "@/components/scanner/Scanner";
 import { api } from "@/lib/api";
+import { parseBagCode } from "@/lib/bagCode";
 import type { Part } from "@/types";
 
 export default function PartScan() {
   const nav = useNavigate();
   const [last, setLast] = useState<ScanResult | null>(null);
+  const [parsedMpn, setParsedMpn] = useState<string>("");
   const [matches, setMatches] = useState<Part[]>([]);
   const [busy, setBusy] = useState(false);
 
   async function handleScan(s: ScanResult) {
     setLast(s);
+    const parsed = parseBagCode(s.data);
+    // eslint-disable-next-line no-console
+    console.log("[bag scan]", {
+      symbology: s.symbology,
+      raw: s.data,
+      escaped: JSON.stringify(s.data),
+      length: s.data.length,
+      codepoints: Array.from(s.data, c => c.charCodeAt(0)),
+      parsed,
+    });
+    const lookupKey = (parsed.mpn || s.data).trim();
+    setParsedMpn(lookupKey);
     setBusy(true);
     try {
       // first try MPN exact, then fallback to free-text q
-      let parts = await api.get<Part[]>(`/parts?mpn=${encodeURIComponent(s.data)}`);
+      let parts = await api.get<Part[]>(`/parts?mpn=${encodeURIComponent(lookupKey)}`);
       if (parts.length === 0) {
-        parts = await api.get<Part[]>(`/parts?q=${encodeURIComponent(s.data)}`);
+        parts = await api.get<Part[]>(`/parts?q=${encodeURIComponent(lookupKey)}`);
       }
       setMatches(parts);
       if (parts.length === 1) {
@@ -40,6 +54,11 @@ export default function PartScan() {
               Last scan: <span className="font-mono text-text">{last.symbology}</span>{" "}
               <span className="font-mono">{last.data}</span>
             </div>
+            {parsedMpn && parsedMpn !== last.data && (
+              <div className="text-xs text-muted mt-1">
+                Looking up MPN: <span className="font-mono text-text">{parsedMpn}</span>
+              </div>
+            )}
             {busy && <div className="text-muted text-sm mt-2">Looking up…</div>}
             {!busy && matches.length === 0 && (
               <div className="mt-2 text-sm">

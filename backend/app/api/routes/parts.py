@@ -15,7 +15,10 @@ from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part, PartMetaMember, PartSubstitute
 from app.domain.parts.providers import make_provider
 from app.domain.stock.models import StockEntry
+from app.domain.stock.schemas import AddStockIn, LotInput
 from app.domain.stock.service import (
+    StockError,
+    add_stock,
     reserved_quantity,
     stock_summary_for_part,
     total_for_part,
@@ -442,7 +445,11 @@ def refresh_from_provider(
     if not (p.mpn or "").strip():
         raise HTTPException(status_code=400, detail="part has no MPN to look up")
 
-    provider = make_provider(ws.parts_provider, ws.parts_provider_api_key)
+    provider = make_provider(
+        ws.parts_provider,
+        ws.parts_provider_api_key,
+        ws.parts_provider_api_secret,
+    )
     if provider is None:
         raise HTTPException(
             status_code=400,
@@ -561,3 +568,232 @@ def refresh_from_provider(
             ),
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# Bulk import from a barcode-scan session.
+#
+# The frontend's scan-import flow accumulates rows of {mpn, quantity?,
+# storage_location_id?} as bags are scanned. Each row goes through the
+# same MPN→provider→canonical-record pipeline used by lookup-mpn, then
+# we materialise: a Part (linked-type), `source='provider'` custom_fields
+# for every spec, and — if quantity>0 and a storage location is given —
+# a stock entry. The endpoint returns one status row per input so the
+# UI can show a per-row outcome banner ("created", "duplicate", "no match").
+# ---------------------------------------------------------------------------
+
+
+class ScanImportRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mpn: str = Field(min_length=1, max_length=200)
+    quantity: int | None = Field(default=None, ge=0)
+    storage_location_id: UUID | None = None
+    # Traceability fields lifted from the bag's 2D code. The frontend
+    # synthesises these strings from the parsed DIs (10D/1T → lot_name,
+    # K/1K/14K/11K → comments). All optional — the import works without
+    # them, you just lose the audit trail.
+    lot_name: str | None = Field(default=None, max_length=200)
+    lot_serial: str | None = Field(default=None, max_length=200)
+    comments: str | None = Field(default=None, max_length=1000)
+
+
+class ScanImportIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rows: list[ScanImportRow] = Field(min_length=1, max_length=200)
+
+
+@router.post("/bulk-import-from-scan")
+def bulk_import_from_scan(
+    payload: ScanImportIn,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
+    """Materialise scanned bag rows into Parts (+ optional initial stock).
+    Each row is independent — duplicates / no-match outcomes are returned
+    inline rather than aborting the batch."""
+    provider = make_provider(
+        ws.parts_provider,
+        ws.parts_provider_api_key,
+        ws.parts_provider_api_secret,
+    )
+    if provider is None:
+        raise HTTPException(
+            status_code=400,
+            detail="no parts provider configured (set one in Workspace settings)",
+        )
+
+    out_rows: list[dict] = []
+    for row in payload.rows:
+        mpn = (row.mpn or "").strip()
+        if not mpn:
+            out_rows.append({
+                "mpn": row.mpn,
+                "status": "invalid",
+                "error": "empty MPN",
+            })
+            continue
+
+        # Duplicate check — workspace-scoped, case-sensitive (mirrors how
+        # GET /parts?mpn= matches).
+        existing = db.execute(
+            select(Part)
+            .where(Part.workspace_id == ws.id)
+            .where(Part.mpn == mpn)
+            .where(Part.archived_at.is_(None))
+            .limit(1)
+        ).scalars().first()
+        if existing is not None:
+            out_rows.append({
+                "mpn": mpn,
+                "status": "duplicate",
+                "part_id": str(existing.id),
+            })
+            continue
+
+        # Provider lookup.
+        try:
+            lookup = provider.lookup_mpn(mpn)
+        except Exception as exc:  # provider should swallow these — belt+braces
+            out_rows.append({
+                "mpn": mpn,
+                "status": "lookup_failed",
+                "error": f"provider raised {type(exc).__name__}",
+            })
+            continue
+        if not lookup.get("found") or not lookup.get("result"):
+            out_rows.append({
+                "mpn": mpn,
+                "status": "lookup_failed",
+                "error": lookup.get("message") or "no match",
+            })
+            continue
+
+        r = lookup["result"]
+        # Name: description if we have it, else MPN. Both providers
+        # typically return a useful description.
+        name = (r.get("description") or "").strip() or mpn
+        # Truncate to the column limit (Part.name is varchar(300)).
+        if len(name) > 300:
+            name = name[:300]
+
+        p = Part(
+            workspace_id=ws.id,
+            part_type="linked",
+            name=name,
+            manufacturer=(r.get("manufacturer") or None),
+            mpn=(r.get("mpn") or mpn),
+            description=(r.get("description") or None),
+            footprint=(r.get("footprint") or None),
+            attrition_percentage=0,
+            attrition_min_quantity=0,
+            default_storage_location_id=row.storage_location_id,
+            default_storage_mandatory=False,
+            serialized=False,
+            linked_provider=provider.name,
+            linked_external_id=(r.get("mpn") or mpn),
+            last_refresh_at=datetime.now(timezone.utc),
+            description_locally_edited=False,
+            created_by=user.id,
+            updated_by=user.id,
+        )
+        db.add(p)
+        db.flush()  # assign p.id for the custom_fields below
+
+        # Materialise spec rows + image/datasheet as `source='provider'`,
+        # mirroring the refresh-from-provider path. Skip empties.
+        for s in (r.get("specs") or []):
+            key = (s.get("key") or "").strip()
+            value = (s.get("value") or "").strip()
+            if not key or not value:
+                continue
+            db.add(CustomField(
+                workspace_id=ws.id,
+                object_type="part",
+                object_id=p.id,
+                key=key,
+                value=value,
+                source="provider",
+                created_by=user.id,
+                updated_by=user.id,
+            ))
+        if r.get("image_url"):
+            db.add(CustomField(
+                workspace_id=ws.id,
+                object_type="part",
+                object_id=p.id,
+                key="image_url",
+                value=r["image_url"],
+                source="provider",
+                created_by=user.id,
+                updated_by=user.id,
+            ))
+        if r.get("datasheet_url"):
+            db.add(CustomField(
+                workspace_id=ws.id,
+                object_type="part",
+                object_id=p.id,
+                key="datasheet_url",
+                value=r["datasheet_url"],
+                source="provider",
+                created_by=user.id,
+                updated_by=user.id,
+            ))
+
+        # Initial stock entry — when the bag's Q field carries a count
+        # (or the operator entered one), the part lands on-hand right
+        # away. Storage location is optional: when present, the entry is
+        # filed there; when absent, it's recorded with no location so the
+        # operator can move/file it later from the Stock view. This
+        # mirrors how a freshly-arrived bag actually exists physically:
+        # you have it in hand, the count is on the label, the bin
+        # assignment can happen later.
+        qty_added = 0
+        stock_error: str | None = None
+        if row.quantity and row.quantity > 0:
+            # Build a Lot row only when the bag carried any traceability
+            # info. Without it, add_stock makes a bare stock entry with
+            # no associated lot — same as the manual stock-add flow.
+            lot_payload: LotInput | None = None
+            if row.lot_name or row.lot_serial:
+                lot_payload = LotInput(
+                    name=row.lot_name,
+                    serial_number=row.lot_serial,
+                )
+            try:
+                add_stock(
+                    db,
+                    workspace_id=ws.id,
+                    user_id=user.id,
+                    payload=AddStockIn(
+                        part_id=p.id,
+                        quantity=row.quantity,
+                        storage_location_id=row.storage_location_id,
+                        lot=lot_payload,
+                        comments=row.comments,
+                    ),
+                )
+                qty_added = row.quantity
+            except StockError as exc:
+                # Don't fail the whole row — the part is created, but
+                # surface the stock issue so the UI can flag it.
+                stock_error = str(exc)
+
+        out_rows.append({
+            "mpn": mpn,
+            "status": "created",
+            "part_id": str(p.id),
+            "quantity_added": qty_added,
+            "stock_error": stock_error,
+        })
+
+    db.commit()
+    summary = {
+        "created":        sum(1 for r in out_rows if r["status"] == "created"),
+        "duplicate":      sum(1 for r in out_rows if r["status"] == "duplicate"),
+        "lookup_failed":  sum(1 for r in out_rows if r["status"] == "lookup_failed"),
+        "invalid":        sum(1 for r in out_rows if r["status"] == "invalid"),
+    }
+    return ok({"rows": out_rows, "summary": summary, "provider": provider.name})
