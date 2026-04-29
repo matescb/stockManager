@@ -99,15 +99,37 @@ def _stub_full_response() -> dict:
                     "LeadTime": "85 Days",
                     "Min": "1",
                     "Mult": "1",
+                    "MouserPartNumber": "603-RC0402JR-070R",
+                    "ActualMfrName": "YAGEO Phycomp",
                     "PriceBreaks": [
                         {"Quantity": 1,    "Price": "$0.10",    "Currency": "USD"},
                         {"Quantity": 100,  "Price": "$0.05",    "Currency": "USD"},
+                        {"Quantity": 1000, "Price": "$0.02",    "Currency": "USD"},
                     ],
                     "ProductAttributes": [
                         {"AttributeName": "Packaging", "AttributeValue": "Reel"},
                         {"AttributeName": "Packaging", "AttributeValue": "Cut Tape"},
                         {"AttributeName": "Standard Pack Qty", "AttributeValue": "10000"},
                     ],
+                    "ProductCompliance": [
+                        {"ComplianceName": "REACH", "ComplianceValue": "Compliant"},
+                        {"ComplianceName": "Conflict Minerals", "ComplianceValue": "Compliant"},
+                        # Should NOT shadow the existing RoHS row from ROHSStatus
+                        {"ComplianceName": "RoHS", "ComplianceValue": "Different value"},
+                    ],
+                    "REACH-SVHC": ["Lead", "Cadmium"],
+                    "IsDiscontinued": "False",
+                    "SuggestedReplacement": "RC0402JR-070R-NEW",
+                    "RestrictionMessage": "",
+                    "AvailabilityInStock": "5000",
+                    "AvailableOnOrder": "0",
+                    "SalesMaximumOrderQty": "0",
+                    "AlternatePackagings": [
+                        {"APMfrPN": "RC0402JR-070RP"},
+                        {"APMfrPN": "RC0402JR-070RT"},
+                    ],
+                    "UnitWeightKg": {"UnitWeight": 0.0001},
+                    "IPCCode": "RES_0402_2P_5%",
                 }
             ],
         },
@@ -138,12 +160,98 @@ def test_provider_emits_packaging_plus_description_plus_direct(monkeypatch):
     # MOQ=1 / Mult=1 are skipped — they'd just be noise.
     assert "MOQ" not in keys
     assert "Order multiple" not in keys
-    # Price-break snapshot
-    assert any(k.startswith("Unit price") for k in keys)
+    # AvailableOnOrder=0 / SalesMaximumOrderQty=0 likewise skipped.
+    assert "On order (qty)" not in keys
+    assert "Max order qty" not in keys
+    # Empty RestrictionMessage / IsDiscontinued=False likewise skipped.
+    assert "Restriction" not in keys
+    assert "Discontinued" not in keys
 
     by_key = {s["key"]: s["value"] for s in out["result"]["specs"]}
     assert "Reel" in by_key["Packaging"] and "Cut Tape" in by_key["Packaging"]
     assert out["result"]["footprint"] == "0402"
+
+
+def test_provider_emits_full_price_ladder(monkeypatch):
+    monkeypatch.setattr(
+        "app.domain.parts.providers.mouser._post_mouser",
+        lambda url, payload: _stub_full_response(),
+    )
+    out = MouserProvider("k").lookup_mpn("X")
+    by_key = {s["key"]: s["value"] for s in out["result"]["specs"]}
+    assert by_key["Unit price (1+)"] == "$0.10"
+    assert by_key["Unit price (100+)"] == "$0.05"
+    assert by_key["Unit price (1000+)"] == "$0.02"
+
+
+def test_provider_surfaces_extra_identity_fields(monkeypatch):
+    monkeypatch.setattr(
+        "app.domain.parts.providers.mouser._post_mouser",
+        lambda url, payload: _stub_full_response(),
+    )
+    out = MouserProvider("k").lookup_mpn("X")
+    by_key = {s["key"]: s["value"] for s in out["result"]["specs"]}
+    assert by_key["Mouser P/N"] == "603-RC0402JR-070R"
+    # ActualMfrName differs from Manufacturer ("YAGEO") so it surfaces.
+    assert by_key["Distributor mfr name"] == "YAGEO Phycomp"
+
+
+def test_provider_emits_compliance_without_shadowing_rohs(monkeypatch):
+    monkeypatch.setattr(
+        "app.domain.parts.providers.mouser._post_mouser",
+        lambda url, payload: _stub_full_response(),
+    )
+    out = MouserProvider("k").lookup_mpn("X")
+    by_key = {s["key"]: s["value"] for s in out["result"]["specs"]}
+    # ProductCompliance entries land as their own rows...
+    assert by_key["REACH"] == "Compliant"
+    assert by_key["Conflict Minerals"] == "Compliant"
+    # ...except for RoHS, which is already emitted from ROHSStatus and
+    # must NOT be replaced by the ProductCompliance entry.
+    assert by_key["RoHS"] == "RoHS Compliant"
+    # REACH-SVHC list joined with ", "
+    assert by_key["REACH SVHC"] == "Lead, Cadmium"
+
+
+def test_provider_emits_alt_packagings_unit_weight_ipc(monkeypatch):
+    monkeypatch.setattr(
+        "app.domain.parts.providers.mouser._post_mouser",
+        lambda url, payload: _stub_full_response(),
+    )
+    out = MouserProvider("k").lookup_mpn("X")
+    by_key = {s["key"]: s["value"] for s in out["result"]["specs"]}
+    assert by_key["Alternate packagings"] == "RC0402JR-070RP / RC0402JR-070RT"
+    assert by_key["Unit weight"] == "0.0001 kg"
+    assert by_key["IPC code"] == "RES_0402_2P_5%"
+    assert by_key["In stock (qty)"] == "5000"
+
+
+def test_provider_emits_discontinued_and_restriction_when_set(monkeypatch):
+    resp = _stub_full_response()
+    resp["SearchResults"]["Parts"][0]["IsDiscontinued"] = "True"
+    resp["SearchResults"]["Parts"][0]["RestrictionMessage"] = "Export controlled"
+    monkeypatch.setattr(
+        "app.domain.parts.providers.mouser._post_mouser",
+        lambda url, payload: resp,
+    )
+    out = MouserProvider("k").lookup_mpn("X")
+    by_key = {s["key"]: s["value"] for s in out["result"]["specs"]}
+    assert by_key["Discontinued"] == "yes"
+    assert by_key["Restriction"] == "Export controlled"
+    # Suggested replacement still surfaces.
+    assert by_key["Suggested replacement"] == "RC0402JR-070R-NEW"
+
+
+def test_provider_skips_actual_mfr_when_same_as_manufacturer(monkeypatch):
+    resp = _stub_full_response()
+    resp["SearchResults"]["Parts"][0]["ActualMfrName"] = "YAGEO"
+    monkeypatch.setattr(
+        "app.domain.parts.providers.mouser._post_mouser",
+        lambda url, payload: resp,
+    )
+    out = MouserProvider("k").lookup_mpn("X")
+    keys = [s["key"] for s in out["result"]["specs"]]
+    assert "Distributor mfr name" not in keys
 
 
 def test_provider_emits_moq_and_mult_when_above_one(monkeypatch):

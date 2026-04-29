@@ -220,19 +220,126 @@ class MouserProvider:
             spec_order.append("Order multiple")
             specs_by_key["Order multiple"] = [str(mult_int)]
 
-        # Lowest unit price across price breaks (informational; treated as
-        # a snapshot — pricing isn't kept fresh, the link to the Mouser
-        # page is the source of truth for live prices).
-        price_breaks = p.get("PriceBreaks") or []
-        if price_breaks and "Unit price (1+)" not in specs_by_key:
-            first = price_breaks[0]
-            price = (first.get("Price") or "").strip() if isinstance(first, dict) else ""
-            qty = first.get("Quantity") if isinstance(first, dict) else None
-            if price:
-                label_qty = f"({qty}+)" if qty else ""
-                key = f"Unit price {label_qty}".strip()
+        # ---- Pricing — full ladder, one row per tier ----------------
+        # Pricing is a snapshot — refresh-from-provider re-pulls; the
+        # Mouser product link stays the source of truth for live prices.
+        for tier in (p.get("PriceBreaks") or []):
+            if not isinstance(tier, dict):
+                continue
+            price = (tier.get("Price") or "").strip()
+            qty = tier.get("Quantity")
+            if not price:
+                continue
+            label_qty = f"({qty}+)" if qty else ""
+            key = f"Unit price {label_qty}".strip()
+            if key not in specs_by_key:
                 spec_order.append(key)
                 specs_by_key[key] = [price]
+
+        # ---- Identity (extra) ---------------------------------------
+        mouser_pn = (p.get("MouserPartNumber") or "").strip()
+        if mouser_pn and "Mouser P/N" not in specs_by_key:
+            spec_order.append("Mouser P/N")
+            specs_by_key["Mouser P/N"] = [mouser_pn]
+
+        actual_mfr = (p.get("ActualMfrName") or "").strip()
+        manufacturer = (p.get("Manufacturer") or "").strip()
+        if (
+            actual_mfr
+            and actual_mfr.lower() != manufacturer.lower()
+            and "Distributor mfr name" not in specs_by_key
+        ):
+            spec_order.append("Distributor mfr name")
+            specs_by_key["Distributor mfr name"] = [actual_mfr]
+
+        # ---- Compliance / regulatory --------------------------------
+        for entry in (p.get("ProductCompliance") or []):
+            if not isinstance(entry, dict):
+                continue
+            cname = (entry.get("ComplianceName") or "").strip()
+            cval = (entry.get("ComplianceValue") or "").strip()
+            if not cname or not cval:
+                continue
+            if cname in specs_by_key:
+                # Don't shadow an existing row (e.g. RoHS already emitted
+                # from ROHSStatus).
+                continue
+            spec_order.append(cname)
+            specs_by_key[cname] = [cval]
+
+        reach = p.get("REACH-SVHC") or []
+        if isinstance(reach, list):
+            reach_values = [s.strip() for s in reach if isinstance(s, str) and s.strip()]
+            if reach_values and "REACH SVHC" not in specs_by_key:
+                spec_order.append("REACH SVHC")
+                specs_by_key["REACH SVHC"] = [", ".join(reach_values)]
+
+        # ---- Lifecycle / supply (extra) -----------------------------
+        is_disc = p.get("IsDiscontinued")
+        # Mouser sends this as a string ("True"/"False") or sometimes a bool.
+        if isinstance(is_disc, str):
+            disc_bool = is_disc.strip().lower() in {"true", "yes", "1"}
+        else:
+            disc_bool = bool(is_disc)
+        if disc_bool and "Discontinued" not in specs_by_key:
+            spec_order.append("Discontinued")
+            specs_by_key["Discontinued"] = ["yes"]
+
+        for mouser_key, our_key in (
+            ("SuggestedReplacement", "Suggested replacement"),
+            ("RestrictionMessage",   "Restriction"),
+            ("IPCCode",              "IPC code"),
+        ):
+            v = p.get(mouser_key)
+            if not isinstance(v, str):
+                continue
+            v = v.strip()
+            if not v or v.lower() in {"n/a", "none"}:
+                continue
+            if our_key not in specs_by_key:
+                spec_order.append(our_key)
+                specs_by_key[our_key] = [v]
+
+        # AvailabilityInStock / AvailableOnOrder are int-flavoured; surface
+        # only when they parse to a positive integer so they don't duplicate
+        # the human-readable `Availability` string ("5,000 In Stock").
+        for mouser_key, our_key in (
+            ("AvailabilityInStock", "In stock (qty)"),
+            ("AvailableOnOrder",    "On order (qty)"),
+            ("SalesMaximumOrderQty", "Max order qty"),
+        ):
+            v = p.get(mouser_key)
+            try:
+                ival = int(str(v).replace(",", "").strip()) if v not in (None, "") else 0
+            except (TypeError, ValueError):
+                ival = 0
+            if ival > 0 and our_key not in specs_by_key:
+                spec_order.append(our_key)
+                specs_by_key[our_key] = [str(ival)]
+
+        alt = p.get("AlternatePackagings") or []
+        alt_pns = [
+            (a.get("APMfrPN") or "").strip()
+            for a in alt
+            if isinstance(a, dict) and (a.get("APMfrPN") or "").strip()
+        ]
+        if alt_pns and "Alternate packagings" not in specs_by_key:
+            spec_order.append("Alternate packagings")
+            specs_by_key["Alternate packagings"] = [" / ".join(dict.fromkeys(alt_pns))]
+
+        # ---- Physical -----------------------------------------------
+        weight_obj = p.get("UnitWeightKg")
+        if isinstance(weight_obj, dict):
+            w = weight_obj.get("UnitWeight")
+            try:
+                w_float = float(w) if w is not None else 0.0
+            except (TypeError, ValueError):
+                w_float = 0.0
+            if w_float > 0 and "Unit weight" not in specs_by_key:
+                # Trim trailing zeros for display: 0.0001 not 0.000100
+                w_str = ("%.6f" % w_float).rstrip("0").rstrip(".")
+                spec_order.append("Unit weight")
+                specs_by_key["Unit weight"] = [f"{w_str} kg"]
 
         specs: list[dict[str, str]] = [
             {"key": k, "value": " / ".join(specs_by_key[k])} for k in spec_order
