@@ -32,12 +32,11 @@ class MouserProvider:
             return {"found": False, "result": None, "message": "empty MPN"}
 
         url = f"{_ENDPOINT}?apiKey={self.api_key}"
-        body = {
-            "SearchByPartRequest": {
-                "mouserPartNumber": mpn,
-                "partSearchOptions": "Exact",
-            }
-        }
+        # `partSearchOptions: "Exact"` matches only Mouser's own part numbers,
+        # not manufacturer MPNs (the field name is misleading). We want
+        # manufacturer-MPN search, so leave the option off — the API then
+        # searches both Mouser P/N and Manufacturer P/N with partial match.
+        body = {"SearchByPartRequest": {"mouserPartNumber": mpn}}
         try:
             data = _post_mouser(url, body)
         except Exception as exc:

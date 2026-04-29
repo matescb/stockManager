@@ -139,6 +139,9 @@ def test_lookup_mouser_success_path(authed, monkeypatch):
     # API key must travel in the URL we POST to, not anywhere else
     assert "fake-key" in captured["url"]
     assert captured["payload"]["SearchByPartRequest"]["mouserPartNumber"] == "RC0402JR-070R"
+    # We deliberately don't pass partSearchOptions: "Exact" because it
+    # only matches Mouser's own part numbers, not manufacturer MPNs.
+    assert "partSearchOptions" not in captured["payload"]["SearchByPartRequest"]
 
 
 def test_lookup_mouser_no_match(authed, monkeypatch):
