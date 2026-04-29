@@ -29,6 +29,10 @@ class Workspace(Base):
     parts_provider_api_key = Column(String(255), nullable=True)
     # DigiKey needs a second credential (client_secret). Mouser leaves this NULL.
     parts_provider_api_secret = Column(String(255), nullable=True)
+    # Which client-side decoder the scanner pages mount. 'zxing' is the
+    # royalty-free default; 'scandit' is opt-in and consumes scanner_license_key.
+    scanner = Column(String(40), nullable=False, default="zxing")  # zxing | scandit
+    scanner_license_key = Column(String(2048), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
 
 

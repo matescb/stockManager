@@ -16,6 +16,8 @@ type Ws = {
   parts_provider: "none" | "mouser" | "digikey";
   has_parts_provider_api_key: boolean;
   has_parts_provider_api_secret: boolean;
+  scanner: "zxing" | "scandit";
+  has_scanner_license_key: boolean;
 };
 
 type Member = {
@@ -54,6 +56,8 @@ export default function WorkspaceSettings() {
   const [providerKey, setProviderKey] = useState("");
   const [providerSecret, setProviderSecret] = useState("");
   const [providerKeyBusy, setProviderKeyBusy] = useState(false);
+  const [scannerLicense, setScannerLicense] = useState("");
+  const [scannerBusy, setScannerBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   async function createWs() {
@@ -378,6 +382,69 @@ export default function WorkspaceSettings() {
                   }}
                 >
                   {providerKey ? "Save" : (cur.has_parts_provider_api_key ? "Clear" : "Save")}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {cur && (
+        <div className="card p-4 mb-4 space-y-3 text-sm">
+          <div className="flex items-center justify-between">
+            <h2 className="text-md font-semibold">Scanner</h2>
+            <select
+              className="input max-w-[220px]"
+              value={cur.scanner}
+              onChange={e => patch({ scanner: e.target.value as Ws["scanner"] })}
+            >
+              <option value="zxing">Open-source (ZXing)</option>
+              <option value="scandit">Scandit (license required)</option>
+            </select>
+          </div>
+          {cur.scanner === "zxing" ? (
+            <div className="text-xs text-muted">
+              Royalty-free decoder bundled with the app. Decodes Code128, Code39,
+              QR, DataMatrix, and PDF417. No license key needed.
+            </div>
+          ) : (
+            <>
+              <div className="text-xs text-muted">
+                Paste your Scandit license key. The key must list this site's
+                origin (the page you're on right now) in its allowed domains —
+                otherwise the SDK refuses to load. Empty the field to clear it.
+              </div>
+              <div className="flex gap-2 items-center">
+                <input
+                  className="input flex-1 font-mono text-xs"
+                  type="password"
+                  autoComplete="off"
+                  value={scannerLicense}
+                  onChange={e => setScannerLicense(e.target.value)}
+                  placeholder={cur.has_scanner_license_key ? "•••••••• (key set)" : "license key"}
+                />
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={scannerBusy}
+                  onClick={async () => {
+                    setScannerBusy(true);
+                    try {
+                      await api.patch("/workspaces/current", {
+                        scanner_license_key: scannerLicense,
+                      });
+                      qc.invalidateQueries({ queryKey: ["ws", "current"] });
+                      qc.invalidateQueries({ queryKey: ["ws", "scanner", "license-key"] });
+                      setScannerLicense("");
+                      toast.success(scannerLicense ? "License key saved." : "License key cleared.");
+                    } catch (e) {
+                      toast.error(e instanceof ApiError ? e.message : "Failed");
+                    } finally {
+                      setScannerBusy(false);
+                    }
+                  }}
+                >
+                  {scannerLicense ? "Save" : (cur.has_scanner_license_key ? "Clear" : "Save")}
                 </button>
               </div>
             </>

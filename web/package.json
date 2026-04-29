@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/copy-zxing-wasm.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/copy-zxing-wasm.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview"
   },
@@ -21,7 +23,8 @@
     "react-router-dom": "^6.27.0",
     "sonner": "^2.0.7",
     "tailwind-merge": "^2.5.4",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "zxing-wasm": "^3.0.2"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",

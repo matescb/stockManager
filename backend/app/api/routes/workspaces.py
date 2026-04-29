@@ -68,12 +68,25 @@ def _serialize_workspace(ws: Workspace) -> dict:
         # Never echo the API key/secret. Just say whether each is set.
         "has_parts_provider_api_key": bool(ws.parts_provider_api_key),
         "has_parts_provider_api_secret": bool(ws.parts_provider_api_secret),
+        "scanner": ws.scanner or "zxing",
+        # Same secret-handling pattern as the parts-provider key.
+        "has_scanner_license_key": bool(ws.scanner_license_key),
     }
 
 
 @router.get("/current")
 def current(ws: CurrentWorkspace):
     return ok(_serialize_workspace(ws))
+
+
+@router.get("/current/scanner-license-key")
+def current_scanner_license_key(ws: CurrentWorkspace):
+    """Raw Scandit license key for the scanner mount. Kept on a dedicated
+    route so it never leaks into normal /current payloads — the regular
+    serializer only emits has_scanner_license_key. Any authenticated
+    workspace member already has access; this just keeps the value out of
+    response bodies that are fetched on every page."""
+    return ok({"license_key": ws.scanner_license_key or ""})
 
 
 class WorkspacePatch(BaseModel):
@@ -94,6 +107,9 @@ class WorkspacePatch(BaseModel):
     # Same semantics as parts_provider_api_key. Used as DigiKey's
     # client_secret; Mouser doesn't need it.
     parts_provider_api_secret: str | None = None
+    scanner: Literal["zxing", "scandit"] | None = None
+    # Same '' clears / non-empty replaces / None leaves alone semantics.
+    scanner_license_key: str | None = None
 
 
 @router.patch("/current", dependencies=[Depends(require_role("admin"))])
@@ -110,6 +126,9 @@ def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace):
     if "parts_provider_api_secret" in data:
         new_secret = data.pop("parts_provider_api_secret")
         ws.parts_provider_api_secret = new_secret if new_secret else None
+    if "scanner_license_key" in data:
+        new_license = data.pop("scanner_license_key")
+        ws.scanner_license_key = new_license if new_license else None
 
     for k, v in data.items():
         setattr(ws, k, v)

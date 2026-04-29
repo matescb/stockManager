@@ -1,25 +1,25 @@
-import { useEffect, useRef, useState } from "react";
-import {
-  DataCaptureContext,
-  DataCaptureView,
-  Camera,
-  FrameSourceState,
-} from "@scandit/web-datacapture-core";
-import {
-  barcodeCaptureLoader,
-  BarcodeCapture,
-  BarcodeCaptureOverlay,
-  BarcodeCaptureSettings,
-  Symbology,
-} from "@scandit/web-datacapture-barcode";
+import { lazy, Suspense } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 
-const LICENSE_KEY =
-  "ARqyj56BCn1qC4rajxmvbwY8FsD5CN4jq0T+kURLRlAAej9Rrmc8K6YypikELDzmRkxWEa5x8IXzKgKw4FJ5WIVbzzyCb4uY02OlGv0cmxs2TZUhUFar0a52fOs+JMK28wXcYKkRdF5TBJNA8Rnheb8RDK55Ib01/CYq8rrqxQSgCjtVmd/wBbVrpnT9lINbgIp8DSYgH9y5yIp515dPGnuOIms4P0bKICJmSu5qboptMDfqV+xzTWHJZA/d52cVc1dzIAPoZFd7/hUKmVv35+7uh+xVy6Rfa+NEs4SqyMM3LyskVW0VxgA6CJl9mFuO1RMGmoiPdok71U5EE/9039wlXuh74G52TsZWolPKmqGUOqNwqWi+eO5TEd1pwgc20TI8XqzfATKQMC4gCdhHMMG1/iU3Z9nNvbaPpzmPjzHv8MeAq3l73LawxtbQ5FaO2pnIUrJPWkJBxyyiTVCCZ1YGEv3UafNr1OHL6goOF/kg1ALs1Z1w/Lb2poSU5kPRw50PyV6sYRqlYQqcF3H8UdSgfNO4k2tpxqpneyJhlV0b57E2+YE2uuAmCDEoD3pl6MhchsUOCd58Ep4zqQN/3fBDpD9fQ19Anqt3pzHXMhG7bvfQXDcmcgncbz3dwJG9ZhcG7X95OnSxcpeDO52laacIY+qAhqet+Nspl4lg6O6uQLMJzecDfM2c1p8X2PGZI5UujpKXBT1kkpYCmUE3gVqkOLj/y2T+KqChMx9ViBHJp7P5urh4SOYpkyVRdpZljQApUtF0+MifO25Htg/9Zt+HZL56c34aShjrujkX6YKHlE8LVoAEGPHy7Vb/6iOu2aafKRch";
+type WsScanner = {
+  scanner: "zxing" | "scandit";
+  has_scanner_license_key: boolean;
+};
 
-const LICENSED_SYMBOLOGIES = ["Code128", "Code39", "QR", "DataMatrix", "PDF417"] as const;
-type LicensedSymbology = (typeof LICENSED_SYMBOLOGIES)[number];
+/**
+ * Dispatcher: pick the scanner backend the workspace is configured for and
+ * mount only that one. Both backends conform to the `Props` shape so call
+ * sites (`MpnLookup`, `ScanImport`, `PartScan`) don't change.
+ *
+ * Why lazy: each backend pulls a multi-MB wasm blob. Splitting them keeps
+ * the SPA shell small and only fetches the chosen decoder.
+ */
 
 export type ScanResult = { data: string; symbology: string };
+
+const LICENSED_SYMBOLOGIES = ["Code128", "Code39", "QR", "DataMatrix", "PDF417"] as const;
+export type LicensedSymbology = (typeof LICENSED_SYMBOLOGIES)[number];
 
 type Props = {
   onScan: (b: ScanResult) => void;
@@ -33,85 +33,93 @@ type Props = {
   symbologies?: ReadonlyArray<LicensedSymbology>;
 };
 
+const ZxingScanner = lazy(() => import("./ZxingScanner"));
+const ScanditScanner = lazy(() => import("./ScanditScanner"));
+
 export default function Scanner({ onScan, className, symbologies }: Props) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [status, setStatus] = useState<{ text: string; kind?: "ready" | "err" }>({
-    text: "Initializing…",
+  // Same query key as Settings → Workspace, so the cache is shared across
+  // scanner mounts and the settings page.
+  const { data: ws, isLoading } = useQuery({
+    queryKey: ["ws", "current"],
+    queryFn: () => api.get<WsScanner>("/workspaces/current"),
   });
 
-  useEffect(() => {
-    let stopped = false;
-    let cameraRef: Camera | null = null;
-    let contextRef: DataCaptureContext | null = null;
+  if (isLoading || !ws) {
+    return <div className={className}>Loading scanner…</div>;
+  }
 
-    (async () => {
-      try {
-        if (!window.isSecureContext) {
-          throw new Error("Not a secure context — open via http://localhost or https.");
-        }
+  const fallback = <div className={className}>Loading decoder…</div>;
 
-        setStatus({ text: "Loading engine…" });
-        const ctx = await DataCaptureContext.forLicenseKey(LICENSE_KEY, {
-          libraryLocation: new URL("/scandit/", window.location.href).toString(),
-          moduleLoaders: [barcodeCaptureLoader({ highEndBlurryRecognition: false })],
-        });
-        contextRef = ctx;
-        if (stopped) return;
-
-        setStatus({ text: "Starting camera…" });
-        const camera = Camera.pickBestGuess();
-        if (!camera) throw new Error("No camera available.");
-        cameraRef = camera;
-        await camera.setMirrorImageEnabled(false);
-        await ctx.setFrameSource(camera);
-
-        const settings = new BarcodeCaptureSettings();
-        const enabled = symbologies ?? LICENSED_SYMBOLOGIES;
-        for (const key of enabled) {
-          if ((Symbology as any)[key] !== undefined) {
-            settings.enableSymbology((Symbology as any)[key], true);
-          }
-        }
-        const capture = await BarcodeCapture.forContext(ctx, settings);
-        capture.addListener({
-          didScan: (_m, session) => {
-            const b = (session as any).newlyRecognizedBarcode;
-            if (b) onScan({ data: b.data ?? "", symbology: b.symbology ?? "?" });
-          },
-        });
-
-        const view = await DataCaptureView.forContext(ctx);
-        if (containerRef.current) view.connectToElement(containerRef.current);
-        const overlay = await BarcodeCaptureOverlay.withBarcodeCapture(capture);
-        await view.addOverlay(overlay);
-
-        await camera.switchToDesiredState(FrameSourceState.On);
-        setStatus({ text: "Ready — point camera at a barcode", kind: "ready" });
-      } catch (err: any) {
-        console.error(err);
-        setStatus({ text: `Error: ${err?.message ?? err}`, kind: "err" });
-      }
-    })();
-
-    return () => {
-      stopped = true;
-      cameraRef?.switchToDesiredState(FrameSourceState.Off).catch(() => {});
-      contextRef?.dispose?.().catch?.(() => {});
-    };
-  }, [onScan, symbologies]);
-
-  return (
-    <div className={className ?? "flex flex-col h-[70vh]"}>
-      <div ref={containerRef} className="flex-1 bg-black relative overflow-hidden rounded-md" />
-      <div className="mt-2 flex items-center gap-2 text-sm">
-        <span
-          className={
-            "w-2.5 h-2.5 rounded-full " +
-            (status.kind === "ready" ? "bg-accent" : status.kind === "err" ? "bg-danger" : "bg-muted")
-          }
+  if (ws.scanner === "scandit") {
+    if (!ws.has_scanner_license_key) {
+      return (
+        <div className={className ?? "flex flex-col h-[70vh]"}>
+          <div className="flex-1 flex items-center justify-center bg-bg-soft rounded-md p-6 text-center">
+            <div className="max-w-sm text-sm text-text-muted">
+              <p className="mb-2 font-medium text-text">Scandit license key missing.</p>
+              <p>
+                Set one in <strong className="text-text">Settings → Workspace → Scanner</strong>,
+                or switch the scanner to the open-source decoder there.
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    // The license key is fetched at run time. We don't put it on the wire
+    // anywhere else; the API exposes only `has_scanner_license_key`. Fetch
+    // the raw key separately so it stays scoped to the scanner mount.
+    return (
+      <Suspense fallback={fallback}>
+        <ScanditScannerWithKey
+          onScan={onScan}
+          className={className}
+          symbologies={symbologies}
         />
-        <span>{status.text}</span>
+      </Suspense>
+    );
+  }
+
+  // Default: open-source ZXing.
+  return (
+    <Suspense fallback={fallback}>
+      <ZxingScanner onScan={onScan} className={className} symbologies={symbologies} />
+    </Suspense>
+  );
+}
+
+/**
+ * Wrapper that fetches the Scandit license key from a dedicated endpoint
+ * (the workspace serializer never echoes it) and passes it down. Kept as
+ * a small inner component so the key fetch is scoped to Scandit users only.
+ */
+function ScanditScannerWithKey({
+  onScan,
+  className,
+  symbologies,
+}: {
+  onScan: (b: ScanResult) => void;
+  className?: string;
+  symbologies?: ReadonlyArray<LicensedSymbology>;
+}) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["ws", "scanner", "license-key"],
+    queryFn: () => api.get<{ license_key: string }>("/workspaces/current/scanner-license-key"),
+  });
+  if (isLoading) return <div className={className}>Fetching license…</div>;
+  if (error || !data?.license_key) {
+    return (
+      <div className={className}>
+        Failed to load Scandit license key. Re-save it in Settings.
       </div>
-    </div>
+    );
+  }
+  return (
+    <ScanditScanner
+      licenseKey={data.license_key}
+      onScan={onScan}
+      className={className}
+      symbologies={symbologies}
+    />
   );
 }
