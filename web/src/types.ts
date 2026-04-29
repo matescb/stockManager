@@ -15,10 +15,24 @@ export type Part = {
   default_storage_mandatory: boolean;
   serialized: boolean;
   published?: boolean;
+  linked_provider: "mouser" | null;
+  linked_external_id: string | null;
+  last_refresh_at: string | null;
+  description_locally_edited: boolean;
   archived_at: string | null;
   on_hand: number | null;
   reserved: number;
   available: number;
+};
+
+export type SpecSource = "provider" | "manual" | "override";
+
+export type CustomFieldRow = {
+  id: string;
+  key: string;
+  value: string | null;
+  source: SpecSource;
+  original_value: string | null;
 };
 
 export type StorageLocation = {

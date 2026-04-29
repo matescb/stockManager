@@ -18,3 +18,9 @@ class CustomField(WorkspaceOwned, Base):
     object_id = Column(UUID(as_uuid=True), nullable=False)
     key = Column(String(256), nullable=False)
     value = Column(String(1024), nullable=True)
+    # provider — supplied by an external data source (e.g. Mouser).
+    # manual   — user-entered. The default for legacy and new manual rows.
+    # override — user-edited a row that was originally `provider`. The
+    #            upstream value is preserved in `original_value`.
+    source = Column(String(20), nullable=False, default="manual")
+    original_value = Column(String(1024), nullable=True)

@@ -2,21 +2,32 @@ import { useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, RotateCcw, Trash2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
-import type { Part } from "@/types";
+import type { CustomFieldRow, Part, SpecSource } from "@/types";
 
-type CustomField = { id: string; key: string; value: string | null };
-
-// Keys reserved for non-spec metadata (rendered elsewhere on PartInfo).
-// We hide them from the Specs table to keep it focused on actual specs.
+// Reserved keys that surface elsewhere on PartInfo (Media card). We hide
+// them from the Specs table to keep it focused on actual specs.
 const RESERVED = new Set(["image_url", "datasheet_url"]);
 
+const SOURCE_BADGE: Record<SpecSource, string> = {
+  provider: "bg-accent/15 text-accent",
+  manual:   "bg-panel2 text-muted",
+  override: "bg-warning/20 text-warning",
+};
+
+const SOURCE_LABEL: Record<SpecSource, string> = {
+  provider: "Provider",
+  manual:   "Manual",
+  override: "Override",
+};
+
 /**
- * The "Specs" tab on a part. Renders all custom_fields entries on the
- * part as a key/value table, with inline add + delete. Provider-supplied
- * rows (e.g. Mouser ProductAttributes) are persisted here at part-create
- * time; users can extend the table with their own rows afterwards.
+ * The "Specs" tab on a part. Provider-supplied rows (from the
+ * configured MPN provider) carry source='provider'; user-typed rows
+ * are source='manual'; editing a provider row in place transitions it
+ * to source='override' and preserves the upstream value as
+ * original_value, so a single click on Restore reverts cleanly.
  */
 export default function PartSpecs() {
   const { part } = useOutletContext<{ part: Part }>();
@@ -26,7 +37,7 @@ export default function PartSpecs() {
   const { data, isLoading } = useQuery({
     queryKey,
     queryFn: () =>
-      api.get<CustomField[]>(`/custom-fields/by-object/part/${part.id}`),
+      api.get<CustomFieldRow[]>(`/custom-fields/by-object/part/${part.id}`),
   });
 
   const [newKey, setNewKey] = useState("");
@@ -59,7 +70,7 @@ export default function PartSpecs() {
     }
   }
 
-  async function update(row: CustomField, newValueText: string) {
+  async function update(row: CustomFieldRow, newValueText: string) {
     if ((row.value ?? "") === newValueText) return;
     try {
       await api.post("/custom-fields", {
@@ -74,12 +85,22 @@ export default function PartSpecs() {
     }
   }
 
-  async function remove(row: CustomField) {
+  async function remove(row: CustomFieldRow) {
     if (!confirm(`Delete spec "${row.key}"?`)) return;
     try {
       await api.delete(`/custom-fields/${row.id}`);
       qc.invalidateQueries({ queryKey });
       toast.success("Spec deleted.");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Failed");
+    }
+  }
+
+  async function restore(row: CustomFieldRow) {
+    try {
+      await api.delete(`/custom-fields/${row.id}/override`);
+      qc.invalidateQueries({ queryKey });
+      toast.success("Restored upstream value.");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Failed");
     }
@@ -107,7 +128,8 @@ export default function PartSpecs() {
             <tr>
               <th className="w-1/3">Key</th>
               <th>Value</th>
-              <th className="w-12"></th>
+              <th className="w-32">Source</th>
+              <th className="w-20"></th>
             </tr>
           </thead>
           <tbody>
@@ -120,16 +142,39 @@ export default function PartSpecs() {
                     defaultValue={r.value ?? ""}
                     onBlur={e => update(r, e.target.value)}
                   />
+                  {r.source === "override" && r.original_value != null && (
+                    <div className="text-xs text-muted mt-1">
+                      Upstream: <span className="font-mono">{r.original_value}</span>
+                    </div>
+                  )}
                 </td>
                 <td>
-                  <button
-                    type="button"
-                    className="btn-ghost btn-sm"
-                    aria-label={`Delete ${r.key}`}
-                    onClick={() => remove(r)}
-                  >
-                    <Trash2 size={14} className="text-danger" />
-                  </button>
+                  <span className={`pill ${SOURCE_BADGE[r.source]}`}>
+                    {SOURCE_LABEL[r.source]}
+                  </span>
+                </td>
+                <td>
+                  <div className="flex gap-1 justify-end">
+                    {r.source === "override" && (
+                      <button
+                        type="button"
+                        className="btn-ghost btn-sm"
+                        title="Restore upstream value"
+                        aria-label={`Restore ${r.key}`}
+                        onClick={() => restore(r)}
+                      >
+                        <RotateCcw size={14} />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="btn-ghost btn-sm"
+                      aria-label={`Delete ${r.key}`}
+                      onClick={() => remove(r)}
+                    >
+                      <Trash2 size={14} className="text-danger" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

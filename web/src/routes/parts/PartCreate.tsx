@@ -20,12 +20,15 @@ export default function PartCreate() {
   });
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // Provider-discovered metadata; persisted as custom_fields on the new
-  // part after creation. URL fields surface inline; specs land on the
-  // Specs tab once the part exists.
+  // The lookup preview lets the user see what will be loaded from the
+  // provider before clicking Create. After the part exists, we run a
+  // single refresh-from-provider call which writes all the provider
+  // data with the right `source='provider'` tagging — instead of
+  // posting each row from the browser as a manual edit.
   const [datasheetUrl, setDatasheetUrl] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [specs, setSpecs] = useState<ProviderSpec[]>([]);
+  const [hasLookup, setHasLookup] = useState(false);
   const { data: storage } = useQuery({ queryKey: ["storage"], queryFn: () => api.get<StorageLocation[]>("/storage") });
 
   function set<K extends keyof typeof form>(k: K, v: (typeof form)[K]) {
@@ -42,19 +45,7 @@ export default function PartCreate() {
     setDatasheetUrl(r.datasheet_url ?? null);
     setImageUrl(r.image_url ?? null);
     setSpecs(r.specs ?? []);
-  }
-
-  async function persistCustomField(partId: string, key: string, value: string) {
-    try {
-      await api.post("/custom-fields", {
-        object_type: "part",
-        object_id: partId,
-        key,
-        value,
-      });
-    } catch {
-      /* non-fatal — the part already exists */
-    }
+    setHasLookup(true);
   }
 
   async function submit(e: React.FormEvent) {
@@ -65,15 +56,20 @@ export default function PartCreate() {
       const payload: any = { ...form };
       if (!payload.default_storage_location_id) delete payload.default_storage_location_id;
       const res = await api.post<{ id: string }>("/parts", payload);
-      // Persist all provider-discovered metadata as custom_fields. Failures
-      // here are non-fatal: the part is created and the user can edit later.
-      const writes: Promise<unknown>[] = [];
-      if (datasheetUrl) writes.push(persistCustomField(res.id, "datasheet_url", datasheetUrl));
-      if (imageUrl) writes.push(persistCustomField(res.id, "image_url", imageUrl));
-      for (const s of specs) {
-        writes.push(persistCustomField(res.id, s.key, s.value));
+
+      // If the user successfully ran the MPN lookup and the part is
+      // linked-type with an MPN, re-run the lookup against the new
+      // part to populate provider data with proper source='provider'
+      // tagging + last_refresh_at + linked_provider. Failures here are
+      // non-fatal — the part already exists and the user can hit
+      // Refresh on PartInfo later.
+      if (hasLookup && form.part_type === "linked" && form.mpn.trim()) {
+        try {
+          await api.post(`/parts/${res.id}/refresh-from-provider`);
+        } catch {
+          /* non-fatal */
+        }
       }
-      await Promise.all(writes);
       nav(`/parts/${res.id}/info`);
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Failed");
@@ -130,8 +126,9 @@ export default function PartCreate() {
               <img src={imageUrl} alt="Part" className="h-16 w-16 object-contain rounded bg-panel" />
             )}
             <div className="flex-1 text-xs text-muted">
-              Found via lookup — these fields will be saved on the new part as custom fields
-              (visible on the Specs tab) once you click Create.
+              Found via provider lookup. After Create, the part will be linked
+              and these specs will be tagged as <strong>Provider</strong>;
+              click Refresh on the part page to re-pull whenever you want.
             </div>
           </div>
           {specs.length > 0 && (

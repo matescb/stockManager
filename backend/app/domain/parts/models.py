@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy import (
     Boolean,
     Column,
+    DateTime,
     ForeignKey,
     Index,
     Integer,
@@ -47,6 +48,17 @@ class Part(WorkspaceOwned, Base):
     default_storage_mandatory = Column(Boolean, nullable=False, default=False)
     serialized = Column(Boolean, nullable=False, default=False)
     published = Column(Boolean, nullable=False, default=False)
+    # Provider linkage. linked_provider names which workspace-configured
+    # data source owns the canonical fields (manufacturer/mpn/description);
+    # linked_external_id (declared above) holds the upstream identifier
+    # (e.g. Mouser's ManufacturerPartNumber after lookup). last_refresh_at
+    # is updated on every successful provider fetch;
+    # description_locally_edited flips true when a user edits the
+    # description on a linked part so that subsequent refreshes won't
+    # overwrite it.
+    linked_provider = Column(String(40), nullable=True)
+    last_refresh_at = Column(DateTime(timezone=True), nullable=True)
+    description_locally_edited = Column(Boolean, nullable=False, default=False)
 
 
 class PartCadKey(Base):

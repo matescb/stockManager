@@ -1,35 +1,123 @@
+import { useState } from "react";
 import { useOutletContext } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { ExternalLink, FileText, ImageOff } from "lucide-react";
-import { api } from "@/lib/api";
-import type { Part } from "@/types";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { ExternalLink, FileText, ImageOff, Loader2, RefreshCw } from "lucide-react";
+import { api, ApiError } from "@/lib/api";
+import type { CustomFieldRow, Part } from "@/types";
 
-type CustomField = { id: string; key: string; value: string | null };
+const PROVIDER_LABEL: Record<string, string> = {
+  mouser: "Mouser",
+};
 
-/**
- * Renders the part's identity + stock + description + (when present)
- * the provider-discovered image and datasheet link. Image and
- * datasheet are stored as custom_fields with reserved keys — same
- * place provider-supplied specs live (see Specs tab).
- */
+const STALE_DAYS = 30;
+
+function relativeTime(iso: string | null): string {
+  if (!iso) return "never";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60_000) return "just now";
+  const min = Math.round(ms / 60_000);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 48) return `${hr}h ago`;
+  const day = Math.round(hr / 24);
+  return `${day}d ago`;
+}
+
+function isStale(iso: string | null): boolean {
+  if (!iso) return false;
+  return Date.now() - new Date(iso).getTime() > STALE_DAYS * 24 * 3600 * 1000;
+}
+
 export default function PartInfo() {
   const { part } = useOutletContext<{ part: Part }>();
+  const qc = useQueryClient();
   const { data: cf } = useQuery({
     queryKey: ["part", part.id, "custom-fields"],
     queryFn: () =>
-      api.get<CustomField[]>(`/custom-fields/by-object/part/${part.id}`),
+      api.get<CustomFieldRow[]>(`/custom-fields/by-object/part/${part.id}`),
   });
   const lookupBy = (k: string) => cf?.find(r => r.key === k)?.value || null;
   const imageUrl = lookupBy("image_url");
   const datasheetUrl = lookupBy("datasheet_url");
 
+  const [refreshing, setRefreshing] = useState(false);
+  async function refresh() {
+    setRefreshing(true);
+    try {
+      const r = await api.post<{
+        found: boolean;
+        provider?: string;
+        message?: string;
+        summary?: { added: number; updated: number; removed: number };
+      }>(`/parts/${part.id}/refresh-from-provider`, {});
+      if (r.found && r.summary) {
+        const { added, updated, removed } = r.summary;
+        toast.success(
+          `Refreshed from ${PROVIDER_LABEL[r.provider!] ?? r.provider}: ` +
+            `${added} added, ${updated} updated, ${removed} removed.`,
+        );
+      } else {
+        toast.message(r.message || "No upstream match.");
+      }
+      qc.invalidateQueries({ queryKey: ["part", part.id] });
+      qc.invalidateQueries({ queryKey: ["part", part.id, "custom-fields"] });
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Refresh failed");
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  const linked = !!part.linked_provider;
+  const providerLabel = linked
+    ? PROVIDER_LABEL[part.linked_provider as string] ?? part.linked_provider
+    : null;
+
   return (
     <div className="grid grid-cols-2 gap-4">
+      {linked && (
+        <div className="card p-3 col-span-2 flex items-center gap-3 text-sm">
+          <RefreshCw size={14} className="text-accent shrink-0" />
+          <div className="flex-1">
+            <span className="font-medium">Linked to {providerLabel}</span>
+            <span className="text-muted ml-2">
+              · last refreshed {relativeTime(part.last_refresh_at)}
+              {isStale(part.last_refresh_at) && (
+                <span className="ml-2 pill bg-warning/20 text-warning">stale</span>
+              )}
+            </span>
+            {part.linked_external_id && (
+              <span className="ml-2 text-xs text-muted font-mono">
+                {part.linked_external_id}
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            className="btn"
+            onClick={refresh}
+            disabled={refreshing}
+            title={`Re-pull ${providerLabel} data`}
+          >
+            {refreshing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+            Refresh
+          </button>
+        </div>
+      )}
       <div className="card p-4">
         <h3 className="text-sm uppercase tracking-wider text-muted mb-2">Identity</h3>
         <Field label="Name" value={part.name} />
-        <Field label="Manufacturer" value={part.manufacturer} />
-        <Field label="MPN" value={part.mpn} />
+        <Field
+          label="Manufacturer"
+          value={part.manufacturer}
+          badge={linked ? <ProviderBadge label={providerLabel!} /> : null}
+        />
+        <Field
+          label="MPN"
+          value={part.mpn}
+          badge={linked ? <ProviderBadge label={providerLabel!} /> : null}
+        />
         <Field label="Internal P/N" value={part.internal_part_number} />
         <Field label="Footprint" value={part.footprint} />
       </div>
@@ -77,18 +165,42 @@ export default function PartInfo() {
         </div>
       )}
       <div className="card p-4 col-span-2">
-        <h3 className="text-sm uppercase tracking-wider text-muted mb-2">Description</h3>
+        <div className="flex items-center mb-2">
+          <h3 className="text-sm uppercase tracking-wider text-muted">Description</h3>
+          {linked && (
+            part.description_locally_edited ? (
+              <span className="pill ml-2 bg-warning/20 text-warning">Locally edited</span>
+            ) : (
+              <ProviderBadge label={providerLabel!} className="ml-2" />
+            )
+          )}
+        </div>
         <p className="whitespace-pre-wrap text-sm">{part.description || <span className="text-muted">—</span>}</p>
       </div>
     </div>
   );
 }
 
-function Field({ label, value }: { label: string; value: string | null | undefined }) {
+function ProviderBadge({ label, className }: { label: string; className?: string }) {
   return (
-    <div className="text-sm py-1">
+    <span className={`pill bg-accent/15 text-accent ${className ?? ""}`}>{label}</span>
+  );
+}
+
+function Field({
+  label,
+  value,
+  badge,
+}: {
+  label: string;
+  value: string | null | undefined;
+  badge?: React.ReactNode;
+}) {
+  return (
+    <div className="text-sm py-1 flex items-baseline gap-2">
       <span className="text-muted w-40 inline-block">{label}</span>
       <span>{value || <span className="text-muted">—</span>}</span>
+      {badge && <span className="ml-auto">{badge}</span>}
     </div>
   );
 }

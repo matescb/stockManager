@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
@@ -10,13 +11,16 @@ from sqlalchemy import or_, select
 from app.api.routes._activity import build_activity
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
+from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part, PartMetaMember, PartSubstitute
+from app.domain.parts.providers import make_provider
 from app.domain.stock.models import StockEntry
 from app.domain.stock.service import (
     reserved_quantity,
     stock_summary_for_part,
     total_for_part,
 )
+from app.domain.workspaces.models import Workspace
 
 router = APIRouter()
 
@@ -57,6 +61,11 @@ class PartPatch(BaseModel):
     default_storage_mandatory: bool | None = None
     serialized: bool | None = None
     published: bool | None = None
+    # Command flag: when true, drops the provider link, clears
+    # last_refresh_at, resets description_locally_edited, and converts
+    # every {provider, override} custom_field row on this part to
+    # `manual` (override rows lose their original_value).
+    unlink_provider: bool | None = None
 
 
 def _serialize(
@@ -87,6 +96,10 @@ def _serialize(
         "default_storage_mandatory": p.default_storage_mandatory,
         "serialized": p.serialized,
         "published": bool(p.published),
+        "linked_provider": p.linked_provider,
+        "linked_external_id": p.linked_external_id,
+        "last_refresh_at": p.last_refresh_at.isoformat() if p.last_refresh_at else None,
+        "description_locally_edited": bool(p.description_locally_edited),
         "archived_at": p.archived_at.isoformat() if p.archived_at else None,
         "on_hand": on_hand,
         "reserved": reserved,
@@ -172,9 +185,52 @@ def get_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
 @router.patch("/{part_id}")
 def patch_part(part_id: UUID, payload: PartPatch, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     p = _get_part(db, ws.id, part_id)
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    unlink = bool(data.pop("unlink_provider", False))
+
+    # Linked-part guards: manufacturer + MPN are provider-owned for as long
+    # as the link is active. The user must explicitly unlink to edit them.
+    if p.linked_provider and not unlink:
+        for f in ("manufacturer", "mpn"):
+            if f in data and data[f] != getattr(p, f):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{f} is provider-owned on a linked part; pass unlink_provider=true to take ownership",
+                )
+
+    # Editing description on a linked part flips the locally-edited flag so
+    # subsequent provider refreshes won't overwrite the user's wording.
+    if (
+        "description" in data
+        and p.linked_provider is not None
+        and data["description"] != p.description
+    ):
+        p.description_locally_edited = True
+
+    for k, v in data.items():
         setattr(p, k, v)
     p.updated_by = user.id
+
+    if unlink:
+        p.linked_provider = None
+        p.last_refresh_at = None
+        p.description_locally_edited = False
+        # Convert every provider/override custom_field on this part into a
+        # plain manual row, dropping the saved original.
+        rows = list(
+            db.execute(
+                select(CustomField)
+                .where(CustomField.workspace_id == ws.id)
+                .where(CustomField.object_type == "part")
+                .where(CustomField.object_id == p.id)
+                .where(CustomField.source.in_(["provider", "override"]))
+            ).scalars()
+        )
+        for r in rows:
+            r.source = "manual"
+            r.original_value = None
+            r.updated_by = user.id
+
     db.commit()
     return ok(
         _serialize(
@@ -187,7 +243,6 @@ def patch_part(part_id: UUID, payload: PartPatch, db: DbSession, ws: CurrentWork
 
 @router.post("/{part_id}/archive")
 def archive_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    from datetime import datetime, timezone
     p = _get_part(db, ws.id, part_id)
     p.archived_at = datetime.now(timezone.utc)
     db.commit()
@@ -363,3 +418,146 @@ def part_activity(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
         updated_kind="part_updated",
     )
     return ok(events)
+
+
+# Reserved keys that surface elsewhere on PartInfo (Media card). These
+# are also treated as `source='provider'` rows but we keep them out of
+# the spec body when listing.
+_PROVIDER_RESERVED_KEYS = ("image_url", "datasheet_url")
+
+
+@router.post("/{part_id}/refresh-from-provider")
+def refresh_from_provider(
+    part_id: UUID,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
+    """Re-run the workspace's configured MPN lookup against this part's
+    stored MPN. Reconciles `source='provider'` custom_field rows
+    (insert / update / delete) and never touches `manual` / `override`.
+    Updates manufacturer + mpn + footprint always; description only when
+    it hasn't been locally edited."""
+    p = _get_part(db, ws.id, part_id)
+    if not (p.mpn or "").strip():
+        raise HTTPException(status_code=400, detail="part has no MPN to look up")
+
+    provider = make_provider(ws.parts_provider, ws.parts_provider_api_key)
+    if provider is None:
+        raise HTTPException(
+            status_code=400,
+            detail="no parts provider configured (set one in Workspace settings)",
+        )
+
+    out = provider.lookup_mpn(p.mpn.strip())
+    if not out.get("found") or not out.get("result"):
+        return ok(
+            {
+                "found": False,
+                "message": out.get("message") or "no match",
+                "provider": provider.name,
+            }
+        )
+
+    r = out["result"]
+    p.manufacturer = r.get("manufacturer") or p.manufacturer
+    new_mpn = r.get("mpn") or p.mpn
+    if new_mpn:
+        p.mpn = new_mpn
+    fp = r.get("footprint")
+    if fp:
+        # On every refresh we let the provider drive footprint — same
+        # treatment as manufacturer/mpn (provider-owned for linked parts).
+        p.footprint = fp
+    if not p.description_locally_edited:
+        new_desc = r.get("description")
+        if new_desc:
+            p.description = new_desc
+    p.linked_provider = provider.name
+    p.linked_external_id = r.get("mpn") or p.linked_external_id
+    p.last_refresh_at = datetime.now(timezone.utc)
+    p.updated_by = user.id
+
+    # Reconcile spec rows. For each provider-supplied (key, value):
+    #   • existing row, source='provider'  → update value
+    #   • existing row, source='manual'    → leave alone (user owns it)
+    #   • existing row, source='override'  → leave alone, but remember the
+    #     new upstream value as the new `original_value` so a Restore
+    #     reflects current upstream, not historical.
+    #   • absent                           → insert with source='provider'
+    # After processing, any source='provider' row whose key isn't in the
+    # upstream payload (and isn't a reserved system key) is deleted.
+    desired: dict[str, str] = {}
+    for s in r.get("specs") or []:
+        key = (s.get("key") or "").strip()
+        value = (s.get("value") or "").strip()
+        if key:
+            desired[key] = value
+    if r.get("image_url"):
+        desired["image_url"] = r["image_url"]
+    if r.get("datasheet_url"):
+        desired["datasheet_url"] = r["datasheet_url"]
+
+    existing_rows = list(
+        db.execute(
+            select(CustomField)
+            .where(CustomField.workspace_id == ws.id)
+            .where(CustomField.object_type == "part")
+            .where(CustomField.object_id == p.id)
+        ).scalars()
+    )
+    by_key = {row.key: row for row in existing_rows}
+
+    added = updated = removed = 0
+    for key, value in desired.items():
+        row = by_key.get(key)
+        if row is None:
+            db.add(
+                CustomField(
+                    workspace_id=ws.id,
+                    object_type="part",
+                    object_id=p.id,
+                    key=key,
+                    value=value,
+                    source="provider",
+                    created_by=user.id,
+                    updated_by=user.id,
+                )
+            )
+            added += 1
+        elif row.source == "provider":
+            if row.value != value:
+                row.value = value
+                row.updated_by = user.id
+                updated += 1
+        elif row.source == "override":
+            # Refresh the saved baseline so the Restore button reverts to
+            # the current upstream value — not what was sent the first
+            # time the part was linked.
+            if row.original_value != value:
+                row.original_value = value
+                row.updated_by = user.id
+
+    upstream_keys = set(desired.keys())
+    for row in existing_rows:
+        if row.source == "provider" and row.key not in upstream_keys:
+            db.delete(row)
+            removed += 1
+
+    db.commit()
+    return ok(
+        {
+            "found": True,
+            "provider": provider.name,
+            "summary": {
+                "added": added,
+                "updated": updated,
+                "removed": removed,
+            },
+            "part": _serialize(
+                p,
+                on_hand=total_for_part(db, workspace_id=ws.id, part_id=p.id),
+                reserved=reserved_quantity(db, workspace_id=ws.id, part_id=p.id),
+            ),
+        }
+    )
