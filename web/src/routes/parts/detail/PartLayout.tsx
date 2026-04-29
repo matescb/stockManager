@@ -16,6 +16,7 @@ export default function PartLayout() {
   if (!part) return <div className="text-muted">Loading…</div>;
   const items = [
     { to: `/parts/${part.id}/info`, label: "Part info" },
+    { to: `/parts/${part.id}/specs`, label: "Specs" },
     { to: `/parts/${part.id}/stock`, label: "Stock" },
     { to: `/parts/${part.id}/add`, label: "Add stock" },
     { to: `/parts/${part.id}/remove`, label: "Remove stock" },

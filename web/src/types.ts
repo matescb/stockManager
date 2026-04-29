@@ -131,6 +131,8 @@ export type BuildShortageRow = {
 
 export type PartsProviderName = "none" | "mouser";
 
+export type ProviderSpec = { key: string; value: string };
+
 export type MpnLookupResult = {
   found: boolean;
   result: {
@@ -140,7 +142,9 @@ export type MpnLookupResult = {
     category: string | null;
     footprint: string | null;
     datasheet_url: string | null;
+    image_url: string | null;
     source_url: string;
+    specs: ProviderSpec[];
   } | null;
   message: string | null;
   /** Which provider produced this response (or "none" when unconfigured). */
