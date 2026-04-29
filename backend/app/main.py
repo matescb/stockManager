@@ -17,13 +17,13 @@ from app.api.routes import (
     lots,
     orders,
     parts,
+    parts_provider,
     projects,
     reports,
     search,
     stock,
     storage,
     tags,
-    trustedparts,
     workspaces,
 )
 from app.core.config import settings
@@ -64,9 +64,9 @@ app.include_router(custom_fields.router, prefix="/api/custom-fields", tags=["cus
 app.include_router(tags.router, prefix="/api/tags", tags=["tags"], dependencies=_member_gate)
 app.include_router(search.router, prefix="/api/search", tags=["search"], dependencies=_member_gate)
 app.include_router(
-    trustedparts.router,
-    prefix="/api/trustedparts",
-    tags=["trustedparts"],
+    parts_provider.router,
+    prefix="/api/parts",
+    tags=["parts_provider"],
     dependencies=_member_gate,
 )
 

@@ -64,6 +64,9 @@ def _serialize_workspace(ws: Workspace) -> dict:
         "serial_tracking_enabled": ws.serial_tracking_enabled,
         "catalog_enabled": bool(ws.catalog_enabled),
         "catalog_url": _catalog_url(ws),
+        "parts_provider": ws.parts_provider or "none",
+        # Never echo the API key. Just say whether one is set.
+        "has_parts_provider_api_key": bool(ws.parts_provider_api_key),
     }
 
 
@@ -83,6 +86,10 @@ class WorkspacePatch(BaseModel):
     # Write-only command flag: when true (and the catalog stays enabled), the
     # route mints a fresh secrets.token_urlsafe(32) and stores it.
     regenerate_catalog_token: bool | None = None
+    parts_provider: Literal["none", "mouser"] | None = None
+    # Empty string clears the stored key; any other non-None value replaces it.
+    # None (omitted) leaves whatever's already stored alone.
+    parts_provider_api_key: str | None = None
 
 
 @router.patch("/current", dependencies=[Depends(require_role("admin"))])
@@ -90,6 +97,12 @@ def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace):
     data = payload.model_dump(exclude_unset=True)
     regenerate = bool(data.pop("regenerate_catalog_token", False))
     was_enabled = bool(ws.catalog_enabled)
+
+    # parts_provider_api_key needs special handling so '' actually clears.
+    if "parts_provider_api_key" in data:
+        new_key = data.pop("parts_provider_api_key")
+        ws.parts_provider_api_key = new_key if new_key else None
+
     for k, v in data.items():
         setattr(ws, k, v)
     # Mint a token when enabling the catalog for the first time, or when the
