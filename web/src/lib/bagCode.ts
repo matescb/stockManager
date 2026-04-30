@@ -165,6 +165,27 @@ function stripHeader(s: string): string {
     .replace(/^\[\)>06/, "");
 }
 
+/**
+ * Stable hash of the raw bag code, used to recognise the same physical
+ * bag when it's scanned twice. Normalises pictograms first so a code
+ * decoded by ZXing (with its U+241D/U+241E/U+2420 substitutions) hashes
+ * identically to the same code decoded by Scandit (with raw 0x1d/0x1e/0x20).
+ *
+ * Returns null when the input has no scannable content — the caller
+ * shouldn't dedup on an empty signature (that would block every restock).
+ */
+export async function bagSignature(raw: string): Promise<string | null> {
+  const normalised = normalizeControlPictures((raw ?? "").trim());
+  if (!normalised) return null;
+  // Web Crypto isn't on every legacy stack; degrade silently.
+  if (!globalThis.crypto?.subtle) return null;
+  const bytes = new TextEncoder().encode(normalised);
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(hash))
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 export function parseBagCode(raw: string): BagCode {
   const input = normalizeControlPictures((raw ?? "").trim());
   if (!input) return { mpn: "", raw };

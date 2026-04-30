@@ -208,6 +208,7 @@ def add_stock(
         currency=currency,
         operation_type="add",
         comments=payload.comments,
+        bag_signature=payload.bag_signature,
         occurred_at=_now(),
         created_by=user_id,
     )

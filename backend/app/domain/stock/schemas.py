@@ -35,6 +35,11 @@ class AddStockIn(BaseModel):
     price: PriceInput | None = None
     lot: LotInput | None = None
     comments: str | None = None
+    # Set by /parts/bulk-import-from-scan to record which physical bag
+    # produced this entry (sha256 of the normalised raw bag code). Other
+    # callers leave it None — the manual add-stock flow doesn't have a
+    # bag identity.
+    bag_signature: str | None = Field(default=None, max_length=64)
 
 
 class RemoveStockIn(BaseModel):

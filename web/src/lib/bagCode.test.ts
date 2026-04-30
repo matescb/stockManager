@@ -5,7 +5,7 @@
  * test here corresponds to a regression that hit users.
  */
 import { describe, it, expect } from "vitest";
-import { parseBagCode, bagLotName, bagComments } from "./bagCode";
+import { parseBagCode, bagLotName, bagComments, bagSignature } from "./bagCode";
 
 describe("parseBagCode — separator handling", () => {
   it("splits on real ASCII control separators (Scandit-shaped input)", () => {
@@ -83,6 +83,33 @@ describe("parseBagCode — field assignments", () => {
   it("rejects non-positive quantity values", () => {
     const raw = "[)>\x1e06\x1d1PFOO\x1dQ0\x1e\x04";
     expect(parseBagCode(raw).quantity).toBeUndefined();
+  });
+});
+
+describe("bagSignature", () => {
+  it("hashes the same bag identically across decoder pictogram differences", async () => {
+    // Same physical bag, two decoders. Scandit emits raw control chars;
+    // ZXing emits the Unicode "Symbol for X" pictograms. Both should
+    // hash to the same signature so dedup works regardless of decoder.
+    const scandit =
+      "[)>\x1e06\x1d1P98266-0897\x1dQ3\x1dK#44861 A #44920\x1e\x04";
+    const zxing =
+      "[)>␞06␝1P98266-0897␝Q3␝K#44861␠A␠#44920␞␄";
+    const a = await bagSignature(scandit);
+    const b = await bagSignature(zxing);
+    expect(a).toBeTruthy();
+    expect(a).toBe(b);
+  });
+
+  it("different bags hash to different signatures", async () => {
+    const a = await bagSignature("[)>\x1e06\x1d1PFOO-1\x1eEOT");
+    const b = await bagSignature("[)>\x1e06\x1d1PFOO-2\x1eEOT");
+    expect(a).not.toBe(b);
+  });
+
+  it("returns null for empty input", async () => {
+    expect(await bagSignature("")).toBeNull();
+    expect(await bagSignature("   ")).toBeNull();
   });
 });
 

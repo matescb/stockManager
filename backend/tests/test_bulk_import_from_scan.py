@@ -126,6 +126,54 @@ def test_bulk_import_with_quantity_creates_initial_stock(authed, monkeypatch):
     assert p["on_hand"] == 50
 
 
+def test_bulk_import_recognises_bag_rescan(authed, monkeypatch):
+    """Re-scanning the same physical bag (same bag_signature) doesn't
+    double-import. The second import surfaces a `bag_rescan` row
+    carrying the prior import's (part, lot, location, qty) so the UI
+    can offer an inline consume-from-this-bag affordance instead of
+    silently creating a duplicate stock entry."""
+    monkeypatch.setattr(
+        "app.domain.parts.providers.mouser._post_mouser",
+        lambda url, payload: _stub_mouser_response(),
+    )
+    storage_id = _create_storage(authed, "Bin A")
+    sig = "a" * 64  # 64-char hex digest, the route accepts any [a-f0-9]{64}
+    # First import: standard `created` outcome plus an on_hand stock_entry
+    # carrying the bag_signature.
+    first = authed.post(
+        "/api/parts/bulk-import-from-scan",
+        json={"rows": [{
+            "mpn": "RC0402JR-070R",
+            "quantity": 50,
+            "storage_location_id": storage_id,
+            "lot_name": "Lot 12345",
+            "bag_signature": sig,
+        }]},
+    )
+    first_row = first.json()["data"]["rows"][0]
+    assert first_row["status"] == "created", first_row
+
+    # Second import — same signature. No new part, no new stock; we get
+    # back the prior coordinates so the UI can offer "remove qty from this lot".
+    second = authed.post(
+        "/api/parts/bulk-import-from-scan",
+        json={"rows": [{
+            "mpn": "RC0402JR-070R",
+            "bag_signature": sig,
+        }]},
+    )
+    body = second.json()["data"]
+    rescan = body["rows"][0]
+    assert rescan["status"] == "bag_rescan", rescan
+    assert rescan["part_id"] == first_row["part_id"]
+    assert rescan["storage_location_id"] == storage_id
+    assert rescan["quantity"] == 50
+    assert rescan["lot_id"] is not None
+    assert body["summary"]["bag_rescan"] == 1
+    assert body["summary"]["created"] == 0
+    assert body["summary"]["duplicate"] == 0
+
+
 def test_bulk_import_persists_lot_and_comments_for_traceability(authed, monkeypatch):
     """When the bag carries traceability fields (lot, date code, PO,
     invoice), they must land on the lot row + stock-entry comments so
@@ -284,6 +332,7 @@ def test_bulk_import_mixed_batch_returns_per_row_status(authed, monkeypatch):
     assert body["summary"] == {
         "created": 1,
         "duplicate": 1,
+        "bag_rescan": 0,
         "lookup_failed": 1,
         "invalid": 0,
     }

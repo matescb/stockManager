@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -9,12 +9,14 @@ import {
   ImageOff,
   Link2,
   Loader2,
+  Minus,
   Package,
+  RotateCcw,
   Trash2,
 } from "lucide-react";
 import Scanner, { ScanResult } from "@/components/scanner/Scanner";
 import { api, ApiError } from "@/lib/api";
-import { parseBagCode, bagLotName, bagComments, type BagCode } from "@/lib/bagCode";
+import { parseBagCode, bagLotName, bagComments, bagSignature, type BagCode } from "@/lib/bagCode";
 import type {
   MpnLookupResult,
   Part,
@@ -31,11 +33,22 @@ type LookupState =
   | { kind: "pending" }
   | { kind: "duplicate"; existing: Part }
   | { kind: "found"; result: NonNullable<MpnLookupResult["result"]>; provider: string }
+  // Same physical bag was imported earlier — surface the prior coordinates
+  // so the user can either open the part or consume from the lot inline.
+  | {
+      kind: "bag_rescan";
+      part_id: string;
+      lot_id: string | null;
+      storage_location_id: string | null;
+      quantity: number;
+    }
+  | { kind: "consumed"; partId: string; quantity: number }
   | { kind: "error"; message: string };
 
 type Row = {
   rowId: string;     // local id for rendering / dedup
   bag: BagCode;      // every field the parser pulled off the bag
+  bagSig: string | null;  // sha256 of the raw bag — null when no Web Crypto / empty
   quantity: number;  // editable, defaults to bag's Q if any
   state: LookupState;
 };
@@ -52,7 +65,7 @@ function manufacturerMatches(bagMfr: string | undefined, providerMfr: string | n
 
 type ImportResultRow = {
   mpn: string;
-  status: "created" | "duplicate" | "lookup_failed" | "invalid";
+  status: "created" | "duplicate" | "bag_rescan" | "lookup_failed" | "invalid";
   part_id?: string;
   quantity_added?: number;
   stock_error?: string | null;
@@ -61,7 +74,13 @@ type ImportResultRow = {
 
 type ImportResponse = {
   rows: ImportResultRow[];
-  summary: { created: number; duplicate: number; lookup_failed: number; invalid: number };
+  summary: {
+    created: number;
+    duplicate: number;
+    bag_rescan: number;
+    lookup_failed: number;
+    invalid: number;
+  };
   provider: string;
 };
 
@@ -72,14 +91,28 @@ function newRowId(): string {
 
 export default function ScanImport() {
   const nav = useNavigate();
+  const qc = useQueryClient();
+  const [searchParams] = useSearchParams();
   const [rows, setRows] = useState<Row[]>([]);
-  const [storageId, setStorageId] = useState<string>("");
+  // Pre-select the storage when arriving via /storage/<id> "Scan into here"
+  // — the destination is whichever bin the user opened.
+  const [storageId, setStorageId] = useState<string>(() => searchParams.get("storage_id") ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [lastSummary, setLastSummary] = useState<ImportResponse | null>(null);
 
-  // Dedup against rapid re-scan of the same bag — Scandit fires didScan
-  // continuously while the code is in frame. We key by parsed MPN.
+  // Dedup against the camera firing didScan continuously while a code is
+  // in frame: we key by signature first (catches the same bag re-read from
+  // a slightly different angle), and fall back to MPN for non-2D scans.
+  const seenSigs = useRef<Set<string>>(new Set());
   const seenMpns = useRef<Set<string>>(new Set());
+
+  // Honour ?storage_id= even when the URL changes mid-session (e.g. a
+  // back-button navigation drops us back here from Storage).
+  useEffect(() => {
+    const fromUrl = searchParams.get("storage_id");
+    if (fromUrl && fromUrl !== storageId) setStorageId(fromUrl);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   const { data: storages } = useQuery({
     queryKey: ["storage-locations"],
@@ -88,10 +121,7 @@ export default function ScanImport() {
 
   const handleScan = useCallback(async (s: ScanResult) => {
     const parsed = parseBagCode(s.data);
-    // Diagnostics — when the parser misreads a real-world bag code, the
-    // raw byte stream from the scanner is the ground truth. Logging the
-    // codepoints (not just the rendered string) is what makes munged
-    // separators visible in DevTools.
+    const sig = await bagSignature(s.data);
     // eslint-disable-next-line no-console
     console.log("[bag scan]", {
       symbology: s.symbology,
@@ -100,31 +130,58 @@ export default function ScanImport() {
       length: s.data.length,
       codepoints: Array.from(s.data, c => c.charCodeAt(0)),
       parsed,
+      signature: sig,
     });
     const mpn = parsed.mpn.trim();
     if (!mpn) return;
-    if (seenMpns.current.has(mpn)) return;
+    // Dedup by signature first (the same physical bag re-fires the scan
+    // event while it's in frame), then by MPN as a fallback for 1D codes
+    // and crypto-less browsers.
+    if (sig && seenSigs.current.has(sig)) return;
+    if (!sig && seenMpns.current.has(mpn)) return;
+    if (sig) seenSigs.current.add(sig);
     seenMpns.current.add(mpn);
 
     const rowId = newRowId();
     const initialQty = parsed.quantity ?? 0;
     setRows(prev => [
       ...prev,
-      { rowId, bag: parsed, quantity: initialQty, state: { kind: "pending" } },
+      { rowId, bag: parsed, bagSig: sig, quantity: initialQty, state: { kind: "pending" } },
     ]);
 
-    // Run duplicate check + provider lookup concurrently — they hit
-    // different paths and either may resolve first. The provider call
-    // is the slow one (Mouser/DigiKey ~1-2s), the dup check is local.
     const setState = (state: LookupState) =>
       setRows(prev => prev.map(r => (r.rowId === rowId ? { ...r, state } : r)));
 
     try {
+      // 1. Bag-rescan check — only meaningful when we have a signature,
+      //    since the lookup is signature-based.
+      if (sig) {
+        const prior = await api.get<{
+          part_id: string;
+          lot_id: string | null;
+          storage_location_id: string | null;
+          quantity: number;
+        } | null>(`/parts/by-bag-signature/${sig}`);
+        if (prior) {
+          setState({
+            kind: "bag_rescan",
+            part_id: prior.part_id,
+            lot_id: prior.lot_id,
+            storage_location_id: prior.storage_location_id,
+            quantity: prior.quantity,
+          });
+          return;
+        }
+      }
+
+      // 2. Same-MPN duplicate (different bag, same part).
       const dupes = await api.get<Part[]>(`/parts?mpn=${encodeURIComponent(mpn)}`);
       if (dupes.length > 0) {
         setState({ kind: "duplicate", existing: dupes[0] });
         return;
       }
+
+      // 3. New part — provider lookup.
       const lookup = await api.post<MpnLookupResult>("/parts/lookup-mpn", { mpn });
       if (lookup.found && lookup.result) {
         setState({ kind: "found", result: lookup.result, provider: lookup.provider });
@@ -136,6 +193,31 @@ export default function ScanImport() {
     }
   }, []);
 
+  async function quickRemoveFromBag(rowId: string) {
+    const row = rows.find(r => r.rowId === rowId);
+    if (!row || row.state.kind !== "bag_rescan") return;
+    const st = row.state;
+    try {
+      await api.post(`/parts/${st.part_id}/quick-remove-bag`, {
+        quantity: st.quantity,
+        lot_id: st.lot_id,
+        storage_location_id: st.storage_location_id,
+      });
+      setRows(prev =>
+        prev.map(r =>
+          r.rowId === rowId
+            ? { ...r, state: { kind: "consumed", partId: st.part_id, quantity: st.quantity } }
+            : r,
+        ),
+      );
+      qc.invalidateQueries({ queryKey: ["part", st.part_id] });
+      qc.invalidateQueries({ queryKey: ["part", st.part_id, "stock"] });
+      toast.success(`Removed ${st.quantity} from this bag.`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Quick-remove failed");
+    }
+  }
+
   const importable = useMemo(
     () => rows.filter(r => r.state.kind === "found"),
     [rows]
@@ -144,7 +226,10 @@ export default function ScanImport() {
   function removeRow(rowId: string) {
     setRows(prev => {
       const dropped = prev.find(r => r.rowId === rowId);
-      if (dropped) seenMpns.current.delete(dropped.bag.mpn);
+      if (dropped) {
+        seenMpns.current.delete(dropped.bag.mpn);
+        if (dropped.bagSig) seenSigs.current.delete(dropped.bagSig);
+      }
       return prev.filter(r => r.rowId !== rowId);
     });
   }
@@ -170,6 +255,7 @@ export default function ScanImport() {
           lot_name: bagLotName(r.bag) ?? undefined,
           lot_serial: r.bag.serial,
           comments: bagComments(r.bag) ?? undefined,
+          bag_signature: r.bagSig ?? undefined,
         })),
       });
       setLastSummary(out);
@@ -280,7 +366,10 @@ export default function ScanImport() {
                 onQuantity={q => setQuantity(r.rowId, q)}
                 onOpenExisting={() => {
                   if (r.state.kind === "duplicate") nav(`/parts/${r.state.existing.id}/info`);
+                  else if (r.state.kind === "bag_rescan") nav(`/parts/${r.state.part_id}/info`);
+                  else if (r.state.kind === "consumed") nav(`/parts/${r.state.partId}/info`);
                 }}
+                onQuickRemove={() => quickRemoveFromBag(r.rowId)}
               />
             ))}
           </div>
@@ -295,11 +384,13 @@ function ScanCard({
   onRemove,
   onQuantity,
   onOpenExisting,
+  onQuickRemove,
 }: {
   row: Row;
   onRemove: () => void;
   onQuantity: (q: number) => void;
   onOpenExisting: () => void;
+  onQuickRemove: () => void;
 }) {
   return (
     <div className="rounded-md border border-border bg-panel2/40 p-3">
@@ -331,6 +422,53 @@ function ScanCard({
                 onClick={onOpenExisting}
               >
                 <Link2 size={12} /> Open existing part
+              </button>
+            </div>
+          </div>
+        )}
+        {row.state.kind === "bag_rescan" && (
+          <div className="flex items-start gap-2 text-sm">
+            <RotateCcw className="h-4 w-4 text-accent shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <div>
+                Recognised — this bag was imported earlier
+                {row.state.quantity > 0 && (
+                  <> (qty <span className="font-mono">{row.state.quantity}</span>)</>
+                )}
+                .
+              </div>
+              <div className="flex gap-2 mt-2">
+                <button
+                  type="button"
+                  className="btn-ghost btn-sm inline-flex items-center gap-1"
+                  onClick={onOpenExisting}
+                >
+                  <Link2 size={12} /> Open part
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary btn-sm inline-flex items-center gap-1"
+                  onClick={onQuickRemove}
+                  disabled={row.state.quantity <= 0}
+                  title="Remove the bag's quantity from this lot"
+                >
+                  <Minus size={12} /> Remove {row.state.quantity}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {row.state.kind === "consumed" && (
+          <div className="flex items-start gap-2 text-sm text-success">
+            <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
+            <div>
+              Removed {row.state.quantity} from this bag.{" "}
+              <button
+                type="button"
+                className="text-accent hover:underline text-xs ml-1"
+                onClick={onOpenExisting}
+              >
+                Open part
               </button>
             </div>
           </div>

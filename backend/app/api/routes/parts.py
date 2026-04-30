@@ -394,6 +394,36 @@ def bulk_delete_parts(payload: BulkDeleteIn, db: DbSession, ws: CurrentWorkspace
     )
 
 
+@router.get("/by-bag-signature/{signature}")
+def find_by_bag_signature(signature: str, db: DbSession, ws: CurrentWorkspace):
+    """Look up the most recent stock_entry whose bag_signature matches.
+    Used by the scan-import UI: when the operator scans the same physical
+    bag again, the frontend hits this endpoint to surface the prior
+    import inline instead of waiting for the bulk-import POST to come
+    back with a `bag_rescan` status."""
+    if len(signature) != 64 or not signature.isalnum():
+        # SHA-256 hex digest is exactly 64 hex chars. Reject obvious junk
+        # so this can't be abused for prefix-scan probing.
+        return ok(None)
+    prior = db.execute(
+        select(StockEntry)
+        .where(StockEntry.workspace_id == ws.id)
+        .where(StockEntry.bag_signature == signature)
+        .order_by(StockEntry.occurred_at.desc())
+        .limit(1)
+    ).scalars().first()
+    if prior is None:
+        return ok(None)
+    return ok({
+        "part_id": str(prior.part_id),
+        "lot_id": str(prior.lot_id) if prior.lot_id else None,
+        "storage_location_id": (
+            str(prior.storage_location_id) if prior.storage_location_id else None
+        ),
+        "quantity": int(prior.quantity_delta or 0),
+    })
+
+
 @router.get("/{part_id}/stock")
 def part_stock(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
     p = _get_part(db, ws.id, part_id)
@@ -734,6 +764,12 @@ class ScanImportRow(BaseModel):
     lot_name: str | None = Field(default=None, max_length=200)
     lot_serial: str | None = Field(default=None, max_length=200)
     comments: str | None = Field(default=None, max_length=1000)
+    # sha256 hex of the normalised raw bag code. When the workspace has
+    # already imported a bag with this signature, the row resolves with
+    # status='bag_rescan' carrying the prior import's part/lot/location/qty
+    # so the frontend can offer an inline "remove qty from this bag"
+    # affordance instead of double-importing.
+    bag_signature: str | None = Field(default=None, max_length=64)
 
 
 class ScanImportIn(BaseModel):
@@ -773,6 +809,31 @@ def bulk_import_from_scan(
                 "error": "empty MPN",
             })
             continue
+
+        # Bag re-scan recognition — same physical bag scanned again.
+        # The first import wrote bag_signature on the resulting
+        # stock_entry; finding it now means we should offer the operator
+        # a path to consume from this lot rather than double-importing.
+        if row.bag_signature:
+            prior = db.execute(
+                select(StockEntry)
+                .where(StockEntry.workspace_id == ws.id)
+                .where(StockEntry.bag_signature == row.bag_signature)
+                .order_by(StockEntry.occurred_at.desc())
+                .limit(1)
+            ).scalars().first()
+            if prior is not None:
+                out_rows.append({
+                    "mpn": mpn,
+                    "status": "bag_rescan",
+                    "part_id": str(prior.part_id),
+                    "lot_id": str(prior.lot_id) if prior.lot_id else None,
+                    "storage_location_id": (
+                        str(prior.storage_location_id) if prior.storage_location_id else None
+                    ),
+                    "quantity": int(prior.quantity_delta or 0),
+                })
+                continue
 
         # Duplicate check — workspace-scoped, case-sensitive (mirrors how
         # GET /parts?mpn= matches).
@@ -916,6 +977,7 @@ def bulk_import_from_scan(
                         storage_location_id=row.storage_location_id,
                         lot=lot_payload,
                         comments=row.comments,
+                        bag_signature=row.bag_signature,
                     ),
                 )
                 qty_added = row.quantity
@@ -936,7 +998,57 @@ def bulk_import_from_scan(
     summary = {
         "created":        sum(1 for r in out_rows if r["status"] == "created"),
         "duplicate":      sum(1 for r in out_rows if r["status"] == "duplicate"),
+        "bag_rescan":     sum(1 for r in out_rows if r["status"] == "bag_rescan"),
         "lookup_failed":  sum(1 for r in out_rows if r["status"] == "lookup_failed"),
         "invalid":        sum(1 for r in out_rows if r["status"] == "invalid"),
     }
     return ok({"rows": out_rows, "summary": summary, "provider": provider.name})
+
+
+class QuickRemoveBagIn(BaseModel):
+    """Inline-consume from a recognised re-scanned bag. The frontend
+    sends back the lot/location/qty hint it got from the bag_rescan
+    row in /bulk-import-from-scan; we run remove_stock with those
+    coordinates targeting the named lot+location."""
+    model_config = ConfigDict(extra="forbid")
+
+    quantity: int = Field(gt=0)
+    lot_id: UUID | None = None
+    storage_location_id: UUID | None = None
+    comments: str | None = Field(default=None, max_length=1000)
+
+
+@router.post("/{part_id}/quick-remove-bag")
+def quick_remove_bag(
+    part_id: UUID,
+    payload: QuickRemoveBagIn,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
+    """Remove `quantity` units from a specific (lot, location) combo —
+    used by the scan-import re-scan UI to consume from a bag that was
+    imported earlier without forcing the operator into the full
+    Remove-Stock form. remove_stock enforces the lot's actual on-hand
+    via the same path as the manual flow, so an over-qty request
+    still 4xx's cleanly."""
+    p = _get_part(db, ws.id, part_id)
+    from app.domain.stock.schemas import RemoveStockIn
+    from app.domain.stock.service import remove_stock as _remove
+    try:
+        _remove(
+            db,
+            workspace_id=ws.id,
+            user_id=user.id,
+            payload=RemoveStockIn(
+                part_id=p.id,
+                quantity=payload.quantity,
+                storage_location_id=payload.storage_location_id,
+                lot_id=payload.lot_id,
+                comments=payload.comments,
+            ),
+        )
+    except StockError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    db.commit()
+    return ok(None, "removed")

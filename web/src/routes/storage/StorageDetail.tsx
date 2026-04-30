@@ -1,5 +1,6 @@
-import { Outlet, useParams, NavLink, useNavigate } from "react-router-dom";
+import { Link, Outlet, useParams, NavLink, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ScanLine } from "lucide-react";
 import { api } from "@/lib/api";
 import EntityHeader from "@/components/EntityHeader";
 import SubNav from "@/components/SubNav";
@@ -32,6 +33,20 @@ export function StorageDetailLayout() {
           </span>
         }
         idCode={data.id}
+        actions={
+          !data.archived_at && (
+            // "Scan into here": jumps to the bulk-import flow with this
+            // bin pre-selected as the destination, so a fresh bag of
+            // parts lands directly without picking storage in the form.
+            <Link
+              to={`/parts/scan-import?storage_id=${data.id}`}
+              className="btn-primary inline-flex items-center gap-1.5"
+            >
+              <ScanLine size={14} />
+              Scan into here
+            </Link>
+          )
+        }
       />
       <SubNav items={items} />
       <Outlet context={{ storage: data }} />

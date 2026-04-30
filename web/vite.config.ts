@@ -24,6 +24,10 @@ const sentryProject = process.env.SENTRY_PROJECT;
 const enableSentryUpload = Boolean(sentryToken && sentryOrg && sentryProject);
 
 export default defineConfig({
+  // @ts-expect-error vitest config lives next to vite's; types come from vitest/config
+  test: {
+    setupFiles: ["./vitest.setup.ts"],
+  },
   build: {
     sourcemap: enableSentryUpload ? "hidden" : false,
     rollupOptions: {

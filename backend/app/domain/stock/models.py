@@ -31,6 +31,12 @@ class StockEntry(Base):
         Index("ix_stock_ws_lot", "workspace_id", "lot_id"),
         Index("ix_stock_ws_storage", "workspace_id", "storage_location_id"),
         Index("ix_stock_ws_occurred", "workspace_id", "occurred_at"),
+        # Bag-rescan recognition: sha256 of the normalised raw bag code
+        # captured when this entry was created via scan-import. Looking
+        # the same bag up again should let the operator consume from
+        # the lot it created instead of double-importing. See
+        # alembic 0012 + bagSignature() in web/src/lib/bagCode.ts.
+        Index("ix_stock_ws_bag_signature", "workspace_id", "bag_signature"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -51,6 +57,10 @@ class StockEntry(Base):
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     build_id = Column(UUID(as_uuid=True), nullable=True)
     comments = Column(Text, nullable=True)
+    # sha256 hex digest of the raw bag code that produced this entry, only
+    # set by the scan-import flow. Used to recognise re-scans so the
+    # operator can consume from this bag's lot instead of double-importing.
+    bag_signature = Column(String(64), nullable=True)
     occurred_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
