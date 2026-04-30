@@ -25,6 +25,13 @@ const tracesSampleRate = Number.isFinite(parseFloat(tracesRaw))
 
 Sentry.init({
   dsn,
+  // Same-origin tunnel: the React SDK POSTs envelopes to our backend,
+  // which forwards to Sentry's ingest endpoint. Without this, ad-blockers
+  // (uBlock Origin, Brave Shields, Pi-hole) intercept the direct call
+  // to *.ingest.sentry.io with ERR_BLOCKED_BY_CLIENT and we lose every
+  // event from anyone running an ad-blocker. The tunnel handler lives
+  // at backend/app/api/routes/sentry_tunnel.py.
+  tunnel: "/api/sentry-tunnel",
   environment: import.meta.env.MODE,
   // Per the wizard. Sends user IP + request headers; cookies are
   // redacted automatically. Flip to false for stricter data minimisation.

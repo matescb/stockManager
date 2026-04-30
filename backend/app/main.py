@@ -52,6 +52,7 @@ from app.api.routes import (
     projects,
     reports,
     search,
+    sentry_tunnel,
     stock,
     storage,
     tags,
@@ -99,6 +100,10 @@ app.include_router(builds.router, prefix="/api/builds", tags=["builds"], depende
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"], dependencies=_member_gate)
 app.include_router(bom_presets.router, prefix="/api/bom-presets", tags=["bom_presets"], dependencies=_member_gate)
 app.include_router(invitations.router, prefix="/api/invitations", tags=["invitations"])
+# Sentry tunnel: same-origin proxy for /api/sentry-tunnel to Sentry's
+# ingest endpoint, so ad-blockers don't drop the SDK's events. NOT gated
+# on workspace membership — the SDK fires from the login screen too.
+app.include_router(sentry_tunnel.router, prefix="/api", tags=["sentry"])
 app.include_router(attachments.router, prefix="/api/attachments", tags=["attachments"], dependencies=_member_gate)
 app.include_router(custom_fields.router, prefix="/api/custom-fields", tags=["custom_fields"], dependencies=_member_gate)
 app.include_router(tags.router, prefix="/api/tags", tags=["tags"], dependencies=_member_gate)
