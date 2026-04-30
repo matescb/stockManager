@@ -194,6 +194,36 @@ def test_lookup_mouser_returns_errors(authed, monkeypatch):
     assert body["message"] == "Invalid Unique Identifier"
 
 
+def test_lookup_mouser_translates_invalid_api_key(authed, monkeypatch):
+    """Mouser surfaces a rejected API key as `Invalid unique identifier.`
+    with PropertyName='API Key' — useless to the operator. The provider
+    should translate that into a clear, actionable message naming the
+    setting to fix."""
+    _enable_mouser(authed, "ZnGz3970R7NTBfR1gXxUGlMN4xDNTIn4xM68chzUXzdP9sjw")
+    monkeypatch.setattr(
+        "app.domain.parts.providers.mouser._post_mouser",
+        lambda url, payload: {
+            "Errors": [{
+                "Id": 0,
+                "Code": "Invalid",
+                "Message": "Invalid unique identifier.",
+                "ResourceKey": "InvalidIdentifier",
+                "PropertyName": "API Key",
+            }],
+            "SearchResults": None,
+        },
+    )
+    r = authed.post("/api/parts/lookup-mpn", json={"mpn": "ANY"})
+    body = r.json()["data"]
+    assert body["found"] is False
+    msg = body["message"].lower()
+    assert "api key" in msg
+    assert "settings" in msg or "workspace" in msg
+    # Don't pass through the raw "Invalid unique identifier" — that's the
+    # confusing original message the translation is replacing.
+    assert "invalid unique identifier" not in msg
+
+
 def test_lookup_mouser_network_failure_is_graceful(authed, monkeypatch):
     _enable_mouser(authed)
 

@@ -140,8 +140,23 @@ class MouserProvider:
 
         errors = data.get("Errors") or []
         if errors:
-            msg = errors[0].get("Message") or "Mouser returned an error"
-            return {"found": False, "result": None, "message": msg}
+            err = errors[0]
+            raw_msg = err.get("Message") or "Mouser returned an error"
+            # Mouser surfaces a key-rejection as `Invalid unique identifier.`
+            # with PropertyName="API Key" — useless to the operator. Translate
+            # to something they can act on.
+            prop = (err.get("PropertyName") or "").strip().lower()
+            rkey = (err.get("ResourceKey") or "").strip().lower()
+            if prop == "api key" or rkey == "invalidapikey" or rkey == "invalididentifier":
+                return {
+                    "found": False,
+                    "result": None,
+                    "message": (
+                        "Mouser rejected the API key. Re-paste a valid key in "
+                        "Settings → Workspace → Parts data provider."
+                    ),
+                }
+            return {"found": False, "result": None, "message": raw_msg}
 
         parts = (data.get("SearchResults") or {}).get("Parts") or []
         if not parts:
