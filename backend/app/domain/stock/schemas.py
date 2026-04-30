@@ -70,6 +70,8 @@ class AdjustStockIn(BaseModel):
 
 
 class StockEntryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     part_id: UUID
     lot_id: UUID | None
@@ -81,9 +83,6 @@ class StockEntryOut(BaseModel):
     operation_type: str
     comments: str | None
     occurred_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class StockSummaryRow(BaseModel):

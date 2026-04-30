@@ -23,14 +23,13 @@ class ProjectPatchIn(BaseModel):
 
 
 class ProjectOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     name: str
     description: str | None
     notes_markdown: str | None
     archived_at: str | None = None
-
-    class Config:
-        from_attributes = True
 
 
 # BOM
