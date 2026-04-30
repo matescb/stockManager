@@ -69,10 +69,10 @@ services:
     # We're nowhere near needing parallelism at our scale; if traffic
     # ever justifies > 1 worker, switch slowapi to a Redis backend
     # before bumping this number.
-    command: >
-      sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
-                    --proxy-headers --forwarded-allow-ips='*'"
+    # Single-line so YAML's folded-scalar rules don't break shell tokens
+    # across argv boundaries (uvicorn was missing --proxy-headers
+    # because the YAML kept the newline before it intact).
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=*"]
 
   web:
     build:
