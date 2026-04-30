@@ -49,3 +49,6 @@ uploads/
 .coverage
 htmlcov/
 
+# Claude Code local artifacts (transcript exports, scratch logs).
+/2*-this-session-*.txt
+
