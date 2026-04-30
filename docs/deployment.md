@@ -321,32 +321,51 @@ unless you mean to.
 
 ## Backups
 
-Backups are your responsibility. Two volumes need covering:
+Two volumes need covering:
 
 - `db_data` — postgres. `pg_dump` is sufficient for a single-host setup.
 - `uploads` — lot photos / datasheets. `pg_dump` does not cover this.
 
-```bash
-# Postgres dump.
-cd /srv/stockmanager
-sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
-    exec db pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" \
-    | gzip > "backup-$(date +%F).sql.gz"
+A canonical script ships at [`deploy/backup.sh`](../deploy/backup.sh) and is
+installed under root cron on the VPS:
 
-# Uploads dump.
-docker run --rm \
-    -v stockmanager_uploads:/u \
-    -v "$PWD":/out \
-    alpine \
-    tar czf /out/uploads-$(date +%F).tar.gz -C /u .
+```cron
+30 3 * * * /srv/stockmanager/deploy/backup.sh >> /var/log/stockmanager-backup.log 2>&1
+```
+
+It writes timestamped artifacts to `/srv/backups/stockmanager/`:
+
+```
+db-2026-04-30.sql.gz
+uploads-2026-04-30.tar.gz
+```
+
+…and prunes anything older than 30 days. The script is idempotent and
+fail-loud — non-zero exit → cron emails root if MTA is configured.
+
+Run it manually any time before a risky operation:
+
+```bash
+/srv/stockmanager/deploy/backup.sh
 ```
 
 Restore the DB (DESTRUCTIVE — overwrites the existing one):
 
 ```bash
-gunzip -c backup-2026-04-29.sql.gz \
-    | sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
-        exec -T db psql -U "$POSTGRES_USER" "$POSTGRES_DB"
+gunzip -c /srv/backups/stockmanager/db-2026-04-30.sql.gz \
+    | sudo -u deploy docker compose -f /srv/stockmanager/docker-compose.prod.yml \
+        --env-file /srv/stockmanager/.env.prod exec -T db \
+        psql -U "$POSTGRES_USER" "$POSTGRES_DB"
+```
+
+Restore the uploads volume (DESTRUCTIVE — replaces existing files):
+
+```bash
+docker run --rm \
+    -v stockmanager_uploads:/u \
+    -v /srv/backups/stockmanager:/in \
+    alpine \
+    sh -c "rm -rf /u/* && tar xzf /in/uploads-2026-04-30.tar.gz -C /u"
 ```
 
 For point-in-time recovery, off-site replication, or retention policies look
