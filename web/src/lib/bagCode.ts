@@ -90,6 +90,28 @@ export function bagComments(b: BagCode): string | null {
 // inline-DI fallback below recovers the fields without false splits.
 const SEPARATOR_RE = /\{GS\}|<FNC1>|[\x1c\x1d\x1e\x1f\x04]/g;
 
+/**
+ * Some decoders (notably ZXing-C++ in its default HRI text mode) emit the
+ * printable "Control Pictures" Unicode block (U+2400..U+243F) instead of
+ * the raw ASCII control characters they represent. So a real GS (0x1D)
+ * comes through as U+241D ("Symbol for GS") which renders as `␝` and is
+ * not a control character at all — our SEPARATOR_RE doesn't see it, the
+ * field separators land inside the "value" half of each DI, and we end
+ * up sending an MPN like `98266-0897␝` to the provider lookup.
+ *
+ * Map the relevant pictograms back to their ASCII counterparts before any
+ * other parsing step runs so the rest of the pipeline works uniformly,
+ * regardless of which decoder produced the input.
+ */
+function normalizeControlPictures(s: string): string {
+  return s
+    .replace(/␄/g, "\x04")  // Symbol for EOT → EOT
+    .replace(/␜/g, "\x1c")  // Symbol for FS  → FS
+    .replace(/␝/g, "\x1d")  // Symbol for GS  → GS
+    .replace(/␞/g, "\x1e")  // Symbol for RS  → RS
+    .replace(/␟/g, "\x1f"); // Symbol for US  → US
+}
+
 // Recognized Data Identifiers. Order matters for inlineSplit (longest
 // prefix wins so "1P" is preferred over "P", "30P" over "P", etc.).
 const DI_LIST = [
@@ -140,7 +162,7 @@ function stripHeader(s: string): string {
 }
 
 export function parseBagCode(raw: string): BagCode {
-  const input = (raw ?? "").trim();
+  const input = normalizeControlPictures((raw ?? "").trim());
   if (!input) return { mpn: "", raw };
 
   const stripped = stripHeader(input);
