@@ -66,6 +66,10 @@ jobs:
         working-directory: web
         run: npm ci
 
+      - name: Vitest
+        working-directory: web
+        run: npm test
+
       - name: Type-check + bundle
         working-directory: web
         run: npm run build
