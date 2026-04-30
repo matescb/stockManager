@@ -6,7 +6,7 @@ import { readBarcodes, prepareZXingModule } from "zxing-wasm/reader";
  * with no Scandit license still get a working `/parts/scan*` flow.
  *
  * Architecture:
- *   <video>  ← getUserMedia stream
+ *   <video>  ← getUserMedia stream (chosen camera + applyConstraints zoom)
  *      │
  *      ▼ requestAnimationFrame loop, throttled to ~6 Hz
  *   offscreen <canvas>.drawImage(video) → ctx.getImageData
@@ -20,6 +20,13 @@ import { readBarcodes, prepareZXingModule } from "zxing-wasm/reader";
  * Why we render the video ourselves (Scandit's SDK does this internally):
  * we need pixel access to the current frame anyway, and a visible preview is
  * what makes hand-aiming feasible.
+ *
+ * Camera + zoom UX: phones typically expose multiple cameras (rear wide,
+ * rear telephoto, ultrawide, front) plus per-track zoom on rear cameras.
+ * The picker lets the user choose which one — the chosen `deviceId` is
+ * cached in localStorage so reloads remember it. Zoom is exposed as a
+ * slider whenever `track.getCapabilities().zoom` reports a range; otherwise
+ * it stays hidden (e.g. desktops, Firefox).
  */
 
 export type ScanResult = { data: string; symbology: string };
@@ -47,6 +54,9 @@ const DEFAULT_SYMBOLOGIES = ["Code128", "Code39", "QR", "DataMatrix", "PDF417"];
 
 const SCAN_PERIOD_MS = 160;        // ~6 Hz; ZXing on a recent phone returns in ~30-80ms
 const DUPLICATE_WINDOW_MS = 1200;  // suppress repeated reads of the same code
+const DEVICE_PREF_KEY = "scanner.deviceId";
+
+type ZoomCap = { min: number; max: number; step: number };
 
 type Props = {
   onScan: (b: ScanResult) => void;
@@ -56,17 +66,29 @@ type Props = {
 
 export default function ZxingScanner({ onScan, className, symbologies }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastHitRef = useRef<{ data: string; t: number } | null>(null);
-  const stoppedRef = useRef(false);
+  const trackRef = useRef<MediaStreamTrack | null>(null);
   const [status, setStatus] = useState<{ text: string; kind?: "ready" | "err" }>({
     text: "Initializing…",
   });
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  const [deviceId, setDeviceId] = useState<string | undefined>(() => {
+    try {
+      return localStorage.getItem(DEVICE_PREF_KEY) || undefined;
+    } catch {
+      return undefined;
+    }
+  });
+  const [zoomCap, setZoomCap] = useState<ZoomCap | null>(null);
+  const [zoom, setZoom] = useState<number>(1);
 
+  // ---------------------------------------------------------------------
+  // Camera + decoder loop. Restarts whenever the picked camera changes.
+  // ---------------------------------------------------------------------
   useEffect(() => {
     let stream: MediaStream | null = null;
     let timer: number | null = null;
-    stoppedRef.current = false;
+    let stopped = false;
 
     const enabled = (symbologies && symbologies.length ? symbologies : DEFAULT_SYMBOLOGIES)
       .map(s => ZXING_FORMAT_BY_PUBLIC[s])
@@ -82,10 +104,10 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
         }
 
         setStatus({ text: "Loading decoder…" });
-        // Warm up the wasm so the first decode doesn't pay the load cost.
         // Override locateFile so the wasm is fetched from our own /zxing/
         // path (copied there by scripts/copy-zxing-wasm.mjs as a prebuild
-        // step) rather than the package's default jsDelivr CDN URL.
+        // step) rather than zxing-wasm's default jsDelivr CDN URL. Idempotent
+        // across renders — zxing-wasm caches the module promise internally.
         await prepareZXingModule({
           overrides: {
             locateFile: (path: string) =>
@@ -93,14 +115,31 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
           },
           fireImmediately: true,
         });
-        if (stoppedRef.current) return;
+        if (stopped) return;
 
         setStatus({ text: "Starting camera…" });
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" } },
+        const constraints: MediaStreamConstraints = {
+          video: deviceId
+            ? { deviceId: { exact: deviceId } }
+            : { facingMode: { ideal: "environment" } },
           audio: false,
-        });
-        if (stoppedRef.current) {
+        };
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (e: any) {
+          // The saved deviceId may no longer exist (different host, camera
+          // unplugged, etc.). Drop the preference and fall back to defaults.
+          if (deviceId && e?.name === "OverconstrainedError") {
+            try { localStorage.removeItem(DEVICE_PREF_KEY); } catch {}
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: { ideal: "environment" } },
+              audio: false,
+            });
+          } else {
+            throw e;
+          }
+        }
+        if (stopped) {
           stream.getTracks().forEach(t => t.stop());
           return;
         }
@@ -108,16 +147,44 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
         if (!video) throw new Error("Video element not mounted.");
         video.srcObject = stream;
         await video.play();
+
+        const track = stream.getVideoTracks()[0] ?? null;
+        trackRef.current = track;
+
+        // Surface zoom capability for the new track. Browsers that don't
+        // implement getCapabilities (or don't expose zoom on this track)
+        // hit the else branch and the slider stays hidden.
+        const caps = (track && (track as any).getCapabilities?.()) || {};
+        if (typeof caps.zoom?.min === "number" && typeof caps.zoom?.max === "number") {
+          const cap = {
+            min: caps.zoom.min,
+            max: caps.zoom.max,
+            step: caps.zoom.step || 0.1,
+          };
+          setZoomCap(cap);
+          const settings = ((track as any)?.getSettings?.() || {}) as any;
+          setZoom(typeof settings.zoom === "number" ? settings.zoom : cap.min);
+        } else {
+          setZoomCap(null);
+          setZoom(1);
+        }
+
+        // Now that permission has been granted, enumerateDevices() returns
+        // populated `label` fields. Refresh the picker.
+        try {
+          const all = await navigator.mediaDevices.enumerateDevices();
+          if (!stopped) setDevices(all.filter(d => d.kind === "videoinput"));
+        } catch { /* non-fatal */ }
+
         setStatus({ text: "Aim at the code…", kind: "ready" });
 
         // Reusable offscreen canvas — sized to the video each frame.
         const canvas = document.createElement("canvas");
-        canvasRef.current = canvas;
         const ctx = canvas.getContext("2d", { willReadFrequently: true });
         if (!ctx) throw new Error("2D canvas context unavailable.");
 
         const tick = async () => {
-          if (stoppedRef.current) return;
+          if (stopped) return;
           if (document.visibilityState !== "visible") {
             timer = window.setTimeout(tick, SCAN_PERIOD_MS);
             return;
@@ -154,56 +221,114 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
             // Decoder errors are routine (unreadable frame, occlusion). Just
             // try again on the next tick — never tear the loop down for them.
           }
-          if (!stoppedRef.current) {
+          if (!stopped) {
             timer = window.setTimeout(tick, SCAN_PERIOD_MS);
           }
         };
         timer = window.setTimeout(tick, SCAN_PERIOD_MS);
       } catch (e: any) {
-        if (!stoppedRef.current) {
+        if (!stopped) {
           setStatus({ text: e?.message ?? "Failed to start scanner.", kind: "err" });
         }
       }
     })();
 
     return () => {
-      stoppedRef.current = true;
+      stopped = true;
       if (timer) window.clearTimeout(timer);
       if (stream) stream.getTracks().forEach(t => t.stop());
+      trackRef.current = null;
       const video = videoRef.current;
       if (video) {
         video.pause();
         video.srcObject = null;
       }
     };
-    // symbologies array identity is stable per-render at the call sites; we
-    // don't restart the loop when it shifts. If a caller ever flips it
-    // dynamically, that will be the moment to add `symbologies` to deps.
+    // Restarting the camera is the whole point of a deviceId change — we want
+    // the dep. `symbologies` and `onScan` are intentionally excluded so the
+    // loop doesn't tear down when the parent re-renders with a new closure.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [deviceId]);
+
+  // ---------------------------------------------------------------------
+  // Apply zoom imperatively on the live track when the slider moves.
+  // Separated from the camera effect so dragging doesn't restart capture.
+  // ---------------------------------------------------------------------
+  useEffect(() => {
+    const track = trackRef.current;
+    if (!track || !zoomCap) return;
+    (track as any)
+      .applyConstraints({ advanced: [{ zoom }] })
+      .catch(() => {
+        // Some Android Chromes silently reject mid-stream constraint changes
+        // when the track is in an interim state (just opened, focusing).
+        // Ignore — the next slider tick will retry.
+      });
+  }, [zoom, zoomCap]);
+
+  function selectDevice(id: string) {
+    setDeviceId(id);
+    try {
+      if (id) localStorage.setItem(DEVICE_PREF_KEY, id);
+      else localStorage.removeItem(DEVICE_PREF_KEY);
+    } catch { /* ignore quota / disabled storage */ }
+  }
 
   return (
-    <div className={className}>
-      <div className="relative w-full overflow-hidden rounded bg-black">
+    <div className={className ?? "flex flex-col h-[70vh]"}>
+      {(devices.length > 1 || zoomCap) && (
+        <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
+          {devices.length > 1 && (
+            <label className="flex items-center gap-1.5">
+              <span className="text-muted">Camera</span>
+              <select
+                className="input py-1 max-w-[14rem]"
+                value={deviceId ?? ""}
+                onChange={e => selectDevice(e.target.value)}
+              >
+                <option value="">Default</option>
+                {devices.map((d, i) => (
+                  <option key={d.deviceId} value={d.deviceId}>
+                    {d.label || `Camera ${i + 1}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {zoomCap && (
+            <label className="flex items-center gap-2 flex-1 min-w-[10rem] max-w-md">
+              <span className="text-muted">Zoom</span>
+              <input
+                type="range"
+                className="flex-1 accent-accent"
+                min={zoomCap.min}
+                max={zoomCap.max}
+                step={zoomCap.step}
+                value={zoom}
+                onChange={e => setZoom(parseFloat(e.target.value))}
+              />
+              <span className="tabular-nums w-10 text-right">{zoom.toFixed(1)}×</span>
+            </label>
+          )}
+        </div>
+      )}
+      <div className="flex-1 relative w-full overflow-hidden rounded-md bg-black">
         <video
           ref={videoRef}
-          className="block w-full"
+          className="block w-full h-full object-cover"
           playsInline
           muted
           autoPlay
         />
       </div>
-      <div
-        className={
-          "mt-2 text-xs " +
-          (status.kind === "err"
-            ? "text-red-500"
-            : status.kind === "ready"
-            ? "text-text-muted"
-            : "text-text-muted")
-        }
-      >
-        {status.text}
+      <div className="mt-2 flex items-center gap-2 text-sm">
+        <span
+          className={
+            "w-2.5 h-2.5 rounded-full " +
+            (status.kind === "ready" ? "bg-accent" : status.kind === "err" ? "bg-danger" : "bg-muted")
+          }
+        />
+        <span>{status.text}</span>
       </div>
     </div>
   );
