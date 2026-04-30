@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Link, NavLink, Outlet } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { BarChart3 } from "lucide-react";
-import { api } from "@/lib/api";
+import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { BarChart3, ShoppingCart } from "lucide-react";
+import { api, ApiError } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
-import type { Project } from "@/types";
+import type { Order, Project } from "@/types";
 
 type LowStockRow = {
   part_id: string;
@@ -41,6 +42,52 @@ type Expiring = {
   days_until_expiry: number;
   expired: boolean;
 }[];
+
+/**
+ * Turn a list of (part, quantity) shortages into a fresh purchase order
+ * pre-populated with one entry per part. Used by the action button on
+ * Low-stock and BOM-shortage so a report finding becomes a one-click
+ * restock instead of busywork in OrderDetail.
+ *
+ * Entries POST in parallel — partial failures are reported as a warning;
+ * the order itself still exists with whatever succeeded so the user can
+ * pick up from OrderDetail.
+ */
+async function createRestockOrder(
+  name: string,
+  lines: { part_id: string; quantity: number }[],
+  nav: ReturnType<typeof useNavigate>,
+  qc: QueryClient,
+): Promise<void> {
+  if (lines.length === 0) return;
+  try {
+    const order = await api.post<Order>("/orders", { name });
+    const settled = await Promise.allSettled(
+      lines.map(l =>
+        api.post(`/orders/${order.id}/entries`, {
+          part_id: l.part_id,
+          quantity_ordered: l.quantity,
+        })
+      )
+    );
+    const failed = settled.filter(s => s.status === "rejected").length;
+    qc.invalidateQueries({ queryKey: ["orders"] });
+    if (failed > 0) {
+      toast.warning(
+        `Order created — ${lines.length - failed} of ${lines.length} lines added; ${failed} failed.`
+      );
+    } else {
+      toast.success(`Order with ${lines.length} line${lines.length === 1 ? "" : "s"} created.`);
+    }
+    nav(`/orders/${order.id}`);
+  } catch (e) {
+    toast.error(e instanceof ApiError ? e.message : "Failed to create order");
+  }
+}
+
+function todayISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}
 
 export default function ReportsLayout() {
   return (
@@ -147,14 +194,48 @@ function KpiStrip() {
 }
 
 export function LowStockReport() {
+  const nav = useNavigate();
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
   const { data, isLoading } = useQuery({
     queryKey: ["report", "low-stock"],
     queryFn: () => api.get<LowStockRow[]>("/reports/low-stock"),
   });
   if (isLoading) return <div className="text-muted">Loading…</div>;
+  const rows = data ?? [];
+
+  async function orderShortages() {
+    if (busy || rows.length === 0) return;
+    setBusy(true);
+    try {
+      await createRestockOrder(
+        `Restock ${todayISO()}`,
+        rows.map(r => ({ part_id: r.part_id, quantity: Math.max(1, r.short_by) })),
+        nav,
+        qc,
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
+    <div className="space-y-3">
+      {rows.length > 0 && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            className="btn-primary inline-flex items-center gap-1.5"
+            disabled={busy}
+            onClick={orderShortages}
+          >
+            <ShoppingCart size={14} />
+            Create restock order ({rows.length})
+          </button>
+        </div>
+      )}
     <DataTable
-      rows={data ?? []}
+      rows={rows}
       rowKey={r => r.part_id}
       tableId="report-low-stock"
       empty={
@@ -178,6 +259,7 @@ export function LowStockReport() {
           render: r => <span className="tabular-nums text-danger">{r.short_by}</span> },
       ]}
     />
+    </div>
   );
 }
 
@@ -228,14 +310,36 @@ export function StockValueReport() {
 }
 
 export function BomShortageReport() {
+  const nav = useNavigate();
+  const qc = useQueryClient();
   const { data: projects } = useQuery({ queryKey: ["projects"], queryFn: () => api.get<Project[]>("/projects") });
   const [projectId, setProjectId] = useState("");
   const [qty, setQty] = useState(1);
+  const [busy, setBusy] = useState(false);
   const { data } = useQuery({
     queryKey: ["report", "bom", projectId, qty],
     queryFn: () => api.get<Shortage>(`/reports/bom-shortage?project_id=${projectId}&quantity=${qty}`),
     enabled: !!projectId && qty > 0,
   });
+
+  const shortages = data?.rows.filter(r => r.short_by > 0) ?? [];
+  const projectName = projects?.find(p => p.id === projectId)?.name;
+
+  async function orderShortages() {
+    if (busy || shortages.length === 0) return;
+    setBusy(true);
+    try {
+      const subject = projectName ? `${projectName} × ${qty}` : `build × ${qty}`;
+      await createRestockOrder(
+        `BOM restock — ${subject} (${todayISO()})`,
+        shortages.map(r => ({ part_id: r.part_id, quantity: r.short_by })),
+        nav,
+        qc,
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="space-y-3">
@@ -253,6 +357,20 @@ export function BomShortageReport() {
         </div>
       </div>
       {data && (
+        <>
+        {shortages.length > 0 && (
+          <div className="flex justify-end">
+            <button
+              type="button"
+              className="btn-primary inline-flex items-center gap-1.5"
+              disabled={busy}
+              onClick={orderShortages}
+            >
+              <ShoppingCart size={14} />
+              Order shortages ({shortages.length})
+            </button>
+          </div>
+        )}
         <DataTable
           rows={data.rows}
           rowKey={r => r.part_id}
@@ -273,6 +391,7 @@ export function BomShortageReport() {
               render: r => r.short_by ? <span className="tabular-nums text-danger">{r.short_by}</span> : <span className="text-muted">—</span> },
           ]}
         />
+        </>
       )}
     </div>
   );
