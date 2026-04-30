@@ -6,10 +6,11 @@ import { readBarcodes, prepareZXingModule } from "zxing-wasm/reader";
  * with no Scandit license still get a working `/parts/scan*` flow.
  *
  * Architecture:
- *   <video>  ← getUserMedia stream (chosen camera + applyConstraints zoom)
+ *   <video>  ← getUserMedia stream (chosen camera + applyConstraints zoom
+ *      │      in hardware mode; raw frame + center-crop in digital mode)
  *      │
  *      ▼ requestAnimationFrame loop, throttled to ~6 Hz
- *   offscreen <canvas>.drawImage(video) → ctx.getImageData
+ *   offscreen <canvas>.drawImage(video, srcRect…) → ctx.getImageData
  *      │
  *      ▼
  *   readBarcodes(imageData, { formats: [...] })
@@ -21,20 +22,22 @@ import { readBarcodes, prepareZXingModule } from "zxing-wasm/reader";
  * we need pixel access to the current frame anyway, and a visible preview is
  * what makes hand-aiming feasible.
  *
- * Camera + zoom UX: phones typically expose multiple cameras (rear wide,
- * rear telephoto, ultrawide, front) plus per-track zoom on rear cameras.
- * The picker lets the user choose which one — the chosen `deviceId` is
- * cached in localStorage so reloads remember it. Zoom is exposed as a
- * slider whenever `track.getCapabilities().zoom` reports a range; otherwise
- * it stays hidden (e.g. desktops, Firefox).
+ * Camera + zoom UX. Phones typically expose multiple cameras (rear wide,
+ * rear telephoto, ultrawide, front) plus per-track hardware zoom. PC
+ * webcams usually expose neither hardware zoom nor multiple cameras. So:
+ *
+ *  - The picker shows up whenever there's >1 video input. Pick is cached
+ *    in localStorage so reloads remember it.
+ *  - The zoom slider is ALWAYS visible (whenever the camera is up).
+ *    When `track.getCapabilities().zoom` reports a range we drive the
+ *    hardware (best quality). Otherwise we crop the source rect in
+ *    software ("digital zoom") and the preview gets a CSS `scale()` so
+ *    the user sees the same crop the decoder sees. Digital is capped at
+ *    4× — past that you're decoding upscaled noise.
  */
 
 export type ScanResult = { data: string; symbology: string };
 
-// Public symbology names match the Scandit-flavored API the rest of the app
-// consumes (`MpnLookup`, `ScanImport`, `PartScan`). `QR` is internally mapped
-// to ZXing's `QRCode`, and QRCode results are mapped back to `QR` so callers
-// see consistent values regardless of which decoder ran.
 const ZXING_FORMAT_BY_PUBLIC: Record<string, string> = {
   Code128: "Code128",
   Code39: "Code39",
@@ -56,7 +59,12 @@ const SCAN_PERIOD_MS = 160;        // ~6 Hz; ZXing on a recent phone returns in 
 const DUPLICATE_WINDOW_MS = 1200;  // suppress repeated reads of the same code
 const DEVICE_PREF_KEY = "scanner.deviceId";
 
+// Software-crop range. Above ~4× the decoder is fed visibly-pixelated input
+// and the slider stops being useful.
+const DIGITAL_ZOOM: ZoomCap = { min: 1, max: 4, step: 0.1 };
+
 type ZoomCap = { min: number; max: number; step: number };
+type ZoomMode = "hardware" | "digital";
 
 type Props = {
   onScan: (b: ScanResult) => void;
@@ -68,6 +76,11 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastHitRef = useRef<{ data: string; t: number } | null>(null);
   const trackRef = useRef<MediaStreamTrack | null>(null);
+  // Refs the decoder loop reads each tick — state setters wouldn't reach the
+  // closure that was captured when the camera effect first ran.
+  const zoomRef = useRef<number>(1);
+  const zoomModeRef = useRef<ZoomMode>("digital");
+
   const [status, setStatus] = useState<{ text: string; kind?: "ready" | "err" }>({
     text: "Initializing…",
   });
@@ -80,7 +93,12 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
     }
   });
   const [zoomCap, setZoomCap] = useState<ZoomCap | null>(null);
+  const [zoomMode, setZoomMode] = useState<ZoomMode>("digital");
   const [zoom, setZoom] = useState<number>(1);
+
+  // Mirror the live zoom values into refs the tick callback can read.
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+  useEffect(() => { zoomModeRef.current = zoomMode; }, [zoomMode]);
 
   // ---------------------------------------------------------------------
   // Camera + decoder loop. Restarts whenever the picked camera changes.
@@ -151,9 +169,8 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
         const track = stream.getVideoTracks()[0] ?? null;
         trackRef.current = track;
 
-        // Surface zoom capability for the new track. Browsers that don't
-        // implement getCapabilities (or don't expose zoom on this track)
-        // hit the else branch and the slider stays hidden.
+        // Decide hardware vs digital zoom for THIS track. Switching cameras
+        // can flip the mode (rear may have hw zoom, front may not).
         const caps = (track && (track as any).getCapabilities?.()) || {};
         if (typeof caps.zoom?.min === "number" && typeof caps.zoom?.max === "number") {
           const cap = {
@@ -162,10 +179,12 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
             step: caps.zoom.step || 0.1,
           };
           setZoomCap(cap);
+          setZoomMode("hardware");
           const settings = ((track as any)?.getSettings?.() || {}) as any;
           setZoom(typeof settings.zoom === "number" ? settings.zoom : cap.min);
         } else {
-          setZoomCap(null);
+          setZoomCap(DIGITAL_ZOOM);
+          setZoomMode("digital");
           setZoom(1);
         }
 
@@ -178,7 +197,8 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
 
         setStatus({ text: "Aim at the code…", kind: "ready" });
 
-        // Reusable offscreen canvas — sized to the video each frame.
+        // Reusable offscreen canvas — sized per tick (digital zoom changes the
+        // crop dimensions; hardware mode keeps it equal to the video frame).
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d", { willReadFrequently: true });
         if (!ctx) throw new Error("2D canvas context unavailable.");
@@ -195,10 +215,24 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
             timer = window.setTimeout(tick, SCAN_PERIOD_MS);
             return;
           }
-          if (canvas.width !== w) canvas.width = w;
-          if (canvas.height !== h) canvas.height = h;
-          ctx.drawImage(video, 0, 0, w, h);
-          const imageData = ctx.getImageData(0, 0, w, h);
+
+          // Hardware mode: the camera already delivers the zoomed-in frame.
+          // Digital mode: read a centre-cropped rectangle so the decoder sees
+          // exactly what the user thinks they're scanning. We feed the
+          // decoder the cropped pixels at native resolution rather than
+          // upscaling them — fewer pixels, same true detail.
+          const z = zoomRef.current;
+          let sx = 0, sy = 0, sw = w, sh = h;
+          if (zoomModeRef.current === "digital" && z > 1) {
+            sw = Math.max(1, Math.round(w / z));
+            sh = Math.max(1, Math.round(h / z));
+            sx = Math.round((w - sw) / 2);
+            sy = Math.round((h - sh) / 2);
+          }
+          if (canvas.width !== sw) canvas.width = sw;
+          if (canvas.height !== sh) canvas.height = sh;
+          ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
+          const imageData = ctx.getImageData(0, 0, sw, sh);
           try {
             const results = await readBarcodes(imageData, {
               formats: enabled as any,
@@ -251,12 +285,13 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
   }, [deviceId]);
 
   // ---------------------------------------------------------------------
-  // Apply zoom imperatively on the live track when the slider moves.
-  // Separated from the camera effect so dragging doesn't restart capture.
+  // Apply zoom imperatively on the live track in hardware mode. Digital
+  // mode just lives in the ref and the tick callback picks it up.
   // ---------------------------------------------------------------------
   useEffect(() => {
+    if (zoomMode !== "hardware") return;
     const track = trackRef.current;
-    if (!track || !zoomCap) return;
+    if (!track) return;
     (track as any)
       .applyConstraints({ advanced: [{ zoom }] })
       .catch(() => {
@@ -264,7 +299,7 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
         // when the track is in an interim state (just opened, focusing).
         // Ignore — the next slider tick will retry.
       });
-  }, [zoom, zoomCap]);
+  }, [zoom, zoomMode]);
 
   function selectDevice(id: string) {
     setDeviceId(id);
@@ -273,6 +308,11 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
       else localStorage.removeItem(DEVICE_PREF_KEY);
     } catch { /* ignore quota / disabled storage */ }
   }
+
+  // CSS preview transform for digital zoom. Hardware mode skips it because
+  // the underlying frame is already zoomed by the camera.
+  const previewTransform =
+    zoomMode === "digital" && zoom > 1 ? `scale(${zoom})` : undefined;
 
   return (
     <div className={className ?? "flex flex-col h-[70vh]"}>
@@ -297,7 +337,9 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
           )}
           {zoomCap && (
             <label className="flex items-center gap-2 flex-1 min-w-[10rem] max-w-md">
-              <span className="text-muted">Zoom</span>
+              <span className="text-muted">
+                Zoom{zoomMode === "digital" ? " (digital)" : ""}
+              </span>
               <input
                 type="range"
                 className="flex-1 accent-accent"
@@ -316,6 +358,14 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
         <video
           ref={videoRef}
           className="block w-full h-full object-cover"
+          style={{
+            transform: previewTransform,
+            transformOrigin: "center center",
+            // Disable any subpixel smoothing the browser might add at high
+            // CSS scale — keeps the preview legible at the same crop the
+            // decoder is reading.
+            imageRendering: previewTransform ? "auto" : undefined,
+          }}
           playsInline
           muted
           autoPlay
