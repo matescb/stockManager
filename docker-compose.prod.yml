@@ -55,9 +55,15 @@ services:
     # docker bridge IP and the auth rate-limiter buckets all clients
     # together. '*' is safe here because Apache strips/sets XFF and is
     # the only thing reachable on the docker network.
+    #
+    # --workers 1: slowapi's in-memory bucket store is per-process, so
+    # the effective auth rate-limit gets multiplied by the worker count.
+    # We're nowhere near needing parallelism at our scale; if traffic
+    # ever justifies > 1 worker, switch slowapi to a Redis backend
+    # before bumping this number.
     command: >
       sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
                     --proxy-headers --forwarded-allow-ips='*'"
 
   web:
