@@ -105,11 +105,15 @@ const SEPARATOR_RE = /\{GS\}|<FNC1>|[\x1c\x1d\x1e\x1f\x04]/g;
  */
 function normalizeControlPictures(s: string): string {
   return s
-    .replace(/␄/g, "\x04")  // Symbol for EOT → EOT
-    .replace(/␜/g, "\x1c")  // Symbol for FS  → FS
-    .replace(/␝/g, "\x1d")  // Symbol for GS  → GS
-    .replace(/␞/g, "\x1e")  // Symbol for RS  → RS
-    .replace(/␟/g, "\x1f"); // Symbol for US  → US
+    .replace(/␄/g, "\x04")  // Symbol for EOT   → EOT
+    .replace(/␜/g, "\x1c")  // Symbol for FS    → FS
+    .replace(/␝/g, "\x1d")  // Symbol for GS    → GS
+    .replace(/␞/g, "\x1e")  // Symbol for RS    → RS
+    .replace(/␟/g, "\x1f")  // Symbol for US    → US
+    // ZXing also substitutes printable ASCII space (0x20) with U+2420
+    // ("Symbol for Space"). Without this, parsed values keep the
+    // pictograph — e.g. customerRef shows up as "#44861␠A␠#44920".
+    .replace(/␠/g, " ");
 }
 
 // Recognized Data Identifiers. Order matters for inlineSplit (longest
