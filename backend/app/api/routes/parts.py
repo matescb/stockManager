@@ -151,7 +151,12 @@ def _serialize(
 
 
 @router.get("/assets/{ws_id}/{filename}")
-def get_provider_asset(ws_id: UUID, filename: str, ws: CurrentWorkspace):
+def get_provider_asset(
+    ws_id: UUID,
+    filename: str,
+    ws: CurrentWorkspace,
+    name: str | None = Query(default=None, max_length=120),
+):
     # Workspace-scoped: an operator can only fetch assets that live under
     # their workspace's folder. The `ws` dep already proves membership in
     # the request's current workspace; this matches them.
@@ -164,11 +169,21 @@ def get_provider_asset(ws_id: UUID, filename: str, ws: CurrentWorkspace):
     abs_path = os.path.join(settings().UPLOAD_DIR, "parts", str(ws_id), filename)
     if not os.path.isfile(abs_path):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="asset not found")
-    return FileResponse(
-        abs_path,
+
+    headers = {
         # Content-addressed → safe to cache for a year, never re-revalidate.
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
-    )
+        "Cache-Control": "public, max-age=31536000, immutable",
+    }
+    if name:
+        # `inline` keeps PDF / image preview working; the filename only
+        # comes into play when the user does Save As. Restrict to a safe
+        # subset and append the original extension so the saved file
+        # opens in the right viewer.
+        safe = "".join(c for c in name if c.isalnum() or c in "._-")[:80] or "datasheet"
+        ext = filename.rsplit(".", 1)[-1] if "." in filename else ""
+        ext_suffix = f".{ext}" if ext and not safe.lower().endswith(f".{ext.lower()}") else ""
+        headers["Content-Disposition"] = f'inline; filename="{safe}{ext_suffix}"'
+    return FileResponse(abs_path, headers=headers)
 
 
 @router.get("")

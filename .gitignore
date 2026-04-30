@@ -52,3 +52,10 @@ htmlcov/
 # Claude Code local artifacts (transcript exports, scratch logs).
 /2*-this-session-*.txt
 
+.venv_review/
+
+# Untracked review run artifacts (out-of-band analyses).
+/review-*/
+
+# tsc emits a .d.ts next to vite.config.ts under composite project refs.
+web/vite.config.d.ts

@@ -8,7 +8,10 @@ import MpnLookup from "@/components/MpnLookup";
 export default function PartCreate() {
   const nav = useNavigate();
   const [form, setForm] = useState({
-    part_type: "local" as "linked" | "local" | "meta" | "sub_assembly",
+    // Linked is the typical case for an inventory app fed by Mouser /
+    // DigiKey lookups — start there. Operators creating sub-assemblies
+    // or local-only parts flip the dropdown.
+    part_type: "linked" as "linked" | "local" | "meta" | "sub_assembly",
     name: "",
     manufacturer: "",
     mpn: "",
@@ -110,8 +113,8 @@ export default function PartCreate() {
         <div>
           <label className="label">Type</label>
           <select className="input" value={form.part_type} onChange={e => set("part_type", e.target.value as any)}>
-            <option value="local">Local</option>
             <option value="linked">Linked (MPN)</option>
+            <option value="local">Local</option>
             <option value="meta">Meta-part</option>
             <option value="sub_assembly">Sub-assembly</option>
           </select>

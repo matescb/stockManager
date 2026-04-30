@@ -13,6 +13,23 @@ const PROVIDER_LABEL: Record<string, string> = {
 
 const STALE_DAYS = 30;
 
+/**
+ * Append `?name=<safe>` to an asset URL so the backend serves it with
+ * `Content-Disposition: inline; filename="<safe>.<ext>"`. The browser
+ * still previews PDFs / images inline; the user's Save As dialog
+ * shows the readable filename instead of the content-hash.
+ *
+ * Only applies to our own asset paths; remote URLs (still possible
+ * when a download fell back to the upstream link) get returned as-is.
+ */
+function withDownloadName(url: string, name: string | null | undefined): string {
+  if (!url || !url.startsWith("/api/parts/assets/")) return url;
+  const safe = (name || "datasheet").replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 80);
+  if (!safe) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}name=${encodeURIComponent(safe)}`;
+}
+
 function relativeTime(iso: string | null): string {
   if (!iso) return "never";
   const ms = Date.now() - new Date(iso).getTime();
@@ -133,7 +150,7 @@ export default function PartInfo() {
       {datasheetUrl && (
         <div className="card p-4 col-span-2">
           <a
-            href={datasheetUrl}
+            href={withDownloadName(datasheetUrl, part.mpn || part.name)}
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center gap-1.5 text-accent hover:underline text-sm"

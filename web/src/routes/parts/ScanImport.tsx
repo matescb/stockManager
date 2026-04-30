@@ -11,6 +11,7 @@ import {
   Loader2,
   Minus,
   Package,
+  Plus,
   RotateCcw,
   Trash2,
 } from "lucide-react";
@@ -87,6 +88,60 @@ type ImportResponse = {
 function newRowId(): string {
   // crypto.randomUUID would also work but isn't guaranteed in older TLS hosts.
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+// "Service Unavailable", "upstream unavailable (TimeoutException)",
+// "DigiKey rate limit reached", connection-resets — anything that's
+// likely to clear on its own. Detected so we can retry transparently
+// instead of dumping the user back to "Service Unavailable" under the
+// MPN.
+function isTransientLookupFailure(err: unknown): boolean {
+  if (err instanceof ApiError) {
+    if (err.status >= 500) return true;
+    const msg = (err.message || "").toLowerCase();
+    return /unavailable|timeout|rate.?limit|temporar|503|504|502|connection/.test(msg);
+  }
+  if (err instanceof TypeError) {
+    // Browser fetch throws TypeError on connection abort / network change.
+    return true;
+  }
+  return false;
+}
+
+function isTransientResultMessage(msg: string | undefined | null): boolean {
+  if (!msg) return false;
+  return /unavailable|timeout|rate.?limit|temporar|service.?unavailable/i.test(msg);
+}
+
+const RETRY_DELAYS_MS = [800, 1600, 3000];
+
+async function lookupMpnWithRetry(mpn: string): Promise<MpnLookupResult> {
+  // First attempt + up to len(RETRY_DELAYS_MS) retries. We retry both on
+  // throws (5xx, network) and on 200-with-transient-message (the provider
+  // route swallows upstream failures and returns {found:false,message}).
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      const res = await api.post<MpnLookupResult>("/parts/lookup-mpn", { mpn });
+      if (!res.found && isTransientResultMessage(res.message)) {
+        if (attempt < RETRY_DELAYS_MS.length) {
+          await new Promise(r => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+          continue;
+        }
+      }
+      return res;
+    } catch (err) {
+      if (attempt < RETRY_DELAYS_MS.length && isTransientLookupFailure(err)) {
+        await new Promise(r => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+        continue;
+      }
+      throw err;
+    }
+  }
+  // Exhausted retries on a transient — final attempt's result is what
+  // the operator gets to see. We never reach here because the loop
+  // either returns or throws on every iteration; TS just can't tell.
+  /* istanbul ignore next */
+  throw new Error("lookupMpnWithRetry: unreachable");
 }
 
 export default function ScanImport() {
@@ -181,8 +236,9 @@ export default function ScanImport() {
         return;
       }
 
-      // 3. New part — provider lookup.
-      const lookup = await api.post<MpnLookupResult>("/parts/lookup-mpn", { mpn });
+      // 3. New part — provider lookup with auto-retry on transient
+      //    upstream failures (5xx, "Service Unavailable", timeouts).
+      const lookup = await lookupMpnWithRetry(mpn);
       if (lookup.found && lookup.result) {
         setState({ kind: "found", result: lookup.result, provider: lookup.provider });
       } else {
@@ -193,26 +249,27 @@ export default function ScanImport() {
     }
   }, []);
 
-  async function quickRemoveFromBag(rowId: string) {
+  async function quickRemoveFromBag(rowId: string, quantity: number) {
     const row = rows.find(r => r.rowId === rowId);
     if (!row || row.state.kind !== "bag_rescan") return;
     const st = row.state;
+    if (quantity <= 0 || quantity > st.quantity) return;
     try {
       await api.post(`/parts/${st.part_id}/quick-remove-bag`, {
-        quantity: st.quantity,
+        quantity,
         lot_id: st.lot_id,
         storage_location_id: st.storage_location_id,
       });
       setRows(prev =>
         prev.map(r =>
           r.rowId === rowId
-            ? { ...r, state: { kind: "consumed", partId: st.part_id, quantity: st.quantity } }
+            ? { ...r, state: { kind: "consumed", partId: st.part_id, quantity } }
             : r,
         ),
       );
       qc.invalidateQueries({ queryKey: ["part", st.part_id] });
       qc.invalidateQueries({ queryKey: ["part", st.part_id, "stock"] });
-      toast.success(`Removed ${st.quantity} from this bag.`);
+      toast.success(`Removed ${quantity} from this bag.`);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Quick-remove failed");
     }
@@ -369,10 +426,90 @@ export default function ScanImport() {
                   else if (r.state.kind === "bag_rescan") nav(`/parts/${r.state.part_id}/info`);
                   else if (r.state.kind === "consumed") nav(`/parts/${r.state.partId}/info`);
                 }}
-                onQuickRemove={() => quickRemoveFromBag(r.rowId)}
+                onQuickRemove={(qty) => quickRemoveFromBag(r.rowId, qty)}
               />
             ))}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BagRescanCard({
+  quantity,
+  onOpenExisting,
+  onQuickRemove,
+}: {
+  /** Total qty in the recognised bag — caps the stepper. */
+  quantity: number;
+  onOpenExisting: () => void;
+  onQuickRemove: (qty: number) => void;
+}) {
+  // Default to 1 — most "I'm taking some out of this bag" actions are
+  // for a single unit. Operator can step up via the +/- buttons or
+  // type a number directly. Capped at the bag's available qty.
+  const [qty, setQty] = useState(1);
+  const cap = Math.max(1, quantity);
+  function step(delta: number) {
+    setQty(q => Math.min(cap, Math.max(1, q + delta)));
+  }
+  return (
+    <div className="flex items-start gap-2 text-sm">
+      <RotateCcw className="h-4 w-4 text-accent shrink-0 mt-0.5" />
+      <div className="flex-1">
+        <div>
+          Recognised — this bag was imported earlier
+          {quantity > 0 && (
+            <> (bag had qty <span className="font-mono">{quantity}</span>)</>
+          )}
+          .
+        </div>
+        <div className="flex flex-wrap items-center gap-2 mt-2">
+          <button
+            type="button"
+            className="btn-ghost btn-sm inline-flex items-center gap-1"
+            onClick={onOpenExisting}
+          >
+            <Link2 size={12} /> Open part
+          </button>
+          <div className="flex items-center gap-1 ml-auto">
+            <button
+              type="button"
+              className="btn-ghost btn-sm h-8 w-8 inline-flex items-center justify-center"
+              onClick={() => step(-1)}
+              disabled={qty <= 1}
+              aria-label="Decrease quantity"
+            >
+              <Minus size={14} />
+            </button>
+            <input
+              type="number"
+              className="input w-16 text-center"
+              min={1}
+              max={cap}
+              value={qty}
+              onChange={e => setQty(Math.max(1, Math.min(cap, parseInt(e.target.value, 10) || 1)))}
+            />
+            <button
+              type="button"
+              className="btn-ghost btn-sm h-8 w-8 inline-flex items-center justify-center"
+              onClick={() => step(1)}
+              disabled={qty >= cap}
+              aria-label="Increase quantity"
+            >
+              <Plus size={14} />
+            </button>
+          </div>
+          <button
+            type="button"
+            className="btn-primary btn-sm inline-flex items-center gap-1"
+            onClick={() => onQuickRemove(qty)}
+            disabled={cap <= 0 || qty <= 0 || qty > cap}
+            title={`Remove ${qty} unit${qty === 1 ? "" : "s"} from this lot`}
+          >
+            <Minus size={12} /> Remove {qty}
+          </button>
         </div>
       </div>
     </div>
@@ -390,7 +527,7 @@ function ScanCard({
   onRemove: () => void;
   onQuantity: (q: number) => void;
   onOpenExisting: () => void;
-  onQuickRemove: () => void;
+  onQuickRemove: (qty: number) => void;
 }) {
   return (
     <div className="rounded-md border border-border bg-panel2/40 p-3">
@@ -427,36 +564,11 @@ function ScanCard({
           </div>
         )}
         {row.state.kind === "bag_rescan" && (
-          <div className="flex items-start gap-2 text-sm">
-            <RotateCcw className="h-4 w-4 text-accent shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <div>
-                Recognised — this bag was imported earlier
-                {row.state.quantity > 0 && (
-                  <> (qty <span className="font-mono">{row.state.quantity}</span>)</>
-                )}
-                .
-              </div>
-              <div className="flex gap-2 mt-2">
-                <button
-                  type="button"
-                  className="btn-ghost btn-sm inline-flex items-center gap-1"
-                  onClick={onOpenExisting}
-                >
-                  <Link2 size={12} /> Open part
-                </button>
-                <button
-                  type="button"
-                  className="btn-primary btn-sm inline-flex items-center gap-1"
-                  onClick={onQuickRemove}
-                  disabled={row.state.quantity <= 0}
-                  title="Remove the bag's quantity from this lot"
-                >
-                  <Minus size={12} /> Remove {row.state.quantity}
-                </button>
-              </div>
-            </div>
-          </div>
+          <BagRescanCard
+            quantity={row.state.quantity}
+            onOpenExisting={onOpenExisting}
+            onQuickRemove={onQuickRemove}
+          />
         )}
         {row.state.kind === "consumed" && (
           <div className="flex items-start gap-2 text-sm text-success">
