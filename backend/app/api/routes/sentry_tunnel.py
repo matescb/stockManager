@@ -30,37 +30,44 @@ from app.core.config import settings
 router = APIRouter()
 
 
-def _allowed_endpoint() -> tuple[str, str] | None:
-    """Parse SENTRY_DSN once at request time. Returns (host, project_id) or
-    None if no DSN is configured (in which case the endpoint refuses)."""
-    dsn = settings().SENTRY_DSN
-    if not dsn:
-        return None
-    parsed = urlparse(dsn)
-    host = parsed.hostname
-    project_id = parsed.path.strip("/")
-    if not host or not project_id:
-        return None
-    return host, project_id
+def _allowed_endpoints() -> list[tuple[str, str]]:
+    """Parse the configured DSN(s) once per request. Returns the list of
+    (host, project_id) tuples that envelopes are allowed to target.
+
+    The tunnel exists for the React SDK, so VITE_SENTRY_DSN is the
+    primary entry. SENTRY_DSN (the backend project's DSN) is included
+    too for shops that point both runtimes at the same project, and for
+    forwarding any backend-emitted envelopes that ever route through
+    here. An empty string skips that slot."""
+    cfg = settings()
+    out: list[tuple[str, str]] = []
+    for dsn in (cfg.VITE_SENTRY_DSN, cfg.SENTRY_DSN):
+        if not dsn:
+            continue
+        parsed = urlparse(dsn)
+        host = parsed.hostname
+        project_id = parsed.path.strip("/")
+        if host and project_id:
+            out.append((host, project_id))
+    return out
 
 
 @router.post("/sentry-tunnel")
 async def sentry_tunnel(request: Request) -> Response:
-    allowed = _allowed_endpoint()
-    if allowed is None:
-        # No SENTRY_DSN on the server — there's nothing to forward to.
-        # Return a soft 204 so SDK retries don't hammer the route.
+    allowed = _allowed_endpoints()
+    if not allowed:
+        # No DSN on the server — there's nothing to forward to. Return a
+        # soft 204 so SDK retries don't hammer the route.
         return Response(status_code=status.HTTP_204_NO_CONTENT)
-    expected_host, expected_project = allowed
 
     envelope = await request.body()
     if not envelope:
         raise HTTPException(status_code=400, detail="empty envelope")
 
     # The first line of every Sentry envelope is a JSON header carrying
-    # the DSN the client believes it's sending to. Validate it against the
-    # server-configured DSN so this tunnel only ever forwards to our own
-    # Sentry project.
+    # the DSN the client believes it's sending to. Validate it against
+    # the server's allow-list so this tunnel only ever forwards to a
+    # Sentry project we explicitly configured.
     header_line, _, _ = envelope.partition(b"\n")
     try:
         header = json.loads(header_line.decode("utf-8"))
@@ -70,10 +77,12 @@ async def sentry_tunnel(request: Request) -> Response:
     if not client_dsn:
         raise HTTPException(status_code=400, detail="envelope header missing dsn")
     parsed = urlparse(client_dsn)
-    if parsed.hostname != expected_host or parsed.path.strip("/") != expected_project:
+    target_host = parsed.hostname
+    target_project = parsed.path.strip("/")
+    if (target_host, target_project) not in allowed:
         raise HTTPException(status_code=403, detail="dsn mismatch")
 
-    upstream = f"https://{expected_host}/api/{expected_project}/envelope/"
+    upstream = f"https://{target_host}/api/{target_project}/envelope/"
     # 10s is more than enough for an ingest POST; longer would let a hung
     # upstream tie up our worker.
     async with httpx.AsyncClient(timeout=10.0) as client:
