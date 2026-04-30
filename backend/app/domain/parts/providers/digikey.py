@@ -14,7 +14,7 @@ who needs another locale can plumb it through later.
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import quote
 
 import httpx
@@ -131,20 +131,39 @@ class DigiKeyProvider:
         self._token_exp = time.monotonic() + ttl
         return token
 
+    def _request_with_retry(
+        self,
+        fn: Callable[[str], tuple[int, dict[str, Any]]],
+    ) -> tuple[int, dict[str, Any]]:
+        """Run `fn(token)`. On 401 (token expired between mint and use, or
+        revoked server-side), invalidate the cache, mint a fresh token,
+        and retry once. The proactive 60s buffer in _get_token covers the
+        common case; this guards the rare interleaving where DigiKey
+        rotates the token in the few seconds we held it."""
+        token = self._get_token()
+        status, data = fn(token)
+        if status == 401:
+            self._token = None
+            self._token_exp = 0.0
+            token = self._get_token()
+            status, data = fn(token)
+        return status, data
+
     def lookup_mpn(self, mpn: str) -> MpnLookupResult:
         mpn = mpn.strip()
         if not mpn:
             return {"found": False, "result": None, "message": "empty MPN"}
         try:
-            token = self._get_token()
-        except Exception as exc:
+            status, data = self._request_with_retry(
+                lambda tok: _get_product_details(tok, self.client_id, mpn)
+            )
+        except RuntimeError as exc:
+            # Raised by _get_token when the OAuth response is malformed.
             return {
                 "found": False,
                 "result": None,
                 "message": f"DigiKey auth failed ({type(exc).__name__})",
             }
-        try:
-            status, data = _get_product_details(token, self.client_id, mpn)
         except Exception as exc:
             return {
                 "found": False,
@@ -176,7 +195,9 @@ class DigiKeyProvider:
         # finds the right product as the top hit.
         if status in (200, 404):
             try:
-                kw_status, kw_data = _post_keyword_search(token, self.client_id, mpn, limit=1)
+                kw_status, kw_data = self._request_with_retry(
+                    lambda tok: _post_keyword_search(tok, self.client_id, mpn, limit=1)
+                )
             except Exception as exc:
                 return {
                     "found": False,

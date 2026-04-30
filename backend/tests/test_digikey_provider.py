@@ -273,6 +273,55 @@ def test_provider_404_with_no_keyword_hits_returns_not_found(monkeypatch):
     assert "no match" in (out["message"] or "")
 
 
+def test_provider_401_retries_with_fresh_token(monkeypatch):
+    """When the cached token expires between mint and use (rotation,
+    revocation, network reorder), DigiKey returns 401. The provider must
+    invalidate the cache, re-mint, and retry once before giving up."""
+    token_calls = {"n": 0}
+    def post_token(*_a, **_kw):
+        token_calls["n"] += 1
+        return {"access_token": f"tok-{token_calls['n']}", "expires_in": 600, "token_type": "Bearer"}
+    monkeypatch.setattr("app.domain.parts.providers.digikey._post_token", post_token)
+
+    pd_calls = {"tokens": []}
+    def get_product_details(token, client_id, mpn):
+        pd_calls["tokens"].append(token)
+        # First call (with tok-1) returns 401 — the cached token is stale
+        # from the SDK's point of view. Second call (with tok-2 minted on
+        # retry) returns 200 with the canonical record.
+        if pd_calls["tokens"][-1] == "tok-1":
+            return (401, {"detail": "expired"})
+        return (200, {"Product": _stub_product()})
+    monkeypatch.setattr(
+        "app.domain.parts.providers.digikey._get_product_details", get_product_details
+    )
+
+    out = DigiKeyProvider("cid", "csec").lookup_mpn("TXU0204QWBQARQ1")
+    assert out["found"] is True, out
+    # Token minted twice: once for the cache-warm call that 401'd, once
+    # for the retry. Product-details called twice with distinct tokens.
+    assert token_calls["n"] == 2
+    assert pd_calls["tokens"] == ["tok-1", "tok-2"]
+
+
+def test_provider_401_twice_in_a_row_surfaces_as_error(monkeypatch):
+    """If the freshly-minted token also 401s, don't keep retrying — bubble
+    the HTTP status to the caller as a generic upstream error so we don't
+    accidentally turn a misconfigured client into an infinite loop."""
+    monkeypatch.setattr(
+        "app.domain.parts.providers.digikey._post_token", _ok_token
+    )
+    monkeypatch.setattr(
+        "app.domain.parts.providers.digikey._get_product_details",
+        lambda token, client_id, mpn: (401, {"detail": "expired"}),
+    )
+    out = DigiKeyProvider("cid", "csec").lookup_mpn("X")
+    assert out["found"] is False
+    # The second 401 falls through to the generic "DigiKey returned HTTP …"
+    # branch — not a fallback to keyword search, not an infinite retry.
+    assert "401" in (out["message"] or "")
+
+
 def test_provider_429_returns_rate_limited(monkeypatch):
     monkeypatch.setattr(
         "app.domain.parts.providers.digikey._post_token", _ok_token

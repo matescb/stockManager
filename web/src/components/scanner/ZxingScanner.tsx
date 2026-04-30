@@ -118,9 +118,13 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
   const zoomRef = useRef<number>(1);
   const zoomModeRef = useRef<ZoomMode>("digital");
 
-  const [status, setStatus] = useState<{ text: string; kind?: "ready" | "err" }>({
-    text: "Initializing…",
-  });
+  const [status, setStatus] = useState<{
+    text: string;
+    kind?: "ready" | "err" | "perm";
+  }>({ text: "Initializing…" });
+  // Bumping this re-runs the camera effect — the user clicked "Try again"
+  // after granting / changing the browser's camera permission.
+  const [retryToken, setRetryToken] = useState(0);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState<string | undefined>(() => {
     try {
@@ -299,8 +303,32 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
         };
         timer = window.setTimeout(tick, SCAN_PERIOD_MS);
       } catch (e: any) {
-        if (!stopped) {
-          setStatus({ text: e?.message ?? "Failed to start scanner.", kind: "err" });
+        if (stopped) return;
+        // Map the standardised DOMException names to user-friendly UI
+        // states. NotAllowedError fires when the browser-level prompt is
+        // denied OR when the site's permission was previously dismissed
+        // and the prompt didn't reappear. Both want the same remediation.
+        const name = e?.name as string | undefined;
+        if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+          setStatus({
+            text: "Camera access denied — click the camera icon in your browser's address bar to allow it, then Try again.",
+            kind: "perm",
+          });
+        } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+          setStatus({
+            text: "No camera was found on this device.",
+            kind: "err",
+          });
+        } else if (name === "NotReadableError" || name === "TrackStartError") {
+          setStatus({
+            text: "Camera is in use by another app. Close it and Try again.",
+            kind: "perm",  // same retry affordance fits
+          });
+        } else {
+          setStatus({
+            text: e?.message ?? "Failed to start scanner.",
+            kind: "err",
+          });
         }
       }
     })();
@@ -317,10 +345,12 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
       }
     };
     // Restarting the camera is the whole point of a deviceId change — we want
-    // the dep. `symbologies` and `onScan` are intentionally excluded so the
+    // the dep. retryToken is bumped by the "Try again" button after a
+    // permission-denied error, so the user can re-prompt without a full
+    // reload. `symbologies` and `onScan` are intentionally excluded so the
     // loop doesn't tear down when the parent re-renders with a new closure.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deviceId]);
+  }, [deviceId, retryToken]);
 
   // ---------------------------------------------------------------------
   // Apply zoom imperatively on the live track in hardware mode. Digital
@@ -393,27 +423,43 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
         </div>
       )}
       <div className="flex-1 relative w-full overflow-hidden rounded-md bg-black">
+        {/* Always mount the video so videoRef stays valid for retry — the
+            permission panel just stacks over it when access is denied. */}
         <video
           ref={videoRef}
           className="block w-full h-full object-cover"
           style={{
             transform: previewTransform,
             transformOrigin: "center center",
-            // Disable any subpixel smoothing the browser might add at high
-            // CSS scale — keeps the preview legible at the same crop the
-            // decoder is reading.
             imageRendering: previewTransform ? "auto" : undefined,
           }}
           playsInline
           muted
           autoPlay
         />
+        {status.kind === "perm" && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-bg-soft text-text">
+            <div className="text-2xl mb-2" aria-hidden>📷</div>
+            <p className="max-w-sm text-sm mb-4">{status.text}</p>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => setRetryToken(t => t + 1)}
+            >
+              Try again
+            </button>
+          </div>
+        )}
       </div>
       <div className="mt-2 flex items-center gap-2 text-sm">
         <span
           className={
             "w-2.5 h-2.5 rounded-full " +
-            (status.kind === "ready" ? "bg-accent" : status.kind === "err" ? "bg-danger" : "bg-muted")
+            (status.kind === "ready"
+              ? "bg-accent"
+              : status.kind === "err" || status.kind === "perm"
+              ? "bg-danger"
+              : "bg-muted")
           }
         />
         <span>{status.text}</span>
