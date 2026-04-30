@@ -32,6 +32,7 @@ import PartMembers from "@/routes/parts/detail/PartMembers";
 import PartSettings from "@/routes/parts/detail/PartSettings";
 import PartOther from "@/routes/parts/detail/PartOther";
 import PartSpecs from "@/routes/parts/detail/PartSpecs";
+import PartSourcing from "@/routes/parts/detail/PartSourcing";
 import PartAttachments from "@/routes/parts/detail/PartAttachments";
 import PartActivity from "@/routes/parts/detail/PartActivity";
 
@@ -134,6 +135,7 @@ export default function App() {
             <Route index element={<Navigate to="info" replace />} />
             <Route path="info" element={<PartInfo />} />
             <Route path="specs" element={<PartSpecs />} />
+            <Route path="sourcing" element={<PartSourcing />} />
             <Route path="stock" element={<PartStock />} />
             <Route path="add" element={<PartAddStock />} />
             <Route path="remove" element={<PartRemoveStock />} />

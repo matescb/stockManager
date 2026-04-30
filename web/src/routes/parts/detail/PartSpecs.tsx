@@ -4,11 +4,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Plus, RotateCcw, Trash2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
+import { isSpecKey } from "@/lib/providerCatalog";
 import type { CustomFieldRow, Part, SpecSource } from "@/types";
-
-// Reserved keys that surface elsewhere on PartInfo (Media card). We hide
-// them from the Specs table to keep it focused on actual specs.
-const RESERVED = new Set(["image_url", "datasheet_url"]);
 
 const SOURCE_BADGE: Record<SpecSource, string> = {
   provider: "bg-accent/15 text-accent",
@@ -118,7 +115,9 @@ export default function PartSpecs() {
     }
   }
 
-  const rows = (data ?? []).filter(r => !RESERVED.has(r.key));
+  // Specs tab shows parametric values only — provider catalog rows
+  // (stock, pricing, lead time, lifecycle…) live in the Sourcing tab.
+  const rows = (data ?? []).filter(r => isSpecKey(r.key));
   const providerCount = rows.filter(r => r.source === "provider").length;
   const showSparseHint =
     !!part.linked_provider && providerCount > 0 && providerCount < 4;

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ExternalLink, FileText, ImageOff, Loader2, RefreshCw } from "lucide-react";
+import { ExternalLink, FileText, Loader2, RefreshCw } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { CustomFieldRow, Part } from "@/types";
 
@@ -39,7 +39,9 @@ export default function PartInfo() {
       api.get<CustomFieldRow[]>(`/custom-fields/by-object/part/${part.id}`),
   });
   const lookupBy = (k: string) => cf?.find(r => r.key === k)?.value || null;
-  const imageUrl = lookupBy("image_url");
+  // Image now lives in the layout header (passed in via Part.image_url);
+  // the only Media-card affordance that still belongs on this page is the
+  // datasheet link.
   const datasheetUrl = lookupBy("datasheet_url");
 
   const [refreshing, setRefreshing] = useState(false);
@@ -128,41 +130,16 @@ export default function PartInfo() {
         <Field label="Low-stock threshold" value={part.low_stock_report_quantity != null ? String(part.low_stock_report_quantity) : null} />
         <Field label="Attrition" value={`${part.attrition_percentage}% (min ${part.attrition_min_quantity})`} />
       </div>
-      {(imageUrl || datasheetUrl) && (
+      {datasheetUrl && (
         <div className="card p-4 col-span-2">
-          <h3 className="text-sm uppercase tracking-wider text-muted mb-2">Media</h3>
-          <div className="flex items-start gap-4">
-            {imageUrl ? (
-              <a href={imageUrl} target="_blank" rel="noreferrer" className="shrink-0">
-                <img
-                  src={imageUrl}
-                  alt={part.name}
-                  className="h-28 w-28 object-contain rounded border border-border bg-panel2"
-                />
-              </a>
-            ) : (
-              <div className="h-28 w-28 rounded border border-border bg-panel2 flex items-center justify-center text-muted">
-                <ImageOff size={20} />
-              </div>
-            )}
-            <div className="flex-1 space-y-2 text-sm">
-              {datasheetUrl && (
-                <a
-                  href={datasheetUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 text-accent hover:underline"
-                >
-                  <FileText size={14} /> Datasheet <ExternalLink size={12} />
-                </a>
-              )}
-              {imageUrl && (
-                <div className="text-xs text-muted break-all">
-                  Image: <a className="underline" href={imageUrl} target="_blank" rel="noreferrer">{imageUrl}</a>
-                </div>
-              )}
-            </div>
-          </div>
+          <a
+            href={datasheetUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 text-accent hover:underline text-sm"
+          >
+            <FileText size={14} /> Datasheet <ExternalLink size={12} />
+          </a>
         </div>
       )}
       <div className="card p-4 col-span-2">
