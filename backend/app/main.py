@@ -22,9 +22,12 @@ def _init_sentry() -> None:
         dsn=cfg.SENTRY_DSN,
         environment=cfg.APP_ENV,
         traces_sample_rate=cfg.SENTRY_TRACES_SAMPLE_RATE,
-        # Don't ship request bodies — they can carry MPNs, customer refs,
-        # and the like that we'd rather keep on-prem.
-        send_default_pii=False,
+        # Per the Sentry FastAPI wizard. Sends request headers and the
+        # user IP. Cookies are redacted automatically; if a particular
+        # header (e.g. Authorization) needs scrubbing, add a
+        # before_send hook here. Flip to False if you want strict
+        # data-minimisation.
+        send_default_pii=True,
         integrations=[
             StarletteIntegration(transaction_style="endpoint"),
             FastApiIntegration(transaction_style="endpoint"),
@@ -115,3 +118,14 @@ app.include_router(catalog.router, prefix="/catalog", tags=["catalog"])
 @app.get("/api/health")
 def health():
     return {"data": {"status": "ok"}, "status": {"category": "ok", "message": "OK"}}
+
+
+# Sentry verification endpoint per the FastAPI wizard. Only mounted when a
+# DSN is actually configured — keeps it absent from dev / from forks that
+# disable error tracking. Hit it once after wiring the DSN, confirm the
+# event appears in Sentry, then remove this block.
+if settings().SENTRY_DSN:
+    @app.get("/api/sentry-debug")
+    def trigger_error():  # pragma: no cover
+        division_by_zero = 1 / 0  # noqa: F841 — intentional ZeroDivisionError
+        return {"unreachable": True}
