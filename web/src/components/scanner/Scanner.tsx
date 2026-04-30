@@ -10,7 +10,7 @@ type WsScanner = {
 /**
  * Dispatcher: pick the scanner backend the workspace is configured for and
  * mount only that one. Both backends conform to the `Props` shape so call
- * sites (`MpnLookup`, `ScanImport`, `PartScan`) don't change.
+ * sites (`MpnLookup`, `ScanImport`) don't change.
  *
  * Why lazy: each backend pulls a multi-MB wasm blob. Splitting them keeps
  * the SPA shell small and only fetches the chosen decoder.

@@ -15,7 +15,6 @@ import Signup from "@/routes/auth/Signup";
 // round-trips for another.
 import PartsList from "@/routes/parts/PartsList";
 import PartCreate from "@/routes/parts/PartCreate";
-import PartScan from "@/routes/parts/PartScan";
 import ScanImport from "@/routes/parts/ScanImport";
 import StockHistory from "@/routes/parts/StockHistory";
 import LotsList from "@/routes/parts/LotsList";
@@ -122,7 +121,11 @@ export default function App() {
           <Route path="/parts" element={<Gate><PartsList /></Gate>} />
           <Route path="/parts/archived" element={<Gate><PartsList archived /></Gate>} />
           <Route path="/parts/create" element={<Gate><PartCreate /></Gate>} />
-          <Route path="/parts/scan" element={<Gate><PartScan /></Gate>} />
+          {/* /parts/scan was a single-MPN-lookup page; superseded by
+              the bulk-import flow which already handles the duplicate
+              case the way scan did (shows "Already in library" + an
+              Open Existing button). Redirect for any external links. */}
+          <Route path="/parts/scan" element={<Navigate to="/parts/scan-import" replace />} />
           <Route path="/parts/scan-import" element={<Gate><ScanImport /></Gate>} />
           <Route path="/parts/lots" element={<Gate><LotsList /></Gate>} />
           <Route path="/parts/stock/history" element={<Gate><StockHistory /></Gate>} />

@@ -19,8 +19,7 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
       <PartsTopNav
         rightAccessory={
           <>
-            <Link to="/parts/scan" className="btn">Scan</Link>
-            <Link to="/parts/scan-import" className="btn">Scan to import</Link>
+            <Link to="/parts/scan-import" className="btn">Scan</Link>
             <Link to="/parts/create" className="btn-primary">+ Part</Link>
           </>
         }
