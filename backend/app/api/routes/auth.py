@@ -13,6 +13,7 @@ from app.core.auth import (
 )
 from app.core.config import settings
 from app.core.deps import CurrentUser, DbSession
+from app.core.ratelimit import limiter
 from app.core.responses import ok
 from app.domain.users.models import User
 from app.domain.workspaces.models import Workspace, WorkspaceMember
@@ -51,8 +52,12 @@ def _set_session_cookie(response: Response, token: str) -> None:
     )
 
 
+# Sign-up rate limit: legitimate humans rarely create more than one account
+# per IP per hour. Tighter than login because failed signups are a stronger
+# spam / reputation signal than a forgotten password.
 @router.post("/signup")
-def signup(payload: SignupIn, response: Response, db: DbSession):
+@limiter.limit("5/hour")
+def signup(request: Request, payload: SignupIn, response: Response, db: DbSession):
     existing = db.query(User).filter(User.email == payload.email).first()
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="email already registered")
@@ -74,8 +79,11 @@ def signup(payload: SignupIn, response: Response, db: DbSession):
     return ok({"user": {"id": str(user.id), "email": user.email, "name": user.name}, "workspace_id": str(ws.id)})
 
 
+# Login rate limit: 10 / minute per IP is enough for a human fat-fingering
+# their password, far short of viable for online password stuffing.
 @router.post("/login")
-def login(payload: LoginIn, response: Response, db: DbSession):
+@limiter.limit("10/minute")
+def login(request: Request, payload: LoginIn, response: Response, db: DbSession):
     user = db.query(User).filter(User.email == payload.email).first()
     if not user or not verify_password(user.password_hash, payload.password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid credentials")

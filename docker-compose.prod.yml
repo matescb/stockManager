@@ -39,6 +39,9 @@ services:
       UPLOAD_DIR: /data/uploads
       APP_ENV: prod
       CORS_ORIGINS: ${CORS_ORIGINS}
+      # Empty in unset / dev — SDK becomes a no-op.
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.0}
     volumes:
       - uploads:/data/uploads
     depends_on:
@@ -46,9 +49,16 @@ services:
         condition: service_healthy
     expose:
       - "8000"
+    # --proxy-headers + --forwarded-allow-ips='*' make uvicorn rewrite
+    # request.client.host from the X-Forwarded-For header that Apache
+    # populates. Without it, every request looks like it came from the
+    # docker bridge IP and the auth rate-limiter buckets all clients
+    # together. '*' is safe here because Apache strips/sets XFF and is
+    # the only thing reachable on the docker network.
     command: >
       sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+                    --proxy-headers --forwarded-allow-ips='*'"
 
   web:
     build:
@@ -56,6 +66,12 @@ services:
       # and `deploy/nginx-web.conf` (SPA routing + /api/ proxy) in one image.
       context: .
       dockerfile: web/Dockerfile.prod
+      # Vite reads VITE_* at build time and inlines them into the bundle. The
+      # frontend Sentry DSN is a public token by design (it shows up in the
+      # browser DevTools) — it identifies the project, not authorises writes.
+      args:
+        VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
+        VITE_SENTRY_TRACES_SAMPLE_RATE: ${VITE_SENTRY_TRACES_SAMPLE_RATE:-0.0}
     restart: unless-stopped
     depends_on:
       - backend

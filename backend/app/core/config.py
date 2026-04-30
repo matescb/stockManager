@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     SESSION_LIFETIME_DAYS: int = 30
     UPLOAD_DIR: str = "/data/uploads"
     CORS_ORIGINS: str = "http://localhost:5173"
+    # Sentry. Empty string → SDK is not initialised (no events sent, no
+    # network egress, no performance overhead). Populate in .env.prod
+    # only — leaving it unset in dev keeps local error stacks clean.
+    SENTRY_DSN: str = ""
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.0
 
     @property
     def cors_origin_list(self) -> list[str]:

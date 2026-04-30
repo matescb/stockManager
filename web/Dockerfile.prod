@@ -17,6 +17,15 @@ RUN npm ci
 
 # Copy sources and produce dist/.
 COPY web/ ./
+
+# Sentry DSN baked into the bundle at build time. Empty when unset → SDK
+# init no-ops, no events, no network egress. The DSN is intentionally
+# public (Sentry's threat model treats it as an identifier, not a key).
+ARG VITE_SENTRY_DSN=
+ARG VITE_SENTRY_TRACES_SAMPLE_RATE=0.0
+ENV VITE_SENTRY_DSN=$VITE_SENTRY_DSN
+ENV VITE_SENTRY_TRACES_SAMPLE_RATE=$VITE_SENTRY_TRACES_SAMPLE_RATE
+
 RUN npm run build
 
 

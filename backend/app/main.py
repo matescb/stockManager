@@ -6,6 +6,34 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
+# Initialise Sentry BEFORE FastAPI is imported, per the SDK's docs — its
+# auto-instrumentation patches starlette / FastAPI on first import. No-ops
+# entirely when SENTRY_DSN is empty (dev / unset prod), so this stays
+# zero-cost outside production.
+def _init_sentry() -> None:
+    from app.core.config import settings  # local import to avoid cycle
+    cfg = settings()
+    if not cfg.SENTRY_DSN:
+        return
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+    from sentry_sdk.integrations.starlette import StarletteIntegration
+    sentry_sdk.init(
+        dsn=cfg.SENTRY_DSN,
+        environment=cfg.APP_ENV,
+        traces_sample_rate=cfg.SENTRY_TRACES_SAMPLE_RATE,
+        # Don't ship request bodies — they can carry MPNs, customer refs,
+        # and the like that we'd rather keep on-prem.
+        send_default_pii=False,
+        integrations=[
+            StarletteIntegration(transaction_style="endpoint"),
+            FastApiIntegration(transaction_style="endpoint"),
+        ],
+    )
+
+
+_init_sentry()
+
 from app.api.routes import (
     attachments,
     auth,
@@ -31,6 +59,15 @@ from app.core.deps import require_member_for_writes
 from app.core.responses import http_exception_handler, validation_exception_handler
 
 app = FastAPI(title="Parts Inventory & Production Manager", version="0.1.0")
+
+# Rate limiter wired before CORS so 429 responses still get the right headers.
+from slowapi import _rate_limit_exceeded_handler  # noqa: E402
+from slowapi.errors import RateLimitExceeded  # noqa: E402
+
+from app.core.ratelimit import limiter  # noqa: E402
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,

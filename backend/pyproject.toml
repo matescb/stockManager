@@ -18,6 +18,10 @@ dependencies = [
     "chardet>=5.2",
     # Used by the Mouser + DigiKey provider clients at runtime.
     "httpx>=0.27",
+    # Production error tracking. Inert when SENTRY_DSN is empty.
+    "sentry-sdk[fastapi]>=2.18",
+    # In-process rate limiter on the auth endpoints.
+    "slowapi>=0.1.9",
 ]
 
 [project.optional-dependencies]
