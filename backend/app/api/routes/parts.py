@@ -4,16 +4,21 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
+import os
+
 from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import or_, select
 
 from app.api.routes._activity import build_activity
+from app.core.config import settings
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part, PartMetaMember, PartSubstitute
 from app.domain.parts.providers import make_provider
+from app.domain.parts.services.assets import fetch_provider_asset
 from app.domain.stock.models import StockEntry
 from app.domain.stock.schemas import AddStockIn, LotInput
 from app.domain.stock.service import (
@@ -111,6 +116,38 @@ def _serialize(
         "reserved": reserved,
         "available": available if available is not None else 0,
     }
+
+
+# ---------------------------------------------------------------------------
+# Provider assets (images + datasheets, downloaded at part-creation /
+# refresh time and served from our own origin so the app keeps working
+# when the upstream CDN rotates a URL or goes down).
+#
+# Files live at {UPLOAD_DIR}/parts/{ws_id}/{sha256}.{ext} — content-
+# addressed, so the immutable cache header is safe and overwrites can't
+# break in-flight requests.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/assets/{ws_id}/{filename}")
+def get_provider_asset(ws_id: UUID, filename: str, ws: CurrentWorkspace):
+    # Workspace-scoped: an operator can only fetch assets that live under
+    # their workspace's folder. The `ws` dep already proves membership in
+    # the request's current workspace; this matches them.
+    if ws_id != ws.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="asset not found")
+    # Disallow path traversal — filename must be a flat content-addressed name.
+    if "/" in filename or "\\" in filename or filename.startswith("."):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid filename")
+
+    abs_path = os.path.join(settings().UPLOAD_DIR, "parts", str(ws_id), filename)
+    if not os.path.isfile(abs_path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="asset not found")
+    return FileResponse(
+        abs_path,
+        # Content-addressed → safe to cache for a year, never re-revalidate.
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
 
 
 @router.get("")
@@ -533,10 +570,14 @@ def refresh_from_provider(
         value = (s.get("value") or "").strip()
         if key:
             desired[key] = value
+    # Download provider assets locally — same fallback semantics as
+    # bulk-import: failed downloads keep the upstream URL.
     if r.get("image_url"):
-        desired["image_url"] = r["image_url"]
+        local = fetch_provider_asset(r["image_url"], str(ws.id), "image")
+        desired["image_url"] = local or r["image_url"]
     if r.get("datasheet_url"):
-        desired["datasheet_url"] = r["datasheet_url"]
+        local = fetch_provider_asset(r["datasheet_url"], str(ws.id), "datasheet")
+        desired["datasheet_url"] = local or r["datasheet_url"]
 
     existing_rows = list(
         db.execute(
@@ -752,24 +793,29 @@ def bulk_import_from_scan(
                 created_by=user.id,
                 updated_by=user.id,
             ))
+        # Download image + datasheet locally so we don't depend on the
+        # provider's CDN at render time. Failed downloads fall back to
+        # the original URL so the worst case is unchanged from before.
         if r.get("image_url"):
+            local = fetch_provider_asset(r["image_url"], str(ws.id), "image")
             db.add(CustomField(
                 workspace_id=ws.id,
                 object_type="part",
                 object_id=p.id,
                 key="image_url",
-                value=r["image_url"],
+                value=local or r["image_url"],
                 source="provider",
                 created_by=user.id,
                 updated_by=user.id,
             ))
         if r.get("datasheet_url"):
+            local = fetch_provider_asset(r["datasheet_url"], str(ws.id), "datasheet")
             db.add(CustomField(
                 workspace_id=ws.id,
                 object_type="part",
                 object_id=p.id,
                 key="datasheet_url",
-                value=r["datasheet_url"],
+                value=local or r["datasheet_url"],
                 source="provider",
                 created_by=user.id,
                 updated_by=user.id,
