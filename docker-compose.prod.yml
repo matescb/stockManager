@@ -42,6 +42,11 @@ services:
       # Empty in unset / dev — SDK becomes a no-op.
       SENTRY_DSN: ${SENTRY_DSN:-}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.0}
+      # Frontend DSN, read by the backend solely so /api/sentry-tunnel
+      # can allow-list its forwarder against the React project. Vite
+      # also bakes this into the SPA bundle at build time (see web
+      # service below).
+      VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
     volumes:
       - uploads:/data/uploads
     depends_on:
