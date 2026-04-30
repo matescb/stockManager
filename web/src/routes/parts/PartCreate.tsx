@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
 import type { MpnLookupResult, ProviderSpec, StorageLocation } from "@/types";
@@ -19,6 +19,10 @@ export default function PartCreate() {
     serialized: false,
   });
   const [err, setErr] = useState<string | null>(null);
+  // When the create attempt collides on MPN, the 409 carries the existing
+  // part's id + name; we surface a link straight to it instead of forcing
+  // the operator to manually search.
+  const [conflict, setConflict] = useState<{ id: string; name: string } | null>(null);
   const [busy, setBusy] = useState(false);
   // The lookup preview lets the user see what will be loaded from the
   // provider before clicking Create. After the part exists, we run a
@@ -51,10 +55,13 @@ export default function PartCreate() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
+    setConflict(null);
     setBusy(true);
     try {
       const payload: any = { ...form };
       if (!payload.default_storage_location_id) delete payload.default_storage_location_id;
+      // Send blank name as undefined so the server defaults it to mpn.
+      if (!payload.name?.trim()) delete payload.name;
       const res = await api.post<{ id: string }>("/parts", payload);
 
       // If the user successfully ran the MPN lookup and the part is
@@ -72,6 +79,14 @@ export default function PartCreate() {
       }
       nav(`/parts/${res.id}/info`);
     } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        const body = e.body as any;
+        if (body?.existing_id && body?.existing_name) {
+          setConflict({ id: body.existing_id, name: body.existing_name });
+          setErr(null);
+          return;
+        }
+      }
       setErr(e instanceof ApiError ? e.message : "Failed");
     } finally {
       setBusy(false);
@@ -82,6 +97,15 @@ export default function PartCreate() {
     <form onSubmit={submit} className="max-w-2xl card p-4 space-y-3">
       <h1 className="text-xl font-semibold">Create part</h1>
       {err && <div className="text-danger text-sm">{err}</div>}
+      {conflict && (
+        <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
+          MPN <span className="font-mono">{form.mpn}</span> is already used
+          by part <strong>{conflict.name}</strong>.{" "}
+          <Link to={`/parts/${conflict.id}/info`} className="text-accent underline">
+            Open existing part →
+          </Link>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="label">Type</label>
@@ -98,8 +122,16 @@ export default function PartCreate() {
         </div>
       </div>
       <div>
-        <label className="label">Name *</label>
-        <input className="input" required value={form.name} onChange={e => set("name", e.target.value)} />
+        <label className="label">Name</label>
+        <input
+          className="input"
+          value={form.name}
+          onChange={e => set("name", e.target.value)}
+          placeholder={form.mpn.trim() ? form.mpn.trim() : "(required if no MPN)"}
+        />
+        <div className="text-xs text-muted mt-1">
+          Defaults to the MPN when left blank.
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>

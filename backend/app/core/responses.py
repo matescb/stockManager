@@ -18,10 +18,20 @@ def err(category: str, message: str, errors: list[dict] | None = None) -> dict[s
 
 
 async def http_exception_handler(_: Request, exc: HTTPException):
-    return JSONResponse(
-        status_code=exc.status_code,
-        content=err(_category_for_status(exc.status_code), str(exc.detail)),
-    )
+    # Routes can raise HTTPException(detail={"message": "...", ...extras})
+    # to surface structured context alongside the human-readable message.
+    # The "message" key (or stringified detail) goes into status.message;
+    # any remaining dict keys are spread onto the top-level response so
+    # the frontend can act on them (e.g. existing_id from a 409 conflict).
+    if isinstance(exc.detail, dict):
+        message = exc.detail.get("message") or str(exc.detail)
+        body = err(_category_for_status(exc.status_code), message)
+        for k, v in exc.detail.items():
+            if k != "message":
+                body[k] = v
+    else:
+        body = err(_category_for_status(exc.status_code), str(exc.detail))
+    return JSONResponse(status_code=exc.status_code, content=body)
 
 
 def _category_for_status(code: int) -> str:

@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -24,7 +25,17 @@ class Part(WorkspaceOwned, Base):
     __tablename__ = "parts"
     __table_args__ = (
         Index("ix_parts_ws_name", "workspace_id", "name"),
-        Index("ix_parts_ws_mpn", "workspace_id", "manufacturer", "mpn"),
+        # MPN is unique per workspace where present and active — see
+        # alembic 0011. The partial predicate excludes NULL mpn rows
+        # (manual / sub-assembly parts) and archived rows (archiving
+        # frees up the MPN so a replacement can take over).
+        Index(
+            "uq_parts_ws_mpn",
+            "workspace_id",
+            "mpn",
+            unique=True,
+            postgresql_where=text("mpn IS NOT NULL AND archived_at IS NULL"),
+        ),
         Index("ix_parts_ws_ipn", "workspace_id", "internal_part_number"),
         Index("ix_parts_ws_archived", "workspace_id", "archived_at"),
     )

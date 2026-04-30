@@ -32,7 +32,10 @@ class PartIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     part_type: Literal["linked", "local", "meta", "sub_assembly"] = "local"
-    name: str = Field(min_length=1, max_length=300)
+    # Optional — defaults to mpn server-side when blank, so the operator can
+    # paste an MPN and skip the name field. At least one of name/mpn must be
+    # set; the create endpoint enforces that explicitly.
+    name: str | None = Field(default=None, max_length=300)
     manufacturer: str | None = None
     mpn: str | None = None
     internal_part_number: str | None = None
@@ -146,12 +149,42 @@ def list_parts(
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_part(payload: PartIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+    # Name defaults to MPN when blank — paste-an-MPN-and-go workflow.
+    # At least one of the two has to be set; the partial unique index on
+    # (workspace_id, mpn) enforces no-duplicate-MPN at the DB level, but
+    # we pre-check here so the response can name the existing part.
+    name = (payload.name or "").strip()
+    mpn = (payload.mpn or "").strip()
+    if not name and not mpn:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="provide at least one of `name` or `mpn`",
+        )
+    if not name:
+        name = mpn
+
+    if mpn:
+        existing = (
+            db.query(Part)
+            .filter(Part.workspace_id == ws.id, Part.mpn == mpn, Part.archived_at.is_(None))
+            .first()
+        )
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": f"MPN already used by part \"{existing.name}\"",
+                    "existing_id": str(existing.id),
+                    "existing_name": existing.name,
+                },
+            )
+
     p = Part(
         workspace_id=ws.id,
         part_type=payload.part_type,
-        name=payload.name,
+        name=name,
         manufacturer=payload.manufacturer,
-        mpn=payload.mpn,
+        mpn=mpn or None,
         internal_part_number=payload.internal_part_number,
         description=payload.description,
         notes_markdown=payload.notes_markdown,
