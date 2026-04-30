@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import basicSsl from "@vitejs/plugin-basic-ssl";
+import { sentryVitePlugin } from "@sentry/vite-plugin";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,8 +13,54 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 // only HTTP exception.
 const useHttps = process.env.VITE_HTTPS === "1";
 
+// Source maps for Sentry. Hidden mode produces .map files alongside the
+// bundle but omits the //# sourceMappingURL= comment, so users can't
+// fetch them from the browser — only Sentry can, via direct upload. The
+// plugin no-ops cleanly when SENTRY_AUTH_TOKEN is unset, so dev builds
+// don't need the token.
+const sentryToken = process.env.SENTRY_AUTH_TOKEN;
+const sentryOrg = process.env.SENTRY_ORG;
+const sentryProject = process.env.SENTRY_PROJECT;
+const enableSentryUpload = Boolean(sentryToken && sentryOrg && sentryProject);
+
 export default defineConfig({
-  plugins: [react(), ...(useHttps ? [basicSsl()] : [])],
+  build: {
+    sourcemap: enableSentryUpload ? "hidden" : false,
+    rollupOptions: {
+      output: {
+        // Carve heavy third-party deps into their own cached chunks so
+        // the main `index-*.js` stays close to its lazy-route-only weight.
+        // Sentry's SDK is the biggest single contributor (~280 KB);
+        // splitting it puts that bytes-on-disk in its own file that
+        // returning visitors hit out of cache.
+        manualChunks: {
+          sentry: [
+            "@sentry/react",
+          ],
+        },
+      },
+    },
+  },
+  plugins: [
+    react(),
+    ...(useHttps ? [basicSsl()] : []),
+    ...(enableSentryUpload
+      ? [
+          sentryVitePlugin({
+            authToken: sentryToken,
+            org: sentryOrg,
+            project: sentryProject,
+            // The release name is provided by VITE_APP_VERSION at build
+            // time (compose passes the deploy's git SHA); fall back to
+            // the plugin's git-based detection if absent.
+            release: process.env.VITE_APP_VERSION
+              ? { name: process.env.VITE_APP_VERSION }
+              : undefined,
+            telemetry: false,
+          }),
+        ]
+      : []),
+  ],
   resolve: {
     alias: {
       "@": path.resolve(here, "src"),

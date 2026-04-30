@@ -42,6 +42,9 @@ services:
       # Empty in unset / dev — SDK becomes a no-op.
       SENTRY_DSN: ${SENTRY_DSN:-}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.0}
+      # Release identifier — populated by the deploy script with the
+      # current git SHA so Sentry groups issues per release.
+      SENTRY_RELEASE: ${SENTRY_RELEASE:-}
       # Frontend DSN, read by the backend solely so /api/sentry-tunnel
       # can allow-list its forwarder against the React project. Vite
       # also bakes this into the SPA bundle at build time (see web
@@ -80,9 +83,19 @@ services:
       # Vite reads VITE_* at build time and inlines them into the bundle. The
       # frontend Sentry DSN is a public token by design (it shows up in the
       # browser DevTools) — it identifies the project, not authorises writes.
+      #
+      # SENTRY_AUTH_TOKEN / _ORG / _PROJECT are required ONLY for source-map
+      # upload during the build itself. Empty → sourcemap upload is skipped
+      # and the bundle still ships fine; you just won't get readable stack
+      # traces in Sentry. The auth token is sensitive — keep .env.prod
+      # chmod 600 owned by `deploy`.
       args:
         VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
         VITE_SENTRY_TRACES_SAMPLE_RATE: ${VITE_SENTRY_TRACES_SAMPLE_RATE:-0.0}
+        VITE_APP_VERSION: ${SENTRY_RELEASE:-}
+        SENTRY_AUTH_TOKEN: ${SENTRY_AUTH_TOKEN:-}
+        SENTRY_ORG: ${SENTRY_ORG:-}
+        SENTRY_PROJECT: ${SENTRY_PROJECT:-}
     restart: unless-stopped
     depends_on:
       - backend

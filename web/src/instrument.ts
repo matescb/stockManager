@@ -33,6 +33,11 @@ Sentry.init({
   // at backend/app/api/routes/sentry_tunnel.py.
   tunnel: "/api/sentry-tunnel",
   environment: import.meta.env.MODE,
+  // Release identifier — set to the git SHA at build time by compose.
+  // Sentry uses this to group issues per release, auto-resolve issues
+  // when a fixed release ships, and pair stack traces with their
+  // matching uploaded source maps.
+  release: import.meta.env.VITE_APP_VERSION || undefined,
   // Per the wizard. Sends user IP + request headers; cookies are
   // redacted automatically. Flip to false for stricter data minimisation.
   sendDefaultPii: true,

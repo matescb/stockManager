@@ -96,5 +96,13 @@ jobs:
             cd /srv/stockmanager
             git fetch --quiet origin main
             git reset --hard origin/main
+            # Tag this deploy with the short SHA — exposed to both the
+            # backend (SENTRY_RELEASE) and the frontend Vite build
+            # (VITE_APP_VERSION) so Sentry groups issues per release
+            # and source-map upload pins maps to it. Exported, not
+            # appended to .env.prod, so the SHA isn't persisted between
+            # deploys.
+            export SENTRY_RELEASE
+            SENTRY_RELEASE=$(git rev-parse --short=12 HEAD)
             docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
             docker image prune -f

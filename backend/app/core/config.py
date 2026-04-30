@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     # only — leaving it unset in dev keeps local error stacks clean.
     SENTRY_DSN: str = ""
     SENTRY_TRACES_SAMPLE_RATE: float = 0.0
+    # Release identifier — set to the git SHA at deploy time by compose.
+    # Sentry groups issues per release and auto-resolves when a fixed
+    # release ships.
+    SENTRY_RELEASE: str = ""
     # Frontend DSN. Vite consumes it at build time; the backend reads it
     # only to allow-list the /api/sentry-tunnel forwarder against
     # exactly one Sentry project (the React one) instead of any
