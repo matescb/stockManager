@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
+import * as Sentry from "@sentry/react";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import AppShell from "@/components/layout/AppShell";
 
@@ -100,6 +101,31 @@ const ProjectOther = lazy(() => import("@/routes/projects/detail/ProjectOther"))
 const Account = lazy(() => import("@/routes/settings/Account"));
 const WorkspaceSettings = lazy(() => import("@/routes/settings/Workspace"));
 
+function SentryDebug() {
+  return (
+    <div className="p-6 max-w-md mx-auto">
+      <h1 className="text-xl font-semibold mb-2">Sentry verification</h1>
+      <p className="text-sm text-muted mb-4">
+        Click the button — the React error boundary catches the throw and
+        reports the event to Sentry. Confirm it appears in your dashboard.
+      </p>
+      <button
+        type="button"
+        className="btn-danger"
+        onClick={() => {
+          // Send a structured log first so we exercise enableLogs:true too.
+          Sentry.logger?.info?.("User triggered test error", {
+            action: "sentry_debug_button_click",
+          });
+          throw new Error("Sentry React test error");
+        }}
+      >
+        Break the world
+      </button>
+    </div>
+  );
+}
+
 function Gate({ children }: { children: React.ReactNode }) {
   const { me, loading } = useAuth();
   if (loading) return <div className="p-6 text-muted">Loading…</div>;
@@ -195,6 +221,15 @@ export default function App() {
 
           <Route path="/settings/account" element={<Gate><Account /></Gate>} />
           <Route path="/settings/workspace" element={<Gate><WorkspaceSettings /></Gate>} />
+
+          {/* Sentry verification route, mirrored from the backend. Only
+              mounted when a DSN was baked into the build, so dev / forks
+              without Sentry don't expose a public render-time crash. Hit
+              once after wiring the DSN, confirm the event in Sentry,
+              then the route can be removed. */}
+          {import.meta.env.VITE_SENTRY_DSN ? (
+            <Route path="/sentry-debug" element={<SentryDebug />} />
+          ) : null}
 
           <Route path="*" element={<Gate><div className="text-muted">Not found.</div></Gate>} />
         </Routes>
