@@ -79,12 +79,29 @@ class PartPatch(BaseModel):
     unlink_provider: bool | None = None
 
 
+def _image_urls_for_parts(db, ws_id, part_ids: list) -> dict:
+    """Single-shot SELECT for the per-part image_url custom_field row,
+    keyed by part_id. The /parts list endpoint uses this so we don't
+    fire one query per row."""
+    if not part_ids:
+        return {}
+    rows = db.execute(
+        select(CustomField.object_id, CustomField.value)
+        .where(CustomField.workspace_id == ws_id)
+        .where(CustomField.object_type == "part")
+        .where(CustomField.object_id.in_(part_ids))
+        .where(CustomField.key == "image_url")
+    ).all()
+    return {pid: val for pid, val in rows}
+
+
 def _serialize(
     p: Part,
     *,
     on_hand: int | None = None,
     reserved: int | None = None,
     available: int | None = None,
+    image_url: str | None = None,
 ) -> dict:
     if reserved is None:
         reserved = 0
@@ -115,6 +132,10 @@ def _serialize(
         "on_hand": on_hand,
         "reserved": reserved,
         "available": available if available is not None else 0,
+        # Sourced from the part's `image_url` custom_field — the post-
+        # download local path or a fallback to the upstream URL when the
+        # download failed. None when no image was ever attached.
+        "image_url": image_url,
     }
 
 
@@ -176,11 +197,17 @@ def list_parts(
         )
     stmt = stmt.order_by(Part.name).limit(limit)
     parts = list(db.execute(stmt).scalars())
+    image_urls = _image_urls_for_parts(db, ws.id, [p.id for p in parts])
     out = []
     for p in parts:
         on_hand = total_for_part(db, workspace_id=ws.id, part_id=p.id)
         reserved = reserved_quantity(db, workspace_id=ws.id, part_id=p.id)
-        out.append(_serialize(p, on_hand=on_hand, reserved=reserved))
+        out.append(_serialize(
+            p,
+            on_hand=on_hand,
+            reserved=reserved,
+            image_url=image_urls.get(p.id),
+        ))
     return ok(out)
 
 
@@ -252,7 +279,8 @@ def get_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
     p = _get_part(db, ws.id, part_id)
     on_hand = total_for_part(db, workspace_id=ws.id, part_id=p.id)
     reserved = reserved_quantity(db, workspace_id=ws.id, part_id=p.id)
-    return ok(_serialize(p, on_hand=on_hand, reserved=reserved))
+    image_url = _image_urls_for_parts(db, ws.id, [p.id]).get(p.id)
+    return ok(_serialize(p, on_hand=on_hand, reserved=reserved, image_url=image_url))
 
 
 @router.patch("/{part_id}")
@@ -328,6 +356,42 @@ def restore_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
     p.archived_at = None
     db.commit()
     return ok(None, "restored")
+
+
+class BulkDeleteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # 100 is plenty for a single-shot multi-select; if a user wants to wipe
+    # more they can run it twice. Keeps the response payload bounded.
+    part_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+
+@router.post("/bulk-delete")
+def bulk_delete_parts(payload: BulkDeleteIn, db: DbSession, ws: CurrentWorkspace):
+    """Soft-delete (archive) the listed parts in one shot. Hard-deleting
+    would foreign-key-cascade into stock_entries / lots / order_entries
+    / bom_entries — the user can already filter `/parts/archived` to
+    review or restore. Workspace-scoped: ids that don't belong are
+    silently skipped (no information leak about other workspaces)."""
+    now = datetime.now(timezone.utc)
+    rows = (
+        db.query(Part)
+        .filter(Part.workspace_id == ws.id, Part.id.in_(payload.part_ids))
+        .all()
+    )
+    archived_ids = []
+    for p in rows:
+        if p.archived_at is None:
+            p.archived_at = now
+            archived_ids.append(str(p.id))
+    db.commit()
+    return ok(
+        {
+            "archived_ids": archived_ids,
+            "skipped": len(payload.part_ids) - len(archived_ids),
+        },
+        f"archived {len(archived_ids)}",
+    )
 
 
 @router.get("/{part_id}/stock")

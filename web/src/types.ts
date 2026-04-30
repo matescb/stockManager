@@ -23,6 +23,10 @@ export type Part = {
   on_hand: number | null;
   reserved: number;
   available: number;
+  // Local path under /api/parts/assets/... after a download succeeds, or
+  // the upstream URL when it didn't, or null when no image was attached.
+  // Sourced from the `image_url` custom_field row at list-fetch time.
+  image_url: string | null;
 };
 
 export type SpecSource = "provider" | "manual" | "override";

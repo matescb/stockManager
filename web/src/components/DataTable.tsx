@@ -27,6 +27,15 @@ type Props<T> = {
   exportFilename?: string;
   /** Persists hidden columns + density to localStorage. */
   tableId?: string;
+  /**
+   * When true, renders a leftmost checkbox column and a header
+   * "select-all" checkbox. Selection is uncontrolled (the table
+   * tracks the set internally) but the parent gets notified via
+   * `onSelectionChange`.
+   */
+  selectable?: boolean;
+  /** Rendered right of the search box when at least one row is selected. */
+  selectionAccessory?: (selectedIds: string[], clear: () => void) => ReactNode;
 };
 
 type Persisted = { hidden?: Record<string, boolean>; density?: Density };
@@ -61,6 +70,8 @@ export function DataTable<T>({
   empty,
   exportFilename,
   tableId,
+  selectable = false,
+  selectionAccessory,
 }: Props<T>) {
   const persisted = useMemo(() => loadPersisted(tableId), [tableId]);
 
@@ -72,6 +83,17 @@ export function DataTable<T>({
       Object.fromEntries(columns.filter(c => c.hidden).map(c => [c.key, true]))
   );
   const [density, setDensity] = useState<Density>(() => persisted.density ?? "comfortable");
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+
+  function toggleSelected(id: string) {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function clearSelection() { setSelected(new Set()); }
 
   useEffect(() => {
     savePersisted(tableId, { hidden, density });
@@ -126,6 +148,23 @@ export function DataTable<T>({
     a.click();
   }
 
+  // All currently-filtered/sorted ids — used for select-all semantics
+  // (only the visible filtered rows toggle, not the entire underlying set).
+  const visibleIds = useMemo(() => sorted.map(r => rowKey(r)), [sorted, rowKey]);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selected.has(id));
+  function toggleAllVisible() {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        for (const id of visibleIds) next.delete(id);
+      } else {
+        for (const id of visibleIds) next.add(id);
+      }
+      return next;
+    });
+  }
+  const selectedIds = useMemo(() => Array.from(selected), [selected]);
+
   return (
     <div className="card overflow-hidden">
       <div className="flex items-center gap-2 p-2 border-b border-border">
@@ -135,6 +174,11 @@ export function DataTable<T>({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
+        {selectable && selectedIds.length > 0 && selectionAccessory && (
+          <div className="flex items-center gap-2">
+            {selectionAccessory(selectedIds, clearSelection)}
+          </div>
+        )}
         <button
           type="button"
           className="btn-ghost btn-sm ml-auto"
@@ -165,6 +209,16 @@ export function DataTable<T>({
         <table className={cn("table", textCls)}>
           <thead>
             <tr>
+              {selectable && (
+                <th className={cn(padCls, "w-8 text-center")}>
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    onChange={toggleAllVisible}
+                    aria-label={allVisibleSelected ? "Deselect all visible" : "Select all visible"}
+                  />
+                </th>
+              )}
               {visibleCols.map(c => {
                 const align = defaultAlignFor(c, sample);
                 return (
@@ -197,21 +251,41 @@ export function DataTable<T>({
           <tbody>
             {sorted.length === 0 && (
               <tr>
-                <td colSpan={visibleCols.length} className="text-center py-8 text-muted">
+                <td
+                  colSpan={visibleCols.length + (selectable ? 1 : 0)}
+                  className="text-center py-8 text-muted"
+                >
                   {empty || "No rows."}
                 </td>
               </tr>
             )}
-            {sorted.map((r, i) => (
+            {sorted.map((r, i) => {
+              const id = rowKey(r);
+              const isSel = selected.has(id);
+              return (
               <tr
-                key={rowKey(r)}
+                key={id}
                 onClick={() => onRowClick?.(r)}
                 className={cn(
                   onRowClick && "cursor-pointer",
                   // Subtle zebra striping — only odd rows pick up panel2.
                   i % 2 === 1 && "bg-panel2/40",
+                  isSel && "bg-accent/10",
                 )}
               >
+                {selectable && (
+                  <td
+                    className={cn(padCls, "w-8 text-center")}
+                    onClick={e => e.stopPropagation()}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSel}
+                      onChange={() => toggleSelected(id)}
+                      aria-label={isSel ? "Deselect row" : "Select row"}
+                    />
+                  </td>
+                )}
                 {visibleCols.map(c => {
                   const align = defaultAlignFor(c, sample);
                   return (
@@ -228,7 +302,8 @@ export function DataTable<T>({
                   );
                 })}
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
