@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Boxes, ImageOff, Trash2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
+import { PartsListSchema } from "@/lib/schemas";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import PartsTopNav from "@/components/PartsTopNav";
@@ -16,7 +17,8 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
   const [busy, setBusy] = useState(false);
   const { data, isLoading } = useQuery({
     queryKey: ["parts", { archived }],
-    queryFn: () => api.get<Part[]>(`/parts${archived ? "?archived=true" : ""}`),
+    queryFn: () =>
+      api.parsed.get(`/parts${archived ? "?archived=true" : ""}`, PartsListSchema),
   });
 
   const partsById = new Map((data ?? []).map(p => [p.id, p]));
