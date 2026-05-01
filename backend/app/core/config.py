@@ -22,6 +22,14 @@ class Settings(BaseSettings):
     # bigger PDFs that fail with 413 are the operator's signal to
     # compress or to bump this number.
     MAX_UPLOAD_BYTES: int = 10 * 1024 * 1024
+    # Maximum size of a single Sentry envelope forwarded through
+    # /api/sentry-tunnel, in bytes. Default 200 KiB. Real envelopes from
+    # the React SDK are typically <50 KiB; this caps abuse without
+    # truncating legitimate replays. The route is unauthenticated by
+    # design (Sentry SDKs don't carry a session), so without this cap
+    # the tunnel is an open ingress that anyone on the internet can
+    # use to pump arbitrary bytes through this worker.
+    SENTRY_TUNNEL_MAX_BYTES: int = 200 * 1024
     CORS_ORIGINS: str = "http://localhost:5173"
     # Sentry. Empty string → SDK is not initialised (no events sent, no
     # network egress, no performance overhead). Populate in .env.prod
