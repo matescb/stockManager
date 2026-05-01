@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.deps import CurrentWorkspace
 from app.core.responses import ok
+from app.core.secrets import decrypt
 from app.domain.parts.providers import make_provider
 
 router = APIRouter()
@@ -20,10 +21,12 @@ class LookupIn(BaseModel):
 
 @router.post("/lookup-mpn")
 def lookup_mpn(payload: LookupIn, ws: CurrentWorkspace):
+    # Decrypt credentials at the boundary (Sec HIGH-9). Columns store
+    # Fernet ciphertext post-0016; provider classes get the plaintext.
     provider = make_provider(
         ws.parts_provider,
-        ws.parts_provider_api_key,
-        ws.parts_provider_api_secret,
+        decrypt(ws.parts_provider_api_key),
+        decrypt(ws.parts_provider_api_secret),
     )
     if provider is None:
         return ok({
