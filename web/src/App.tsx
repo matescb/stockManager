@@ -15,6 +15,7 @@ import Signup from "@/routes/auth/Signup";
 // small, and code-splitting them would just trade one set of network
 // round-trips for another.
 import PartsList from "@/routes/parts/PartsList";
+import NotFound from "@/routes/NotFound";
 import PartCreate from "@/routes/parts/PartCreate";
 import ScanImport from "@/routes/parts/ScanImport";
 import StockHistory from "@/routes/parts/StockHistory";
@@ -219,7 +220,7 @@ export default function App() {
             <Route path="/settings/account" element={<Account />} />
             <Route path="/settings/workspace" element={<WorkspaceSettings />} />
 
-            <Route path="*" element={<div className="text-muted">Not found.</div>} />
+            <Route path="*" element={<NotFound />} />
           </Route>
         </Routes>
         </Suspense>

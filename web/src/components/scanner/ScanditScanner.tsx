@@ -107,7 +107,13 @@ export default function ScanditScanner({ licenseKey, onScan, className, symbolog
         await camera.switchToDesiredState(FrameSourceState.On);
         setStatus({ text: "Ready — point camera at a barcode", kind: "ready" });
       } catch (err: any) {
-        console.error(err);
+        // Surface to Sentry so ops sees recurring init failures (license
+        // expiry, libraryLocation misconfig, etc.) without depending on
+        // someone watching the browser console.
+        try {
+          const Sentry = await import("@sentry/react");
+          Sentry.captureException(err);
+        } catch { /* Sentry import failed — non-fatal */ }
         setStatus({ text: `Error: ${err?.message ?? err}`, kind: "err" });
       }
     })();
