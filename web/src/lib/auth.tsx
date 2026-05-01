@@ -1,10 +1,8 @@
 import { createContext, ReactNode, useContext, useEffect, useState } from "react";
 import { api, ApiError } from "./api";
+import { MeSchema, type Me } from "./schemas";
 
-export type Me = {
-  user: { id: string; email: string; name: string };
-  workspaces: { id: string; name: string; kind: string }[];
-};
+export type { Me };
 
 type Ctx = {
   me: Me | null;
@@ -27,7 +25,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function refresh() {
     setLoading(true);
     try {
-      const data = await api.get<Me>("/auth/me");
+      // Parsed boundary: schema mismatch on /auth/me would cascade into
+      // every authed page, so this is the highest-stakes path to validate.
+      const data = await api.parsed.get("/auth/me", MeSchema);
       setMe(data);
       if (!workspaceId && data.workspaces[0]) {
         setWorkspaceId(data.workspaces[0].id);
