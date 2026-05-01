@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
+from app.api._helpers import assert_in_workspace, assert_polymorphic_in_workspace
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.domain.custom_fields.models import CustomField
@@ -21,11 +21,6 @@ class CustomFieldIn(BaseModel):
     object_id: UUID
     key: str = Field(min_length=1, max_length=256)
     value: str | None = Field(default=None, max_length=1024)
-    # Hint for the upsert. Defaults to "manual" — provider data is written
-    # via app.api.routes.parts.refresh_from_provider, which sets source
-    # directly. The frontend doesn't pass this; it's here so the provider
-    # path can reuse this surface if it ever needs to.
-    source: Literal["provider", "manual", "override"] = "manual"
 
 
 def _serialize(r: CustomField) -> dict:
@@ -62,9 +57,19 @@ def create_or_update(payload: CustomFieldIn, db: DbSession, ws: CurrentWorkspace
     * existing.source='override' and the new value matches
       existing.original_value → revert to 'provider', clear
       original_value.
-    * existing.source='manual' or no existing row → plain upsert at
-      payload.source (default 'manual').
+    * existing.source='manual' or no existing row → plain upsert as 'manual'.
+
+    `source` is server-controlled — provider rows are only ever written
+    through the refresh-from-provider path in
+    domain/parts/services/provider.py. Without this guard a caller could
+    POST {source: "provider"} and forge a provider-origin row.
     """
+    # Polymorphic FK validation: object_id must name a row in the current
+    # workspace, and object_type must be a known resource. Without this
+    # guard a caller in workspace B can store custom fields keyed to a
+    # part_id owned by workspace A.
+    assert_polymorphic_in_workspace(db, payload.object_type, payload.object_id, ws.id)
+
     existing = (
         db.execute(
             select(CustomField)
@@ -96,11 +101,6 @@ def create_or_update(payload: CustomFieldIn, db: DbSession, ws: CurrentWorkspace
         else:
             # manual or provider-write-with-same-value
             existing.value = new_value
-            if existing.source == "manual" and payload.source == "provider":
-                # Edge case: a provider path is back-filling a row that
-                # was previously stored as manual (e.g. legacy rows
-                # before this migration). Trust the explicit source.
-                existing.source = "provider"
         existing.updated_by = user.id
         db.commit()
         return ok(_serialize(existing))
@@ -111,7 +111,7 @@ def create_or_update(payload: CustomFieldIn, db: DbSession, ws: CurrentWorkspace
         object_id=payload.object_id,
         key=payload.key,
         value=new_value,
-        source=payload.source,
+        source="manual",
         created_by=user.id,
         updated_by=user.id,
     )
@@ -122,8 +122,12 @@ def create_or_update(payload: CustomFieldIn, db: DbSession, ws: CurrentWorkspace
 
 @router.delete("/{cf_id}")
 def delete(cf_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    row = db.get(CustomField, cf_id)
-    if row and row.workspace_id == ws.id:
+    row = db.execute(
+        select(CustomField)
+        .where(CustomField.id == cf_id)
+        .where(CustomField.workspace_id == ws.id)
+    ).scalar_one_or_none()
+    if row is not None:
         db.delete(row)
         db.commit()
     return ok(None, "deleted")
@@ -133,9 +137,7 @@ def delete(cf_id: UUID, db: DbSession, ws: CurrentWorkspace):
 def restore_override(cf_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     """Reverts an `override` row back to `provider`, restoring the saved
     `original_value` as the live value. 400 if the row isn't an override."""
-    row = db.get(CustomField, cf_id)
-    if not row or row.workspace_id != ws.id:
-        raise HTTPException(status_code=404, detail="row not found")
+    row = assert_in_workspace(db, CustomField, cf_id, ws.id, label="row")
     if row.source != "override":
         raise HTTPException(
             status_code=400,

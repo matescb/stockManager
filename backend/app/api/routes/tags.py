@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
+from app.api._helpers import assert_in_workspace, assert_polymorphic_in_workspace
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.domain.tags.models import Tag, TagLink
@@ -44,9 +45,11 @@ class TagLinkIn(BaseModel):
 
 @router.post("/links", status_code=status.HTTP_201_CREATED)
 def link(payload: TagLinkIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
-    tag = db.get(Tag, payload.tag_id)
-    if not tag or tag.workspace_id != ws.id:
-        raise HTTPException(status_code=404, detail="tag not found")
+    tag = assert_in_workspace(db, Tag, payload.tag_id, ws.id, label="tag")
+    # Polymorphic FK validation: object_id must name a row in the current
+    # workspace, and object_type must be a known resource. Without this
+    # guard a caller in workspace B can tag a part_id owned by workspace A.
+    assert_polymorphic_in_workspace(db, payload.object_type, payload.object_id, ws.id)
     existing = (
         db.execute(
             select(TagLink)
@@ -75,8 +78,12 @@ def link(payload: TagLinkIn, db: DbSession, ws: CurrentWorkspace, user: CurrentU
 
 @router.delete("/links/{link_id}")
 def unlink(link_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    row = db.get(TagLink, link_id)
-    if row and row.workspace_id == ws.id:
+    row = db.execute(
+        select(TagLink)
+        .where(TagLink.id == link_id)
+        .where(TagLink.workspace_id == ws.id)
+    ).scalar_one_or_none()
+    if row is not None:
         db.delete(row)
         db.commit()
     return ok(None, "deleted")
