@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Outlet, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import AppShell from "@/components/layout/AppShell";
 
@@ -100,11 +100,24 @@ const ProjectOther = lazy(() => import("@/routes/projects/detail/ProjectOther"))
 const Account = lazy(() => import("@/routes/settings/Account"));
 const WorkspaceSettings = lazy(() => import("@/routes/settings/Workspace"));
 
-function Gate({ children }: { children: React.ReactNode }) {
+/**
+ * Auth gate + AppShell as a layout route. Mounting this once at the top
+ * of the authed subtree means `<AppShell>` survives every navigation;
+ * its mobile-drawer state, command-palette state, user-menu state, and
+ * react-query in-flight requests don't get torn down on every URL change.
+ * Pre-fix this lived inside an `element={<Gate><X/></Gate>}` per route,
+ * which made React Router treat each one as a separate element and
+ * remount AppShell on every navigation (FE CRIT-1).
+ */
+function Gate() {
   const { me, loading } = useAuth();
   if (loading) return <div className="p-6 text-muted">Loading…</div>;
   if (!me) return <Navigate to="/login" replace />;
-  return <AppShell>{children}</AppShell>;
+  return (
+    <AppShell>
+      <Outlet />
+    </AppShell>
+  );
 }
 
 const lazyFallback = <div className="p-6 text-muted">Loading…</div>;
@@ -117,91 +130,95 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
 
-          <Route path="/" element={<Gate><Navigate to="/parts" replace /></Gate>} />
+          {/* Single layout route — Gate stays mounted across every
+              authed navigation, so AppShell + its state survive. */}
+          <Route element={<Gate />}>
+            <Route path="/" element={<Navigate to="/parts" replace />} />
 
-          <Route path="/parts" element={<Gate><PartsList /></Gate>} />
-          <Route path="/parts/archived" element={<Gate><PartsList archived /></Gate>} />
-          <Route path="/parts/create" element={<Gate><PartCreate /></Gate>} />
-          {/* /parts/scan was a single-MPN-lookup page; superseded by
-              the bulk-import flow which already handles the duplicate
-              case the way scan did (shows "Already in library" + an
-              Open Existing button). Redirect for any external links. */}
-          <Route path="/parts/scan" element={<Navigate to="/parts/scan-import" replace />} />
-          <Route path="/parts/scan-import" element={<Gate><ScanImport /></Gate>} />
-          <Route path="/parts/lots" element={<Gate><LotsList /></Gate>} />
-          <Route path="/parts/stock/history" element={<Gate><StockHistory /></Gate>} />
+            <Route path="/parts" element={<PartsList />} />
+            <Route path="/parts/archived" element={<PartsList archived />} />
+            <Route path="/parts/create" element={<PartCreate />} />
+            {/* /parts/scan was a single-MPN-lookup page; superseded by
+                the bulk-import flow which already handles the duplicate
+                case the way scan did (shows "Already in library" + an
+                Open Existing button). Redirect for any external links. */}
+            <Route path="/parts/scan" element={<Navigate to="/parts/scan-import" replace />} />
+            <Route path="/parts/scan-import" element={<ScanImport />} />
+            <Route path="/parts/lots" element={<LotsList />} />
+            <Route path="/parts/stock/history" element={<StockHistory />} />
 
-          <Route path="/parts/:partId" element={<Gate><PartLayout /></Gate>}>
-            <Route index element={<Navigate to="info" replace />} />
-            <Route path="info" element={<PartInfo />} />
-            <Route path="specs" element={<PartSpecs />} />
-            <Route path="sourcing" element={<PartSourcing />} />
-            <Route path="stock" element={<PartStock />} />
-            <Route path="add" element={<PartAddStock />} />
-            <Route path="remove" element={<PartRemoveStock />} />
-            <Route path="move" element={<PartMoveStock />} />
-            <Route path="history" element={<PartHistory />} />
-            <Route path="lots" element={<PartLots />} />
-            <Route path="substitutes" element={<PartSubstitutes />} />
-            <Route path="members" element={<PartMembers />} />
-            <Route path="settings" element={<PartSettings />} />
-            <Route path="other" element={<PartOther />} />
-            <Route path="attachments" element={<PartAttachments />} />
-            <Route path="activity" element={<PartActivity />} />
+            <Route path="/parts/:partId" element={<PartLayout />}>
+              <Route index element={<Navigate to="info" replace />} />
+              <Route path="info" element={<PartInfo />} />
+              <Route path="specs" element={<PartSpecs />} />
+              <Route path="sourcing" element={<PartSourcing />} />
+              <Route path="stock" element={<PartStock />} />
+              <Route path="add" element={<PartAddStock />} />
+              <Route path="remove" element={<PartRemoveStock />} />
+              <Route path="move" element={<PartMoveStock />} />
+              <Route path="history" element={<PartHistory />} />
+              <Route path="lots" element={<PartLots />} />
+              <Route path="substitutes" element={<PartSubstitutes />} />
+              <Route path="members" element={<PartMembers />} />
+              <Route path="settings" element={<PartSettings />} />
+              <Route path="other" element={<PartOther />} />
+              <Route path="attachments" element={<PartAttachments />} />
+              <Route path="activity" element={<PartActivity />} />
+            </Route>
+
+            <Route path="/storage" element={<StorageListPage />} />
+            <Route path="/storage/archived" element={<StorageListPage archived />} />
+            <Route path="/storage/create" element={<StorageCreate />} />
+            <Route path="/storage/:storageId" element={<StorageDetailLayout />}>
+              <Route index element={<Navigate to="info" replace />} />
+              <Route path="info" element={<StorageInfo />} />
+              <Route path="history" element={<StorageHistory />} />
+              <Route path="settings" element={<StorageSettings />} />
+              <Route path="other" element={<StorageOther />} />
+            </Route>
+
+            <Route path="/lots/:lotId" element={<LotLayout />}>
+              <Route index element={<Navigate to="info" replace />} />
+              <Route path="info" element={<LotInfo />} />
+              <Route path="move" element={<LotMove />} />
+              <Route path="adjust" element={<LotAdjust />} />
+              <Route path="history" element={<LotHistory />} />
+            </Route>
+
+            <Route path="/orders" element={<OrdersList />} />
+            <Route path="/orders/archived" element={<OrdersList archived />} />
+            <Route path="/orders/create" element={<OrderCreate />} />
+            <Route path="/orders/:orderId" element={<OrderDetail />} />
+
+            <Route path="/builds" element={<BuildsList />} />
+            <Route path="/builds/archived" element={<BuildsList archived />} />
+            <Route path="/builds/create" element={<BuildCreate />} />
+            <Route path="/builds/:buildId" element={<BuildDetail />} />
+
+            <Route path="/reports" element={<ReportsLayout />}>
+              <Route index element={<LowStockReport />} />
+              <Route path="value" element={<StockValueReport />} />
+              <Route path="bom" element={<BomShortageReport />} />
+              <Route path="expiring" element={<ExpiringLotsReport />} />
+            </Route>
+
+            <Route path="/projects" element={<ProjectsList />} />
+            <Route path="/projects/archived" element={<ProjectsList archived />} />
+            <Route path="/projects/create" element={<ProjectCreate />} />
+            <Route path="/projects/:projectId" element={<ProjectLayout />}>
+              <Route index element={<Navigate to="data" replace />} />
+              <Route path="data" element={<ProjectData />} />
+              <Route path="bom" element={<ProjectBOM />} />
+              <Route path="import" element={<ProjectImport />} />
+              <Route path="builds" element={<ProjectBuilds />} />
+              <Route path="other" element={<ProjectOther />} />
+            </Route>
+
+            <Route path="/settings/account" element={<Account />} />
+            <Route path="/settings/workspace" element={<WorkspaceSettings />} />
+
+            <Route path="*" element={<div className="text-muted">Not found.</div>} />
           </Route>
-
-          <Route path="/storage" element={<Gate><StorageListPage /></Gate>} />
-          <Route path="/storage/archived" element={<Gate><StorageListPage archived /></Gate>} />
-          <Route path="/storage/create" element={<Gate><StorageCreate /></Gate>} />
-          <Route path="/storage/:storageId" element={<Gate><StorageDetailLayout /></Gate>}>
-            <Route index element={<Navigate to="info" replace />} />
-            <Route path="info" element={<StorageInfo />} />
-            <Route path="history" element={<StorageHistory />} />
-            <Route path="settings" element={<StorageSettings />} />
-            <Route path="other" element={<StorageOther />} />
-          </Route>
-
-          <Route path="/lots/:lotId" element={<Gate><LotLayout /></Gate>}>
-            <Route index element={<Navigate to="info" replace />} />
-            <Route path="info" element={<LotInfo />} />
-            <Route path="move" element={<LotMove />} />
-            <Route path="adjust" element={<LotAdjust />} />
-            <Route path="history" element={<LotHistory />} />
-          </Route>
-
-          <Route path="/orders" element={<Gate><OrdersList /></Gate>} />
-          <Route path="/orders/archived" element={<Gate><OrdersList archived /></Gate>} />
-          <Route path="/orders/create" element={<Gate><OrderCreate /></Gate>} />
-          <Route path="/orders/:orderId" element={<Gate><OrderDetail /></Gate>} />
-
-          <Route path="/builds" element={<Gate><BuildsList /></Gate>} />
-          <Route path="/builds/archived" element={<Gate><BuildsList archived /></Gate>} />
-          <Route path="/builds/create" element={<Gate><BuildCreate /></Gate>} />
-          <Route path="/builds/:buildId" element={<Gate><BuildDetail /></Gate>} />
-
-          <Route path="/reports" element={<Gate><ReportsLayout /></Gate>}>
-            <Route index element={<LowStockReport />} />
-            <Route path="value" element={<StockValueReport />} />
-            <Route path="bom" element={<BomShortageReport />} />
-            <Route path="expiring" element={<ExpiringLotsReport />} />
-          </Route>
-
-          <Route path="/projects" element={<Gate><ProjectsList /></Gate>} />
-          <Route path="/projects/archived" element={<Gate><ProjectsList archived /></Gate>} />
-          <Route path="/projects/create" element={<Gate><ProjectCreate /></Gate>} />
-          <Route path="/projects/:projectId" element={<Gate><ProjectLayout /></Gate>}>
-            <Route index element={<Navigate to="data" replace />} />
-            <Route path="data" element={<ProjectData />} />
-            <Route path="bom" element={<ProjectBOM />} />
-            <Route path="import" element={<ProjectImport />} />
-            <Route path="builds" element={<ProjectBuilds />} />
-            <Route path="other" element={<ProjectOther />} />
-          </Route>
-
-          <Route path="/settings/account" element={<Gate><Account /></Gate>} />
-          <Route path="/settings/workspace" element={<Gate><WorkspaceSettings /></Gate>} />
-
-          <Route path="*" element={<Gate><div className="text-muted">Not found.</div></Gate>} />
         </Routes>
       </Suspense>
     </AuthProvider>
