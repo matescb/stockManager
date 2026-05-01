@@ -7,6 +7,7 @@ import EntityHeader from "@/components/EntityHeader";
 import { DataTable } from "@/components/DataTable";
 import AttachmentsPanel from "@/components/AttachmentsPanel";
 import ActivityTimeline from "@/components/ActivityTimeline";
+import { useConfirm } from "@/components/ConfirmDialog";
 import type { Order, OrderEntry, Part, StorageLocation } from "@/types";
 
 type DetailOut = { order: Order; entries: OrderEntry[] };
@@ -15,6 +16,7 @@ export default function OrderDetail() {
   const { orderId } = useParams<{ orderId: string }>();
   const qc = useQueryClient();
   const nav = useNavigate();
+  const confirm = useConfirm();
 
   const { data } = useQuery({
     queryKey: ["order", orderId],
@@ -65,7 +67,7 @@ export default function OrderDetail() {
   }
 
   async function removeEntry(entryId: string) {
-    if (!confirm("Delete this entry?")) return;
+    if (!(await confirm({ message: "Delete this entry?", severity: "danger" }))) return;
     try {
       await api.delete(`/orders/${orderId}/entries/${entryId}`);
       qc.invalidateQueries({ queryKey: ["order", orderId] });

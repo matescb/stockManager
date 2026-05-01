@@ -1,0 +1,253 @@
+/**
+ * Imperative confirm + prompt primitives.
+ *
+ * Replaces every `window.confirm(...)` / `window.prompt(...)` call site
+ * in the app (FE HIGH-5 in the 2026-04-30 review). Native browser dialogs
+ * are not styled, look like phishing prompts on most platforms, are not
+ * keyboard-accessible on mobile Safari, and block the event loop. This
+ * file provides:
+ *
+ *   const confirm = useConfirm();
+ *   if (!await confirm({ message: "Delete this entry?", severity: "danger" })) return;
+ *
+ *   const prompt = usePrompt();
+ *   const name = await prompt({ message: "Preset name?", defaultValue: "" });
+ *   if (name === null) return;
+ *
+ * Identical call shape to the natives, just async. The provider mounts
+ * once at the top of `<App>`; the hooks read its imperative methods
+ * out of context.
+ */
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
+
+type Severity = "default" | "danger" | "warning";
+
+type ConfirmOptions = {
+  message: string;
+  /** Title above the message. Optional — defaults to "Confirm" / "Delete". */
+  title?: string;
+  /** Label on the OK button. Optional — defaults vary by severity. */
+  confirmLabel?: string;
+  /** Label on the Cancel button. Defaults to "Cancel". */
+  cancelLabel?: string;
+  /** Tints the OK button. `danger` = red, `warning` = amber. */
+  severity?: Severity;
+};
+
+type PromptOptions = {
+  message: string;
+  title?: string;
+  defaultValue?: string;
+  /** Label on the OK button. Defaults to "OK". */
+  confirmLabel?: string;
+  /** Label on the Cancel button. Defaults to "Cancel". */
+  cancelLabel?: string;
+  /** Optional placeholder for the input. */
+  placeholder?: string;
+};
+
+type ConfirmCtx = {
+  confirm: (opts: ConfirmOptions) => Promise<boolean>;
+  prompt: (opts: PromptOptions) => Promise<string | null>;
+};
+
+const Ctx = createContext<ConfirmCtx | null>(null);
+
+type DialogState =
+  | { kind: "none" }
+  | { kind: "confirm"; opts: ConfirmOptions; resolve: (v: boolean) => void }
+  | { kind: "prompt"; opts: PromptOptions; resolve: (v: string | null) => void };
+
+export function ConfirmDialogProvider({ children }: { children: ReactNode }) {
+  const [state, setState] = useState<DialogState>({ kind: "none" });
+  const [inputValue, setInputValue] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Reset prompt input whenever a new prompt opens.
+  useEffect(() => {
+    if (state.kind === "prompt") {
+      setInputValue(state.opts.defaultValue ?? "");
+      // Focus + select-all on next paint so the user can just type.
+      queueMicrotask(() => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      });
+    }
+  }, [state]);
+
+  // Esc closes (cancels) the dialog. Capture-phase so app-wide handlers
+  // don't swallow it first.
+  useEffect(() => {
+    if (state.kind === "none") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        if (state.kind === "confirm") state.resolve(false);
+        if (state.kind === "prompt") state.resolve(null);
+        setState({ kind: "none" });
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [state]);
+
+  const confirm = useCallback((opts: ConfirmOptions) => {
+    return new Promise<boolean>((resolve) => {
+      // If something else is already open, drop it (resolve false) and
+      // replace. Avoids nesting prompts; in practice this doesn't fire.
+      setState((prev) => {
+        if (prev.kind === "confirm") prev.resolve(false);
+        if (prev.kind === "prompt") prev.resolve(null);
+        return { kind: "confirm", opts, resolve };
+      });
+    });
+  }, []);
+
+  const prompt = useCallback((opts: PromptOptions) => {
+    return new Promise<string | null>((resolve) => {
+      setState((prev) => {
+        if (prev.kind === "confirm") prev.resolve(false);
+        if (prev.kind === "prompt") prev.resolve(null);
+        return { kind: "prompt", opts, resolve };
+      });
+    });
+  }, []);
+
+  const closeWith = useCallback(
+    (value: boolean | string | null) => {
+      setState((prev) => {
+        if (prev.kind === "confirm" && typeof value === "boolean") prev.resolve(value);
+        if (prev.kind === "prompt") prev.resolve(value as string | null);
+        return { kind: "none" };
+      });
+    },
+    [],
+  );
+
+  return (
+    <Ctx.Provider value={{ confirm, prompt }}>
+      {children}
+      {state.kind !== "none" &&
+        createPortal(
+          <DialogShell
+            state={state}
+            inputRef={inputRef}
+            inputValue={inputValue}
+            setInputValue={setInputValue}
+            onConfirm={() => {
+              if (state.kind === "confirm") closeWith(true);
+              if (state.kind === "prompt") closeWith(inputValue);
+            }}
+            onCancel={() => {
+              if (state.kind === "confirm") closeWith(false);
+              if (state.kind === "prompt") closeWith(null);
+            }}
+          />,
+          document.body,
+        )}
+    </Ctx.Provider>
+  );
+}
+
+function DialogShell({
+  state,
+  inputRef,
+  inputValue,
+  setInputValue,
+  onConfirm,
+  onCancel,
+}: {
+  state: Exclude<DialogState, { kind: "none" }>;
+  inputRef: React.RefObject<HTMLInputElement>;
+  inputValue: string;
+  setInputValue: (s: string) => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const opts = state.opts;
+  const isPrompt = state.kind === "prompt";
+  const severity: Severity = isPrompt ? "default" : ((opts as ConfirmOptions).severity ?? "default");
+  const defaultTitle =
+    state.kind === "prompt" ? "Enter a value" : severity === "danger" ? "Confirm delete" : "Confirm";
+  const defaultConfirmLabel =
+    isPrompt ? "OK" : severity === "danger" ? "Delete" : severity === "warning" ? "Continue" : "OK";
+
+  const confirmClass =
+    severity === "danger"
+      ? "btn-danger"
+      : severity === "warning"
+        ? "btn border-warning/50 bg-warning/10 text-warning hover:bg-warning/20"
+        : "btn-primary";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      onMouseDown={(e) => {
+        // Click outside the panel cancels.
+        if (e.target === e.currentTarget) onCancel();
+      }}
+    >
+      <div className="card max-w-md w-full p-4 space-y-3 shadow-lg">
+        <h2 className="text-base font-semibold text-text">
+          {opts.title ?? defaultTitle}
+        </h2>
+        <p className="text-sm text-text whitespace-pre-wrap">{opts.message}</p>
+        {state.kind === "prompt" && (
+          <input
+            ref={inputRef}
+            className="input"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                onConfirm();
+              }
+            }}
+            placeholder={(state.opts as PromptOptions).placeholder}
+          />
+        )}
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" className="btn-ghost" onClick={onCancel}>
+            {opts.cancelLabel ?? "Cancel"}
+          </button>
+          <button
+            type="button"
+            className={confirmClass}
+            onClick={onConfirm}
+            autoFocus={!isPrompt}
+          >
+            {opts.confirmLabel ?? defaultConfirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function useConfirm(): (opts: ConfirmOptions) => Promise<boolean> {
+  const ctx = useContext(Ctx);
+  if (!ctx) {
+    throw new Error("useConfirm must be used inside <ConfirmDialogProvider>");
+  }
+  return ctx.confirm;
+}
+
+export function usePrompt(): (opts: PromptOptions) => Promise<string | null> {
+  const ctx = useContext(Ctx);
+  if (!ctx) {
+    throw new Error("usePrompt must be used inside <ConfirmDialogProvider>");
+  }
+  return ctx.prompt;
+}

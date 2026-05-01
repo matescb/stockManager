@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Plus, RotateCcw, Trash2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { isSpecKey } from "@/lib/providerCatalog";
+import { useConfirm } from "@/components/ConfirmDialog";
 import type { CustomFieldRow, Part, SpecSource } from "@/types";
 
 const SOURCE_BADGE: Record<SpecSource, string> = {
@@ -39,6 +40,7 @@ const PROVIDER_SEARCH_URL: Record<string, (mpn: string) => string> = {
  * original_value, so a single click on Restore reverts cleanly.
  */
 export default function PartSpecs() {
+  const confirm = useConfirm();
   const { part } = useOutletContext<{ part: Part }>();
   const qc = useQueryClient();
   const queryKey = ["part", part.id, "custom-fields"];
@@ -95,7 +97,7 @@ export default function PartSpecs() {
   }
 
   async function remove(row: CustomFieldRow) {
-    if (!confirm(`Delete spec "${row.key}"?`)) return;
+    if (!(await confirm({ message: `Delete spec "${row.key}"?`, severity: "danger" }))) return;
     try {
       await api.delete(`/custom-fields/${row.id}`);
       qc.invalidateQueries({ queryKey });

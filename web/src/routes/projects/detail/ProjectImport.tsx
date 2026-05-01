@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
+import { useConfirm, usePrompt } from "@/components/ConfirmDialog";
 
 type Preset = {
   id: string;
@@ -71,6 +72,8 @@ async function fileToBase64(file: File): Promise<string> {
 }
 
 export default function ProjectImport() {
+  const confirm = useConfirm();
+  const prompt = usePrompt();
   const { projectId } = useParams<{ projectId: string }>();
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -99,7 +102,11 @@ export default function ProjectImport() {
   }
 
   async function savePreset() {
-    const name = prompt("Save current mapping as preset — name?");
+    const name = await prompt({
+      message: "Save current mapping as preset — name?",
+      title: "Save preset",
+      placeholder: "e.g. Mouser PCB BOM",
+    });
     if (!name) return;
     try {
       await api.post("/bom-presets", {
@@ -120,7 +127,7 @@ export default function ProjectImport() {
   }
 
   async function deletePreset(id: string) {
-    if (!confirm("Delete this preset?")) return;
+    if (!(await confirm({ message: "Delete this preset?", severity: "danger" }))) return;
     await api.delete(`/bom-presets/${id}`);
     refetchPresets();
     toast.success("Preset deleted.");
