@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
 from app.core.responses import ok
 from app.domain.users.models import User
@@ -224,11 +225,19 @@ def remove_member(member_id: UUID, db: DbSession, ws: CurrentWorkspace, user: Cu
 
 @router.post("/{workspace_id}/switch")
 def switch_workspace(workspace_id: str, response: Response):
+    # Hardened cookie attributes (Sec CRIT-3 in 2026-04-30 review):
+    # - httponly: the SPA reads the active workspace from localStorage, never
+    #   from this cookie, so JS access is unnecessary and an XSS vector.
+    # - secure in prod: cookie may not be sent over plain HTTP. Dev runs
+    #   over HTTP so we keep it permissive there.
+    # - samesite=lax: blocks cross-site sub-request cookie attachment, so a
+    #   victim cannot be silently switched to another workspace from a
+    #   different origin.
     response.set_cookie(
         key="stockmgr_workspace",
         value=workspace_id,
-        httponly=False,
-        secure=False,
+        httponly=True,
+        secure=settings().APP_ENV == "prod",
         samesite="lax",
         max_age=365 * 24 * 3600,
         path="/",

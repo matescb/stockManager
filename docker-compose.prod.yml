@@ -72,7 +72,19 @@ services:
     # Single-line so YAML's folded-scalar rules don't break shell tokens
     # across argv boundaries (uvicorn was missing --proxy-headers
     # because the YAML kept the newline before it intact).
-    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=*"]
+    #
+    # Boot sequence:
+    #   1. chown the upload volume to appuser. Idempotent — cheap when
+    #      already correct, fixes ownership the first time a fresh named
+    #      volume is mounted (Docker preserves the image's path ownership
+    #      on first creation) or when migrating from a previous root-only
+    #      image. Runs as root because the compose container's USER is
+    #      unset by design (see backend/Dockerfile).
+    #   2. exec gosu appuser <inner shell>. Drops privileges to UID 1000
+    #      for the rest of the process tree. From this point uvicorn and
+    #      alembic both run unprivileged.
+    #   3. alembic upgrade head, then exec uvicorn. Identical to before.
+    command: ["sh", "-c", "chown -R appuser:appuser /data 2>/dev/null || true; exec gosu appuser sh -c 'alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=*'"]
 
   web:
     build:

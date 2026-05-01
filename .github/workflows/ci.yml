@@ -12,6 +12,13 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: false
 
+# Default token scope for the workflow. Tighter than the repo default,
+# prevents a malicious dependency in test code from using the auto-issued
+# GITHUB_TOKEN to push commits / open PRs / edit issues. Override per-job
+# when a step needs more (none currently do).
+permissions:
+  contents: read
+
 jobs:
   backend-tests:
     runs-on: ubuntu-latest
@@ -31,9 +38,13 @@ jobs:
           --health-retries 10
 
     steps:
-      - uses: actions/checkout@v4
+      # SHA-pin every action so a tag-rewrite attack can't substitute a
+      # malicious version. Comments record the human-readable tag the SHA
+      # was resolved from on 2026-05-01; bump via
+      # `gh api repos/<owner>/<repo>/git/refs/tags/<tag>`.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: "3.12"
           cache: pip
@@ -54,9 +65,9 @@ jobs:
   web-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
           node-version: "20"
           cache: npm
@@ -80,10 +91,16 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [backend-tests, web-build]
     runs-on: ubuntu-latest
+    # Environment association. Today this just scopes any environment-level
+    # secrets we add later; if a "Required reviewers" protection rule is
+    # configured for `production` in the repo's GitHub Settings → Environments,
+    # this job will pause for human approval before each deploy. See
+    # docs/deployment.md → "Optional: gate deploys behind a human reviewer".
+    environment: production
 
     steps:
       - name: SSH deploy
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262  # v1.0.3
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}

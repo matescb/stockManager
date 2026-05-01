@@ -1,0 +1,20 @@
+# Build context exclusions for `docker build web/` invocations.
+# Mirrors the repo-root .dockerignore for the web subtree, in case the
+# build is ever invoked with `context: web/` instead of the current
+# `context: .`.
+
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.git
+__pycache__/
+.pytest_cache/
+.idea/
+.vscode/
+*.log
+*.swp
+.DS_Store

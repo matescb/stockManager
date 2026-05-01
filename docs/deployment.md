@@ -231,6 +231,38 @@ If the VPS host key ever rotates (rebuild, key regeneration), pin the new
 fingerprint via the action's `fingerprint:` input — capture it on the host
 with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`.
 
+### Action SHA pins
+
+All third-party actions are SHA-pinned in `ci.yml`, with a comment recording
+the human-readable tag the SHA was resolved from. Bump them with:
+
+```bash
+gh api repos/actions/checkout/git/refs/tags/v4 --jq .object.sha
+gh api repos/actions/setup-python/git/refs/tags/v5 --jq .object.sha
+gh api repos/actions/setup-node/git/refs/tags/v4 --jq .object.sha
+gh api repos/appleboy/ssh-action/git/refs/tags/v1.0.3 --jq .object.sha
+```
+
+Replace the SHA in the `uses:` line; keep the tag in the trailing comment.
+Pin-bumps are normal-stream PRs (no special review gate); only bump on a
+genuine version intent.
+
+### Optional: gate deploys behind a human reviewer
+
+The `deploy` job has `environment: production` set. By default this just
+scopes any environment-level secrets we add later. If you want a manual
+"approve this deploy" step before each prod push:
+
+1. GitHub UI → Settings → Environments → New environment → name `production`.
+2. Add a "Required reviewers" rule and list the trusted approvers
+   (typically just your own account).
+3. Optional: "Wait timer" if you want a cooling-off period before the
+   approval prompt fires.
+
+After this, every push to `main` that passes CI will pause at the deploy
+step and email the listed reviewers. Approving the run resumes the SSH
+deploy. Skip this if you'd rather keep the current friction-free flow.
+
 ## Operations
 
 All commands below assume you're SSH'd into the VPS. If you don't have a

@@ -1,0 +1,65 @@
+# Build context exclusions. Without this the docker daemon receives the
+# entire repo (was 263 MB with web/node_modules + .git + dist), which
+# slows every rebuild and risks shipping local secrets via incidental
+# COPY-* layers. Listed here at the repo root because docker-compose's
+# `context: .` for the web build is the worst offender.
+
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Environments and secrets — must NEVER enter a build context.
+.env
+.env.*
+!.env.example
+deploy/.env*
+!deploy/.env.prod.example
+
+# Python build artifacts and venvs
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.venv*/
+venv*/
+*.venv/
+
+# Node / Vite
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# IDE / OS noise
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local Claude tooling — not a runtime concern
+.claude/
+.remember/
+
+# Past review artifacts — kept locally, never shipped
+review-*/
+
+# Top-level docs / READMEs (not needed at runtime)
+*.md
+!web/index.html
+
+# Old static-bundle graveyard — see PR #16 in the remediation plan
+barcodeReader/
+
+# Misc local files
+*.log
+uploads/
