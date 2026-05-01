@@ -8,7 +8,7 @@ from app.main import app
 
 
 def _signup(c: TestClient, email: str):
-    r = c.post("/api/auth/signup", json={"email": email, "name": "u", "password": "password123"})
+    r = c.post("/api/auth/signup", json={"email": email, "name": "u", "password": "TestPass-2026-Stronk"})
     assert r.status_code == 200, r.text
     return r.json()["data"]["workspace_id"]
 
