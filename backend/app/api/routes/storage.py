@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import or_, select
 
-from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
+from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
 from app.core.responses import ok
 from app.domain.storage.models import StorageLocation
 from app.domain.stock.service import (
@@ -108,7 +108,7 @@ def patch_storage(storage_id: UUID, payload: StoragePatch, db: DbSession, ws: Cu
     return ok(_serialize(s))
 
 
-@router.post("/{storage_id}/archive")
+@router.post("/{storage_id}/archive", dependencies=[Depends(require_role("admin"))])
 def archive_storage(storage_id: UUID, db: DbSession, ws: CurrentWorkspace):
     s = _get(db, ws.id, storage_id)
     s.archived_at = datetime.now(timezone.utc)
@@ -116,7 +116,7 @@ def archive_storage(storage_id: UUID, db: DbSession, ws: CurrentWorkspace):
     return ok(None, "archived")
 
 
-@router.post("/{storage_id}/restore")
+@router.post("/{storage_id}/restore", dependencies=[Depends(require_role("admin"))])
 def restore_storage(storage_id: UUID, db: DbSession, ws: CurrentWorkspace):
     s = _get(db, ws.id, storage_id)
     s.archived_at = None

@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 
 from app.api.routes._activity import build_activity
-from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
+from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
 from app.core.responses import ok
 from app.domain.builds.models import Build
 from app.domain.builds.schemas import BuildCreateIn, BuildPatchIn, ConsumeIn
@@ -137,7 +137,7 @@ def patch_build(build_id: UUID, payload: BuildPatchIn, db: DbSession, ws: Curren
     return ok(_serialize(b))
 
 
-@router.post("/{build_id}/archive")
+@router.post("/{build_id}/archive", dependencies=[Depends(require_role("admin"))])
 def archive_build(build_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     b = _get_build(db, ws.id, build_id)
     release_reservations(db, workspace_id=ws.id, user_id=user.id, build=b)
@@ -146,7 +146,7 @@ def archive_build(build_id: UUID, db: DbSession, ws: CurrentWorkspace, user: Cur
     return ok(None, "archived")
 
 
-@router.post("/{build_id}/restore")
+@router.post("/{build_id}/restore", dependencies=[Depends(require_role("admin"))])
 def restore_build(build_id: UUID, db: DbSession, ws: CurrentWorkspace):
     b = _get_build(db, ws.id, build_id)
     b.archived_at = None
