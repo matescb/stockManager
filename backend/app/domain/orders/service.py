@@ -8,8 +8,11 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.core.logging import get_logger
 from app.domain.lots.models import Lot
 from app.domain.orders.models import Order, OrderEntry
+
+log = get_logger(__name__)
 from app.domain.orders.schemas import ReceiveIn
 from app.domain.parts.models import Part
 from app.domain.stock.models import StockEntry
@@ -151,6 +154,16 @@ def receive(
         order.received_on = received_at.date()
     order.updated_by = user_id
 
+    log.info(
+        "order received",
+        extra={
+            "workspace_id": str(workspace_id),
+            "order_id": str(order.id),
+            "status": order.status,
+            "lots_created": len(created_lots),
+            "entries_created": len(created_entries),
+        },
+    )
     return {
         "order_id": str(order.id),
         "status": order.status,

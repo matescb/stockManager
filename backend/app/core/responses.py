@@ -5,6 +5,10 @@ from typing import Any
 from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
+from app.core.logging import get_logger
+
+_log = get_logger(__name__)
+
 
 def ok(data: Any = None, message: str = "OK") -> dict[str, Any]:
     return {"data": data, "status": {"category": "ok", "message": message}}
@@ -17,7 +21,7 @@ def err(category: str, message: str, errors: list[dict] | None = None) -> dict[s
     return body
 
 
-async def http_exception_handler(_: Request, exc: HTTPException):
+async def http_exception_handler(request: Request, exc: HTTPException):
     # Routes can raise HTTPException(detail={"message": "...", ...extras})
     # to surface structured context alongside the human-readable message.
     # The "message" key (or stringified detail) goes into status.message;
@@ -31,6 +35,20 @@ async def http_exception_handler(_: Request, exc: HTTPException):
                 body[k] = v
     else:
         body = err(_category_for_status(exc.status_code), str(exc.detail))
+    # Log every 5xx as an error so the local journal has a full record
+    # of server-side failures (matched by Sentry but not contingent on
+    # it). 4xx is too noisy at INFO; route-level logging fires when a
+    # 4xx is actionable (login failures, etc.).
+    if exc.status_code >= 500:
+        _log.error(
+            "http error",
+            extra={
+                "status": exc.status_code,
+                "path": request.url.path,
+                "method": request.method,
+                "message": str(exc.detail)[:500],
+            },
+        )
     return JSONResponse(status_code=exc.status_code, content=body)
 
 

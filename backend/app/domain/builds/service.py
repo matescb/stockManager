@@ -14,8 +14,11 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.logging import get_logger
 from app.domain.builds.models import Build
 from app.domain.builds.schemas import ConsumeIn
+
+log = get_logger(__name__)
 from app.domain.lots.models import Lot
 from app.domain.parts.models import Part, PartMetaMember, PartSubstitute
 from app.domain.projects.models import Project, ProjectEntry
@@ -429,6 +432,16 @@ def consume(
     build.output_lot_id = output_lot.id if output_lot else None
     build.updated_by = user_id
 
+    log.info(
+        "build consumed",
+        extra={
+            "workspace_id": str(workspace_id),
+            "build_id": str(build.id),
+            "project_id": str(project.id),
+            "consumed_lines": len(consumed_entries),
+            "output_lot_id": str(output_lot.id) if output_lot else None,
+        },
+    )
     return {
         "build_id": str(build.id),
         "status": build.status,
