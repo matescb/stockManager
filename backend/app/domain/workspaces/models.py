@@ -26,13 +26,15 @@ class Workspace(Base):
     catalog_token = Column(String(64), nullable=True)
     catalog_enabled = Column(Boolean, nullable=False, default=False)
     parts_provider = Column(String(40), nullable=False, default="none")  # none | mouser | digikey
-    parts_provider_api_key = Column(String(255), nullable=True)
+    # Encrypted at rest via app.core.secrets (Sec HIGH-9). Fernet
+    # tokens are ~140 chars for a 36-char API key, but we leave headroom.
+    parts_provider_api_key = Column(String(1024), nullable=True)
     # DigiKey needs a second credential (client_secret). Mouser leaves this NULL.
-    parts_provider_api_secret = Column(String(255), nullable=True)
+    parts_provider_api_secret = Column(String(1024), nullable=True)
     # Which client-side decoder the scanner pages mount. 'zxing' is the
     # royalty-free default; 'scandit' is opt-in and consumes scanner_license_key.
     scanner = Column(String(40), nullable=False, default="zxing")  # zxing | scandit
-    scanner_license_key = Column(String(2048), nullable=True)
+    scanner_license_key = Column(String(4096), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
 
 

@@ -16,6 +16,7 @@ from app.api.routes._activity import build_activity
 from app.core.config import settings
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
+from app.core.secrets import decrypt
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part, PartMetaMember, PartSubstitute
 from app.domain.parts.providers import make_provider
@@ -647,8 +648,8 @@ def refresh_from_provider(
 
     provider = make_provider(
         ws.parts_provider,
-        ws.parts_provider_api_key,
-        ws.parts_provider_api_secret,
+        decrypt(ws.parts_provider_api_key),
+        decrypt(ws.parts_provider_api_secret),
     )
     if provider is None:
         raise HTTPException(
@@ -838,8 +839,8 @@ def bulk_import_from_scan(
     """
     provider = make_provider(
         ws.parts_provider,
-        ws.parts_provider_api_key,
-        ws.parts_provider_api_secret,
+        decrypt(ws.parts_provider_api_key),
+        decrypt(ws.parts_provider_api_secret),
     )
     if provider is None:
         raise HTTPException(

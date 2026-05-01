@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     # the tunnel is an open ingress that anyone on the internet can
     # use to pump arbitrary bytes through this worker.
     SENTRY_TUNNEL_MAX_BYTES: int = 200 * 1024
+    # Fernet key (urlsafe-base64-encoded 32 bytes) for encrypting
+    # workspace-level secrets at rest: parts_provider_api_key,
+    # parts_provider_api_secret, scanner_license_key. Empty string →
+    # falls back to a dev-only default (see app/core/secrets.py).
+    # Generate a real key for prod with:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    WORKSPACE_SECRETS_KEY: str = ""
     CORS_ORIGINS: str = "http://localhost:5173"
     # Sentry. Empty string → SDK is not initialised (no events sent, no
     # network egress, no performance overhead). Populate in .env.prod
