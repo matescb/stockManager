@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Iterable
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.domain.lots.models import Lot
@@ -32,6 +32,30 @@ def _now() -> datetime:
 
 def _belongs(obj, workspace_id: UUID) -> bool:
     return obj is not None and obj.workspace_id == workspace_id
+
+
+def _lock_for_stock_write(db: Session, *, workspace_id: UUID, part_id: UUID) -> None:
+    """Serialise concurrent stock writes on the same (workspace, part).
+
+    The append-only ledger has a TOCTOU race: two concurrent operators
+    consuming from the same lot both read available=N from
+    `current_quantity()`, both pass `qty <= available`, then both insert
+    a -qty row — the lot ends up at -qty (BE CRIT-1).
+
+    `pg_advisory_xact_lock` takes a session-level lock keyed on a
+    bigint hash of (workspace_id, part_id). The lock is released
+    automatically at COMMIT or ROLLBACK. Two transactions targeting
+    the same tuple serialise: the second waits for the first to
+    finish, then re-reads `current_quantity` against the updated
+    state. The 0013 trigger is the database-side fall-back if the
+    lock is ever bypassed (e.g. raw SQL outside the service layer).
+    """
+    # UUID's __str__ is stable RFC 4122 canonical form, so the same
+    # (workspace_id, part_id) pair always hashes to the same int8 lock id.
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+        {"k": f"{workspace_id}:{part_id}"},
+    )
 
 
 def current_quantity(
@@ -225,6 +249,7 @@ def remove_stock(
     user_id: UUID | None,
     payload: RemoveStockIn,
 ) -> StockEntry:
+    _lock_for_stock_write(db, workspace_id=workspace_id, part_id=payload.part_id)
     part = db.get(Part, payload.part_id)
     if not _belongs(part, workspace_id):
         raise StockError("part not found")
@@ -274,6 +299,7 @@ def move_stock(
     user_id: UUID | None,
     payload: MoveStockIn,
 ) -> tuple[StockEntry, StockEntry]:
+    _lock_for_stock_write(db, workspace_id=workspace_id, part_id=payload.part_id)
     part = db.get(Part, payload.part_id)
     if not _belongs(part, workspace_id):
         raise StockError("part not found")
@@ -391,6 +417,7 @@ def adjust_stock(
     user_id: UUID | None,
     payload: AdjustStockIn,
 ) -> StockEntry | None:
+    _lock_for_stock_write(db, workspace_id=workspace_id, part_id=payload.part_id)
     part = db.get(Part, payload.part_id)
     if not _belongs(part, workspace_id):
         raise StockError("part not found")
