@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import os
 import uuid
+from pathlib import Path
 
 import pytest
+from alembic import command
+from alembic.config import Config as AlembicConfig
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -21,12 +24,25 @@ from app.infra.db import Base  # noqa: E402
 from app.main import app  # noqa: E402
 
 
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
+
+
 def _reset_schema(eng) -> None:
     """Drop and recreate the public schema. Avoids drop_all() failing on
     circular FK dependencies (parts <-> projects)."""
     with eng.begin() as conn:
         conn.exec_driver_sql("DROP SCHEMA IF EXISTS public CASCADE")
         conn.exec_driver_sql("CREATE SCHEMA public")
+
+
+def _alembic_upgrade_head(database_url: str) -> None:
+    """Run the production migration chain against the test DB. Replaces
+    `Base.metadata.create_all(...)` so model-vs-migration drift surfaces
+    in CI rather than at deploy time (BE CRIT-5 in 2026-04-30 review)."""
+    cfg = AlembicConfig(str(_BACKEND_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(_BACKEND_ROOT / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(cfg, "head")
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -45,14 +61,14 @@ def engine():
         admin.dispose()
         eng = create_engine(settings().DATABASE_URL, future=True)
     _reset_schema(eng)
-    Base.metadata.create_all(bind=eng)
+    _alembic_upgrade_head(settings().DATABASE_URL)
     return eng
 
 
 @pytest.fixture
 def db(engine):
     _reset_schema(engine)
-    Base.metadata.create_all(bind=engine)
+    _alembic_upgrade_head(settings().DATABASE_URL)
     Session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
     s = Session()
     try:
