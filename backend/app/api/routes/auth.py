@@ -13,12 +13,14 @@ from app.core.auth import (
 )
 from app.core.config import settings
 from app.core.deps import CurrentUser, DbSession
+from app.core.logging import get_logger
 from app.core.ratelimit import limiter
 from app.core.responses import ok
 from app.domain.users.models import User
 from app.domain.workspaces.models import Workspace, WorkspaceMember
 
 router = APIRouter()
+log = get_logger(__name__)
 
 
 class SignupIn(BaseModel):
@@ -60,6 +62,7 @@ def _set_session_cookie(response: Response, token: str) -> None:
 def signup(request: Request, payload: SignupIn, response: Response, db: DbSession):
     existing = db.query(User).filter(User.email == payload.email).first()
     if existing:
+        log.warning("signup conflict", extra={"email": payload.email})
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="email already registered")
     user = User(email=payload.email, name=payload.name, password_hash=hash_password(payload.password))
     db.add(user)
@@ -76,6 +79,7 @@ def signup(request: Request, payload: SignupIn, response: Response, db: DbSessio
     db.commit()
 
     _set_session_cookie(response, sess.token)
+    log.info("signup", extra={"user_id": str(user.id), "workspace_id": str(ws.id)})
     return ok({"user": {"id": str(user.id), "email": user.email, "name": user.name}, "workspace_id": str(ws.id)})
 
 
@@ -86,11 +90,15 @@ def signup(request: Request, payload: SignupIn, response: Response, db: DbSessio
 def login(request: Request, payload: LoginIn, response: Response, db: DbSession):
     user = db.query(User).filter(User.email == payload.email).first()
     if not user or not verify_password(user.password_hash, payload.password):
+        # Log failures (without the password). Useful for spotting
+        # brute-force patterns alongside the slowapi rate-limit.
+        log.warning("login failed", extra={"email": payload.email})
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid credentials")
     sess = create_session_row(db, user.id)
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
     _set_session_cookie(response, sess.token)
+    log.info("login", extra={"user_id": str(user.id)})
     return ok({"user": {"id": str(user.id), "email": user.email, "name": user.name}})
 
 
@@ -102,6 +110,7 @@ def logout(request: Request, response: Response, db: DbSession):
         revoke_session(db, token)
         db.commit()
     response.delete_cookie(cookie_name, path="/")
+    log.info("logout")
     return ok(None, "logged out")
 
 

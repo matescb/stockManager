@@ -6,6 +6,13 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.logging import configure_logging
+
+# Configure structured logging once at import time, before anything else
+# tries to log. uvicorn replays logs through the root logger so this
+# captures its lifecycle messages too.
+configure_logging()
+
 
 # Top-level (testable) Sentry event scrubber. Runs as `before_send` so the
 # event is mutated before it leaves the worker. We have to scrub here
