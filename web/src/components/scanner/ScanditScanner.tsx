@@ -42,6 +42,17 @@ export default function ScanditScanner({ licenseKey, onScan, className, symbolog
     text: "Initializing…",
   });
 
+  // Refs hold the latest props so the SDK init effect can read them at
+  // event time without subscribing to them in its dep array. Without
+  // this, every parent re-render with a fresh `onScan` closure or
+  // `symbologies` array tore the SDK down (`DataCaptureContext.dispose`)
+  // and reloaded the multi-MB wasm — visible camera stutter or full
+  // soft-lock under any state churn (FE CRIT-2 in the 2026-04-30 review).
+  const onScanRef = useRef(onScan);
+  useEffect(() => { onScanRef.current = onScan; }, [onScan]);
+  const symbologiesRef = useRef(symbologies);
+  useEffect(() => { symbologiesRef.current = symbologies; }, [symbologies]);
+
   useEffect(() => {
     let stopped = false;
     let cameraRef: Camera | null = null;
@@ -69,7 +80,12 @@ export default function ScanditScanner({ licenseKey, onScan, className, symbolog
         await ctx.setFrameSource(camera);
 
         const settings = new BarcodeCaptureSettings();
-        const enabled = symbologies ?? LICENSED_SYMBOLOGIES;
+        // symbologies is read at SDK-init time; the ref deref captures
+        // whatever the parent had on first mount. If the parent ever
+        // wants to change which symbologies are decoded, that requires
+        // a remount — keyed-by-symbologies would be the call-site fix,
+        // but no caller does that today.
+        const enabled = symbologiesRef.current ?? LICENSED_SYMBOLOGIES;
         for (const key of enabled) {
           if ((Symbology as any)[key] !== undefined) {
             settings.enableSymbology((Symbology as any)[key], true);
@@ -79,7 +95,7 @@ export default function ScanditScanner({ licenseKey, onScan, className, symbolog
         capture.addListener({
           didScan: (_m, session) => {
             const b = (session as any).newlyRecognizedBarcode;
-            if (b) onScan({ data: b.data ?? "", symbology: b.symbology ?? "?" });
+            if (b) onScanRef.current({ data: b.data ?? "", symbology: b.symbology ?? "?" });
           },
         });
 
@@ -101,7 +117,9 @@ export default function ScanditScanner({ licenseKey, onScan, className, symbolog
       cameraRef?.switchToDesiredState(FrameSourceState.Off).catch(() => {});
       contextRef?.dispose?.().catch?.(() => {});
     };
-  }, [licenseKey, onScan, symbologies]);
+    // Only license-key changes warrant a full SDK teardown / re-init.
+    // onScan and symbologies flow through refs above.
+  }, [licenseKey]);
 
   return (
     <div className={className ?? "flex flex-col h-[70vh]"}>

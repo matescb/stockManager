@@ -117,6 +117,16 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
   // closure that was captured when the camera effect first ran.
   const zoomRef = useRef<number>(1);
   const zoomModeRef = useRef<ZoomMode>("digital");
+  // Refs for `onScan` and `symbologies` — same rationale as the Scandit
+  // scanner. Without these, the eslint-disable-deps comment further down
+  // was the only thing keeping the camera effect from tearing down on
+  // every parent re-render. Now the loop reads `onScanRef.current(...)`
+  // at hit time, so a fresh closure from the parent flows through
+  // without restarting the camera (FE CRIT-2 / MED-9).
+  const onScanRef = useRef(onScan);
+  useEffect(() => { onScanRef.current = onScan; }, [onScan]);
+  const symbologiesRef = useRef(symbologies);
+  useEffect(() => { symbologiesRef.current = symbologies; }, [symbologies]);
 
   const [status, setStatus] = useState<{
     text: string;
@@ -149,7 +159,12 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
     let timer: number | null = null;
     let stopped = false;
 
-    const enabled = (symbologies && symbologies.length ? symbologies : DEFAULT_SYMBOLOGIES)
+    // Read symbologies from the ref so the parent can pass an inline
+    // array literal (memoised at the call site is preferred, but this
+    // keeps us robust if a caller forgets). Captured at effect-init
+    // time; subsequent prop changes don't restart the camera.
+    const enabledSyms = symbologiesRef.current;
+    const enabled = (enabledSyms && enabledSyms.length ? enabledSyms : DEFAULT_SYMBOLOGIES)
       .map(s => ZXING_FORMAT_BY_PUBLIC[s])
       .filter(Boolean);
 
@@ -290,7 +305,7 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
                 lastHitRef.current = { data: hit.text, t: now };
                 const sym = PUBLIC_NAME_BY_ZXING[hit.format] ?? hit.format ?? "?";
                 scanFeedback();
-                onScan({ data: hit.text, symbology: sym });
+                onScanRef.current({ data: hit.text, symbology: sym });
               }
             }
           } catch {
@@ -347,9 +362,9 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
     // Restarting the camera is the whole point of a deviceId change — we want
     // the dep. retryToken is bumped by the "Try again" button after a
     // permission-denied error, so the user can re-prompt without a full
-    // reload. `symbologies` and `onScan` are intentionally excluded so the
-    // loop doesn't tear down when the parent re-renders with a new closure.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // reload. `symbologies` and `onScan` flow through refs (declared at
+    // the top of the component) so a parent re-render with fresh closures
+    // doesn't tear down the camera.
   }, [deviceId, retryToken]);
 
   // ---------------------------------------------------------------------

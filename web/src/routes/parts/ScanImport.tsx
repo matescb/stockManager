@@ -30,6 +30,13 @@ const PROVIDER_LABEL: Record<string, string> = {
   none: "no provider",
 };
 
+// Module-level constant — referenced by `<Scanner symbologies={...}>` below.
+// Inline `["DataMatrix", "QR"]` would be a fresh array on every render, which
+// (combined with effect deps in ScanditScanner / ZxingScanner) would tear
+// down and rebuild the multi-MB scanner SDK on every parent state change.
+// FE CRIT-2 in the 2026-04-30 review.
+const SCAN_IMPORT_SYMBOLOGIES = ["DataMatrix", "QR"] as const;
+
 type LookupState =
   | { kind: "pending" }
   | { kind: "duplicate"; existing: Part }
@@ -345,7 +352,7 @@ export default function ScanImport() {
         <div className="card p-3">
           <Scanner
             onScan={handleScan}
-            symbologies={["DataMatrix", "QR"]}
+            symbologies={SCAN_IMPORT_SYMBOLOGIES}
             className="flex flex-col h-[55vh]"
           />
           <div className="mt-3 text-xs text-muted leading-relaxed">
