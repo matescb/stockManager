@@ -138,3 +138,77 @@ def test_cannot_already_member(admin):
     # Now try to invite the same email again — should 409
     r = admin.post("/api/invitations", json={"email": invitee_email, "role": "member"})
     assert r.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# Token-hashing-at-rest (PR #18 / Sec MED-7-style hardening)
+# ---------------------------------------------------------------------------
+
+
+def test_token_is_stored_as_hash_not_plaintext(admin):
+    """The plaintext returned to the caller must NOT match what's
+    persisted. The DB has only the SHA-256 digest."""
+    import hashlib
+
+    invitee_email = f"hash-{uuid.uuid4().hex[:6]}@x.com"
+    inv = admin.post(
+        "/api/invitations", json={"email": invitee_email, "role": "member"}
+    ).json()["data"]
+    plaintext = inv["token"]
+    assert plaintext, "create response must carry the plaintext token"
+
+    # Reach into the DB and verify what landed.
+    from app.domain.workspaces.models import WorkspaceInvitation
+    from app.infra.db import SessionLocal
+
+    with SessionLocal() as s:
+        row = s.get(WorkspaceInvitation, uuid.UUID(inv["id"]))
+        assert row is not None
+        # The plaintext is gone — the model only has token_hash now.
+        assert not hasattr(row, "token") or getattr(row, "token", None) is None
+        assert row.token_hash == hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
+        # Stored value is NOT the plaintext.
+        assert row.token_hash != plaintext
+
+
+def test_list_invitations_does_not_leak_token(admin):
+    """List endpoint returns token=None for every row — the plaintext
+    only ever exists in the create response. A re-fetch can't recover it."""
+    invitee_email = f"list-{uuid.uuid4().hex[:6]}@x.com"
+    admin.post("/api/invitations", json={"email": invitee_email, "role": "member"})
+
+    rows = admin.get("/api/invitations").json()["data"]
+    assert len(rows) >= 1
+    for r in rows:
+        if r["email"] == invitee_email:
+            assert r["token"] is None, "list must not echo any token, plaintext or hash"
+
+
+def test_accept_with_wrong_token_returns_404(admin):
+    """A token that doesn't hash to any stored token_hash → 404
+    (same path as a non-existent invitation)."""
+    invitee_email = f"wrong-{uuid.uuid4().hex[:6]}@x.com"
+    admin.post("/api/invitations", json={"email": invitee_email, "role": "member"})
+
+    invitee = TestClient(app)
+    invitee.post(
+        "/api/auth/signup",
+        json={"email": invitee_email, "name": "x", "password": "password123"},
+    )
+
+    # Submit a wrong token — must not match by hash, must 404.
+    r = invitee.post("/api/invitations/accept", json={"token": "WRONG-TOKEN-VALUE"})
+    assert r.status_code == 404, r.text
+
+
+def test_accept_endpoint_has_rate_limit_decorator():
+    """slowapi is disabled outside prod so we can't trip the limit at
+    runtime in tests. Pin the decorator's presence — if a future
+    refactor drops the @limiter.limit, this test fails."""
+    from app.api.routes.invitations import accept_invitation
+
+    markers = ("limiter_kwargs", "_limiter", "limit", "__wrapped__")
+    has_marker = any(hasattr(accept_invitation, m) for m in markers)
+    assert has_marker, (
+        f"expected @limiter.limit on accept_invitation; markers checked: {markers}"
+    )

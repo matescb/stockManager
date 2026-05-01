@@ -53,14 +53,18 @@ class WorkspaceMember(Base):
 class WorkspaceInvitation(Base):
     __tablename__ = "workspace_invitations"
     __table_args__ = (
-        UniqueConstraint("token", name="uq_workspace_invitation_token"),
+        UniqueConstraint("token_hash", name="uq_workspace_invitation_token_hash"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
     email = Column(String(320), nullable=False, index=True)
     role = Column(String(40), nullable=False, default="member")
-    token = Column(String(120), nullable=False)
+    # SHA-256 hex digest of the plaintext token. The plaintext is
+    # returned to the caller exactly once at creation time and is never
+    # persisted; without this, a DB dump leaks every pending invitation
+    # as a replayable credential.
+    token_hash = Column(String(64), nullable=False)
     status = Column(String(20), nullable=False, default="pending")  # pending | accepted | revoked
     invited_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
