@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import secrets
 from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy import select
 
@@ -15,11 +16,19 @@ from app.core.deps import (
     DbSession,
     require_role,
 )
+from app.core.ratelimit import limiter
 from app.core.responses import ok
 from app.domain.users.models import User
 from app.domain.workspaces.models import Workspace, WorkspaceInvitation, WorkspaceMember
 
 router = APIRouter()
+
+
+def _hash_token(plaintext: str) -> str:
+    """SHA-256 hex digest. Used both at create time (to compute what to
+    store) and at accept time (to look up by what the caller supplied).
+    """
+    return hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
 
 
 class InviteIn(BaseModel):
@@ -29,14 +38,24 @@ class InviteIn(BaseModel):
     role: Literal["admin", "member", "viewer"] = "member"
 
 
-def _serialize(inv: WorkspaceInvitation) -> dict:
+def _serialize(inv: WorkspaceInvitation, *, plaintext_token: str | None = None) -> dict:
+    """Serialise an invitation row.
+
+    `plaintext_token` is set ONLY in the create response — the only
+    moment the plaintext exists. Subsequent reads (list, revoke) never
+    have it, because the DB stores only the hash. The caller is
+    responsible for delivering the plaintext to the invitee out-of-band
+    immediately (typically via the link embedded in the response).
+    """
     return {
         "id": str(inv.id),
         "workspace_id": str(inv.workspace_id),
         "email": inv.email,
         "role": inv.role,
         "status": inv.status,
-        "token": inv.token if inv.status == "pending" else None,
+        # Only the create response carries the plaintext; all other
+        # serialisations return None here.
+        "token": plaintext_token if inv.status == "pending" else None,
         "created_at": inv.created_at.isoformat(),
         "accepted_at": inv.accepted_at.isoformat() if inv.accepted_at else None,
     }
@@ -67,6 +86,10 @@ def create_invitation(
         raise HTTPException(status_code=409, detail="user is already a member")
 
     # Existing pending invite for this email — reuse rather than duplicate.
+    # Note: we cannot return the existing plaintext token (we don't have
+    # it). The frontend interprets a pending row with token=None as
+    # "already invited; ask the operator to revoke + re-invite if the
+    # invitee never received the original email".
     existing = (
         db.execute(
             select(WorkspaceInvitation)
@@ -80,16 +103,20 @@ def create_invitation(
     if existing:
         return ok(_serialize(existing))
 
+    # Mint a new token. 32 bytes urlsafe ≈ 256 bits of entropy — well
+    # past brute-force feasibility. The hash goes to the DB; the
+    # plaintext goes back to the caller exactly once via the response.
+    plaintext = secrets.token_urlsafe(32)
     inv = WorkspaceInvitation(
         workspace_id=ws.id,
         email=payload.email,
         role=payload.role,
-        token=secrets.token_urlsafe(32),
+        token_hash=_hash_token(plaintext),
         invited_by=user.id,
     )
     db.add(inv)
     db.commit()
-    return ok(_serialize(inv))
+    return ok(_serialize(inv, plaintext_token=plaintext))
 
 
 @router.get("", dependencies=[Depends(require_role("admin"))])
@@ -125,11 +152,21 @@ class AcceptIn(BaseModel):
     token: str
 
 
+# Token is 256-bit so brute-force is infeasible, but the endpoint is
+# unauthenticated-by-workspace and could otherwise be hammered.
+# 10/min/IP is well above any legitimate user's behaviour and well
+# below useful enumeration speed.
 @router.post("/accept")
-def accept_invitation(payload: AcceptIn, db: DbSession, user: CurrentUser):
+@limiter.limit("10/minute")
+def accept_invitation(request: Request, payload: AcceptIn, db: DbSession, user: CurrentUser):
+    # Look up by hash — the plaintext is never stored, so an attacker
+    # with a DB dump cannot mint a valid lookup query without first
+    # cracking the hash (infeasible at 256 bits).
     inv = (
         db.execute(
-            select(WorkspaceInvitation).where(WorkspaceInvitation.token == payload.token)
+            select(WorkspaceInvitation).where(
+                WorkspaceInvitation.token_hash == _hash_token(payload.token)
+            )
         )
         .scalars()
         .first()
