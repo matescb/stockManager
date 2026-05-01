@@ -56,6 +56,7 @@ def list_storage(
     ws: CurrentWorkspace,
     archived: bool = Query(default=False),
     q: str | None = Query(default=None),
+    limit: int = Query(default=200, le=1000),
 ):
     stmt = select(StorageLocation).where(StorageLocation.workspace_id == ws.id)
     stmt = stmt.where(
@@ -64,7 +65,7 @@ def list_storage(
     if q:
         like = f"%{q}%"
         stmt = stmt.where(or_(StorageLocation.name.ilike(like), StorageLocation.description.ilike(like)))
-    stmt = stmt.order_by(StorageLocation.name)
+    stmt = stmt.order_by(StorageLocation.name).limit(limit)
     return ok([_serialize(s) for s in db.execute(stmt).scalars()])
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
@@ -39,13 +39,18 @@ def _serialize(p: BomImportPreset) -> dict:
 
 
 @router.get("")
-def list_presets(db: DbSession, ws: CurrentWorkspace):
+def list_presets(
+    db: DbSession,
+    ws: CurrentWorkspace,
+    limit: int = Query(default=200, le=1000),
+):
     rows = list(
         db.execute(
             select(BomImportPreset)
             .where(BomImportPreset.workspace_id == ws.id)
             .where(BomImportPreset.archived_at.is_(None))
             .order_by(BomImportPreset.name)
+            .limit(limit)
         ).scalars()
     )
     return ok([_serialize(p) for p in rows])

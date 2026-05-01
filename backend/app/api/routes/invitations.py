@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy import select
 
@@ -120,12 +120,17 @@ def create_invitation(
 
 
 @router.get("", dependencies=[Depends(require_role("admin"))])
-def list_invitations(db: DbSession, ws: CurrentWorkspace):
+def list_invitations(
+    db: DbSession,
+    ws: CurrentWorkspace,
+    limit: int = Query(default=200, le=1000),
+):
     rows = list(
         db.execute(
             select(WorkspaceInvitation)
             .where(WorkspaceInvitation.workspace_id == ws.id)
             .order_by(WorkspaceInvitation.created_at.desc())
+            .limit(limit)
         ).scalars()
     )
     return ok([_serialize(r) for r in rows])

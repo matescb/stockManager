@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
 from app.api.routes._activity import build_activity
@@ -56,12 +56,18 @@ def _get_project(db, ws_id, pid) -> Project:
 
 
 @router.get("")
-def list_builds(db: DbSession, ws: CurrentWorkspace, archived: bool = False, project_id: UUID | None = None):
+def list_builds(
+    db: DbSession,
+    ws: CurrentWorkspace,
+    archived: bool = False,
+    project_id: UUID | None = None,
+    limit: int = Query(default=200, le=1000),
+):
     stmt = select(Build).where(Build.workspace_id == ws.id)
     stmt = stmt.where(Build.archived_at.is_(None) if not archived else Build.archived_at.is_not(None))
     if project_id:
         stmt = stmt.where(Build.project_id == project_id)
-    stmt = stmt.order_by(Build.created_at.desc())
+    stmt = stmt.order_by(Build.created_at.desc()).limit(limit)
     return ok([_serialize(b) for b in db.execute(stmt).scalars()])
 
 

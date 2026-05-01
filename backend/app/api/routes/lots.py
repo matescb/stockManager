@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
@@ -42,10 +42,17 @@ def _serialize(l: Lot, quantity: int | None = None) -> dict:
 
 
 @router.get("")
-def list_lots(db: DbSession, ws: CurrentWorkspace):
+def list_lots(
+    db: DbSession,
+    ws: CurrentWorkspace,
+    limit: int = Query(default=200, le=1000),
+):
     lots = list(
         db.execute(
-            select(Lot).where(Lot.workspace_id == ws.id).order_by(Lot.created_at.desc())
+            select(Lot)
+            .where(Lot.workspace_id == ws.id)
+            .order_by(Lot.created_at.desc())
+            .limit(limit)
         ).scalars()
     )
     out = []
