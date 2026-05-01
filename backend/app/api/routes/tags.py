@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
@@ -22,8 +22,19 @@ class TagIn(BaseModel):
 
 
 @router.get("")
-def list_tags(db: DbSession, ws: CurrentWorkspace):
-    rows = list(db.execute(select(Tag).where(Tag.workspace_id == ws.id).order_by(Tag.name)).scalars())
+def list_tags(
+    db: DbSession,
+    ws: CurrentWorkspace,
+    limit: int = Query(default=200, le=1000),
+):
+    rows = list(
+        db.execute(
+            select(Tag)
+            .where(Tag.workspace_id == ws.id)
+            .order_by(Tag.name)
+            .limit(limit)
+        ).scalars()
+    )
     return ok([{"id": str(r.id), "name": r.name, "color": r.color} for r in rows])
 
 

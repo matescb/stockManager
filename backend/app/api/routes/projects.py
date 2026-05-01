@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import or_, select
 
@@ -57,13 +57,19 @@ def _serialize_entry(e: ProjectEntry) -> dict:
 
 
 @router.get("")
-def list_projects(db: DbSession, ws: CurrentWorkspace, archived: bool = False, q: str | None = None):
+def list_projects(
+    db: DbSession,
+    ws: CurrentWorkspace,
+    archived: bool = False,
+    q: str | None = None,
+    limit: int = Query(default=200, le=1000),
+):
     stmt = select(Project).where(Project.workspace_id == ws.id)
     stmt = stmt.where(Project.archived_at.is_(None) if not archived else Project.archived_at.is_not(None))
     if q:
         like = f"%{q}%"
         stmt = stmt.where(or_(Project.name.ilike(like), Project.description.ilike(like)))
-    stmt = stmt.order_by(Project.updated_at.desc())
+    stmt = stmt.order_by(Project.updated_at.desc()).limit(limit)
     return ok([_serialize(p) for p in db.execute(stmt).scalars()])
 
 

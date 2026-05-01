@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import or_, select
 
 from app.api.routes._activity import build_activity
@@ -90,6 +90,7 @@ def list_orders(
     archived: bool = False,
     q: str | None = None,
     order_status: str | None = None,
+    limit: int = Query(default=200, le=1000),
 ):
     stmt = select(Order).where(Order.workspace_id == ws.id)
     stmt = stmt.where(Order.archived_at.is_(None) if not archived else Order.archived_at.is_not(None))
@@ -98,7 +99,7 @@ def list_orders(
         stmt = stmt.where(or_(Order.name.ilike(like), Order.supplier.ilike(like), Order.comments.ilike(like)))
     if order_status:
         stmt = stmt.where(Order.status == order_status)
-    stmt = stmt.order_by(Order.updated_at.desc())
+    stmt = stmt.order_by(Order.updated_at.desc()).limit(limit)
     out = []
     for o in db.execute(stmt).scalars():
         entries = _entries_for(db, ws.id, o.id)
