@@ -16,7 +16,15 @@ Implemented phases:
 - **9** serial tracking — workspace + per-part flags enforce qty=1 + `serial_number` on add-stock and order-receive. See `docs/phases/09-serial-tracking.md`.
 - **10** RBAC (owner/admin/member/viewer) + workspace invitations with token-based accept. See `docs/phases/10-rbac-invitations.md`.
 
-The existing webcam barcode scanner (`barcodeReader/`) is integrated into `/parts/scan`.
+Post-Phase-10 work (provider expansion, scan-to-import, switchable scanner
+backend, security remediation, …) is recorded per-commit in
+[`CHANGELOG.md`](CHANGELOG.md) rather than in additional phase docs —
+the per-phase doc model retired with Phase 10.
+
+The webcam barcode scanner lives at `/parts/scan-import` (a bulk
+scan-then-import flow built on a switchable ZXing/Scandit backend in
+`web/src/components/scanner/`). The legacy single-MPN lookup at
+`/parts/scan` redirects there.
 
 ## Run locally
 
@@ -49,6 +57,7 @@ backups.
 ## Layout
 
 - `backend/` — FastAPI + SQLAlchemy 2 + Alembic
-- `web/` — Vite + React + TypeScript + Tailwind
-- `barcodeReader/` — original Scandit assets (source for `web/public/scandit/`)
-- `docs/` — [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) (the cold-start doc), [`development.md`](docs/development.md), per-phase notes under `docs/phases/`
+- `web/` — Vite + React + TypeScript + Tailwind. Scanner backends in
+  `web/src/components/scanner/`; ZXing wasm + Scandit JS+wasm copied
+  from `node_modules` to `public/` at build time.
+- `docs/` — [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) (the cold-start doc), [`development.md`](docs/development.md), per-phase notes (1–10) under `docs/phases/`
