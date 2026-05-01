@@ -6,6 +6,36 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
+
+# Top-level (testable) Sentry event scrubber. Runs as `before_send` so the
+# event is mutated before it leaves the worker. We have to scrub here
+# rather than rely on Sentry's defaults because:
+# - PATCH /api/workspaces/current carries the workspace's plaintext
+#   provider API keys + scanner license key in the body. A 5xx during
+#   that PATCH would otherwise ship those credentials to Sentry.
+# - POST /api/workspaces/{id}/switch carries the target workspace_id —
+#   tenant-identifying, low value to triage.
+# - Cookie / Authorization / X-Workspace-Id headers are tenant- or
+#   session-identifying. Sentry redacts `Cookie` by default, but we
+#   strip explicitly so we don't depend on the SDK's redaction list.
+def _scrub_event(event, _hint):
+    request = event.get("request")
+    if not isinstance(request, dict):
+        return event
+    headers = request.get("headers")
+    if isinstance(headers, dict):
+        drop = {"cookie", "authorization", "x-workspace-id"}
+        for k in list(headers.keys()):
+            if k.lower() in drop:
+                headers.pop(k, None)
+    url = (request.get("url") or "").lower()
+    method = (request.get("method") or "").upper()
+    if method in ("PATCH", "POST") and "/api/workspaces" in url:
+        if request.pop("data", None) is not None:
+            request["body_redacted"] = True
+    return event
+
+
 # Initialise Sentry BEFORE FastAPI is imported, per the SDK's docs — its
 # auto-instrumentation patches starlette / FastAPI on first import. No-ops
 # entirely when SENTRY_DSN is empty (dev / unset prod), so this stays
@@ -23,12 +53,12 @@ def _init_sentry() -> None:
         environment=cfg.APP_ENV,
         release=cfg.SENTRY_RELEASE or None,
         traces_sample_rate=cfg.SENTRY_TRACES_SAMPLE_RATE,
-        # Per the Sentry FastAPI wizard. Sends request headers and the
-        # user IP. Cookies are redacted automatically; if a particular
-        # header (e.g. Authorization) needs scrubbing, add a
-        # before_send hook here. Flip to False if you want strict
-        # data-minimisation.
+        # `send_default_pii=True` ships user IP + request headers + body.
+        # Combined with the `before_send` scrubber below, this is the
+        # right balance: triage gets enough context, plaintext credentials
+        # never reach Sentry.
         send_default_pii=True,
+        before_send=_scrub_event,
         integrations=[
             StarletteIntegration(transaction_style="endpoint"),
             FastApiIntegration(transaction_style="endpoint"),
@@ -63,7 +93,18 @@ from app.core.config import settings
 from app.core.deps import require_member_for_writes
 from app.core.responses import http_exception_handler, validation_exception_handler
 
-app = FastAPI(title="Parts Inventory & Production Manager", version="0.1.0")
+_is_prod = settings().APP_ENV == "prod"
+
+app = FastAPI(
+    title="Parts Inventory & Production Manager",
+    version="0.1.0",
+    # Disable OpenAPI surface in prod — the schema is a free attacker
+    # roadmap to every endpoint, parameter shape, and response. Kept on
+    # in dev where the interactive playground is useful.
+    docs_url=None if _is_prod else "/docs",
+    redoc_url=None if _is_prod else "/redoc",
+    openapi_url=None if _is_prod else "/openapi.json",
+)
 
 # Rate limiter wired before CORS so 429 responses still get the right headers.
 from slowapi import _rate_limit_exceeded_handler  # noqa: E402

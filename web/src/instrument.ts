@@ -41,6 +41,32 @@ Sentry.init({
   // Per the wizard. Sends user IP + request headers; cookies are
   // redacted automatically. Flip to false for stricter data minimisation.
   sendDefaultPii: true,
+  // Strip request bodies on workspace settings PATCH/switch (carry
+  // plaintext provider API keys + scanner license key) and a few
+  // tenant-identifying headers. Sentry redacts Cookie by default, but
+  // we don't depend on the default redaction list.
+  beforeSend(event) {
+    const req = event.request;
+    if (req) {
+      if (req.headers) {
+        const drop = new Set(["cookie", "authorization", "x-workspace-id"]);
+        for (const k of Object.keys(req.headers)) {
+          if (drop.has(k.toLowerCase())) {
+            delete (req.headers as Record<string, unknown>)[k];
+          }
+        }
+      }
+      const url = (req.url ?? "").toLowerCase();
+      const method = (req.method ?? "").toUpperCase();
+      if ((method === "PATCH" || method === "POST") && url.includes("/api/workspaces")) {
+        if (req.data !== undefined) {
+          delete req.data;
+          (req as Record<string, unknown>).body_redacted = true;
+        }
+      }
+    }
+    return event;
+  },
   integrations: [
     // Hooks-based router integration: we use <BrowserRouter> + <Routes>
     // (not createBrowserRouter), so we hand React Router's hooks to
