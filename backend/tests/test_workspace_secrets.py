@@ -103,8 +103,55 @@ def test_clearing_credential_with_empty_string(admin):
 def test_dev_default_key_does_not_crash_when_env_unset(admin):
     """The previous attempt at this work raised RuntimeError when
     WORKSPACE_SECRETS_KEY was unset. Pin that the new posture is a
-    soft warning + dev fallback — round-trip works without env."""
+    soft warning + ephemeral per-process key — round-trip works without
+    env (within a single process)."""
     plaintext = "DEV-FALLBACK-OK"
     cipher = encrypt(plaintext)
     assert cipher is not None
     assert decrypt(cipher) == plaintext
+
+
+def test_prod_with_empty_workspace_secrets_key_fails_closed(monkeypatch):
+    """v2 teardown INFRA2-004 / SEC2-002: prod must refuse to start
+    when WORKSPACE_SECRETS_KEY is empty, so a misconfigured deploy
+    surfaces immediately instead of silently encrypting under a
+    fallback. Settings is constructed directly here (bypasses the
+    lru_cache on `settings()`) to exercise the validator."""
+    from pydantic import ValidationError
+
+    from app.core.config import Settings
+
+    monkeypatch.setenv("APP_ENV", "prod")
+    monkeypatch.setenv("WORKSPACE_SECRETS_KEY", "")
+
+    with pytest.raises(ValidationError) as exc_info:
+        Settings()
+    assert "WORKSPACE_SECRETS_KEY" in str(exc_info.value)
+
+
+def test_prod_with_valid_workspace_secrets_key_boots(monkeypatch):
+    """The other direction: a real Fernet key in prod must pass
+    validation cleanly."""
+    from cryptography.fernet import Fernet
+
+    from app.core.config import Settings
+
+    monkeypatch.setenv("APP_ENV", "prod")
+    monkeypatch.setenv("WORKSPACE_SECRETS_KEY", Fernet.generate_key().decode())
+
+    s = Settings()
+    assert s.APP_ENV == "prod"
+    assert s.WORKSPACE_SECRETS_KEY
+
+
+def test_dev_with_empty_workspace_secrets_key_boots(monkeypatch):
+    """Dev posture is unchanged: empty key allowed, ephemeral fallback
+    in `core/secrets._fernet`."""
+    from app.core.config import Settings
+
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("WORKSPACE_SECRETS_KEY", "")
+
+    s = Settings()
+    assert s.APP_ENV == "dev"
+    assert s.WORKSPACE_SECRETS_KEY == ""

@@ -16,11 +16,18 @@ String column. `decrypt()` returns the plaintext or `None` if the
 input is empty / None — letting routes ergonomically pass the column
 through without nullable-handling boilerplate.
 
-Falls back to a dev-only default key when `WORKSPACE_SECRETS_KEY` is
-empty (zero-config local runs + low-stakes throwaway environments).
-The fallback emits a one-shot warning to the structured-logging
-foundation so the operator sees it on container start; production
-operators must set the env var explicitly.
+Key sourcing:
+- Prod (`APP_ENV=prod`) requires `WORKSPACE_SECRETS_KEY` — the
+  Settings validator in `core/config.py` rejects an empty value, so
+  we never reach this module without a real key in prod.
+- Dev / test with the env var unset: generate a per-process random
+  key. Round-trips work within the running process; data does not
+  survive a restart. Trade-off chosen on purpose: the previous
+  approach committed a public default key to the repo (v2 teardown
+  SEC2-002), which meant any dev-encrypted dump could be decrypted
+  by anyone with the source. An ephemeral key is safer and the only
+  visible symptom is "your dev DB credentials don't survive a
+  container restart" — fine.
 
 Operational hazard: losing `WORKSPACE_SECRETS_KEY` makes every encrypted
 column unrecoverable. Escrow alongside SESSION_SECRET.
@@ -37,30 +44,22 @@ from app.core.logging import get_logger
 log = get_logger(__name__)
 
 
-# Dev-only default — weak by design so local runs work without a
-# `.env` step. Prod overrides via the `WORKSPACE_SECRETS_KEY` env var
-# (set in `.env.prod` and not committed). If you ever change THIS
-# default in dev, all dev-encrypted secrets become garbage; fine
-# locally, but a discovery-time gotcha for someone who skipped reading
-# this comment.
-_DEV_DEFAULT_KEY = b"OXmO1Y_-zTtTJ_NXxL5RQqGsbwI3wQAOJ-V_M5HH4_o="
-
-
 @lru_cache(maxsize=1)
 def _fernet() -> Fernet:
     from app.core.config import settings
 
     key = settings().WORKSPACE_SECRETS_KEY
     if not key:
-        # Warn once. lru_cache means this fires on the first credential
-        # write/read after process start, then never again until the
-        # cache is cleared (test fixtures or a process restart).
+        # Reachable only when APP_ENV != "prod" (prod fails closed in
+        # the Settings validator). Mint a fresh per-process key.
         log.warning(
-            "WORKSPACE_SECRETS_KEY not set; encrypting workspace credentials "
-            "under the dev fallback key. Generate a real key for prod with: "
+            "WORKSPACE_SECRETS_KEY not set; using a per-process ephemeral "
+            "key. Encrypted workspace credentials will not survive a "
+            "process restart. Set the env var to persist them. Generate "
+            "one with: "
             "python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
         )
-        return Fernet(_DEV_DEFAULT_KEY)
+        return Fernet(Fernet.generate_key())
     return Fernet(key.encode("ascii"))
 
 

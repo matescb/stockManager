@@ -39,6 +39,14 @@ services:
       UPLOAD_DIR: /data/uploads
       APP_ENV: prod
       CORS_ORIGINS: ${CORS_ORIGINS}
+      # Fernet key for encrypting workspace-level secrets at rest
+      # (provider API keys, scanner license keys). The backend's
+      # Settings validator rejects an empty value when APP_ENV=prod, so
+      # leaving this unset in .env.prod fails the deploy fast (loud
+      # ValidationError on import) instead of silently encrypting under
+      # a fallback key. Generate with:
+      #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      WORKSPACE_SECRETS_KEY: ${WORKSPACE_SECRETS_KEY}
       # Empty in unset / dev — SDK becomes a no-op.
       SENTRY_DSN: ${SENTRY_DSN:-}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.0}
