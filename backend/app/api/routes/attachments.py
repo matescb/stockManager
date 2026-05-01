@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 
+from app.api._helpers import assert_in_workspace
 from app.core.config import settings
 from app.core.deps import (
     CurrentUser,
@@ -20,7 +21,17 @@ from app.core.deps import (
 )
 from app.core.responses import ok
 from app.domain.attachments.models import Attachment
+from app.domain.parts.models import Part
 from app.infra.db import get_db
+
+
+# Registry of (object_type → SQLAlchemy model). Add a new entry here only when
+# a new workspace-owned resource starts accepting attachments. The registry is
+# the cross-tenant write guardrail on /attachments — without it, a caller in
+# workspace B could attach a file to an object_id owned by workspace A.
+_OBJECT_RESOLVERS: dict[str, type] = {
+    "part": Part,
+}
 
 router = APIRouter()
 
@@ -48,6 +59,10 @@ async def upload(
     ws=Depends(get_current_workspace),
     user=Depends(get_current_user),
 ):
+    Model = _OBJECT_RESOLVERS.get(object_type)
+    if Model is None:
+        raise HTTPException(status_code=400, detail=f"unknown object_type: {object_type}")
+    assert_in_workspace(db, Model, object_id, ws.id, label=object_type)
     storage_key = f"{ws.id}/{uuidlib.uuid4()}-{file.filename}"
     abs_path = os.path.join(settings().UPLOAD_DIR, storage_key)
     os.makedirs(os.path.dirname(abs_path), exist_ok=True)
