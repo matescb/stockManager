@@ -94,7 +94,11 @@ def test_scrubber_strips_post_body_on_workspace_switch():
     assert "data" not in out["request"]
 
 
-def test_scrubber_keeps_body_on_unrelated_endpoint():
+def test_scrubber_strips_body_on_unrelated_post_too():
+    """Updated for v2 SEC2-005: the previous URL allow-list (only
+    `/api/workspaces`) leaked credential-bearing bodies on signup,
+    login, invitations, parts-provider, bulk-import. The new posture
+    is method-based default-deny — every non-GET strips its body."""
     event = {
         "request": {
             "method": "POST",
@@ -104,8 +108,8 @@ def test_scrubber_keeps_body_on_unrelated_endpoint():
         },
     }
     out = _scrub_event(event, None)
-    # Non-workspace POSTs keep their body — this is normal triage data.
-    assert out["request"]["data"] == '{"name": "Cap"}'
+    assert "data" not in out["request"]
+    assert out["request"].get("body_redacted") is True
 
 
 def test_scrubber_strips_sensitive_headers():
