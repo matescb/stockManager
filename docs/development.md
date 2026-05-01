@@ -41,13 +41,27 @@ tests, so re-running the suite does not require manual cleanup.
 
 ## Migrations
 
-The schema is managed by Alembic. Each phase adds one revision file under
-`backend/alembic/versions/`:
+The schema is managed by Alembic. Migrations are linear (one chain,
+`0001 → 0002 → … → 0012`) and live under `backend/alembic/versions/`:
 
 | File | What |
 |------|------|
 | `0001_initial.py` | Phase 1–3 schema (auth, parts, storage, stock ledger, lots, projects, BOMs) |
 | `0002_orders.py`  | Phase 4: orders + order_entries |
+| `0003_builds.py`  | Phase 5: builds + reservations |
+| `0004_part_serialized.py` | Phase 9 prep: `Part.serialized` flag |
+| `0005_workspace_invitations.py` | Phase 10: invitations table |
+| `0006_workspace_catalog_token.py` | Public token-gated `/catalog/{token}` route |
+| `0007_workspace_parts_provider.py` | Per-workspace MPN-lookup provider config |
+| `0008_spec_source_part_link_metadata.py` | `CustomField.source` + `Part.linked_*` columns |
+| `0009_workspace_parts_provider_secret.py` | DigiKey OAuth secret column |
+| `0010_workspace_scanner.py` | Scanner backend choice (Scandit vs ZXing) |
+| `0011_parts_mpn_unique.py` | Partial unique index `uq_parts_ws_mpn` |
+| `0012_stock_entries_bag_signature.py` | Bag re-scan recognition |
+
+Migrations stopped corresponding 1:1 with phase docs after `0005` —
+the per-phase doc model retired with Phase 10. Post-`0005` migrations
+are described in `CHANGELOG.md` instead.
 
 The `parts ↔ projects` circular FK is broken with `use_alter=True` on
 `Project.associated_subassembly_part_id`; `0001` emits an explicit
@@ -61,4 +75,7 @@ DATABASE_URL=… .venv/bin/alembic revision --autogenerate -m "description"
 
 Review the generated file (autogenerate is not perfect — especially around
 `use_alter` FKs and constraint names) and rename to a stable
-`NNNN_short_name.py` filename.
+`NNNN_short_name.py` filename. **Don't edit a migration in place once
+it's on `main`** — it has already been auto-deployed to prod, and
+editing breaks the alembic chain on the next `alembic upgrade head`. Add
+a new migration instead.

@@ -6,6 +6,85 @@ follow that model — it's a continuous flow of product work + production
 hardening landing per-commit. Themes are summarised below; `git log` is
 the canonical record.
 
+## 2026-05 — security remediation (PRs #1 – #9)
+
+Bulk close-out of the 2026-04-30 review (`review-2026-04-30/`,
+22 CRITICAL + 38 HIGH findings). PR numbers and merge order:
+
+### Workspace isolation (Tier A)
+- **#1 / #2** Cross-workspace FK leaks closed across attachments,
+  projects, custom_fields, tags, stock, builds, and `parts.default_storage_location_id`. New shared `assert_in_workspace` /
+  `assert_polymorphic_in_workspace` helper in `app/api/_helpers.py` —
+  one canonical replacement for the `db.get(Model, id) + manual
+  workspace_id check` pattern. `CustomFieldIn.source` dropped from
+  the schema (was client-controllable; would let callers forge
+  `source='provider'` rows).
+
+### Hardening batch (Tier B)
+- **#3** Workspace cookie hardened (httponly + secure-in-prod +
+  samesite=lax). Backend container runs as `appuser` uid 1000
+  (gosu + idempotent /data chown on boot). `.dockerignore` at repo
+  root and `web/` drops build context from 263 MB to ~10 MB and
+  stops shipping `.env` into the daemon. `web/Dockerfile.prod` now
+  strips `*.map` from the served image (Vite's "hidden" sourcemaps
+  go to Sentry only). `/api/docs` / `/redoc` / `/openapi.json`
+  disabled in prod. Sentry `before_send` scrubs request body on
+  workspace settings PATCH/switch and strips Cookie /
+  Authorization / X-Workspace-Id headers — frontend has the
+  matching `beforeSend`. All GitHub Actions SHA-pinned with
+  `permissions: contents: read` at workflow scope and
+  `environment: production` on the deploy job.
+
+### Tier C / D — concrete CRITs
+- **#4** Attachment XSS hardening: MIME allow-list (PNG/JPEG/WebP/PDF;
+  SVG explicitly excluded), magic-byte sniff defeats `evil.html as
+  image/png`, declared-vs-actual MIME mismatch rejects, filename
+  sanitised to `[A-Za-z0-9._-]{1,80}` with extension derived from
+  validated MIME, `Content-Disposition: attachment` always forced
+  on download. New `MAX_UPLOAD_BYTES` config (default 10 MiB);
+  upload reads at most `MAX + 1` and 413s the rest. Legacy
+  pre-allow-list attachments fall back to `application/octet-stream`
+  on download.
+- **#5** `/api/sentry-tunnel` rate-limited (`60/min/IP`) and
+  body-capped via streaming read (`SENTRY_TUNNEL_MAX_BYTES` default
+  200 KiB) — was an open ingress that anyone could pump bytes
+  through. DSN allow-list preserved.
+- **#6** `bulk_import_from_scan` per-row savepoints. Each row's
+  writes wrap in `with db.begin_nested():`; an exception inside
+  rolls back only that row. Outer transaction commits surviving
+  savepoints. New `row_failed` outcome in the per-row response.
+  Provider-call exceptions now `sentry_sdk.capture_exception` —
+  preserves row-resilience, makes ops aware.
+- **#7** `default_storage_mandatory` bypass closed — predicate
+  short-circuited on `storage is None`; now rejects both
+  "wrong storage" and "no storage at all" when the part requires
+  it.
+- **#8** Build consume aggregates demand per `(part, lot, storage)`
+  before the per-line check. Two BOM entries claiming 60 each of
+  the same 100-piece reel now fail with `have 100, want 120`
+  before any `-60` row is written.
+
+### Tooling additions
+- `CLAUDE.md` at repo root pins the project's hard invariants
+  (append-only ledger, code-enforced workspace isolation, response
+  envelope shape, content-addressed asset URLs, `bag_signature`,
+  prod-deploy footguns).
+- `.claude/` adds project-scoped Claude Code config: hooks for
+  pre-edit alembic-migration guard + post-edit pytest-collect +
+  end-of-turn `tsc -b`; subagent contracts for the
+  `workspace-isolation-checker` and `alembic-migration-reviewer`
+  reviewer flows; `settings.json` wires it all to the lifecycle
+  events.
+
+### Test footprint
+- 224 backend tests passing (was 151 at the start of the
+  remediation). Major additions: workspace-isolation matrix across
+  every router, attachment allow-list / size-cap / sanitization,
+  Sentry-tunnel rate-limit + body-cap, `default_storage_mandatory`
+  bypass regression, build-consume aggregation regression,
+  bulk-import savepoint regression, security-hardening cookie +
+  Sentry-scrubber pins.
+
 ## Beyond Phase 10 — production deployment, observability, scan-to-import
 
 ### Production live at `parts.matescb.cz`
