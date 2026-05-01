@@ -7,8 +7,10 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import or_, select
 
+from app.api._helpers import assert_in_workspace
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
+from app.domain.parts.models import Part
 from app.domain.projects import bom_import as bom
 from app.domain.projects.models import Project, ProjectEntry
 from app.domain.projects.schemas import (
@@ -133,6 +135,10 @@ def list_entries(project_id: UUID, db: DbSession, ws: CurrentWorkspace):
 @router.post("/{project_id}/entries")
 def add_entry(project_id: UUID, payload: BomEntryIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     p = _get(db, ws.id, project_id)
+    if payload.part_id is not None:
+        assert_in_workspace(db, Part, payload.part_id, ws.id, label="part")
+    if payload.meta_part_id is not None:
+        assert_in_workspace(db, Part, payload.meta_part_id, ws.id, label="part")
     next_idx = (
         db.execute(
             select(ProjectEntry.order_index)
@@ -170,7 +176,12 @@ def patch_entry(project_id: UUID, entry_id: UUID, payload: BomEntryPatch, db: Db
     e = db.get(ProjectEntry, entry_id)
     if not e or e.workspace_id != ws.id or e.project_id != p.id:
         raise HTTPException(status_code=404, detail="entry not found")
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    if data.get("part_id") is not None:
+        assert_in_workspace(db, Part, data["part_id"], ws.id, label="part")
+    if data.get("meta_part_id") is not None:
+        assert_in_workspace(db, Part, data["meta_part_id"], ws.id, label="part")
+    for k, v in data.items():
         setattr(e, k, v)
     e.updated_by = user.id
     db.commit()
