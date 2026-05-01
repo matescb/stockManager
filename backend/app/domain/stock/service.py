@@ -144,14 +144,15 @@ def add_stock(
         if storage.is_full:
             raise StockError("storage location is marked full")
 
-    # mandatory default-storage check (spec §19.2)
-    if (
-        part.default_storage_mandatory
-        and part.default_storage_location_id
-        and storage
-        and storage.id != part.default_storage_location_id
-    ):
-        raise StockError("part requires default storage location")
+    # Mandatory default-storage check (spec §19.2). Previously the chain
+    # short-circuited when `storage` was None — any row that simply omitted
+    # `storage_location_id` would land with NULL storage even on a part
+    # flagged default_storage_mandatory. The bulk-import-from-scan flow
+    # exploited this implicitly by accepting rows with no storage. Now we
+    # also reject the omitted-storage case (BE CRIT-2 / Sec audit).
+    if part.default_storage_mandatory and part.default_storage_location_id:
+        if storage is None or storage.id != part.default_storage_location_id:
+            raise StockError("part requires default storage location")
 
     # Serial-tracking enforcement: when the workspace has serial tracking on
     # AND the part is flagged serialized, every stock addition must produce
