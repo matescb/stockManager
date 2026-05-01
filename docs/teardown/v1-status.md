@@ -11,8 +11,23 @@ Status legend:
 
 - **RESOLVED** — shipped, v2 does not re-flag.
 - **PARTIAL** — shipped, v2 flags a remaining gap (with v2 ID).
+- **PARTIAL → closing in #N** — shipped originally, v2 gap is now in flight on the named PR.
 - **OPEN** — not shipped, v2 confirms still live (with v2 ID).
 - **DEFERRED** — explicitly skipped per user direction (recorded for completeness).
+
+## In-flight PRs (snapshot 2026-05-02)
+
+Three PRs are open against the v2 priority queue. All three have CI green
+and are mergeable. The encryption PR carries a manual ops step.
+
+| # | Branch | What it closes | Ops step? |
+|---:|---|---|---|
+| [#26](https://github.com/matescb/stockManager/pull/26) | `fix/workspace-secrets-key-fail-closed` | `INFRA2-004` + `SEC2-002` (Critical) — finishes Sec HIGH-9 | YES — set `WORKSPACE_SECRETS_KEY` in `/srv/stockmanager/.env.prod` before merge or backend will crash-loop |
+| [#27](https://github.com/matescb/stockManager/pull/27) | `fix/sentry-scrubber-default-deny` | `SEC2-005` (High) — finishes Sec HIGH-1 | none |
+| [#28](https://github.com/matescb/stockManager/pull/28) | `fix/stock-add-lock-and-null-bucket` | `BE2-001` + `BE2-008` + `DB-002` (Critical/High/High) — finishes BE CRIT-1, closes BE-002 | none |
+
+This file lives on PR #26's branch (commit `304c635`) — it lands on
+`main` when #26 is merged.
 
 ## Headline
 
@@ -36,7 +51,7 @@ recommended-next-5 below targets the v1 PARTIAL set first.
 | # | v1 ID | Title | Status | Resolved by | v2 cross-ref |
 |--:|---|---|---|---|---|
 | 1 | Sec CRIT-1 | Attachment XSS via SVG/HTML; served same-origin | RESOLVED | PR #4 (`965ccf6`) | `SEC2-006` / `SEC2-011` extend the same hardening to the **provider-asset** path which still lacks parity. |
-| 2 | BE CRIT-1 | Stock TOCTOU; ledger can go negative | PARTIAL | PR #11 (`4d27f96`) | `BE2-001` `add_stock` skipped the lock; `BE2-008` `release_reservations` skipped; `DB-002` trigger NULL-bucket diverges from service. |
+| 2 | BE CRIT-1 | Stock TOCTOU; ledger can go negative | PARTIAL → closing in #28 | PR #11 (`4d27f96`) | `BE2-001` `add_stock` skipped the lock; `BE2-008` `release_reservations` skipped; `DB-002` trigger NULL-bucket diverges from service. |
 | 3 | Infra CRIT-2 | Backups never tested, never encrypted, never off-site | DEFERRED | — | `INFRA2-003` (Critical). User paused this thread; not related to the "Phase 11 — printable labels" workstream tracked in `MEMORY.md`. The deferred item is the encrypted off-host backups + restore drill. |
 | 4 | Infra CRIT-1 | No rollback path; no pre-deploy `pg_dump` | OPEN | — | `INFRA2-001` (Critical). Recommended PR #4 in the next-5 below splits this from the off-host story. |
 | 5 | BE CRIT-6 | `bulk_import_from_scan` not transactional; swallows provider errors | PARTIAL | PR #6 (`44ff344`) | `BE2-003` flags no wall-clock budget, no idempotency key, no row-count cap, blocking `--workers 1`. |
@@ -62,7 +77,7 @@ recommended-next-5 below targets the v1 PARTIAL set first.
 
 | # | v1 ID | Title | Status | Resolved by | v2 cross-ref |
 |--:|---|---|---|---|---|
-| 1 | Sec HIGH-1 | Sentry `send_default_pii=True`; no `before_send` scrubber | PARTIAL | PR #3 (`ac69fe7`) | `SEC2-005` (High) — scrubber scoped to `/api/workspaces` only; signup, login, invitations, parts-provider, bulk-import all leak. |
+| 1 | Sec HIGH-1 | Sentry `send_default_pii=True`; no `before_send` scrubber | PARTIAL → closing in #27 | PR #3 (`ac69fe7`) | `SEC2-005` (High) — scrubber scoped to `/api/workspaces` only; signup, login, invitations, parts-provider, bulk-import all leak. |
 | 2 | Sec HIGH-2 | Backend root | RESOLVED | PR #3 (`ac69fe7`) | (covered by Infra CRIT-3 row) |
 | 3 | Sec HIGH-3 | Cross-workspace IDOR on attachment / custom-field / tag-link create | RESOLVED | PR #1 (`8ea0a17`) + PR #2 (`f56d84d`) | (not re-flagged for these routers) |
 | 4 | Sec HIGH-4 | `/catalog/{token}` no rate-limit, no rotation log | OPEN | — | `SEC2-008` (Medium) timing + workspace-name leak; `SEC2-019` (Low) rotation cadence. |
@@ -70,7 +85,7 @@ recommended-next-5 below targets the v1 PARTIAL set first.
 | 6 | Sec HIGH-6 | No security headers (CSP/HSTS/XFO/nosniff) | OPEN | — | `SEC2-009` + `SEC2-010` + `INFRA2-007` (Medium/High). |
 | 7 | Sec HIGH-7 | `--forwarded-allow-ips='*'` trusts XFF for rate-limit | OPEN | — | (not explicitly re-flagged in v2; related: `SEC2-017` per-IP bypass). |
 | 8 | Sec HIGH-8 | BOM import unbounded base64 + chardet | OPEN | — | `SEC2-007` + `BE2-006` (High). Schema cap not added. |
-| 9 | Sec HIGH-9 | Provider creds stored plaintext + leak via Sentry | PARTIAL | PR #25 (`ff867d4`) | `INFRA2-004` + `SEC2-002` (both Critical) — `WORKSPACE_SECRETS_KEY` not in prod compose, dev fallback used in prod. **Single highest-leverage gap.** |
+| 9 | Sec HIGH-9 | Provider creds stored plaintext + leak via Sentry | PARTIAL → closing in #26 | PR #25 (`ff867d4`) | `INFRA2-004` + `SEC2-002` (both Critical) — `WORKSPACE_SECRETS_KEY` not in prod compose, dev fallback used in prod. **Was the highest-leverage gap.** |
 | 10 | BE HIGH-1 | N+1 on `GET /api/parts` stock aggregates | OPEN | — | `BE2-005` (High) — `current_quantity` invariant broken in 5 places; bulk roll-up missing. |
 | 11 | BE HIGH-2 | No pagination, no user-controllable limits | RESOLVED | PR #17 (`cafb468`) | `BE2-019` flags activity routes still hard-cap at 200 with no cursor. |
 | 12 | BE HIGH-3 | Ad-hoc transaction handling per route | OPEN | — | `BE2-010` (High) — `get_db()` does not begin/commit/rollback. |
@@ -170,7 +185,7 @@ These are the **PARTIAL** rows above, expanded with what's missing and how big t
 
 Drawn from `docs/teardown/SUMMARY.md` Top-20 ∩ {PARTIAL, OPEN}, ranked by leverage:
 
-### 1. fix(infra): wire `WORKSPACE_SECRETS_KEY` through prod compose; fail-closed in prod; rotate creds
+### 1. fix(infra): wire `WORKSPACE_SECRETS_KEY` through prod compose; fail-closed in prod; rotate creds — ✅ Submitted as [PR #26](https://github.com/matescb/stockManager/pull/26) (CI green, awaiting ops step + merge)
 
 - **v2 IDs**: `INFRA2-004` + `SEC2-002` (both Critical)
 - **v1 IDs**: Sec HIGH-9 (final close)
@@ -184,7 +199,7 @@ Drawn from `docs/teardown/SUMMARY.md` Top-20 ∩ {PARTIAL, OPEN}, ranked by leve
 - **Operational step**: rotate every workspace's Mouser/DigiKey/Scandit credential after deploy (assume the dev key was compromised).
 - **Effort**: ~½ day.
 
-### 2. fix(security): default-deny request bodies in Sentry scrubber + scrub `frame.vars`
+### 2. fix(security): default-deny request bodies in Sentry scrubber + scrub `frame.vars` — ✅ Submitted as [PR #27](https://github.com/matescb/stockManager/pull/27) (CI green, no ops step)
 
 - **v2 IDs**: `SEC2-005` (High)
 - **v1 IDs**: Sec HIGH-1 (final close)
@@ -195,7 +210,7 @@ Drawn from `docs/teardown/SUMMARY.md` Top-20 ∩ {PARTIAL, OPEN}, ranked by leve
   - `backend/tests/test_sentry_scrubber.py` — capture `before_send` events; assert no plaintext in serialized output.
 - **Effort**: ~½ day.
 
-### 3. fix(stock): close `add_stock` + `release_reservations` advisory-lock holes; align trigger NULL bucket with service
+### 3. fix(stock): close `add_stock` + `release_reservations` advisory-lock holes; align trigger NULL bucket with service — ✅ Submitted as [PR #28](https://github.com/matescb/stockManager/pull/28) (CI green, no ops step)
 
 - **v2 IDs**: `BE2-001` + `BE2-008` (Critical/High) + `DB-002` (High) + `BE-002` (v1 follow-up) + `TEST-005` (regression net)
 - **v1 IDs**: BE CRIT-1 (final close), BE-002
@@ -208,7 +223,7 @@ Drawn from `docs/teardown/SUMMARY.md` Top-20 ∩ {PARTIAL, OPEN}, ranked by leve
   - `backend/tests/test_orders_receive_concurrency.py` (new), `test_builds_consume_concurrency.py` (new), `test_stock_ledger.py` (extend with the BE-002 case).
 - **Effort**: ~1 day.
 
-### 4. feat(infra): pre-deploy `pg_dump` + post-deploy health gate; `/api/health` checks DB + uploads volume
+### 4. feat(infra): pre-deploy `pg_dump` + post-deploy health gate; `/api/health` checks DB + uploads volume — ⏳ Pending
 
 - **v2 IDs**: `INFRA2-001` + `INFRA2-002` (both Critical) + `INFRA-001` (v1)
 - **v1 IDs**: Infra CRIT-1 (final close), Infra HIGH-1, Infra HIGH-7, Infra HIGH-8
@@ -221,7 +236,7 @@ Drawn from `docs/teardown/SUMMARY.md` Top-20 ∩ {PARTIAL, OPEN}, ranked by leve
   - `.github/workflows/ci.yml` deploy script — final `for i in 1..30; do curl -fsS https://parts.matescb.cz/api/health && break; sleep 2; done; curl -fsS https://parts.matescb.cz/api/health` step; non-zero exit fails the deploy.
 - **Effort**: ~1 day.
 
-### 5. fix(security): hash session tokens at rest (auth path)
+### 5. fix(security): hash session tokens at rest (auth path) — ⏳ Pending
 
 - **v2 IDs**: `SEC2-003` (High)
 - **v1 IDs**: (not in v1; net-new at `SEC-006` rename in v2 area review)
