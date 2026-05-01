@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import or_, select
 
+from app.api._helpers import assert_in_workspace
 from app.api.routes._activity import build_activity
 from app.core.config import settings
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
@@ -28,6 +29,7 @@ from app.domain.stock.service import (
     stock_summary_for_part,
     total_for_part,
 )
+from app.domain.storage.models import StorageLocation
 from app.domain.workspaces.models import Workspace
 
 router = APIRouter()
@@ -258,6 +260,16 @@ def create_part(payload: PartIn, db: DbSession, ws: CurrentWorkspace, user: Curr
                 },
             )
 
+    # default_storage_location_id is caller-supplied; it must point at a
+    # storage row in this workspace. Without this guard a caller in
+    # workspace B can persist a foreign storage UUID as the default for one
+    # of their parts (existence-oracle + foot-gun for downstream lookups).
+    if payload.default_storage_location_id is not None:
+        assert_in_workspace(
+            db, StorageLocation, payload.default_storage_location_id, ws.id,
+            label="storage location",
+        )
+
     p = Part(
         workspace_id=ws.id,
         part_type=payload.part_type,
@@ -322,6 +334,15 @@ def patch_part(part_id: UUID, payload: PartPatch, db: DbSession, ws: CurrentWork
         and data["description"] != p.description
     ):
         p.description_locally_edited = True
+
+    # default_storage_location_id is caller-supplied via the generic setattr
+    # loop below; must validate it before assignment. None clears the FK,
+    # which is allowed without lookup.
+    if data.get("default_storage_location_id") is not None:
+        assert_in_workspace(
+            db, StorageLocation, data["default_storage_location_id"], ws.id,
+            label="storage location",
+        )
 
     for k, v in data.items():
         setattr(p, k, v)
@@ -824,6 +845,21 @@ def bulk_import_from_scan(
                 "error": "empty MPN",
             })
             continue
+
+        # Per-row workspace validation of caller-supplied storage. Without
+        # this, the Part is committed with `default_storage_location_id`
+        # pointing at a foreign workspace's row (existence-oracle + downstream
+        # foot-gun). Same fix as create_part / patch_part — surface the
+        # failure as `invalid` so the rest of the batch still runs.
+        if row.storage_location_id is not None:
+            sl = db.get(StorageLocation, row.storage_location_id)
+            if sl is None or sl.workspace_id != ws.id:
+                out_rows.append({
+                    "mpn": mpn,
+                    "status": "invalid",
+                    "error": "storage location not found in workspace",
+                })
+                continue
 
         # Bag re-scan recognition — same physical bag scanned again.
         # The first import wrote bag_signature on the resulting

@@ -293,6 +293,21 @@ def consume(
                 )
                 raise BuildError(f"part {line.part_id} is not {kind} for entry {e.id}")
 
+        # Validate caller-supplied lot / storage against the workspace
+        # BEFORE the availability check. current_quantity is ws-filtered so
+        # a foreign lot/storage is masked as "0 available" — that's defense
+        # in depth, not a contract. Validating here keeps the failure mode
+        # explicit and prevents a future refactor of current_quantity from
+        # silently re-opening a write-side cross-workspace FK leak.
+        if line.lot_id is not None:
+            lot = db.get(Lot, line.lot_id)
+            if lot is None or lot.workspace_id != workspace_id:
+                raise BuildError(f"lot {line.lot_id} not in workspace")
+        if line.storage_location_id is not None:
+            sl = db.get(StorageLocation, line.storage_location_id)
+            if sl is None or sl.workspace_id != workspace_id:
+                raise BuildError(f"storage {line.storage_location_id} not in workspace")
+
         # Verify stock available
         avail = current_quantity(
             db,

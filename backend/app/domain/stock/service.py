@@ -227,6 +227,19 @@ def remove_stock(
     part = db.get(Part, payload.part_id)
     if not _belongs(part, workspace_id):
         raise StockError("part not found")
+    # Validate caller-supplied FK targets against the workspace BEFORE the
+    # availability check. current_quantity is workspace-filtered, so a
+    # foreign lot/storage is masked as "0 available" — that's defense in
+    # depth, not a contract. Validating here also keeps the failure mode
+    # explicit ("lot not found", not "insufficient stock").
+    if payload.storage_location_id is not None:
+        storage = db.get(StorageLocation, payload.storage_location_id)
+        if not _belongs(storage, workspace_id):
+            raise StockError("storage location not found")
+    if payload.lot_id is not None:
+        lot = db.get(Lot, payload.lot_id)
+        if not _belongs(lot, workspace_id):
+            raise StockError("lot not found")
     available = current_quantity(
         db,
         workspace_id=workspace_id,
@@ -270,6 +283,22 @@ def move_stock(
         raise StockError("destination is archived")
     if dest.is_full:
         raise StockError("destination is full")
+
+    # Validate caller-supplied source FKs against the workspace. Same
+    # defense-in-depth rationale as remove_stock — current_quantity ws-filter
+    # would mask a foreign source as "0 available" but the failure should
+    # name the real cause.
+    if payload.source_storage_location_id is not None:
+        src_storage = db.get(StorageLocation, payload.source_storage_location_id)
+        if not _belongs(src_storage, workspace_id):
+            raise StockError("source storage not found")
+    if payload.source_lot_id is not None:
+        # If split_lot is true the same id is re-fetched + checked below for
+        # the new-lot copy; this still validates the workspace boundary up
+        # front so a foreign source-lot fails with a clear message.
+        src_lot = db.get(Lot, payload.source_lot_id)
+        if not _belongs(src_lot, workspace_id):
+            raise StockError("source lot not found")
 
     available = current_quantity(
         db,
@@ -364,6 +393,20 @@ def adjust_stock(
     part = db.get(Part, payload.part_id)
     if not _belongs(part, workspace_id):
         raise StockError("part not found")
+    # Active leak fix: adjust writes a positive delta = (actual_quantity - 0)
+    # when the (lot, storage) tuple resolves to 0 stock — which is exactly
+    # what foreign FKs would return through current_quantity's ws filter.
+    # Without this validation, an A-workspace caller can persist a positive
+    # StockEntry in workspace A whose lot_id / storage_location_id point at
+    # workspace B's rows.
+    if payload.storage_location_id is not None:
+        storage = db.get(StorageLocation, payload.storage_location_id)
+        if not _belongs(storage, workspace_id):
+            raise StockError("storage location not found")
+    if payload.lot_id is not None:
+        lot = db.get(Lot, payload.lot_id)
+        if not _belongs(lot, workspace_id):
+            raise StockError("lot not found")
     current = current_quantity(
         db,
         workspace_id=workspace_id,

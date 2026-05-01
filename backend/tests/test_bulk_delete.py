@@ -99,16 +99,16 @@ def test_list_parts_includes_image_url(authed):
     thumbnail without a per-row custom_field fetch."""
     pid = _create(authed, "Resistor", mpn="RC0402JR-070R")
     # Backdoor: write the custom_field directly via the API.
-    authed.post(
+    r = authed.post(
         "/api/custom-fields",
         json={
             "object_type": "part",
             "object_id": pid,
             "key": "image_url",
             "value": "/api/parts/assets/abc/image.png",
-            "source": "manual",
         },
     )
+    assert r.status_code in (200, 201), r.text
     listed = authed.get("/api/parts").json()["data"]
     row = next(r for r in listed if r["id"] == pid)
     assert row["image_url"] == "/api/parts/assets/abc/image.png"
