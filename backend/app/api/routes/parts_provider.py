@@ -20,10 +20,14 @@ class LookupIn(BaseModel):
 
 @router.post("/lookup-mpn")
 def lookup_mpn(payload: LookupIn, ws: CurrentWorkspace):
+    # Decrypt credentials at the boundary (Sec HIGH-9). The columns
+    # store Fernet ciphertext post-0015; provider classes get the
+    # plaintext.
+    from app.core.secrets import decrypt
     provider = make_provider(
         ws.parts_provider,
-        ws.parts_provider_api_key,
-        ws.parts_provider_api_secret,
+        decrypt(ws.parts_provider_api_key),
+        decrypt(ws.parts_provider_api_secret),
     )
     if provider is None:
         return ok({

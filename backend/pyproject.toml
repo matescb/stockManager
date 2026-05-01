@@ -13,6 +13,9 @@ dependencies = [
     "pydantic-settings>=2.4",
     "python-multipart>=0.0.9",
     "argon2-cffi>=23.1",
+    # Symmetric encryption for workspace-level secrets (provider API keys,
+    # scanner license keys). See app/core/secrets.py + alembic 0015.
+    "cryptography>=42.0",
     "itsdangerous>=2.2",
     "email-validator>=2.2",
     "chardet>=5.2",

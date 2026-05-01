@@ -1,0 +1,103 @@
+"""Tests for the workspace-secrets-at-rest encryption (Sec HIGH-9).
+
+Pins:
+  - encrypt(plaintext) -> decrypt round-trips.
+  - encrypt(None) and encrypt("") collapse to None (matches the route's
+    "empty payload clears the credential" semantics).
+  - The DB column carries ciphertext, not plaintext, after a PATCH.
+  - The /current/scanner-license-key endpoint returns the plaintext
+    (decrypted at the boundary) so the SDK can consume it.
+"""
+from __future__ import annotations
+
+import uuid
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.core.secrets import decrypt, encrypt
+from app.main import app
+
+
+def test_encrypt_decrypt_roundtrip():
+    plain = "RC0402JR-070R-fake-key-1234567890"
+    cipher = encrypt(plain)
+    assert cipher is not None
+    assert cipher != plain  # must not store as-is
+    assert decrypt(cipher) == plain
+
+
+def test_encrypt_none_and_empty_collapse_to_none():
+    assert encrypt(None) is None
+    assert encrypt("") is None
+
+
+def test_decrypt_none_and_empty_passthrough():
+    assert decrypt(None) is None
+    assert decrypt("") is None
+
+
+@pytest.fixture
+def admin():
+    c = TestClient(app)
+    c.post(
+        "/api/auth/signup",
+        json={"email": f"u-{uuid.uuid4().hex[:8]}@x.com", "name": "u", "password": "password123"},
+    )
+    return c
+
+
+def test_patch_workspace_stores_credentials_encrypted(admin):
+    """PATCH /api/workspaces/current with a Mouser API key. The DB
+    column must contain a Fernet token, NOT the plaintext."""
+    plaintext = "MOUSER-FAKE-KEY-DEADBEEF-1234567890"
+    r = admin.patch(
+        "/api/workspaces/current",
+        json={"parts_provider": "mouser", "parts_provider_api_key": plaintext},
+    )
+    assert r.status_code == 200, r.text
+    ws_id = admin.get("/api/workspaces/current").json()["data"]["id"]
+
+    # Reach into the DB and verify THIS workspace's stored value
+    # (other tests may have leftover workspaces in the same DB).
+    from app.domain.workspaces.models import Workspace
+    from app.infra.db import SessionLocal
+
+    with SessionLocal() as s:
+        ws = s.get(Workspace, uuid.UUID(ws_id))
+        assert ws is not None
+        stored = ws.parts_provider_api_key
+        assert stored is not None
+        assert stored != plaintext, "stored value must not be the plaintext"
+        # And we can decrypt it back to the original.
+        assert decrypt(stored) == plaintext
+
+
+def test_scanner_license_key_endpoint_returns_decrypted_plaintext(admin):
+    """The /current/scanner-license-key endpoint must decrypt at the
+    boundary so the SDK gets the plaintext it expects."""
+    plaintext = "SCANDIT-FAKE-LICENSE-" + ("X" * 100)
+    r = admin.patch(
+        "/api/workspaces/current",
+        json={"scanner": "scandit", "scanner_license_key": plaintext},
+    )
+    assert r.status_code == 200, r.text
+
+    r = admin.get("/api/workspaces/current/scanner-license-key")
+    assert r.status_code == 200
+    assert r.json()["data"]["license_key"] == plaintext
+
+
+def test_clearing_credential_with_empty_string(admin):
+    """Empty-string payload still clears the column (the existing
+    semantics — encrypt('') returns None)."""
+    admin.patch(
+        "/api/workspaces/current",
+        json={"parts_provider": "mouser", "parts_provider_api_key": "ABC"},
+    )
+    admin.patch(
+        "/api/workspaces/current",
+        json={"parts_provider_api_key": ""},
+    )
+    out = admin.get("/api/workspaces/current").json()["data"]
+    assert out["has_parts_provider_api_key"] is False
