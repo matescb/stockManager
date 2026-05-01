@@ -184,16 +184,6 @@ export default function ScanImport() {
   const handleScan = useCallback(async (s: ScanResult) => {
     const parsed = parseBagCode(s.data);
     const sig = await bagSignature(s.data);
-    // eslint-disable-next-line no-console
-    console.log("[bag scan]", {
-      symbology: s.symbology,
-      raw: s.data,
-      escaped: JSON.stringify(s.data),
-      length: s.data.length,
-      codepoints: Array.from(s.data, c => c.charCodeAt(0)),
-      parsed,
-      signature: sig,
-    });
     const mpn = parsed.mpn.trim();
     if (!mpn) return;
     // Dedup by signature first (the same physical bag re-fires the scan
