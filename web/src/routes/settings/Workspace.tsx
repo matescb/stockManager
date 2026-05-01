@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useConfirm } from "@/components/ConfirmDialog";
 
 type Ws = {
   id: string;
@@ -39,6 +40,7 @@ type Invitation = {
 };
 
 export default function WorkspaceSettings() {
+  const confirm = useConfirm();
   const { me } = useAuth();
   const qc = useQueryClient();
   const { data: cur } = useQuery({ queryKey: ["ws", "current"], queryFn: () => api.get<Ws>("/workspaces/current") });
@@ -121,7 +123,11 @@ export default function WorkspaceSettings() {
   }
 
   async function removeMember(id: string) {
-    if (!confirm("Remove this member from the workspace?")) return;
+    if (!(await confirm({
+      message: "Remove this member from the workspace?",
+      severity: "danger",
+      confirmLabel: "Remove",
+    }))) return;
     setErr(null);
     try {
       await api.delete(`/workspaces/members/${id}`);
@@ -135,7 +141,11 @@ export default function WorkspaceSettings() {
   }
 
   async function revokeInvite(id: string) {
-    if (!confirm("Revoke this invitation?")) return;
+    if (!(await confirm({
+      message: "Revoke this invitation?",
+      severity: "danger",
+      confirmLabel: "Revoke",
+    }))) return;
     await api.delete(`/invitations/${id}`);
     refetchInvites();
     toast.success("Invitation revoked.");
@@ -231,8 +241,12 @@ export default function WorkspaceSettings() {
                 </button>
                 <button
                   className="btn-ghost"
-                  onClick={() => {
-                    if (!confirm("Regenerate the catalog token? The current URL will stop working immediately.")) return;
+                  onClick={async () => {
+                    if (!(await confirm({
+                      message: "Regenerate the catalog token? The current URL will stop working immediately.",
+                      severity: "warning",
+                      confirmLabel: "Regenerate",
+                    }))) return;
                     patch({ regenerate_catalog_token: true, catalog_enabled: true });
                   }}
                   type="button"
@@ -322,7 +336,11 @@ export default function WorkspaceSettings() {
                     className="btn"
                     disabled={providerKeyBusy}
                     onClick={async () => {
-                      if (!confirm("Clear both DigiKey credentials?")) return;
+                      if (!(await confirm({
+                        message: "Clear both DigiKey credentials?",
+                        severity: "danger",
+                        confirmLabel: "Clear",
+                      }))) return;
                       setProviderKeyBusy(true);
                       try {
                         await api.patch("/workspaces/current", {

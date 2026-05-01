@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Trash2, Download, UploadCloud, Paperclip } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
+import { useConfirm } from "@/components/ConfirmDialog";
 
 type Attachment = {
   id: string;
@@ -29,6 +30,7 @@ function humanSize(bytes: number): string {
 }
 
 export default function AttachmentsPanel({ objectType, objectId, canWrite }: Props) {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const queryKey = ["attachments", objectType, objectId];
   const { data, isLoading } = useQuery({
@@ -68,7 +70,7 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
   }
 
   async function doDelete(a: Attachment) {
-    if (!confirm(`Delete ${a.file_name}?`)) return;
+    if (!(await confirm({ message: `Delete ${a.file_name}?`, severity: "danger" }))) return;
     try {
       await api.delete(`/attachments/${a.id}`);
       toast.success("Attachment deleted.");

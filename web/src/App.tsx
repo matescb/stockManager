@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { Navigate, Outlet, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import AppShell from "@/components/layout/AppShell";
+import { ConfirmDialogProvider } from "@/components/ConfirmDialog";
 
 // Auth pages — small, eager-loaded so the login form renders without
 // a fallback flash on first paint.
@@ -125,7 +126,8 @@ const lazyFallback = <div className="p-6 text-muted">Loading…</div>;
 export default function App() {
   return (
     <AuthProvider>
-      <Suspense fallback={lazyFallback}>
+      <ConfirmDialogProvider>
+        <Suspense fallback={lazyFallback}>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
@@ -220,7 +222,8 @@ export default function App() {
             <Route path="*" element={<div className="text-muted">Not found.</div>} />
           </Route>
         </Routes>
-      </Suspense>
+        </Suspense>
+      </ConfirmDialogProvider>
     </AuthProvider>
   );
 }
