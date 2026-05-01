@@ -822,8 +822,20 @@ def bulk_import_from_scan(
     user: CurrentUser,
 ):
     """Materialise scanned bag rows into Parts (+ optional initial stock).
-    Each row is independent — duplicates / no-match outcomes are returned
-    inline rather than aborting the batch."""
+
+    Each row is independent — both at the result-shape level (duplicates /
+    no-match outcomes are returned inline rather than aborting the batch)
+    AND at the database level: every row that does writes is wrapped in a
+    SAVEPOINT (`db.begin_nested()`) so an unexpected exception mid-row
+    (IntegrityError on a unique constraint, asset-fetch network error,
+    anything we didn't anticipate) rolls back ONLY that row's writes
+    without losing the rest of the batch. The outer transaction commits
+    every surviving savepoint at the end. Without this, a single uncaught
+    exception in row N would discard rows 1..N-1's writes — which the
+    operator already saw acknowledged in the per-row outcome list — and
+    the audit trail would diverge from what was actually persisted (Sec
+    CRIT-6).
+    """
     provider = make_provider(
         ws.parts_provider,
         ws.parts_provider_api_key,
@@ -903,10 +915,20 @@ def bulk_import_from_scan(
             })
             continue
 
-        # Provider lookup.
+        # Provider lookup. Provider classes already convert HTTP / parse
+        # errors into `{"found": False, "message": "..."}`, so this
+        # `except Exception` is a belt-and-braces guard against
+        # programming errors. We capture to Sentry instead of silently
+        # swallowing — the row still resolves with `lookup_failed` so
+        # the operator sees something, but ops aren't blind to the bug.
         try:
             lookup = provider.lookup_mpn(mpn)
-        except Exception as exc:  # provider should swallow these — belt+braces
+        except Exception as exc:
+            try:  # local import keeps this path zero-cost when SENTRY_DSN is empty
+                import sentry_sdk
+                sentry_sdk.capture_exception(exc)
+            except Exception:
+                pass
             out_rows.append({
                 "mpn": mpn,
                 "status": "lookup_failed",
@@ -929,113 +951,29 @@ def bulk_import_from_scan(
         if len(name) > 300:
             name = name[:300]
 
-        p = Part(
-            workspace_id=ws.id,
-            part_type="linked",
-            name=name,
-            manufacturer=(r.get("manufacturer") or None),
-            mpn=(r.get("mpn") or mpn),
-            description=(r.get("description") or None),
-            footprint=(r.get("footprint") or None),
-            attrition_percentage=0,
-            attrition_min_quantity=0,
-            default_storage_location_id=row.storage_location_id,
-            default_storage_mandatory=False,
-            serialized=False,
-            linked_provider=provider.name,
-            linked_external_id=(r.get("mpn") or mpn),
-            last_refresh_at=datetime.now(timezone.utc),
-            description_locally_edited=False,
-            created_by=user.id,
-            updated_by=user.id,
-        )
-        db.add(p)
-        db.flush()  # assign p.id for the custom_fields below
-
-        # Materialise spec rows + image/datasheet as `source='provider'`,
-        # mirroring the refresh-from-provider path. Skip empties.
-        for s in (r.get("specs") or []):
-            key = (s.get("key") or "").strip()
-            value = (s.get("value") or "").strip()
-            if not key or not value:
-                continue
-            db.add(CustomField(
-                workspace_id=ws.id,
-                object_type="part",
-                object_id=p.id,
-                key=key,
-                value=value,
-                source="provider",
-                created_by=user.id,
-                updated_by=user.id,
-            ))
-        # Download image + datasheet locally so we don't depend on the
-        # provider's CDN at render time. Failed downloads fall back to
-        # the original URL so the worst case is unchanged from before.
-        if r.get("image_url"):
-            local = fetch_provider_asset(r["image_url"], str(ws.id), "image")
-            db.add(CustomField(
-                workspace_id=ws.id,
-                object_type="part",
-                object_id=p.id,
-                key="image_url",
-                value=local or r["image_url"],
-                source="provider",
-                created_by=user.id,
-                updated_by=user.id,
-            ))
-        if r.get("datasheet_url"):
-            local = fetch_provider_asset(r["datasheet_url"], str(ws.id), "datasheet")
-            db.add(CustomField(
-                workspace_id=ws.id,
-                object_type="part",
-                object_id=p.id,
-                key="datasheet_url",
-                value=local or r["datasheet_url"],
-                source="provider",
-                created_by=user.id,
-                updated_by=user.id,
-            ))
-
-        # Initial stock entry — when the bag's Q field carries a count
-        # (or the operator entered one), the part lands on-hand right
-        # away. Storage location is optional: when present, the entry is
-        # filed there; when absent, it's recorded with no location so the
-        # operator can move/file it later from the Stock view. This
-        # mirrors how a freshly-arrived bag actually exists physically:
-        # you have it in hand, the count is on the label, the bin
-        # assignment can happen later.
-        qty_added = 0
-        stock_error: str | None = None
-        if row.quantity and row.quantity > 0:
-            # Build a Lot row only when the bag carried any traceability
-            # info. Without it, add_stock makes a bare stock entry with
-            # no associated lot — same as the manual stock-add flow.
-            lot_payload: LotInput | None = None
-            if row.lot_name or row.lot_serial:
-                lot_payload = LotInput(
-                    name=row.lot_name,
-                    serial_number=row.lot_serial,
+        # Wrap every write for this row in a savepoint. If anything
+        # below this line raises (IntegrityError on the partial-unique
+        # MPN constraint, asset-fetch raising mid-flight, fetch_provider_asset
+        # crashing, anything else unanticipated) — only this row rolls
+        # back. Other rows in the batch keep their writes.
+        try:
+            with db.begin_nested():
+                p, qty_added, stock_error = _import_one_scan_row(
+                    db, ws=ws, user=user, row=row, mpn=mpn,
+                    provider_name=provider.name, lookup_result=r,
                 )
+        except Exception as exc:
             try:
-                add_stock(
-                    db,
-                    workspace_id=ws.id,
-                    user_id=user.id,
-                    payload=AddStockIn(
-                        part_id=p.id,
-                        quantity=row.quantity,
-                        storage_location_id=row.storage_location_id,
-                        lot=lot_payload,
-                        comments=row.comments,
-                        bag_signature=row.bag_signature,
-                    ),
-                )
-                qty_added = row.quantity
-            except StockError as exc:
-                # Don't fail the whole row — the part is created, but
-                # surface the stock issue so the UI can flag it.
-                stock_error = str(exc)
+                import sentry_sdk
+                sentry_sdk.capture_exception(exc)
+            except Exception:
+                pass
+            out_rows.append({
+                "mpn": mpn,
+                "status": "row_failed",
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+            continue
 
         out_rows.append({
             "mpn": mpn,
@@ -1052,8 +990,139 @@ def bulk_import_from_scan(
         "bag_rescan":     sum(1 for r in out_rows if r["status"] == "bag_rescan"),
         "lookup_failed":  sum(1 for r in out_rows if r["status"] == "lookup_failed"),
         "invalid":        sum(1 for r in out_rows if r["status"] == "invalid"),
+        "row_failed":     sum(1 for r in out_rows if r["status"] == "row_failed"),
     }
     return ok({"rows": out_rows, "summary": summary, "provider": provider.name})
+
+
+def _import_one_scan_row(
+    db,
+    *,
+    ws,
+    user,
+    row,
+    mpn: str,
+    provider_name: str,
+    lookup_result: dict,
+):
+    """Write the Part + provider custom_fields + initial stock for a
+    single bulk-import row, INSIDE a caller-managed savepoint. Returns
+    (part, qty_added, stock_error). Raises on any unanticipated DB
+    failure — the caller's `with db.begin_nested():` rolls back this
+    row only.
+    """
+    r = lookup_result
+    name = (r.get("description") or "").strip() or mpn
+    if len(name) > 300:
+        name = name[:300]
+
+    p = Part(
+        workspace_id=ws.id,
+        part_type="linked",
+        name=name,
+        manufacturer=(r.get("manufacturer") or None),
+        mpn=(r.get("mpn") or mpn),
+        description=(r.get("description") or None),
+        footprint=(r.get("footprint") or None),
+        attrition_percentage=0,
+        attrition_min_quantity=0,
+        default_storage_location_id=row.storage_location_id,
+        default_storage_mandatory=False,
+        serialized=False,
+        linked_provider=provider_name,
+        linked_external_id=(r.get("mpn") or mpn),
+        last_refresh_at=datetime.now(timezone.utc),
+        description_locally_edited=False,
+        created_by=user.id,
+        updated_by=user.id,
+    )
+    db.add(p)
+    db.flush()  # assign p.id for the custom_fields below
+
+    # Materialise spec rows + image/datasheet as `source='provider'`,
+    # mirroring the refresh-from-provider path. Skip empties.
+    for s in (r.get("specs") or []):
+        key = (s.get("key") or "").strip()
+        value = (s.get("value") or "").strip()
+        if not key or not value:
+            continue
+        db.add(CustomField(
+            workspace_id=ws.id,
+            object_type="part",
+            object_id=p.id,
+            key=key,
+            value=value,
+            source="provider",
+            created_by=user.id,
+            updated_by=user.id,
+        ))
+    # Download image + datasheet locally so we don't depend on the
+    # provider's CDN at render time. Failed downloads fall back to
+    # the original URL so the worst case is unchanged from before.
+    if r.get("image_url"):
+        local = fetch_provider_asset(r["image_url"], str(ws.id), "image")
+        db.add(CustomField(
+            workspace_id=ws.id,
+            object_type="part",
+            object_id=p.id,
+            key="image_url",
+            value=local or r["image_url"],
+            source="provider",
+            created_by=user.id,
+            updated_by=user.id,
+        ))
+    if r.get("datasheet_url"):
+        local = fetch_provider_asset(r["datasheet_url"], str(ws.id), "datasheet")
+        db.add(CustomField(
+            workspace_id=ws.id,
+            object_type="part",
+            object_id=p.id,
+            key="datasheet_url",
+            value=local or r["datasheet_url"],
+            source="provider",
+            created_by=user.id,
+            updated_by=user.id,
+        ))
+
+    # Initial stock entry — when the bag's Q field carries a count
+    # (or the operator entered one), the part lands on-hand right
+    # away. Storage location is optional: when present, the entry is
+    # filed there; when absent, it's recorded with no location so the
+    # operator can move/file it later from the Stock view.
+    qty_added = 0
+    stock_error: str | None = None
+    if row.quantity and row.quantity > 0:
+        lot_payload: LotInput | None = None
+        if row.lot_name or row.lot_serial:
+            lot_payload = LotInput(
+                name=row.lot_name,
+                serial_number=row.lot_serial,
+            )
+        try:
+            add_stock(
+                db,
+                workspace_id=ws.id,
+                user_id=user.id,
+                payload=AddStockIn(
+                    part_id=p.id,
+                    quantity=row.quantity,
+                    storage_location_id=row.storage_location_id,
+                    lot=lot_payload,
+                    comments=row.comments,
+                    bag_signature=row.bag_signature,
+                ),
+            )
+            qty_added = row.quantity
+        except StockError as exc:
+            # Don't fail the whole row — the part is created, but surface
+            # the stock issue so the UI can flag it. StockError is
+            # caught here (inside the savepoint) rather than letting it
+            # bubble out, because we don't want a stock-add failure to
+            # roll back the Part + provider specs the operator already
+            # sees as "created" in the response.
+            stock_error = str(exc)
+
+    return p, qty_added, stock_error
 
 
 class QuickRemoveBagIn(BaseModel):
