@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
 
 from app.api.routes._activity import build_activity
-from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
+from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
 from app.core.responses import ok
 from app.domain.orders.models import Order, OrderEntry
 from app.domain.stock.models import StockEntry
@@ -166,7 +166,7 @@ def patch_order(order_id: UUID, payload: OrderPatchIn, db: DbSession, ws: Curren
     return ok(_serialize(o, totals=_totals(entries)))
 
 
-@router.post("/{order_id}/archive")
+@router.post("/{order_id}/archive", dependencies=[Depends(require_role("admin"))])
 def archive_order(order_id: UUID, db: DbSession, ws: CurrentWorkspace):
     o = _get_order(db, ws.id, order_id)
     o.archived_at = datetime.now(timezone.utc)
@@ -174,7 +174,7 @@ def archive_order(order_id: UUID, db: DbSession, ws: CurrentWorkspace):
     return ok(None, "archived")
 
 
-@router.post("/{order_id}/restore")
+@router.post("/{order_id}/restore", dependencies=[Depends(require_role("admin"))])
 def restore_order(order_id: UUID, db: DbSession, ws: CurrentWorkspace):
     o = _get_order(db, ws.id, order_id)
     o.archived_at = None

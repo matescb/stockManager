@@ -3,12 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import or_, select
 
 from app.api._helpers import assert_in_workspace
-from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
+from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
 from app.core.responses import ok
 from app.domain.parts.models import Part
 from app.domain.projects import bom_import as bom
@@ -110,7 +110,7 @@ def patch_project(project_id: UUID, payload: ProjectPatchIn, db: DbSession, ws: 
     return ok(_serialize(p))
 
 
-@router.post("/{project_id}/archive")
+@router.post("/{project_id}/archive", dependencies=[Depends(require_role("admin"))])
 def archive_project(project_id: UUID, db: DbSession, ws: CurrentWorkspace):
     p = _get(db, ws.id, project_id)
     p.archived_at = datetime.now(timezone.utc)
@@ -118,7 +118,7 @@ def archive_project(project_id: UUID, db: DbSession, ws: CurrentWorkspace):
     return ok(None, "archived")
 
 
-@router.post("/{project_id}/restore")
+@router.post("/{project_id}/restore", dependencies=[Depends(require_role("admin"))])
 def restore_project(project_id: UUID, db: DbSession, ws: CurrentWorkspace):
     p = _get(db, ws.id, project_id)
     p.archived_at = None

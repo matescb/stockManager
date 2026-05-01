@@ -6,7 +6,7 @@ from uuid import UUID
 
 import os
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import or_, select
@@ -14,7 +14,7 @@ from sqlalchemy import or_, select
 from app.api._helpers import assert_in_workspace
 from app.api.routes._activity import build_activity
 from app.core.config import settings
-from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
+from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
 from app.core.responses import ok
 from app.core.secrets import decrypt
 from app.domain.custom_fields.models import CustomField
@@ -379,7 +379,9 @@ def patch_part(part_id: UUID, payload: PartPatch, db: DbSession, ws: CurrentWork
     )
 
 
-@router.post("/{part_id}/archive")
+# Archive/restore are admin+ — they're workspace-management ops, not
+# regular operational tasks. Members get a 403 if they try (Arch HIGH-3).
+@router.post("/{part_id}/archive", dependencies=[Depends(require_role("admin"))])
 def archive_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
     p = _get_part(db, ws.id, part_id)
     p.archived_at = datetime.now(timezone.utc)
@@ -387,7 +389,7 @@ def archive_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
     return ok(None, "archived")
 
 
-@router.post("/{part_id}/restore")
+@router.post("/{part_id}/restore", dependencies=[Depends(require_role("admin"))])
 def restore_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
     p = _get_part(db, ws.id, part_id)
     p.archived_at = None
@@ -403,7 +405,7 @@ class BulkDeleteIn(BaseModel):
     part_ids: list[UUID] = Field(min_length=1, max_length=100)
 
 
-@router.post("/bulk-delete")
+@router.post("/bulk-delete", dependencies=[Depends(require_role("admin"))])
 def bulk_delete_parts(payload: BulkDeleteIn, db: DbSession, ws: CurrentWorkspace):
     """Soft-delete (archive) the listed parts in one shot. Hard-deleting
     would foreign-key-cascade into stock_entries / lots / order_entries
