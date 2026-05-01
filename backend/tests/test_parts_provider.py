@@ -12,7 +12,7 @@ def _signup(c: TestClient, email: str | None = None) -> str:
     email = email or f"u-{uuid.uuid4().hex[:8]}@x.com"
     r = c.post(
         "/api/auth/signup",
-        json={"email": email, "name": "u", "password": "password123"},
+        json={"email": email, "name": "u", "password": "TestPass-2026-Stronk"},
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]["workspace_id"]
@@ -255,7 +255,7 @@ def test_lookup_requires_member_role(authed):
     viewer = TestClient(app)
     viewer.post(
         "/api/auth/signup",
-        json={"email": invitee_email, "name": "Vee", "password": "password123"},
+        json={"email": invitee_email, "name": "Vee", "password": "TestPass-2026-Stronk"},
     )
     viewer.post("/api/invitations/accept", json={"token": token})
     # Switch viewer to the shared workspace

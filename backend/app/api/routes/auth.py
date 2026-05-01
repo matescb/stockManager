@@ -6,9 +6,11 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.core.auth import (
+    WeakPasswordError,
     create_session_row,
     hash_password,
     revoke_session,
+    validate_password_strength,
     verify_password,
 )
 from app.core.config import settings
@@ -60,6 +62,10 @@ def _set_session_cookie(response: Response, token: str) -> None:
 @router.post("/signup")
 @limiter.limit("5/hour")
 def signup(request: Request, payload: SignupIn, response: Response, db: DbSession):
+    try:
+        validate_password_strength(payload.password)
+    except WeakPasswordError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     existing = db.query(User).filter(User.email == payload.email).first()
     if existing:
         log.warning("signup conflict", extra={"email": payload.email})

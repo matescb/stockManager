@@ -84,7 +84,7 @@ def client():
 
 def _signup(client: TestClient, email: str | None = None, name: str = "Tester"):
     email = email or f"u-{uuid.uuid4().hex[:8]}@example.com"
-    r = client.post("/api/auth/signup", json={"email": email, "name": name, "password": "password123"})
+    r = client.post("/api/auth/signup", json={"email": email, "name": name, "password": "TestPass-2026-Stronk"})
     assert r.status_code == 200, r.text
     return r
 

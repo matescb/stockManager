@@ -11,7 +11,7 @@ from app.main import app
 def _signup(c: TestClient, email: str | None = None, name: str = "Tester"):
     email = email or f"u-{uuid.uuid4().hex[:8]}@x.com"
     r = c.post(
-        "/api/auth/signup", json={"email": email, "name": name, "password": "password123"}
+        "/api/auth/signup", json={"email": email, "name": name, "password": "TestPass-2026-Stronk"}
     )
     assert r.status_code == 200, r.text
 

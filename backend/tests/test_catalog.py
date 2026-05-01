@@ -12,7 +12,7 @@ def _signup(c: TestClient, email: str | None = None) -> tuple[str, str]:
     email = email or f"u-{uuid.uuid4().hex[:8]}@x.com"
     r = c.post(
         "/api/auth/signup",
-        json={"email": email, "name": "u", "password": "password123"},
+        json={"email": email, "name": "u", "password": "TestPass-2026-Stronk"},
     )
     assert r.status_code == 200, r.text
     return email, r.json()["data"]["workspace_id"]
@@ -66,7 +66,7 @@ def test_member_cannot_toggle_catalog(engine):
     member = TestClient(app)
     member.post(
         "/api/auth/signup",
-        json={"email": invitee_email, "name": "M", "password": "password123"},
+        json={"email": invitee_email, "name": "M", "password": "TestPass-2026-Stronk"},
     )
     member.post("/api/invitations/accept", json={"token": inv["token"]})
     me = member.get("/api/auth/me").json()["data"]
@@ -147,7 +147,7 @@ def test_html_endpoint_renders_workspace_name_and_part(engine):
         json={
             "email": email,
             "name": "Widgeteer",
-            "password": "password123",
+            "password": "TestPass-2026-Stronk",
             "workspace_name": "Acme Widgets",
         },
     )

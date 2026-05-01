@@ -24,7 +24,7 @@ def _signup(c: TestClient, email: str | None = None) -> str:
     email = email or f"u-{uuid.uuid4().hex[:8]}@x.com"
     r = c.post(
         "/api/auth/signup",
-        json={"email": email, "name": "u", "password": "password123"},
+        json={"email": email, "name": "u", "password": "TestPass-2026-Stronk"},
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]["workspace_id"]

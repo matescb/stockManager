@@ -12,7 +12,7 @@ def _signup(c, email=None):
     email = email or f"u-{uuid.uuid4().hex[:8]}@x.com"
     r = c.post(
         "/api/auth/signup",
-        json={"email": email, "name": "u", "password": "password123"},
+        json={"email": email, "name": "u", "password": "TestPass-2026-Stronk"},
     )
     assert r.status_code == 200, r.text
     return email, r.json()["data"]["workspace_id"]
@@ -44,7 +44,7 @@ def test_admin_creates_invitation_user_accepts(admin):
     invitee = TestClient(app)
     invitee.post(
         "/api/auth/signup",
-        json={"email": invitee_email, "name": "Newbie", "password": "password123"},
+        json={"email": invitee_email, "name": "Newbie", "password": "TestPass-2026-Stronk"},
     )
 
     # Accept
@@ -74,7 +74,7 @@ def test_non_admin_cannot_invite():
     invitee = TestClient(app)
     invitee.post(
         "/api/auth/signup",
-        json={"email": invitee_email, "name": "M", "password": "password123"},
+        json={"email": invitee_email, "name": "M", "password": "TestPass-2026-Stronk"},
     )
     invitee.post("/api/invitations/accept", json={"token": inv["token"]})
     # Switch to the shared workspace
@@ -98,7 +98,7 @@ def test_invitation_email_must_match(admin):
     other = TestClient(app)
     other.post(
         "/api/auth/signup",
-        json={"email": f"someone-else-{uuid.uuid4().hex[:6]}@x.com", "name": "Other", "password": "password123"},
+        json={"email": f"someone-else-{uuid.uuid4().hex[:6]}@x.com", "name": "Other", "password": "TestPass-2026-Stronk"},
     )
     r = other.post("/api/invitations/accept", json={"token": inv["token"]})
     assert r.status_code == 403
@@ -113,7 +113,7 @@ def test_revoke_invitation_blocks_acceptance(admin):
     invitee = TestClient(app)
     invitee.post(
         "/api/auth/signup",
-        json={"email": invitee_email, "name": "x", "password": "password123"},
+        json={"email": invitee_email, "name": "x", "password": "TestPass-2026-Stronk"},
     )
     r = invitee.post("/api/invitations/accept", json={"token": inv["token"]})
     assert r.status_code == 400
@@ -132,7 +132,7 @@ def test_cannot_already_member(admin):
     invitee = TestClient(app)
     invitee.post(
         "/api/auth/signup",
-        json={"email": invitee_email, "name": "x", "password": "password123"},
+        json={"email": invitee_email, "name": "x", "password": "TestPass-2026-Stronk"},
     )
     invitee.post("/api/invitations/accept", json={"token": inv["token"]})
     # Now try to invite the same email again — should 409
@@ -193,7 +193,7 @@ def test_accept_with_wrong_token_returns_404(admin):
     invitee = TestClient(app)
     invitee.post(
         "/api/auth/signup",
-        json={"email": invitee_email, "name": "x", "password": "password123"},
+        json={"email": invitee_email, "name": "x", "password": "TestPass-2026-Stronk"},
     )
 
     # Submit a wrong token — must not match by hash, must 404.
