@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
 from app.core.responses import ok
+from app.core.secrets import decrypt, encrypt
 from app.domain.users.models import User
 from app.domain.workspaces.models import Workspace, WorkspaceMember
 
@@ -87,7 +88,9 @@ def current_scanner_license_key(ws: CurrentWorkspace):
     serializer only emits has_scanner_license_key. Any authenticated
     workspace member already has access; this just keeps the value out of
     response bodies that are fetched on every page."""
-    return ok({"license_key": ws.scanner_license_key or ""})
+    # Decrypt at the boundary (Sec HIGH-9). Column stores Fernet
+    # ciphertext post-0016; SDK gets plaintext.
+    return ok({"license_key": decrypt(ws.scanner_license_key) or ""})
 
 
 class WorkspacePatch(BaseModel):
@@ -121,15 +124,17 @@ def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace):
 
     # parts_provider_api_key / _api_secret need special handling so ''
     # actually clears (rather than being stored as an empty string).
+    # All three credentials are encrypted at rest via app.core.secrets
+    # (Sec HIGH-9). Empty string still clears (encrypt('') → None).
     if "parts_provider_api_key" in data:
         new_key = data.pop("parts_provider_api_key")
-        ws.parts_provider_api_key = new_key if new_key else None
+        ws.parts_provider_api_key = encrypt(new_key) if new_key else None
     if "parts_provider_api_secret" in data:
         new_secret = data.pop("parts_provider_api_secret")
-        ws.parts_provider_api_secret = new_secret if new_secret else None
+        ws.parts_provider_api_secret = encrypt(new_secret) if new_secret else None
     if "scanner_license_key" in data:
         new_license = data.pop("scanner_license_key")
-        ws.scanner_license_key = new_license if new_license else None
+        ws.scanner_license_key = encrypt(new_license) if new_license else None
 
     for k, v in data.items():
         setattr(ws, k, v)
