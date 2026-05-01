@@ -335,12 +335,110 @@ def test_bulk_import_mixed_batch_returns_per_row_status(authed, monkeypatch):
         "bag_rescan": 0,
         "lookup_failed": 1,
         "invalid": 0,
+        "row_failed": 0,
     }
 
 
 # ---------------------------------------------------------------------------
 # Top-level error paths
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Per-row savepoints (Sec CRIT-6) — a single row's unanticipated write
+# failure must not roll back the rest of the batch.
+# ---------------------------------------------------------------------------
+
+
+def test_bulk_import_row_failure_does_not_roll_back_other_rows(authed, monkeypatch):
+    """Force the second row's write step to raise something OTHER than
+    StockError (which is caught inline), then verify rows 1 and 3
+    persisted while row 2 was savepoint-rolled-back."""
+    monkeypatch.setattr(
+        "app.domain.parts.providers.mouser._post_mouser",
+        lambda url, payload: _stub_mouser_response(
+            mpn=payload["SearchByPartRequest"]["mouserPartNumber"]
+        ),
+    )
+
+    # Trigger a mid-row failure on row 2. We patch the per-row helper
+    # to raise on its second invocation — easier than crafting a
+    # legitimate IntegrityError mid-flight, and exercises the same
+    # savepoint-rollback path.
+    import app.api.routes.parts as parts_mod
+
+    real_helper = parts_mod._import_one_scan_row
+    call_count = {"n": 0}
+
+    def flaky_helper(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            raise RuntimeError("simulated mid-row crash")
+        return real_helper(*args, **kwargs)
+
+    monkeypatch.setattr(parts_mod, "_import_one_scan_row", flaky_helper)
+
+    r = authed.post(
+        "/api/parts/bulk-import-from-scan",
+        json={
+            "rows": [
+                {"mpn": "RC0402JR-070R", "quantity": 1},
+                {"mpn": "RC0402JR-070K", "quantity": 1},
+                {"mpn": "RC0402JR-070M", "quantity": 1},
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()["data"]
+    statuses = [row["status"] for row in body["rows"]]
+    assert statuses == ["created", "row_failed", "created"]
+    assert body["summary"]["row_failed"] == 1
+    assert body["summary"]["created"] == 2
+
+    # Surviving rows must actually be in the DB — not just claimed
+    # in the response.
+    listed = authed.get("/api/parts").json()["data"]
+    mpns = {p["mpn"] for p in listed}
+    assert "RC0402JR-070R" in mpns
+    assert "RC0402JR-070M" in mpns
+    # Row 2's MPN must NOT be in the DB (savepoint rolled back).
+    assert "RC0402JR-070K" not in mpns
+
+
+def test_bulk_import_provider_exception_does_not_abort_batch(authed, monkeypatch):
+    """Pre-existing behaviour: a provider exception on one row marks
+    that row lookup_failed, the rest of the batch still processes.
+    Pinned here to prevent regression from the savepoint refactor."""
+    call_count = {"n": 0}
+
+    def flaky_post(url, payload):
+        call_count["n"] += 1
+        mpn = payload["SearchByPartRequest"]["mouserPartNumber"]
+        if call_count["n"] == 2:
+            raise RuntimeError("simulated provider crash")
+        return _stub_mouser_response(mpn=mpn)
+
+    monkeypatch.setattr("app.domain.parts.providers.mouser._post_mouser", flaky_post)
+
+    r = authed.post(
+        "/api/parts/bulk-import-from-scan",
+        json={
+            "rows": [
+                {"mpn": "RC0402JR-070R"},
+                {"mpn": "RC0402JR-070K"},
+                {"mpn": "RC0402JR-070M"},
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+    statuses = [row["status"] for row in r.json()["data"]["rows"]]
+    # Mouser provider catches RuntimeError internally and returns
+    # `{"found": False, "message": "..."}`, so the row resolves as
+    # `lookup_failed` rather than `row_failed`. Either way, the
+    # surrounding batch keeps processing — that's the load-bearing pin.
+    assert statuses[0] == "created"
+    assert statuses[1] == "lookup_failed"
+    assert statuses[2] == "created"
 
 
 def test_bulk_import_fails_when_no_provider_configured():
