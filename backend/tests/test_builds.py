@@ -215,6 +215,104 @@ def test_substitute_consumption(authed):
     assert r.status_code == 200, r.text
 
 
+def test_consume_rejects_oversubscribed_substitute_across_entries(authed):
+    """BE CRIT-3: two BOM entries each claiming 60 from the same 100-piece
+    reel of a substitute. Pre-fix, each line passed `current_quantity >=
+    line.quantity` independently and the lot ended up at -20. The pre-pass
+    aggregation now sums demand per (part, lot, storage) tuple before any
+    write and rejects the combined 120 > 100."""
+    c = authed
+    main = _create_part(c, "R1k 0402")
+    alt = _create_part(c, "R1k 0603")
+    storage = _create_storage(c)
+    _add_stock(c, main, 200, storage)  # plenty of main, not what we're testing
+    # Add 100 of alt and grab the lot id directly from the response.
+    r = c.post(
+        "/api/stock/add",
+        json={"part_id": alt, "quantity": 100, "storage_location_id": storage, "lot": {"name": "ALT-LOT-1"}},
+    )
+    assert r.status_code in (200, 201), r.text
+    alt_lot_id = r.json()["data"]["lot_id"]
+
+    # alt is bidirectional substitute for main.
+    r = c.post(f"/api/parts/{main}/substitutes", json={"substitute_part_id": alt})
+    assert r.status_code == 200, r.text
+
+    # Two entries in the BOM, each demanding 60 of `main` per build (=60 with quantity=1).
+    proj_id = _create_project_with_bom(
+        c, "PCB-CRIT3",
+        [{"part_id": main, "quantity": 60}, {"part_id": main, "quantity": 60}],
+    )
+    r = c.post("/api/builds", json={"name": "B-X", "project_id": proj_id, "quantity": 1})
+    bid = r.json()["data"]["id"]
+    entries = c.get(f"/api/projects/{proj_id}/entries").json()["data"]
+    e1, e2 = entries[0], entries[1]
+
+    # Both lines target the SAME (part=alt, lot=alt_lot_id, storage=storage)
+    # tuple. Combined demand 120 > 100 available — must reject up front.
+    r = c.post(
+        f"/api/builds/{bid}/consume",
+        json={
+            "lines": [
+                {"project_entry_id": e1["id"], "part_id": alt, "lot_id": alt_lot_id, "storage_location_id": storage, "quantity": 60},
+                {"project_entry_id": e2["id"], "part_id": alt, "lot_id": alt_lot_id, "storage_location_id": storage, "quantity": 60},
+            ]
+        },
+    )
+    assert r.status_code == 400, r.text
+    msg = r.json()["status"]["message"]
+    assert "insufficient stock" in msg
+    assert "120" in msg, msg
+    assert "100" in msg, msg
+
+    # And the build must NOT have written any consume rows. Stock for the
+    # substitute lot should still be the full 100.
+    from app.domain.stock.models import StockEntry
+    from app.infra.db import SessionLocal
+    from sqlalchemy import select, func
+    with SessionLocal() as s:
+        total = s.execute(
+            select(func.coalesce(func.sum(StockEntry.quantity_delta), 0))
+            .where(StockEntry.lot_id == uuid.UUID(alt_lot_id))
+            .where(StockEntry.status == "on_hand")
+        ).scalar_one()
+        assert int(total) == 100
+
+
+def test_consume_allows_aggregated_demand_within_stock(authed):
+    """The other side of the aggregation gate: two entries each claiming
+    30 from the same lot of 100 → combined 60 < 100, must be accepted."""
+    c = authed
+    main = _create_part(c, "R1k 0402")
+    alt = _create_part(c, "R1k 0603")
+    storage = _create_storage(c)
+    r = c.post(
+        "/api/stock/add",
+        json={"part_id": alt, "quantity": 100, "storage_location_id": storage, "lot": {"name": "ALT-LOT-2"}},
+    )
+    alt_lot_id = r.json()["data"]["lot_id"]
+    c.post(f"/api/parts/{main}/substitutes", json={"substitute_part_id": alt})
+
+    proj_id = _create_project_with_bom(
+        c, "PCB-OK",
+        [{"part_id": main, "quantity": 30}, {"part_id": main, "quantity": 30}],
+    )
+    r = c.post("/api/builds", json={"name": "B-OK", "project_id": proj_id, "quantity": 1})
+    bid = r.json()["data"]["id"]
+    entries = c.get(f"/api/projects/{proj_id}/entries").json()["data"]
+
+    r = c.post(
+        f"/api/builds/{bid}/consume",
+        json={
+            "lines": [
+                {"project_entry_id": entries[0]["id"], "part_id": alt, "lot_id": alt_lot_id, "storage_location_id": storage, "quantity": 30},
+                {"project_entry_id": entries[1]["id"], "part_id": alt, "lot_id": alt_lot_id, "storage_location_id": storage, "quantity": 30},
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+
+
 def test_non_substitute_rejected(authed):
     c = authed
     main = _create_part(c, "R1k")

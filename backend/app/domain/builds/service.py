@@ -265,6 +265,30 @@ def consume(
         .all()
     }
 
+    # Pre-pass: aggregate demand per exact (part_id, lot_id, storage_location_id)
+    # tuple before any per-line write. Without this, two BOM entries can each
+    # claim 60 of the same 100-piece reel and each pass `current_quantity >=
+    # line.quantity` independently — both lines write -60 and the lot ends up
+    # at -20 (BE CRIT-3). Aggregating first means every tuple's total demand
+    # is checked once, against the same per-tuple availability the per-line
+    # path would have used.
+    demand_by_tuple: dict[tuple[UUID, UUID | None, UUID | None], int] = {}
+    for line in payload.lines:
+        key = (line.part_id, line.lot_id, line.storage_location_id)
+        demand_by_tuple[key] = demand_by_tuple.get(key, 0) + line.quantity
+    for (part_id, lot_id, storage_location_id), total_demand in demand_by_tuple.items():
+        avail = current_quantity(
+            db,
+            workspace_id=workspace_id,
+            part_id=part_id,
+            lot_id=lot_id,
+            storage_location_id=storage_location_id,
+        )
+        if total_demand > avail:
+            raise BuildError(
+                f"insufficient stock for part {part_id} (have {avail}, want {total_demand})"
+            )
+
     # Sum requested quantity per (entry, part) so we can validate against required
     requested_by_entry: dict[UUID, int] = {}
     consumed_entries: list[StockEntry] = []
