@@ -14,6 +14,14 @@ class Settings(BaseSettings):
     SESSION_COOKIE_NAME: str = "stockmgr_session"
     SESSION_LIFETIME_DAYS: int = 30
     UPLOAD_DIR: str = "/data/uploads"
+    # Per-upload size cap. nginx (in web container) and Apache (in front)
+    # both cap at 25 MiB, but FastAPI must enforce its own cap so a
+    # direct hit on the backend port — or any future change to those
+    # proxy limits — doesn't let a single request consume unbounded
+    # memory. 10 MiB is plenty for part photos and most datasheets;
+    # bigger PDFs that fail with 413 are the operator's signal to
+    # compress or to bump this number.
+    MAX_UPLOAD_BYTES: int = 10 * 1024 * 1024
     CORS_ORIGINS: str = "http://localhost:5173"
     # Sentry. Empty string → SDK is not initialised (no events sent, no
     # network egress, no performance overhead). Populate in .env.prod
