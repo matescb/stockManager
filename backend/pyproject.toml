@@ -60,6 +60,7 @@ testpaths = ["tests"]
 # TEST-007 / issue #109.
 markers = [
     "slow: long-running test (excluded by default; run with `-m slow`)",
+    "real_db: test needs independent committed DB connections instead of savepoint isolation",
 ]
 addopts = "-m 'not slow'"
 

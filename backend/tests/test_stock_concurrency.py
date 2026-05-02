@@ -31,6 +31,9 @@ from tests._factories import (
 )
 
 
+pytestmark = pytest.mark.real_db
+
+
 @pytest.fixture
 def authed():
     c = TestClient(app)

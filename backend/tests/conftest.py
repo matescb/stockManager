@@ -109,8 +109,8 @@ def engine():
     return eng
 
 
-@pytest.fixture
-def db(engine, monkeypatch):
+@pytest.fixture(autouse=True)
+def db(request, engine, monkeypatch):
     """Per-test transactional session with savepoint rollback (TEST-009).
 
     Canonical SQLAlchemy 2.x "Joining a Session into an External
@@ -140,6 +140,22 @@ def db(engine, monkeypatch):
     `client` / `authed_client` see the same rolled-back state, closing
     the foot-gun where HTTP tests inherited cross-test state.
     """
+    if request.node.get_closest_marker("real_db"):
+        _reset_schema(engine)
+        _alembic_upgrade_head(settings().DATABASE_URL)
+        RealSession = sessionmaker(
+            bind=engine,
+            autoflush=False,
+            expire_on_commit=False,
+            future=True,
+        )
+        real_session = RealSession()
+        try:
+            yield real_session
+        finally:
+            real_session.close()
+        return
+
     connection = engine.connect()
     transaction = connection.begin()
     TestSession = sessionmaker(
