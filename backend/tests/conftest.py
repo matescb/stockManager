@@ -70,7 +70,12 @@ def _reset_schema(eng) -> None:
 def _alembic_upgrade_head(database_url: str) -> None:
     """Run the production migration chain against the test DB. Replaces
     `Base.metadata.create_all(...)` so model-vs-migration drift surfaces
-    in CI rather than at deploy time (BE CRIT-5 in 2026-04-30 review)."""
+    in CI rather than at deploy time (BE CRIT-5 in 2026-04-30 review).
+
+    Uses "heads" (plural) to handle the rare case where two migration
+    branches share a common ancestor and have not yet been merged into a
+    single linear head (e.g. 0025 and 0029 both descend from 0023).
+    """
     cfg = AlembicConfig(str(_BACKEND_ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(_BACKEND_ROOT / "alembic"))
     cfg.set_main_option("sqlalchemy.url", database_url)

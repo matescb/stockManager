@@ -63,10 +63,9 @@ def test_consume_full_build_with_subassembly_output(authed):
         c, "PCB-B",
         [{"part_id": p1, "quantity": 5}, {"part_id": p2, "quantity": 2}],
     )
-    # Tag the sub-assembly
-    r = c.patch(f"/api/projects/{proj_id}", json={})  # ensure exists
-    # PATCH route doesn't accept associated_subassembly_part_id — set via direct DB?
-    # Use the raw API: there is no exposed endpoint, so just check the basic case w/o output.
+    # Tag the sub-assembly via the now-exposed PATCH field
+    r = c.patch(f"/api/projects/{proj_id}", json={"associated_subassembly_part_id": sub})
+    assert r.status_code == 200, r.text
 
     r = c.post("/api/builds", json={"name": "B-A", "project_id": proj_id, "quantity": 10})
     bid = r.json()["data"]["id"]
