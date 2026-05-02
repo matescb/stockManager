@@ -66,13 +66,31 @@ def test_cross_table_ref_has_fk(db, table, column, ref_table, fk_name):
 
 
 def _make_workspace(db) -> str:
-    """Insert a minimal workspace row so the foreign key from
-    storage_locations / tags resolves. The schema's other columns are
-    NULLable enough for this to be a one-liner."""
+    """Insert a minimal user + workspace pair so the FK from
+    storage_locations / tags resolves. `workspaces.kind` and
+    `workspaces.owner_user_id` are NOT NULL — the model defines a
+    Python-side default for `kind` that doesn't fire on a raw
+    `INSERT INTO workspaces (...)` so we set every required column
+    explicitly here."""
+    user_id = uuid.uuid4()
+    db.execute(
+        text(
+            "INSERT INTO users (id, email, name, password_hash, created_at) "
+            "VALUES (:i, :e, 't', 'x', now())"
+        ),
+        {"i": user_id, "e": f"u-{user_id.hex[:6]}@x.com"},
+    )
     ws_id = uuid.uuid4()
     db.execute(
-        text("INSERT INTO workspaces (id, name, created_at) VALUES (:id, :n, now())"),
-        {"id": ws_id, "n": f"ws-{ws_id.hex[:6]}"},
+        text(
+            "INSERT INTO workspaces "
+            "(id, name, kind, owner_user_id, currency_default, "
+            " lot_control_enabled, serial_tracking_enabled, "
+            " catalog_enabled, parts_provider, scanner, created_at) "
+            "VALUES (:i, :n, 'organization', :owner, 'USD', "
+            "        true, false, false, 'none', 'zxing', now())"
+        ),
+        {"i": ws_id, "n": f"ws-{ws_id.hex[:6]}", "owner": user_id},
     )
     db.commit()
     return ws_id
