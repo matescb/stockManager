@@ -16,6 +16,38 @@ what each feature does.
 - **Auth**: opaque session token in a httpOnly cookie; argon2 password
   hashes; sessions persisted in `user_sessions`.
 
+### Sync, not async
+
+Routes are synchronous (`def`, not `async def`). SQLAlchemy is
+configured for the sync API — there is no `AsyncSession`, no
+`asyncpg`, no `await db.query(...)`. FastAPI is async-native and the
+runtime handles a sync handler by running it on a worker thread, which
+is the right trade for a Postgres-bound app: SQLAlchemy's sync API is
+mature, transaction handling stays straightforward, and the workload
+is dominated by DB round-trips that already release the GIL.
+
+Use `async def` only when you need to consume an async-only library.
+Today the backend has exactly five `async def`s and they're all
+deliberate:
+
+- `app/api/routes/sentry_tunnel.py::sentry_tunnel` — forwards a Sentry
+  envelope upstream via `httpx.AsyncClient`; needs `await
+  request.stream()` to enforce the body cap chunk-by-chunk.
+- `app/api/routes/attachments.py::upload` — streams `UploadFile.read()`
+  for content-addressed asset writes.
+- `app/main.py::*Middleware.dispatch` — request-logging middleware;
+  Starlette middleware contract is async.
+- `app/core/responses.py::http_exception_handler` /
+  `validation_exception_handler` — FastAPI exception handlers are
+  defined as async.
+
+If you find yourself wanting to add a sixth, double-check: never
+`await db.query(...)` against the sync session — it'll either crash or
+silently block the event loop. If a route really does need to consume
+an async library, keep DB access in a sync helper and call it through
+`anyio.to_thread.run_sync` or split the handler so the sync section
+stays sync.
+
 ## Repo layout
 
 ```
