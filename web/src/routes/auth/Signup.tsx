@@ -44,7 +44,7 @@ export default function Signup() {
       await refresh();
       nav(fromPath || "/parts", { replace: true });
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Signup failed");
+      setErr(e instanceof ApiError ? e.userMessage : "Signup failed");
     } finally {
       setBusy(false);
     }
