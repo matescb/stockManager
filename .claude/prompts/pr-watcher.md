@@ -109,10 +109,10 @@ GitHub-side state.
 | Condition | Action |
 |---|---|
 | Any check `pending` | Do nothing this run. Comment **only** if no prior `claude-review` comment exists, with `_Waiting on CI._` |
-| Any check failed | `gh pr review <num> --request-changes --body "<findings + 'CI red'>"` |
-| `mergeable != "MERGEABLE"` | `gh pr review <num> --request-changes --body "<findings + 'merge conflict — please rebase'>"` |
-| Any finding `severity = high` | `gh pr review <num> --request-changes --body "<findings>"` then **either** `gh issue create --title "[claude-review] PR #<num>: <one-line summary>" --body "<findings>" --label claude-review` (no prior issue exists), **or**, if a prior tracking issue for the same bug already exists and is `CLOSED`, `gh issue reopen <num> --comment "<reason>"` followed by `gh issue edit <num> --add-label reopened`. The `reopened` label flags issues whose underlying bug is still present despite an auto-close — never re-create the same issue twice. |
-| Any finding `severity = medium` | `gh pr review <num> --request-changes --body "<findings>"` (no issue) |
+| Any check failed | `gh pr review <num> --request-changes --body "<findings + 'CI red'>"` then `gh pr edit <num> --add-label reopened` |
+| `mergeable != "MERGEABLE"` | `gh pr review <num> --request-changes --body "<findings + 'merge conflict — please rebase'>"` then `gh pr edit <num> --add-label reopened` |
+| Any finding `severity = high` | `gh pr review <num> --request-changes --body "<findings>"` then `gh pr edit <num> --add-label reopened`, then **either** `gh issue create --title "[claude-review] PR #<num>: <one-line summary>" --body "<findings>" --label claude-review,reopened` (no prior issue exists — open it with the `reopened` label so it's visible as "PR needs repair"), **or**, if a prior tracking issue for the same bug already exists, `gh issue reopen <num> --comment "<reason>"` (if closed) followed by `gh issue edit <num> --add-label reopened`. The `reopened` label flags any tracking issue whose PR is in a needs-repair state — applies whether the issue was originally closed and reopened, or stayed open the whole time. Never re-create the same issue twice. |
+| Any finding `severity = medium` | `gh pr review <num> --request-changes --body "<findings>"` then `gh pr edit <num> --add-label reopened` (no issue) |
 | All checks pass + only `low` (or zero) findings + not a fork + not draft | `gh pr merge <num> --squash --delete-branch` then `gh pr comment <num> --body "Approved by claude-review (no medium+ findings, CI green)."` |
 
 After any action, **always** post the sticky marker so the next run

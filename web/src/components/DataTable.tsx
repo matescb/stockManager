@@ -177,7 +177,9 @@ export function DataTable<T>({
     if (!q) return rows;
     return rows.filter(r =>
       columns.some(c => {
-        const v = c.accessor ? c.accessor(r) : (r as any)[c.key];
+        // FIXME: typed row-access requires a generic constraint refactor
+        // (e.g. `T extends Record<string, unknown>`). Deferred — see issue #57.
+        const v = c.accessor ? c.accessor(r) : (r as Record<string, unknown>)[c.key];
         return v != null && String(v).toLowerCase().includes(q);
       })
     );
@@ -187,7 +189,8 @@ export function DataTable<T>({
     if (!sort) return filtered;
     const col = columns.find(c => c.key === sort.key);
     if (!col) return filtered;
-    const acc = col.accessor || ((r: T) => (r as any)[col.key]);
+    // FIXME: typed row-access requires a generic constraint refactor — see issue #57.
+    const acc = col.accessor || ((r: T) => (r as Record<string, unknown>)[col.key]);
     return [...filtered].sort((a, b) => {
       const av = acc(a);
       const bv = acc(b);
@@ -215,7 +218,8 @@ export function DataTable<T>({
     // table cell). Avoid `[object Object]` for non-scalars by checking
     // the type before stringifying.
     if (!c.render) {
-      const v = (r as any)[c.key];
+      // FIXME: typed row-access requires a generic constraint refactor — see issue #57.
+      const v = (r as Record<string, unknown>)[c.key];
       if (v == null) return "";
       const t = typeof v;
       if (t === "string" || t === "number" || t === "boolean") return String(v);
@@ -395,7 +399,8 @@ export function DataTable<T>({
                         align === "center" && "text-center",
                       )}
                     >
-                      {c.render ? c.render(r) : String((c.accessor ? c.accessor(r) : (r as any)[c.key]) ?? "")}
+                      {/* FIXME: typed row-access requires a generic constraint refactor — see issue #57. */}
+                      {c.render ? c.render(r) : String((c.accessor ? c.accessor(r) : (r as Record<string, unknown>)[c.key]) ?? "")}
                     </td>
                   );
                 })}

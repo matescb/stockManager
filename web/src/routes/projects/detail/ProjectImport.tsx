@@ -298,7 +298,7 @@ export default function ProjectImport() {
                         className="input"
                         value={m.target}
                         onChange={(e) =>
-                          setMapping(map => map.map(x => x.column_index === m.column_index ? { ...x, target: e.target.value as any } : x))
+                          setMapping(map => map.map(x => x.column_index === m.column_index ? { ...x, target: e.target.value as Mapping["target"] } : x))
                         }
                       >
                         {TARGETS.map(t => <option key={t} value={t}>{t}</option>)}

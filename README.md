@@ -29,8 +29,8 @@ scan-then-import flow built on a switchable ZXing/Scandit backend in
 ## Run locally
 
 ```bash
-cp .env.example .env
-docker compose up --build
+cp .env.example .env   # first time only
+make dev-up
 ```
 
 - Web UI: <http://localhost:5173>
@@ -41,7 +41,7 @@ Migrations run automatically when the backend container starts.
 ## Tests
 
 ```bash
-docker compose exec backend pytest
+docker compose -f docker-compose.dev.yml exec backend pytest
 ```
 
 For running tests outside Docker, see [`docs/development.md`](docs/development.md).
