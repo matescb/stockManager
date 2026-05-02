@@ -38,6 +38,7 @@ import {
   type LookupState,
   type Row,
 } from "./ScanImport/types";
+import { loadDraft, saveDraft, clearDraft } from "./ScanImport/storage";
 
 // "Service Unavailable", "upstream unavailable (TimeoutException)",
 // "DigiKey rate limit reached", connection-resets — anything that's
@@ -98,18 +99,110 @@ export default function ScanImport() {
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
   const [searchParams] = useSearchParams();
-  const [rows, setRows] = useState<Row[]>([]);
-  // Pre-select the storage when arriving via /storage/<id> "Scan into here"
-  // — the destination is whichever bin the user opened.
-  const [storageId, setStorageId] = useState<string>(() => searchParams.get("storage_id") ?? "");
-  const [submitting, setSubmitting] = useState(false);
-  const [lastSummary, setLastSummary] = useState<ImportResponse | null>(null);
 
   // Dedup against the camera firing didScan continuously while a code is
   // in frame: we key by signature first (catches the same bag re-read from
   // a slightly different angle), and fall back to MPN for non-2D scans.
   const seenSigs = useRef<Set<string>>(new Set());
   const seenMpns = useRef<Set<string>>(new Set());
+
+  // Lazy initialiser: restore draft from sessionStorage on first render so
+  // the rows survive a Back-button, workspace switch, or tab refresh.
+  // seenSigs / seenMpns are rebuilt here so dedup is consistent.
+  const [rows, setRows] = useState<Row[]>(() => {
+    if (!workspaceId) return [];
+    const restored = loadDraft(workspaceId);
+    if (!restored) return [];
+    for (const r of restored) {
+      if (r.bagSig) seenSigs.current.add(r.bagSig);
+      seenMpns.current.add(r.bag.mpn);
+    }
+    return restored;
+  });
+
+  // Track how many rows were restored so we can surface the banner once.
+  const restoredCount = useRef<number>(rows.length);
+  // Whether the "restored N drafts" banner has been shown this session.
+  const restoredBannerShown = useRef(false);
+  // Capture the workspaceId at mount so the persist effect (and the
+  // restored-banner Discard action) cannot write/clear under a *different*
+  // workspace's storage key if a workspace switch fires before this route
+  // unmounts (workspace switcher is global; switchWorkspace flips
+  // workspaceId before the nav("/parts") tears the route down — see
+  // web/src/lib/auth.tsx). Without this guard we'd briefly leak the
+  // previous workspace's rows into workspace B's draft. Cross-workspace
+  // isolation is enforced in code, not the DB (see CLAUDE.md), so this
+  // needs an explicit guard rather than relying on render-ordering.
+  const mountWsId = useRef<string | undefined>(workspaceId);
+
+  // Pre-select the storage when arriving via /storage/<id> "Scan into here"
+  // — the destination is whichever bin the user opened.
+  const [storageId, setStorageId] = useState<string>(() => searchParams.get("storage_id") ?? "");
+  const [submitting, setSubmitting] = useState(false);
+  const [lastSummary, setLastSummary] = useState<ImportResponse | null>(null);
+  // Controls the "restored N drafts" banner visibility.
+  const [showRestoredBanner, setShowRestoredBanner] = useState(() => rows.length > 0);
+
+  // Show the restored-draft toast banner once on mount when rows were restored.
+  useEffect(() => {
+    if (
+      !restoredBannerShown.current &&
+      restoredCount.current > 0 &&
+      showRestoredBanner
+    ) {
+      restoredBannerShown.current = true;
+      const n = restoredCount.current;
+      toast.info(
+        `Restored ${n} draft scan${n === 1 ? "" : "s"} from your previous session.`,
+        {
+          duration: 8000,
+          action: {
+            label: "Discard",
+            onClick: () => {
+              setRows([]);
+              seenSigs.current.clear();
+              seenMpns.current.clear();
+              // Use the wsId captured at mount, not the live `workspaceId`
+              // closure, so a workspace switch between mount and click
+              // can't cause us to clearDraft() against the wrong key.
+              const wsId = mountWsId.current;
+              if (wsId) clearDraft(wsId);
+              setShowRestoredBanner(false);
+            },
+          },
+        },
+      );
+    }
+    // Only run once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist rows to sessionStorage whenever they change.
+  // Bail if the live workspaceId no longer matches the one captured at
+  // mount — a workspace switch flips workspaceId before the route
+  // unmounts, and we mustn't write workspace A's rows under workspace
+  // B's storage key.
+  useEffect(() => {
+    const wsId = mountWsId.current;
+    if (!wsId) return;
+    if (workspaceId !== wsId) return;
+    saveDraft(wsId, rows);
+  }, [rows, workspaceId]);
+
+  // Warn before unload when there are unsaved importable rows.
+  useEffect(() => {
+    function handleBeforeUnload(e: BeforeUnloadEvent) {
+      const importable = rows.filter(r => r.state.kind === "found");
+      const hasPending = rows.some(
+        r => r.state.kind === "found" || r.state.kind === "pending",
+      );
+      if (rows.length > 0 && (importable.length > 0 || hasPending)) {
+        e.preventDefault();
+      }
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [rows]);
 
   // Honour ?storage_id= even when the URL changes mid-session (e.g. a
   // back-button navigation drops us back here from Storage).
@@ -261,7 +354,18 @@ export default function ScanImport() {
       const importedMpns = new Set(
         out.rows.filter(r => r.status === "created").map(r => r.mpn)
       );
-      setRows(prev => prev.filter(r => !importedMpns.has(r.bag.mpn)));
+      setRows(prev => {
+        const remaining = prev.filter(r => !importedMpns.has(r.bag.mpn));
+        // If every row was imported, clear the draft completely; otherwise
+        // the updated (smaller) rows list will be persisted by the rows
+        // effect. Use the wsId captured at mount so a mid-flight workspace
+        // switch can't redirect this clear to a different key.
+        const wsId = mountWsId.current;
+        if (remaining.length === 0 && wsId) {
+          clearDraft(wsId);
+        }
+        return remaining;
+      });
       importedMpns.forEach(m => seenMpns.current.delete(m));
       toast.success(
         `Imported ${out.summary.created} part${out.summary.created === 1 ? "" : "s"}.`
