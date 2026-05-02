@@ -249,13 +249,11 @@ def check_login_lockout(db: Session, *, email: str) -> bool:
     query — no short-circuit on "user not found" — so the response
     time doesn't reveal whether the email exists.
     """
-    from datetime import timedelta
-
     from sqlalchemy import or_
 
     from app.domain.users.models import User, UserLoginFailure
 
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=LOCKOUT_WINDOW_MINUTES)
+    cutoff = utcnow() - timedelta(minutes=LOCKOUT_WINDOW_MINUTES)
     email_hash = _hash_email_for_lockout(email)
     user = db.query(User).filter(User.email == email).first()
     user_id = user.id if user else None
