@@ -6,6 +6,22 @@ follow that model — it's a continuous flow of product work + production
 hardening landing per-commit. Themes are summarised below; `git log` is
 the canonical record.
 
+## 2026-05 — security follow-ups
+
+- **SEC2-013 / #72** Invitation accept flow switched to constant-time
+  HMAC comparison.  Previously the accept endpoint queried
+  `WHERE token_hash = $digest` — a timing oracle because SQL string
+  equality is not constant-time.  Fix: `token_hmac` column added to
+  `workspace_invitations` (migration 0021, HMAC-SHA-256 keyed on
+  `SESSION_SECRET`).  Accept now looks up by `id` (PK, no timing
+  oracle) then calls `hmac.compare_digest(hmac_of_supplied, row.token_hmac)`.
+  Token returned by the create endpoint is now a composite
+  `"{id}:{plaintext}"` string so the frontend passes the PK opaquely.
+  **Operator note:** existing pending invitations are invalidated by
+  this migration (plaintexts were never stored, so `token_hmac` cannot
+  be backfilled).  Revoke and re-issue any outstanding invitations
+  after deploying.
+
 ## 2026-05 — teardown follow-ups
 
 - **DB-009 / #100** Corrected the `Revision ID:` docstring header in
