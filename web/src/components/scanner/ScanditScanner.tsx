@@ -87,14 +87,20 @@ export default function ScanditScanner({ licenseKey, onScan, className, symbolog
         // but no caller does that today.
         const enabled = symbologiesRef.current ?? LICENSED_SYMBOLOGIES;
         for (const key of enabled) {
-          if ((Symbology as any)[key] !== undefined) {
-            settings.enableSymbology((Symbology as any)[key], true);
+          // `key` is a string matching a Symbology enum key (e.g. "Code128",
+          // "QR"). Cast to `keyof typeof Symbology` after confirming the key
+          // exists — the SDK's enum is not directly indexable without the cast
+          // because TypeScript sees enums as closed types.
+          if (key in Symbology) {
+            settings.enableSymbology(Symbology[key as keyof typeof Symbology], true);
           }
         }
         const capture = await BarcodeCapture.forContext(ctx, settings);
         capture.addListener({
           didScan: (_m, session) => {
-            const b = (session as any).newlyRecognizedBarcode;
+            // `newlyRecognizedBarcode` is a public getter on BarcodeCaptureSession;
+            // no cast needed once the import resolves the SDK's own type.
+            const b = session.newlyRecognizedBarcode;
             if (b) onScanRef.current({ data: b.data ?? "", symbology: b.symbology ?? "?" });
           },
         });
