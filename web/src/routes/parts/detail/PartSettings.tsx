@@ -2,13 +2,16 @@ import { useState } from "react";
 import { useOutletContext, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
+import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
+import { useAuth } from "@/lib/auth";
 import type { Part, StorageLocation } from "@/types";
 
 export default function PartSettings() {
   const { part } = useOutletContext<{ part: Part }>();
   const { partId } = useParams();
   const qc = useQueryClient();
-  const { data: storage } = useQuery({ queryKey: ["storage"], queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const { workspaceId } = useAuth();
+  const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
   const [low, setLow] = useState(part.low_stock_report_quantity?.toString() ?? "");
   const [attrPct, setAttrPct] = useState(String(part.attrition_percentage));
   const [attrMin, setAttrMin] = useState(String(part.attrition_min_quantity));
@@ -32,7 +35,7 @@ export default function PartSettings() {
         serialized,
         published,
       });
-      qc.invalidateQueries({ queryKey: ["part", partId] });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId) });
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Failed");
     } finally {

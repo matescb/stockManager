@@ -84,30 +84,53 @@ async function parsedRequest<S extends ZodType>(
   return result.data;
 }
 
+/**
+ * Optional per-call extras the wrappers thread through to fetch():
+ *
+ * - `signal` lets a caller hand in an AbortController so an unmount or
+ *   stale-effect cleanup can cancel an in-flight request (v1 FE HIGH-4).
+ *   `useQuery` already provides `signal` via its `queryFn` argument; this
+ *   makes the wrappers usable from raw `useEffect` blocks too.
+ */
+export type ApiOptions = { signal?: AbortSignal };
+
 export const api = {
   // --- legacy untyped flavour ---
-  get: <T>(p: string) => request<T>(p),
-  post: <T>(p: string, body?: any) =>
-    request<T>(p, { method: "POST", body: body !== undefined ? JSON.stringify(body) : undefined }),
-  patch: <T>(p: string, body?: any) =>
-    request<T>(p, { method: "PATCH", body: body !== undefined ? JSON.stringify(body) : undefined }),
-  delete: <T>(p: string) => request<T>(p, { method: "DELETE" }),
-  upload: <T>(p: string, form: FormData) => request<T>(p, { method: "POST", body: form }),
+  get: <T>(p: string, opts?: ApiOptions) => request<T>(p, { signal: opts?.signal }),
+  post: <T>(p: string, body?: any, opts?: ApiOptions) =>
+    request<T>(p, {
+      method: "POST",
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: opts?.signal,
+    }),
+  patch: <T>(p: string, body?: any, opts?: ApiOptions) =>
+    request<T>(p, {
+      method: "PATCH",
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: opts?.signal,
+    }),
+  delete: <T>(p: string, opts?: ApiOptions) =>
+    request<T>(p, { method: "DELETE", signal: opts?.signal }),
+  upload: <T>(p: string, form: FormData, opts?: ApiOptions) =>
+    request<T>(p, { method: "POST", body: form, signal: opts?.signal }),
 
   // --- zod-validating flavour ---
   parsed: {
-    get: <S extends ZodType>(p: string, schema: S) => parsedRequest(p, schema),
-    post: <S extends ZodType>(p: string, schema: S, body?: any) =>
+    get: <S extends ZodType>(p: string, schema: S, opts?: ApiOptions) =>
+      parsedRequest(p, schema, { signal: opts?.signal }),
+    post: <S extends ZodType>(p: string, schema: S, body?: any, opts?: ApiOptions) =>
       parsedRequest(p, schema, {
         method: "POST",
         body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: opts?.signal,
       }),
-    patch: <S extends ZodType>(p: string, schema: S, body?: any) =>
+    patch: <S extends ZodType>(p: string, schema: S, body?: any, opts?: ApiOptions) =>
       parsedRequest(p, schema, {
         method: "PATCH",
         body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: opts?.signal,
       }),
-    delete: <S extends ZodType>(p: string, schema: S) =>
-      parsedRequest(p, schema, { method: "DELETE" }),
+    delete: <S extends ZodType>(p: string, schema: S, opts?: ApiOptions) =>
+      parsedRequest(p, schema, { method: "DELETE", signal: opts?.signal }),
   },
 };

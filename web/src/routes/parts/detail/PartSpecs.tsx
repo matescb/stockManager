@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Plus, RotateCcw, Trash2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { isSpecKey } from "@/lib/providerCatalog";
+import { useWsKey } from "@/lib/queryKeys";
 import { useConfirm } from "@/components/ConfirmDialog";
 import type { CustomFieldRow, Part, SpecSource } from "@/types";
 
@@ -43,7 +44,7 @@ export default function PartSpecs() {
   const confirm = useConfirm();
   const { part } = useOutletContext<{ part: Part }>();
   const qc = useQueryClient();
-  const queryKey = ["part", part.id, "custom-fields"];
+  const queryKey = useWsKey("part", part.id, "custom-fields");
 
   const { data, isLoading } = useQuery({
     queryKey,

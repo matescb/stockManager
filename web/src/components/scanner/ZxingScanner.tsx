@@ -453,7 +453,9 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
           autoPlay
         />
         {status.kind === "perm" && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-bg-soft text-text">
+          // `bg-bg-soft` is not defined in tailwind.config.js — replaced
+          // with the existing `bg-panel2` token (FE2-009).
+          <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-panel2 text-text">
             <div className="text-2xl mb-2" aria-hidden>📷</div>
             <p className="max-w-sm text-sm mb-4">{status.text}</p>
             <button

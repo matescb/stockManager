@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import Scanner, { ScanResult } from "@/components/scanner/Scanner";
 import { api, ApiError } from "@/lib/api";
+import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
+import { useAuth } from "@/lib/auth";
 import { parseBagCode, bagLotName, bagComments, bagSignature, type BagCode } from "@/lib/bagCode";
 import type {
   MpnLookupResult,
@@ -154,6 +156,7 @@ async function lookupMpnWithRetry(mpn: string): Promise<MpnLookupResult> {
 export default function ScanImport() {
   const nav = useNavigate();
   const qc = useQueryClient();
+  const { workspaceId } = useAuth();
   const [searchParams] = useSearchParams();
   const [rows, setRows] = useState<Row[]>([]);
   // Pre-select the storage when arriving via /storage/<id> "Scan into here"
@@ -177,7 +180,7 @@ export default function ScanImport() {
   }, [searchParams]);
 
   const { data: storages } = useQuery({
-    queryKey: ["storage-locations"],
+    queryKey: useWsKey("storage"),
     queryFn: () => api.get<StorageLocation[]>("/storage"),
   });
 
@@ -264,8 +267,8 @@ export default function ScanImport() {
             : r,
         ),
       );
-      qc.invalidateQueries({ queryKey: ["part", st.part_id] });
-      qc.invalidateQueries({ queryKey: ["part", st.part_id, "stock"] });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", st.part_id) });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", st.part_id, "stock") });
       toast.success(`Removed ${quantity} from this bag.`);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Quick-remove failed");

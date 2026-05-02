@@ -1,16 +1,23 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate, type Location } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import AuthShell from "./AuthShell";
 
 export default function Login() {
   const nav = useNavigate();
+  const location = useLocation();
   const { refresh } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // `from` is set by `<Gate>` (and by the 401 handler in auth.tsx) when
+  // an authed page bounced the user here. Replay the original target on
+  // success rather than always landing them on /parts (FE2-010).
+  const fromLoc = (location.state as { from?: Location } | null)?.from;
+  const fromPath = fromLoc ? `${fromLoc.pathname}${fromLoc.search}${fromLoc.hash}` : null;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -19,7 +26,7 @@ export default function Login() {
     try {
       await api.post("/auth/login", { email, password });
       await refresh();
-      nav("/parts");
+      nav(fromPath || "/parts", { replace: true });
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Login failed");
     } finally {

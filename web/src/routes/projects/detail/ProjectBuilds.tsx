@@ -2,6 +2,7 @@ import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Hammer } from "lucide-react";
 import { api } from "@/lib/api";
+import { useWsKey } from "@/lib/queryKeys";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import type { Build } from "@/types";
@@ -9,7 +10,7 @@ import type { Build } from "@/types";
 export default function ProjectBuilds() {
   const { projectId } = useParams<{ projectId: string }>();
   const { data } = useQuery({
-    queryKey: ["builds", { project: projectId }],
+    queryKey: useWsKey("builds", { project: projectId }),
     queryFn: () => api.get<Build[]>(`/builds?project_id=${projectId}`),
     enabled: !!projectId,
   });

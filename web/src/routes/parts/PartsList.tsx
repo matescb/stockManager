@@ -5,32 +5,55 @@ import { toast } from "sonner";
 import { Boxes, ImageOff, Trash2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { PartsListSchema } from "@/lib/schemas";
+import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
+import { useAuth } from "@/lib/auth";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import PartsTopNav from "@/components/PartsTopNav";
-import type { Part } from "@/types";
+import { useConfirm } from "@/components/ConfirmDialog";
+import QueryStateBoundary from "@/components/QueryStateBoundary";
 
 export default function PartsList({ archived = false }: { archived?: boolean }) {
   const nav = useNavigate();
   const qc = useQueryClient();
-  const [confirming, setConfirming] = useState<{ ids: string[]; clear: () => void } | null>(null);
+  const confirm = useConfirm();
+  const { workspaceId } = useAuth();
+  const partsKey = useWsKey("parts", { archived });
   const [busy, setBusy] = useState(false);
-  const { data, isLoading } = useQuery({
-    queryKey: ["parts", { archived }],
+  const query = useQuery({
+    queryKey: partsKey,
     queryFn: () =>
       api.parsed.get(`/parts${archived ? "?archived=true" : ""}`, PartsListSchema),
   });
-
-  const partsById = new Map((data ?? []).map(p => [p.id, p]));
+  const { data, isLoading } = query;
 
   async function doDelete(ids: string[], clear: () => void) {
+    // Build a friendly preview of the first few names for the dialog —
+    // mirrors the pre-fix overlay UX without rolling our own modal
+    // (FE2-005).
+    const partsById = new Map((data ?? []).map(p => [p.id, p]));
+    const previewLines = ids
+      .slice(0, 12)
+      .map(id => partsById.get(id)?.name ?? id)
+      .join("\n");
+    const more = ids.length > 12 ? `\n…and ${ids.length - 12} more` : "";
+    const ok = await confirm({
+      title: `Archive ${ids.length} part${ids.length === 1 ? "" : "s"}?`,
+      message:
+        "Stock history is preserved. Archived parts can be restored from the Archived view.\n\n" +
+        previewLines +
+        more,
+      severity: "danger",
+      confirmLabel: "Archive",
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       const res = await api.post<{ archived_ids: string[]; skipped: number }>(
         "/parts/bulk-delete",
         { part_ids: ids },
       );
-      qc.invalidateQueries({ queryKey: ["parts"] });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
       clear();
       toast.success(
         res.archived_ids.length === ids.length
@@ -41,7 +64,6 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
       toast.error(e instanceof ApiError ? e.message : "Bulk delete failed");
     } finally {
       setBusy(false);
-      setConfirming(null);
     }
   }
 
@@ -55,9 +77,10 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
           </>
         }
       />
-      {isLoading ? (
-        <div className="text-muted">Loading…</div>
-      ) : (
+      <QueryStateBoundary query={query} resourceLabel="parts">
+        {isLoading ? (
+          <div className="text-muted">Loading…</div>
+        ) : (
         <DataTable
           rows={data ?? []}
           rowKey={(r) => r.id}
@@ -69,7 +92,7 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
               type="button"
               className="btn-danger inline-flex items-center gap-1.5"
               disabled={busy}
-              onClick={() => setConfirming({ ids, clear })}
+              onClick={() => doDelete(ids, clear)}
             >
               <Trash2 size={14} />
               Delete ({ids.length})
@@ -121,59 +144,8 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
             { key: "reserved", header: "Reserved", accessor: r => r.reserved ?? 0, width: "100px", hidden: true },
           ]}
         />
-      )}
-
-      {confirming && (
-        <div
-          className="fixed inset-0 z-30 flex items-center justify-center bg-black/40"
-          onClick={() => !busy && setConfirming(null)}
-        >
-          <div
-            className="card p-4 max-w-md w-full mx-4 space-y-3"
-            onClick={e => e.stopPropagation()}
-          >
-            <h3 className="text-md font-semibold">
-              Archive {confirming.ids.length} part{confirming.ids.length === 1 ? "" : "s"}?
-            </h3>
-            <p className="text-sm text-muted">
-              Stock history is preserved. Archived parts can be restored from
-              the Archived view.
-            </p>
-            <ul className="text-xs text-muted max-h-48 overflow-auto space-y-0.5">
-              {confirming.ids.slice(0, 12).map(id => {
-                const p = partsById.get(id);
-                return (
-                  <li key={id} className="font-mono">
-                    {p ? p.name : id}
-                  </li>
-                );
-              })}
-              {confirming.ids.length > 12 && (
-                <li className="italic">…and {confirming.ids.length - 12} more</li>
-              )}
-            </ul>
-            <div className="flex justify-end gap-2 pt-1">
-              <button
-                type="button"
-                className="btn"
-                disabled={busy}
-                onClick={() => setConfirming(null)}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn-danger inline-flex items-center gap-1.5"
-                disabled={busy}
-                onClick={() => doDelete(confirming.ids, confirming.clear)}
-              >
-                <Trash2 size={14} />
-                {busy ? "Archiving…" : "Archive"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+        )}
+      </QueryStateBoundary>
     </div>
   );
 }

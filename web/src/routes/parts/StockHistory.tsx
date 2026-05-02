@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { ScrollText } from "lucide-react";
 import { api } from "@/lib/api";
+import { useWsKey } from "@/lib/queryKeys";
 import type { Part, StockEntry, StorageLocation } from "@/types";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
@@ -8,9 +9,9 @@ import PartsTopNav from "@/components/PartsTopNav";
 import { Link } from "react-router-dom";
 
 export default function StockHistory() {
-  const { data } = useQuery({ queryKey: ["stock-history"], queryFn: () => api.get<StockEntry[]>("/stock/history?limit=500") });
-  const { data: parts } = useQuery({ queryKey: ["parts"], queryFn: () => api.get<Part[]>("/parts") });
-  const { data: storage } = useQuery({ queryKey: ["storage"], queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const { data } = useQuery({ queryKey: useWsKey("stock-history"), queryFn: () => api.get<StockEntry[]>("/stock/history?limit=500") });
+  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
+  const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
   const partName = new Map(parts?.map(p => [p.id, p.name]) ?? []);
   const sName = new Map(storage?.map(s => [s.id, s.name]) ?? []);
   return (

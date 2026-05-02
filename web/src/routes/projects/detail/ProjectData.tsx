@@ -2,17 +2,20 @@ import { useOutletContext } from "react-router-dom";
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { wsKeyOf } from "@/lib/queryKeys";
+import { useAuth } from "@/lib/auth";
 import type { Project } from "@/types";
 
 export default function ProjectData() {
   const { project } = useOutletContext<{ project: Project }>();
   const qc = useQueryClient();
+  const { workspaceId } = useAuth();
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description ?? "");
   const [notes, setNotes] = useState(project.notes_markdown ?? "");
   async function save() {
     await api.patch(`/projects/${project.id}`, { name, description: description || null, notes_markdown: notes || null });
-    qc.invalidateQueries({ queryKey: ["project", project.id] });
+    qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "project", project.id) });
   }
   return (
     <div className="card p-4 max-w-2xl space-y-3">

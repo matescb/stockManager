@@ -2,13 +2,16 @@ import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
+import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
+import { useAuth } from "@/lib/auth";
 import type { StorageLocation } from "@/types";
 
 export default function PartAddStock() {
   const { partId } = useParams<{ partId: string }>();
   const nav = useNavigate();
   const qc = useQueryClient();
-  const { data: storage } = useQuery({ queryKey: ["storage"], queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const { workspaceId } = useAuth();
+  const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
   const [qty, setQty] = useState<number>(0);
   const [location, setLocation] = useState("");
   const [priceMode, setPriceMode] = useState<"none" | "per_component" | "entire_lot">("none");
@@ -42,8 +45,8 @@ export default function PartAddStock() {
       }
       if (lotName || serial) payload.lot = { name: lotName || undefined, serial_number: serial || undefined };
       await api.post("/stock/add", payload);
-      qc.invalidateQueries({ queryKey: ["part", partId] });
-      qc.invalidateQueries({ queryKey: ["parts"] });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId) });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
       nav(`/parts/${partId}/stock`);
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Failed");

@@ -2,6 +2,8 @@ import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
+import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
+import { useAuth } from "@/lib/auth";
 import type { StorageLocation } from "@/types";
 
 type StockRow = {
@@ -20,16 +22,17 @@ export default function PartMoveStock() {
   const { partId } = useParams<{ partId: string }>();
   const nav = useNavigate();
   const qc = useQueryClient();
+  const { workspaceId } = useAuth();
   const { data: storage } = useQuery({
-    queryKey: ["storage"],
+    queryKey: useWsKey("storage"),
     queryFn: () => api.get<StorageLocation[]>("/storage"),
   });
   const { data: stock } = useQuery({
-    queryKey: ["part", partId, "stock"],
+    queryKey: useWsKey("part", partId, "stock"),
     queryFn: () => api.get<StockResp>(`/parts/${partId}/stock`),
   });
   const { data: lots } = useQuery({
-    queryKey: ["part", partId, "lots"],
+    queryKey: useWsKey("part", partId, "lots"),
     queryFn: () => api.get<Lot[]>(`/parts/${partId}/lots`),
   });
 
@@ -94,8 +97,8 @@ export default function PartMoveStock() {
         split_lot: split,
         comments: comments || undefined,
       });
-      qc.invalidateQueries({ queryKey: ["part", partId] });
-      qc.invalidateQueries({ queryKey: ["part", partId, "stock"] });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId) });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId, "stock") });
       nav(`/parts/${partId}/stock`);
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Failed");

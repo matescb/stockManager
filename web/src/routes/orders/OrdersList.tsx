@@ -2,8 +2,10 @@ import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ShoppingCart } from "lucide-react";
 import { api } from "@/lib/api";
+import { useWsKey } from "@/lib/queryKeys";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
+import QueryStateBoundary from "@/components/QueryStateBoundary";
 import type { Order } from "@/types";
 
 const STATUS_BADGES: Record<Order["status"], string> = {
@@ -16,10 +18,11 @@ const STATUS_BADGES: Record<Order["status"], string> = {
 
 export default function OrdersList({ archived = false }: { archived?: boolean }) {
   const nav = useNavigate();
-  const { data } = useQuery({
-    queryKey: ["orders", { archived }],
+  const query = useQuery({
+    queryKey: useWsKey("orders", { archived }),
     queryFn: () => api.get<Order[]>(`/orders${archived ? "?archived=true" : ""}`),
   });
+  const { data } = query;
 
   return (
     <div>
@@ -28,6 +31,7 @@ export default function OrdersList({ archived = false }: { archived?: boolean })
         <NavLink to="/orders/archived" className={({ isActive }) => "btn " + (isActive ? "border-accent/50 text-accent" : "")}>Archived</NavLink>
         <Link to="/orders/create" className="btn-primary ml-auto">+ Order</Link>
       </div>
+      <QueryStateBoundary query={query} resourceLabel="orders">
       <DataTable
         rows={data ?? []}
         rowKey={r => r.id}
@@ -79,6 +83,7 @@ export default function OrdersList({ archived = false }: { archived?: boolean })
           },
         ]}
       />
+      </QueryStateBoundary>
     </div>
   );
 }

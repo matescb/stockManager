@@ -2,8 +2,10 @@ import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Hammer } from "lucide-react";
 import { api } from "@/lib/api";
+import { useWsKey } from "@/lib/queryKeys";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
+import QueryStateBoundary from "@/components/QueryStateBoundary";
 import type { Build, Project } from "@/types";
 
 const STATUS_BADGES: Record<Build["status"], string> = {
@@ -15,12 +17,13 @@ const STATUS_BADGES: Record<Build["status"], string> = {
 
 export default function BuildsList({ archived = false }: { archived?: boolean }) {
   const nav = useNavigate();
-  const { data } = useQuery({
-    queryKey: ["builds", { archived }],
+  const query = useQuery({
+    queryKey: useWsKey("builds", { archived }),
     queryFn: () => api.get<Build[]>(`/builds${archived ? "?archived=true" : ""}`),
   });
+  const { data } = query;
   const { data: projects } = useQuery({
-    queryKey: ["projects"],
+    queryKey: useWsKey("projects"),
     queryFn: () => api.get<Project[]>("/projects"),
   });
   const projectsById = new Map(projects?.map(p => [p.id, p]) ?? []);
@@ -32,6 +35,7 @@ export default function BuildsList({ archived = false }: { archived?: boolean })
         <NavLink to="/builds/archived" className={({ isActive }) => "btn " + (isActive ? "border-accent/50 text-accent" : "")}>Archived</NavLink>
         <Link to="/builds/create" className="btn-primary ml-auto">+ Build</Link>
       </div>
+      <QueryStateBoundary query={query} resourceLabel="builds">
       <DataTable
         rows={data ?? []}
         rowKey={r => r.id}
@@ -76,6 +80,7 @@ export default function BuildsList({ archived = false }: { archived?: boolean })
           },
         ]}
       />
+      </QueryStateBoundary>
     </div>
   );
 }

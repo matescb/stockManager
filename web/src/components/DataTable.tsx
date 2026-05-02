@@ -2,6 +2,55 @@ import { ReactNode, useEffect, useMemo, useState } from "react";
 import { Rows3, Rows4 } from "lucide-react";
 import { cn } from "@/lib/cn";
 
+// ---------------------------------------------------------------------
+// CSV-export helpers — extracted so they can be unit-tested without
+// rendering the table. The hardening is per FE2-008:
+//
+//   1. Excel formula-injection mitigation: any cell whose first char is
+//      `=`, `+`, `-`, `@`, or a leading tab/CR (per CWE-1236) gets
+//      prefixed with a single quote, which neutralises the formula
+//      while still being readable.
+//   2. Doubled quotes for embedded `"` (RFC 4180).
+//   3. CRLF line terminators so Excel and Windows text editors don't
+//      smush rows together.
+//   4. UTF-8 BOM up front so Excel auto-detects the encoding instead
+//      of mangling non-ASCII to mojibake.
+// ---------------------------------------------------------------------
+
+const FORMULA_INJECTION_LEADERS = new Set(["=", "+", "-", "@", "\t", "\r"]);
+
+export function escapeCsvCell(raw: unknown): string {
+  // null / undefined → empty cell. Booleans + numbers get stringified
+  // verbatim (no leading-`-` neutralisation needed for negatives —
+  // those are legitimate numeric data, but Excel still treats them as
+  // formula-leading text. We only neutralise *string* cells whose first
+  // char is risky, since those are the user-supplied free-form fields.)
+  if (raw == null) return '""';
+  let s = String(raw);
+  if (s.length > 0 && FORMULA_INJECTION_LEADERS.has(s[0]) && typeof raw === "string") {
+    s = "'" + s;
+  }
+  return `"${s.replaceAll('"', '""')}"`;
+}
+
+export function buildCsv(headers: string[], rows: string[][]): string {
+  const head = headers.map(h => escapeCsvCell(h)).join(",");
+  const body = rows.map(r => r.map(c => escapeCsvCell(c)).join(",")).join("\r\n");
+  // U+FEFF BOM so Excel detects UTF-8 instead of misreading as cp1252.
+  return "﻿" + head + "\r\n" + body;
+}
+
+/** Prune a selection set to ids that still appear in the row list. */
+export function pruneSelection(
+  selected: ReadonlySet<string>,
+  rowIds: ReadonlyArray<string>,
+): Set<string> {
+  const visible = new Set(rowIds);
+  const next = new Set<string>();
+  for (const id of selected) if (visible.has(id)) next.add(id);
+  return next;
+}
+
 export type Align = "left" | "right" | "center";
 
 export type Column<T> = {
@@ -99,6 +148,30 @@ export function DataTable<T>({
     savePersisted(tableId, { hidden, density });
   }, [tableId, hidden, density]);
 
+  // FE2-007 — clear the selection set whenever the table changes
+  // identity. Without this, navigating from /parts to /orders carried
+  // a stale selection of part ids that no longer mapped to anything,
+  // and the bulk-action button would happily try to delete random
+  // rows from the new view.
+  useEffect(() => {
+    setSelected(new Set());
+  }, [tableId]);
+
+  // FE2-007 — prune ids of rows that no longer exist after a refetch
+  // or filter narrowing. The bulk-delete dialog reads from `selected`,
+  // so leaving stale ids in here meant the action could attempt to
+  // delete items the user couldn't see.
+  const allRowIds = useMemo(() => rows.map(r => rowKey(r)), [rows, rowKey]);
+  useEffect(() => {
+    setSelected(prev => {
+      const pruned = pruneSelection(prev, allRowIds);
+      // Only update state if something actually changed (avoids an
+      // infinite re-render loop when the row list is stable).
+      if (pruned.size === prev.size) return prev;
+      return pruned;
+    });
+  }, [allRowIds]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return rows;
@@ -131,21 +204,46 @@ export function DataTable<T>({
   const padCls = density === "compact" ? "py-1" : "py-2";
   const textCls = density === "compact" ? "text-[13px]" : "text-sm";
 
+  function cellText(c: Column<T>, r: T): string {
+    // Prefer the structured accessor — it returns the raw scalar
+    // (string / number / bool) without React-rendered HTML.
+    if (c.accessor) {
+      const v = c.accessor(r);
+      return v == null ? "" : String(v);
+    }
+    // No accessor + no render: dumb-key access (matches the on-screen
+    // table cell). Avoid `[object Object]` for non-scalars by checking
+    // the type before stringifying.
+    if (!c.render) {
+      const v = (r as any)[c.key];
+      if (v == null) return "";
+      const t = typeof v;
+      if (t === "string" || t === "number" || t === "boolean") return String(v);
+      return "";
+    }
+    // Render-only column with no accessor — we have no safe way to
+    // pull text out of an arbitrary ReactNode without rendering it,
+    // so return empty rather than `[object Object]`. Authors who
+    // want a column to round-trip through CSV should set `accessor`.
+    return "";
+  }
+
   function exportCsv() {
-    const head = visibleCols.map(c => `"${c.header.replaceAll('"', '""')}"`).join(",");
-    const lines = sorted.map(r =>
-      visibleCols
-        .map(c => {
-          const v = c.accessor ? c.accessor(r) : (r as any)[c.key];
-          return `"${String(v ?? "").replaceAll('"', '""')}"`;
-        })
-        .join(",")
-    );
-    const blob = new Blob([head + "\n" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const head = visibleCols.map(c => c.header);
+    const body = sorted.map(r => visibleCols.map(c => cellText(c, r)));
+    const csv = buildCsv(head, body);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
+    a.href = url;
     a.download = (exportFilename || "export") + ".csv";
+    document.body.appendChild(a);
     a.click();
+    a.remove();
+    // Free the blob URL once the click has been dispatched. Browsers
+    // can keep the reference around forever otherwise (memory leak on
+    // long-lived sessions that export repeatedly).
+    URL.revokeObjectURL(url);
   }
 
   // All currently-filtered/sorted ids — used for select-all semantics
