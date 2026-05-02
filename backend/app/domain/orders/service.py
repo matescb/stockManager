@@ -50,23 +50,35 @@ def receive(
     if order.status == "cancelled":
         raise OrderError("order is cancelled")
 
+    # BE2-001 / #247: acquire the advisory stock-write lock BEFORE reading
+    # OrderEntry rows. Reading first and locking second is a TOCTOU race —
+    # a concurrent receive can slip through the `outstanding` guard while
+    # both threads hold stale in-memory `quantity_received` values.
+    #
+    # Fix: run a lightweight preliminary query to collect the part_ids for
+    # the lock call, acquire the lock, then re-query entries with
+    # FOR UPDATE so the values we act on are authoritative and pinned
+    # for the rest of this transaction.
+    preliminary_entries = (
+        db.query(OrderEntry.id, OrderEntry.part_id)
+        .filter(OrderEntry.workspace_id == workspace_id, OrderEntry.order_id == order.id)
+        .all()
+    )
+    lock_parts_for_stock_write(
+        db,
+        workspace_id=workspace_id,
+        part_ids=[row.part_id for row in preliminary_entries if row.part_id is not None],
+    )
+
+    # Re-query with FOR UPDATE after the lock so quantity_received reflects
+    # any in-flight writes that committed before we acquired the lock.
     entries_by_id: dict[UUID, OrderEntry] = {
         e.id: e
         for e in db.query(OrderEntry)
         .filter(OrderEntry.workspace_id == workspace_id, OrderEntry.order_id == order.id)
+        .with_for_update()
         .all()
     }
-
-    # BE2-001: receive is the order-side producer write. Lock every
-    # distinct part this receive touches (across all entries on this
-    # order, even if some lines target only a subset — keeps lock
-    # coverage symmetric with concurrent build_consume / remove paths
-    # on the same parts). Sorted-UUID order keeps it deadlock-safe.
-    lock_parts_for_stock_write(
-        db,
-        workspace_id=workspace_id,
-        part_ids=[e.part_id for e in entries_by_id.values() if e.part_id is not None],
-    )
 
     received_at = utcnow()
     created_lots: list[Lot] = []
