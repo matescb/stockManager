@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from app.core.time import utcnow
-
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -11,6 +9,7 @@ from sqlalchemy import or_, select
 from app.api._helpers import require_resource_access
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
+from app.core.time import utcnow
 from app.domain.storage.models import StorageLocation
 from app.domain.stock.service import (
     history_for_storage,

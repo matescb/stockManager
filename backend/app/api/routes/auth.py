@@ -5,8 +5,6 @@ import secrets
 from datetime import timedelta
 from uuid import UUID
 
-from app.core.time import utcnow
-
 from fastapi import APIRouter, Request, Response, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -29,6 +27,7 @@ from app.core.logging import get_logger
 from app.core.mail import send_verification_email
 from app.core.ratelimit import limiter
 from app.core.responses import Envelope, ok
+from app.core.time import utcnow
 from app.domain.users.models import PendingUser, User
 from app.domain.workspaces.models import Workspace, WorkspaceMember
 

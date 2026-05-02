@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from app.core.time import utcnow
-
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -11,6 +9,7 @@ from app.api._helpers import require_resource_access
 from app.api.routes._activity import _DEFAULT_LIMIT, _MAX_LIMIT, build_activity
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
+from app.core.time import utcnow
 from app.domain.builds.models import Build
 from app.domain.builds.schemas import BuildCreateIn, BuildPatchIn, ConsumeIn
 from app.domain.builds.service import (
