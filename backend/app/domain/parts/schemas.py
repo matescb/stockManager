@@ -19,6 +19,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.domain.stock.schemas import BagSignatureStr
+
 
 __all__ = [
     "PartIn",
@@ -117,7 +119,12 @@ class ScanImportRow(BaseModel):
     # status='bag_rescan' carrying the prior import's part/lot/location/qty
     # so the frontend can offer an inline "remove qty from this bag"
     # affordance instead of double-importing.
-    bag_signature: str | None = Field(default=None, max_length=64)
+    bag_signature: BagSignatureStr | None = None
+    # Optional raw bag code for server-side signature verification.  When
+    # present the server recomputes the digest and rejects the row with
+    # status='bag_signature_mismatch' if it disagrees with bag_signature.
+    # When absent, bag_signature is accepted verbatim (back-compat).
+    raw_bag_code: str | None = Field(default=None, max_length=4096)
 
 
 class ScanImportIn(BaseModel):
