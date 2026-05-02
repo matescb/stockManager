@@ -22,7 +22,7 @@ export default function BuildDetail() {
   const nav = useNavigate();
   const { workspaceId } = useAuth();
 
-  const { data } = useQuery({
+  const { data, isError, error } = useQuery({
     queryKey: useWsKey("build", buildId),
     queryFn: () => api.get<DetailOut>(`/builds/${buildId}`),
     enabled: !!buildId,
@@ -72,6 +72,7 @@ export default function BuildDetail() {
   });
 
 
+  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load build. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (!data) return <div className="text-muted">Loading…</div>;
   const { build, shortage } = data;
   const isEditable = build.status === "planned" || build.status === "in_progress";

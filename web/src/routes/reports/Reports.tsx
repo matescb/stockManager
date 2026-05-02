@@ -202,7 +202,7 @@ export function LowStockReport() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: useWsKey("report", "low-stock"),
     queryFn: () => api.get<LowStockRow[]>("/reports/low-stock"),
   });
@@ -215,6 +215,7 @@ export function LowStockReport() {
   });
 
 
+  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load low-stock report. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (isLoading) return <div className="text-muted">Loading…</div>;
   const rows = data ?? [];
   const busy = restockMutation.isPending;
