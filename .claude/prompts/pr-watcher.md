@@ -160,6 +160,26 @@ fix from "trivial":
 
 When in doubt, treat as non-trivial and request-changes.
 
+**Pre-merge final-check** (NEW — non-negotiable for both subagents
+and the main thread): immediately before calling `gh pr merge`,
+re-run the check rollup and assert it's clean. Don't trust earlier
+state, don't trust "I waited and it should be fine":
+
+```bash
+# Must return zero (after stripping the legacy `review` /
+# `claude-review` line, which the watcher contract ignores).
+gh pr checks <num> | grep -v "^review" | grep -v "^claude-review" \
+  | awk '{print $2}' | grep -cE "fail|pending" || true
+```
+
+If the count is non-zero, abort the merge. For a `pending` count,
+defer to the next tick (the cron will re-evaluate when CI settles).
+For a `fail` count, request-changes per the table below — the prior
+"trivial fix" introduced a real regression (the #230 / `_utcnow`
+NameError pattern). Never `gh pr merge` past a failing non-legacy
+check, even if it just turned red after the trivial-fix push you
+made yourself.
+
 | Condition | Action |
 |---|---|
 | Any check `pending` | Do nothing this run. Comment **only** if no prior `claude-review` comment exists, with `_Waiting on CI._` |
