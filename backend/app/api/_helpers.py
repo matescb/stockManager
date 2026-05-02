@@ -4,7 +4,7 @@ from functools import lru_cache
 from typing import TypeVar
 from uuid import UUID
 
-from fastapi import status
+from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -94,6 +94,44 @@ def assert_polymorphic_in_workspace(
             object_type=object_type,
         )
     return assert_in_workspace(db, Model, object_id, workspace_id, label=object_type)
+
+
+def assert_child_in_parent(
+    db: Session,
+    Model: type[T],
+    child_id: UUID,
+    parent,
+    *,
+    parent_fk: str,
+    label: str,
+) -> T:
+    """Look up a child row that must belong to both the given parent and the
+    parent's workspace.
+
+    A single query covers workspace isolation + parent-FK check so neither
+    can be bypassed independently. Returns the row on success; raises 404 if
+    the row does not exist, belongs to another workspace, or belongs to a
+    different parent object.
+
+    This is the canonical shape for nested-resource endpoints like
+    PATCH /projects/{project_id}/entries/{entry_id} — the previous hand-rolled
+    `db.get(Child, id) + manual workspace_id + parent_id` pattern let a
+    caller in workspace B pass a foreign entry_id and have it silently
+    matched against workspace A's parent (BE2-021).
+    """
+    row = db.execute(
+        select(Model).where(
+            Model.id == child_id,
+            Model.workspace_id == parent.workspace_id,
+            getattr(Model, parent_fk) == parent.id,
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{label} not found",
+        )
+    return row
 
 
 def require_resource_access(

@@ -737,3 +737,94 @@ def test_part_activity_does_not_leak_cross_workspace_id():
     # B's activity probe on A's part must 404, not return A's events.
     r = b.get(f"/api/parts/{pa}/activity")
     assert r.status_code == 404, r.text
+
+
+# ---------------------------------------------------------------------------
+# BE2-021: assert_child_in_parent — foreign entry_id on project and order
+# entry routes must 404, not silently operate on rows from another workspace.
+# ---------------------------------------------------------------------------
+
+
+def test_project_entry_foreign_entry_id_is_404():
+    """PATCH / DELETE / match on a project entry must reject a foreign
+    entry_id (one owned by workspace A) when called from workspace B.
+    Without assert_child_in_parent the old db.get(ProjectEntry, id) path
+    returned the row and wrote it — a cross-tenant write vector."""
+    a, b = _two_workspaces()
+    part_a = _create_part(a, "A-Part")
+    part_b = _create_part(b, "B-Part")
+
+    # A creates a project + entry.
+    proj_a = a.post("/api/projects", json={"name": "PA"}).json()["data"]["id"]
+    entry_a = a.post(
+        f"/api/projects/{proj_a}/entries",
+        json={"entry_type": "part", "part_id": part_a, "quantity": 1},
+    ).json()["data"]["id"]
+
+    # B creates their own project so the project_id in the URL is valid for B.
+    proj_b = b.post("/api/projects", json={"name": "PB"}).json()["data"]["id"]
+
+    # B uses their own project_id but A's entry_id — must 404 for all verbs.
+    r = b.patch(
+        f"/api/projects/{proj_b}/entries/{entry_a}",
+        json={"quantity": 99},
+    )
+    assert r.status_code == 404, r.text
+
+    r = b.delete(f"/api/projects/{proj_b}/entries/{entry_a}")
+    assert r.status_code == 404, r.text
+
+    r = b.post(
+        f"/api/projects/{proj_b}/entries/{entry_a}/match",
+        json={"part_id": part_b},
+    )
+    assert r.status_code == 404, r.text
+
+
+def test_order_entry_foreign_entry_id_is_404():
+    """PATCH / DELETE on an order entry must reject a foreign entry_id.
+    Without assert_child_in_parent, db.get(OrderEntry, id) returned the
+    cross-workspace row and let it be mutated."""
+    a, b = _two_workspaces()
+    part_a = _create_part(a, "A-Part")
+
+    # A creates an order + entry.
+    order_a = a.post("/api/orders", json={"name": "OA"}).json()["data"]["id"]
+    entry_a = a.post(
+        f"/api/orders/{order_a}/entries",
+        json={"name": "widget", "quantity_ordered": 5},
+    ).json()["data"]["id"]
+
+    # B creates their own order so the order_id in the URL is valid for B.
+    order_b = b.post("/api/orders", json={"name": "OB"}).json()["data"]["id"]
+
+    # B uses their own order_id but A's entry_id — must 404 for all verbs.
+    r = b.patch(
+        f"/api/orders/{order_b}/entries/{entry_a}",
+        json={"quantity_ordered": 99},
+    )
+    assert r.status_code == 404, r.text
+
+    r = b.delete(f"/api/orders/{order_b}/entries/{entry_a}")
+    assert r.status_code == 404, r.text
+
+
+def test_match_entry_foreign_part_id_is_404():
+    """match_entry previously used db.get(Part, id) which skipped the
+    workspace check. Confirm assert_in_workspace closes the gap: passing
+    another workspace's part_id in the match payload must 404."""
+    a, b = _two_workspaces()
+    part_a = _create_part(a, "A-Part")
+
+    # B creates a project + unmatched entry, then tries to match A's part.
+    proj_b = b.post("/api/projects", json={"name": "PB"}).json()["data"]["id"]
+    entry_b = b.post(
+        f"/api/projects/{proj_b}/entries",
+        json={"entry_type": "unmatched", "name": "mystery", "quantity": 1},
+    ).json()["data"]["id"]
+
+    r = b.post(
+        f"/api/projects/{proj_b}/entries/{entry_b}/match",
+        json={"part_id": part_a},
+    )
+    assert r.status_code == 404, r.text
