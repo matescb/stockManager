@@ -241,6 +241,27 @@ def _mock_hibp(monkeypatch):
         yield
 
 
+@pytest.fixture(autouse=True)
+def _reset_provider_cache_and_breakers():
+    """Reset the in-process provider TTL cache and circuit-breaker state
+    between every test so module-level singletons don't bleed across tests.
+
+    The cache and breakers are intentionally module-level (per CLAUDE.md:
+    --workers 1 in prod, single-process, no Redis). This fixture is the
+    test-isolation equivalent of clearing slowapi's in-memory bucket store
+    between rate-limit tests."""
+    import app.domain.parts.services.provider_cache as _cache_mod
+
+    # Clear TTL cache entries.
+    _cache_mod._cache._store.clear()
+    # Reset all circuit breakers.
+    _cache_mod._breakers.clear()
+    yield
+    # Clean up after the test as well (belt-and-suspenders).
+    _cache_mod._cache._store.clear()
+    _cache_mod._breakers.clear()
+
+
 # ---------------------------------------------------------------------------
 # Opt-out for tests that need real cross-connection commits.
 #

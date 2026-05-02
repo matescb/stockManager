@@ -96,7 +96,7 @@ export default function PartCreate() {
         setErr(null);
         return;
       }
-      setErr(e instanceof ApiError ? e.message : "Failed");
+      setErr(e instanceof ApiError ? e.userMessage : "Failed");
     },
   });
 

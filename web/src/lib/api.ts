@@ -23,13 +23,38 @@ export type ApiErr = { data: null; status: { category: string; message: string }
 
 const BASE = "/api";
 
+/**
+ * Map a backend `status.category` value to a safe, human-readable string
+ * that can be shown directly in the UI without leaking server internals.
+ * The raw `message` is kept on `ApiError.message` for Sentry / console.
+ */
+export function categoryToUserMessage(category: string | undefined | null): string {
+  switch (category) {
+    case "unauthenticated":
+      return "Session expired. Please sign in again.";
+    case "forbidden":
+      return "You don't have permission to do that.";
+    case "not_found":
+      return "Not found.";
+    case "conflict":
+      return "That's a duplicate or conflicts with existing data.";
+    case "validation_error":
+      return "Some fields don't look right. Check the form and retry.";
+    default:
+      return "Something went wrong. Try again, or refresh.";
+  }
+}
+
 export class ApiError extends Error {
   status: number;
   body: ApiErr | null;
+  /** Safe, human-readable message for display in toasts and banners. */
+  userMessage: string;
   constructor(status: number, body: ApiErr | null, message: string) {
     super(message);
     this.status = status;
     this.body = body;
+    this.userMessage = categoryToUserMessage(body?.status?.category);
   }
 }
 
