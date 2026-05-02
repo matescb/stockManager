@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -389,28 +390,24 @@ def test_no_cross_workspace_default_storage_in_existing_rows():
     )
 
 
-def test_raw_update_can_smuggle_cross_workspace_default_storage_xfail():
-    """DB-015 / Phase 2 marker. The service layer enforces workspace
-    isolation on `parts.default_storage_location_id`; the database
-    does not. A direct SQL UPDATE bypasses the guard today.
-
-    Marked xfail. When the Phase 2 trigger lands (per-row enforcement
-    of `parts.workspace_id = (SELECT workspace_id FROM
-    storage_locations WHERE id = NEW.default_storage_location_id)`),
-    flip this to a regular assertion: the raw UPDATE must raise an
-    IntegrityError instead of silently persisting."""
-    import pytest as _pytest
+def test_raw_update_cannot_smuggle_cross_workspace_default_storage():
+    """DB-015 Phase 2 (migration 0036). The BEFORE trigger
+    `parts_default_storage_workspace_check` must reject a direct SQL UPDATE
+    that points default_storage_location_id at a storage_location in a
+    different workspace."""
     from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
+
     from app.infra.db import SessionLocal
 
     a, b = _two_workspaces()
     storage_a = _create_storage(a, "A-bin")
     part_b = _create_part(b, "B-part")
 
-    # Direct SQL: bypass the route layer entirely. Today this succeeds —
-    # the Phase 2 trigger would make it fail.
+    # Direct SQL: bypass the route layer entirely.  The trigger must fire
+    # and raise an error (ERRCODE 23514 → IntegrityError in SQLAlchemy).
     with SessionLocal() as s:
-        try:
+        with pytest.raises((IntegrityError, ProgrammingError, DBAPIError)):
             s.execute(
                 text(
                     "UPDATE parts SET default_storage_location_id = :sid "
@@ -419,27 +416,87 @@ def test_raw_update_can_smuggle_cross_workspace_default_storage_xfail():
                 {"sid": storage_a, "pid": part_b},
             )
             s.commit()
-            updated = s.execute(
-                text(
-                    "SELECT default_storage_location_id FROM parts "
-                    "WHERE id = :pid"
-                ),
-                {"pid": part_b},
-            ).scalar()
-            persisted_cross_ws = str(updated) == storage_a
-        except Exception:
-            persisted_cross_ws = False
-            s.rollback()
 
-    if persisted_cross_ws:
-        _pytest.xfail(
-            "DB-015 Phase 2 not landed: raw UPDATE bypasses workspace "
-            "guard. Flip this to a regular assertion when the trigger "
-            "migration ships."
+
+def test_raw_update_same_workspace_default_storage_succeeds():
+    """Positive path for migration 0036: a raw SQL UPDATE that sets
+    default_storage_location_id to a storage_location in the *same*
+    workspace must be accepted by the trigger."""
+    from sqlalchemy import text
+
+    from app.infra.db import SessionLocal
+
+    a, _ = _two_workspaces()
+    storage_a = _create_storage(a, "A-bin")
+    part_a = _create_part(a, "A-part")
+
+    with SessionLocal() as s:
+        s.execute(
+            text(
+                "UPDATE parts SET default_storage_location_id = :sid "
+                "WHERE id = :pid"
+            ),
+            {"sid": storage_a, "pid": part_a},
         )
-    else:
-        # Already fixed (trigger present) — perfect.
-        assert True
+        s.commit()
+
+        result = s.execute(
+            text("SELECT default_storage_location_id FROM parts WHERE id = :pid"),
+            {"pid": part_a},
+        ).scalar()
+
+    assert str(result) == storage_a, (
+        "same-workspace UPDATE should persist; trigger incorrectly rejected it"
+    )
+
+
+def test_raw_insert_cross_workspace_default_storage_rejected():
+    """DB-015 Phase 2 (migration 0036). The BEFORE trigger must also fire on
+    INSERT, preventing a cross-workspace default_storage_location_id from
+    ever being written via a direct SQL INSERT."""
+    import uuid
+
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
+
+    from app.infra.db import SessionLocal
+
+    a, b = _two_workspaces()
+    storage_a = _create_storage(a, "A-bin")
+
+    # We need the workspace_id for workspace B.
+    with SessionLocal() as s:
+        ws_b_id = s.execute(
+            text("SELECT workspace_id FROM parts WHERE workspace_id != :wsa LIMIT 1"),
+            {"wsa": storage_a[:36]},  # narrow to any workspace that isn't A
+        ).scalar()
+        # Fall back: look up via a workspace that owns storage_a
+        ws_a_id = s.execute(
+            text("SELECT workspace_id FROM storage_locations WHERE id = :sid"),
+            {"sid": storage_a},
+        ).scalar()
+
+    # Find workspace B's actual id via a separate query
+    with SessionLocal() as s:
+        ws_b_id = s.execute(
+            text(
+                "SELECT id FROM workspaces WHERE id != :wsa LIMIT 1"
+            ),
+            {"wsa": ws_a_id},
+        ).scalar()
+
+    new_part_id = str(uuid.uuid4())
+    with SessionLocal() as s:
+        with pytest.raises((IntegrityError, ProgrammingError, DBAPIError)):
+            s.execute(
+                text(
+                    "INSERT INTO parts (id, workspace_id, name, part_type, "
+                    "default_storage_location_id, created_at, updated_at) "
+                    "VALUES (:id, :ws, 'injected', 'local', :sid, NOW(), NOW())"
+                ),
+                {"id": new_part_id, "ws": ws_b_id, "sid": storage_a},
+            )
+            s.commit()
 
 
 def test_parts_bulk_import_rejects_foreign_storage():
