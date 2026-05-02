@@ -1,8 +1,12 @@
 """Add bulk_import_idempotency table (BE2-003).
 
-Revision ID: 0031
-Revises: 0030
+Revision ID: 0034
+Revises: 0033
 Create Date: 2026-05-02
+
+Chain: 0030_audit_log -> 0031_search_pg_trgm_indexes ->
+0032_integer_quantities -> 0033_polymorphic_orphan_indexes ->
+0034_bulk_import_idempotency.
 
 Adds an idempotency cache for POST /api/parts/bulk-import-from-scan.
 A (workspace_id, key) composite PK enforces workspace isolation; a
@@ -21,8 +25,8 @@ from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
 
-revision = "0031"
-down_revision = "0030"
+revision = "0034"
+down_revision = "0033"
 branch_labels = None
 depends_on = None
 
