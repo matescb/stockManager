@@ -311,7 +311,7 @@ def purge_expired_sessions(db: Session, *, now: datetime | None = None) -> int:
     """
     from app.domain.users.models import UserSession
 
-    cutoff = now or datetime.now(timezone.utc)
+    cutoff = now or utcnow()
     deleted = (
         db.query(UserSession)
         .filter(UserSession.expires_at < cutoff)
