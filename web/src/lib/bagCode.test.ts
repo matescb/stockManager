@@ -6,6 +6,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { parseBagCode, bagLotName, bagComments, bagSignature } from "./bagCode";
+import bagSignaturesFixture from "./__fixtures__/bagSignatures.json";
 
 describe("parseBagCode — separator handling", () => {
   it("splits on real ASCII control separators (Scandit-shaped input)", () => {
@@ -111,6 +112,36 @@ describe("bagSignature", () => {
     expect(await bagSignature("")).toBeNull();
     expect(await bagSignature("   ")).toBeNull();
   });
+});
+
+// ---------------------------------------------------------------------------
+// Fixture parity (TEST-010). The JSON fixture is the FE/BE drift contract:
+// every alternate decoding inside an entry MUST hash to `expected_signature`,
+// and the same digest is replayed on the BE in tests/test_bag_signature.py.
+// If anybody touches normalisation on either side, exactly one of the two
+// suites fails — and the fix is to update the fixture digest deliberately,
+// not to paper over the difference.
+// ---------------------------------------------------------------------------
+
+describe("bagSignature fixture parity", () => {
+  for (const bag of bagSignaturesFixture.bags) {
+    for (const [i, raw] of bag.raws.entries()) {
+      it(`hashes to expected digest — ${bag.label} [raw#${i}]`, async () => {
+        const sig = await bagSignature(raw);
+        expect(sig).toBe(bag.expected_signature);
+      });
+    }
+  }
+
+  for (const [i, [a, b]] of bagSignaturesFixture.distinct_pairs_must_differ.entries()) {
+    it(`distinct pair #${i} hashes to different signatures`, async () => {
+      const sa = await bagSignature(a);
+      const sb = await bagSignature(b);
+      expect(sa).not.toBe(sb);
+      expect(sa).toBeTruthy();
+      expect(sb).toBeTruthy();
+    });
+  }
 });
 
 describe("bagLotName / bagComments helpers", () => {
