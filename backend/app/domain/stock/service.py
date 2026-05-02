@@ -104,6 +104,41 @@ def lock_parts_for_stock_write(
         _lock_for_stock_write(db, workspace_id=workspace_id, part_id=pid)
 
 
+def _lock_for_storage_constraint(
+    db: Session, *, workspace_id: UUID, storage_location_id: UUID
+) -> None:
+    """Per-(workspace, storage) advisory lock for storage-constraint reads.
+
+    The per-(workspace, part) lock from ``_lock_for_stock_write`` only
+    serialises writers that touch the *same* part. ``single_part_only``
+    and ``existing_parts_only`` are cross-part invariants on the
+    *destination location*: two concurrent ``add_stock`` / ``move_stock``
+    calls for **different parts** targeting the same single_part_only
+    bin each hold a different per-part lock, both read
+    ``stock_for_storage(loc) == []``, both pass the check, and both
+    insert their StockEntry — leaving the bin holding two parts.
+
+    This second lock closes the cross-part race by serialising every
+    write whose destination is the same location. There is no DB-level
+    CHECK or trigger backing single_part_only / existing_parts_only
+    (the 0013 trigger only enforces non-negative balances), so the
+    application-level lock is the only line of defence.
+
+    **Lock ordering**: callers always acquire the per-part lock first
+    (``_lock_for_stock_write``) and the per-storage lock second. Two
+    concurrent writers targeting the same destination thus contend on
+    the storage lock without circular waits — there is no path that
+    holds the storage lock while waiting for a per-part lock. (The
+    multi-part helpers — ``builds.consume``, ``orders.receive`` — do
+    not pass a destination through ``_enforce_storage_constraints``,
+    so they don't take a storage lock.)
+    """
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+        {"k": f"{workspace_id}:storage:{storage_location_id}"},
+    )
+
+
 def current_quantity(
     db: Session,
     *,
@@ -304,11 +339,26 @@ def _enforce_storage_constraints(
     """Enforce single_part_only and existing_parts_only constraints using
     current stock (positive on-hand balances), not historical row counts.
 
-    Must be called inside the advisory lock for (workspace_id, part_id) so
-    the read-check-write sequence is serialised.
+    Must be called inside the advisory lock for (workspace_id, part_id) —
+    every caller acquires that via ``_lock_for_stock_write`` first. We
+    additionally acquire the per-(workspace, storage) lock here so that
+    two concurrent writers targeting the *same destination* with
+    *different parts* can't both pass the single_part_only /
+    existing_parts_only check on a stale read and then both insert
+    (cross-part race). The per-part lock alone only serialises same-part
+    writers; the storage lock closes the cross-part hole. Lock ordering
+    is fixed (part, then storage) to avoid AB/BA deadlocks with
+    ``_lock_for_stock_write``.
+
+    Scope: ``add_stock`` and ``move_stock`` (the storage-constrained
+    paths). ``adjust_stock`` / ``remove_stock`` don't enter constrained
+    locations from outside, and the multi-part helpers don't pass a
+    destination through this function.
 
     Raises StockConflictError on violation.
     """
+    _lock_for_storage_constraint(db, workspace_id=workspace_id, storage_location_id=storage.id)
+
     if storage.single_part_only:
         # Any part other than the one being added/moved-in currently has
         # positive on-hand stock at this location?

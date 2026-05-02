@@ -12,6 +12,7 @@ current positive balances.
 """
 from __future__ import annotations
 
+import threading
 import uuid
 
 import pytest
@@ -229,46 +230,32 @@ def test_existing_parts_only_rejects_part_with_no_prior_history(c):
 
 def test_existing_parts_only_allows_part_with_prior_positive_history(c):
     """existing_parts_only: part that was previously stocked here
-    (even if currently zero) is allowed back."""
-    loc = _storage(c, "EPO-prior", existing_parts_only=True)
+    (even if currently zero) is allowed back.
+
+    Setup: create the location WITHOUT the flag, seed prior positive
+    history (add then remove so the location is currently empty), then
+    PATCH the flag on. Re-adding the same part must now succeed —
+    the helper checks for any prior positive entry, not current stock.
+    """
+    loc = _storage(c, "EPO-prior")  # no flag yet
     part = _part(c, "OldPart")
 
-    # Bypass the constraint to seed initial stock (turn off flag, add, turn on).
-    # The simplest way: add without the flag, then patch the storage.
-    # Use a second storage to add then move.
-    staging = _storage(c, "Staging-EPO")
-    _add(c, part, 5, staging)
+    # Add then remove (creates prior positive entry, zero current balance).
+    _add(c, part, 3, loc)
+    _remove(c, part, 3, loc)
 
-    # Patch storage to enable existing_parts_only.
-    r = c.patch(f"/api/storage/{loc}", json={"existing_parts_only": True})
-    # Some implementations may not expose patch; use a helper via the DB or
-    # create the storage already flagged with a known prior entry.
-    # Instead: seed initial stock directly to the loc while it's NOT flagged,
-    # then remove it to make it empty, then try to add again.
-
-    # Create a fresh location without the flag, add stock, set flag, remove,
-    # verify it still allows re-add.
-    loc2 = _storage(c, "EPO-prior2")  # no flag yet
-    part2 = _part(c, "OldPart2")
-
-    # Add then remove (creates prior positive entry).
-    _add(c, part2, 3, loc2)
-    _remove(c, part2, 3, loc2)
-
-    # Now enable the flag on loc2 via PATCH.
-    r2 = c.patch(f"/api/storage/{loc2}", json={"existing_parts_only": True})
-    # If PATCH is not supported we just re-create with the flag knowing the
-    # prior entries already exist. But the flag needs to be True at query time.
-    if r2.status_code not in (200, 201):
+    # Now enable the flag on loc via PATCH.
+    r_patch = c.patch(f"/api/storage/{loc}", json={"existing_parts_only": True})
+    if r_patch.status_code not in (200, 201):
         # Fallback: the test is not applicable if storage patch isn't wired.
         pytest.skip("storage PATCH not available")
 
-    # part2 has prior positive history at loc2 — should be accepted.
-    r3 = c.post(
+    # part has prior positive history at loc — should be accepted.
+    r = c.post(
         "/api/stock/add",
-        json={"part_id": part2, "quantity": 2, "storage_location_id": loc2},
+        json={"part_id": part, "quantity": 2, "storage_location_id": loc},
     )
-    assert r3.status_code == 200, r3.text
+    assert r.status_code == 200, r.text
 
 
 # ---------------------------------------------------------------------------
@@ -347,3 +334,59 @@ def test_workspace_isolation_storage_constraints(c):
     )
     assert r.status_code == 409, r.text
     assert r.json().get("constraint") == "single_part_only"
+
+
+# ---------------------------------------------------------------------------
+# Concurrency — cross-part race against single_part_only destination.
+#
+# Two threads each fire `POST /api/stock/add` for *different parts* into
+# the same single_part_only empty location. Without the per-storage
+# advisory lock, both pass the `stock_for_storage(loc) == []` check on
+# stale reads and both insert — leaving the bin holding two parts in
+# violation of the invariant. With the lock, the second blocks on the
+# first's commit, then re-reads and sees the first part already there
+# and returns 409.
+# ---------------------------------------------------------------------------
+
+
+pytestmark_real_db = pytest.mark.real_db
+
+
+@pytest.mark.real_db
+def test_single_part_only_cross_part_race_blocked(c):
+    """Concurrent add of part A and part B into the same single_part_only
+    empty location must result in exactly one success — the per-storage
+    advisory lock serialises the read/check/write across different parts.
+    """
+    loc = _storage(c, "SPO-race", single_part_only=True)
+    part_a = _part(c, "RaceA")
+    part_b = _part(c, "RaceB")
+
+    cookie = next(ck for ck in c.cookies.jar)
+
+    results: list[int] = []
+    barrier = threading.Barrier(2)
+
+    def do_add(part_id: str) -> None:
+        client = TestClient(app)
+        client.cookies.set(cookie.name, cookie.value, domain=cookie.domain, path=cookie.path)
+        barrier.wait()  # both threads ready before either fires
+        r = client.post(
+            "/api/stock/add",
+            json={"part_id": part_id, "quantity": 1, "storage_location_id": loc},
+        )
+        results.append(r.status_code)
+
+    t1 = threading.Thread(target=do_add, args=(part_a,))
+    t2 = threading.Thread(target=do_add, args=(part_b,))
+    t1.start()
+    t2.start()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+
+    assert len(results) == 2
+    successes = sum(1 for s in results if s == 200)
+    conflicts = sum(1 for s in results if s == 409)
+    # Exactly one succeeds, one is rejected with the structured 409.
+    assert successes == 1, f"expected 1 success, got results={results}"
+    assert conflicts == 1, f"expected 1 conflict, got results={results}"
