@@ -9,6 +9,7 @@ from typing import Iterable
 from uuid import UUID
 
 import chardet
+from fastapi import HTTPException, status
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
@@ -24,8 +25,31 @@ from app.domain.projects.schemas import (
 )
 
 
+# SEC2-007 / BE2-006 — second line of defence. The schema caps the
+# base64 input at 5 MB; this caps the decoded body at 4 MB and the row
+# count at 10 000 so a malicious payload that squeaks past the schema
+# (e.g. a wildly compressible CSV that base64-decodes oddly) still
+# can't OOM the worker.
+_MAX_DECODED_BYTES = 4_000_000
+_MAX_ROW_COUNT = 10_000
+
+
 def _decode_b64(b64: str) -> bytes:
-    return base64.b64decode(b64)
+    raw = base64.b64decode(b64)
+    if len(raw) > _MAX_DECODED_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"BOM payload exceeds {_MAX_DECODED_BYTES} bytes after decode",
+        )
+    return raw
+
+
+def _enforce_row_cap(rows: list) -> None:
+    if len(rows) > _MAX_ROW_COUNT:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"BOM exceeds {_MAX_ROW_COUNT} rows; split the import",
+        )
 
 
 def _detect_encoding(raw: bytes, hint: str | None) -> str:
@@ -73,6 +97,7 @@ def preview(payload: BomImportPreviewIn) -> BomImportPreviewOut:
     sep = _detect_separator(text, payload.separator)
     rows_iter = csv.reader(io.StringIO(text), delimiter=sep)
     all_rows: list[list[str]] = [list(r) for r in rows_iter if any(c.strip() for c in r)]
+    _enforce_row_cap(all_rows)
     if not all_rows:
         return BomImportPreviewOut(
             detected_separator=sep,
@@ -228,6 +253,7 @@ def commit(
     text = raw.decode(payload.encoding or "utf-8", errors="replace")
     rows_iter = csv.reader(io.StringIO(text), delimiter=payload.separator or ",")
     all_rows: list[list[str]] = [list(r) for r in rows_iter if any(c.strip() for c in r)]
+    _enforce_row_cap(all_rows)
     if payload.has_header and all_rows:
         all_rows = all_rows[1:]
 

@@ -175,3 +175,30 @@ def test_published_flag_reflected_in_part_get(owner_client):
     owner_client.patch(f"/api/parts/{pid}", json={"published": False})
     p = owner_client.get(f"/api/parts/{pid}").json()["data"]
     assert p["published"] is False
+
+
+# ---------------------------------------------------------------------------
+# SEC2-009 — security headers on the public catalog responses
+# ---------------------------------------------------------------------------
+
+
+def test_catalog_html_carries_security_headers(owner_client):
+    url = _enable_catalog(owner_client)
+    _create_part(owner_client, "HdrPart", published=True)
+    r = owner_client.get(url)
+    assert r.status_code == 200, r.text
+    assert r.headers.get("x-content-type-options") == "nosniff"
+    assert r.headers.get("x-frame-options") == "DENY"
+    assert r.headers.get("referrer-policy") == "same-origin"
+    csp = r.headers.get("content-security-policy", "")
+    assert "frame-ancestors 'none'" in csp
+    assert "script-src 'none'" in csp
+
+
+def test_catalog_json_carries_security_headers(owner_client):
+    url = _enable_catalog(owner_client)
+    _create_part(owner_client, "HdrPartJson", published=True)
+    r = owner_client.get(f"{url}/parts.json")
+    assert r.status_code == 200, r.text
+    assert r.headers.get("x-content-type-options") == "nosniff"
+    assert r.headers.get("x-frame-options") == "DENY"

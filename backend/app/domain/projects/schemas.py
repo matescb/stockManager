@@ -67,7 +67,14 @@ class BomImportPreviewIn(BaseModel):
     """Step 1: parse the upload, return preview rows + suggested separator."""
     model_config = ConfigDict(extra="forbid")
 
-    text_b64: str
+    # Cap base64 input at 6 MB (≈4.5 MB raw after decode). The importer
+    # asserts the decoded size separately at 4 MB so a payload that
+    # squeaks under this Field limit but decodes past the runtime cap
+    # still trips the post-decode 413 guard. The 6 MB / 4 MB pairing
+    # is deliberate: Field validation must allow a payload large enough
+    # for the runtime check to fire, otherwise the layered defence
+    # collapses to just the Pydantic 422. SEC2-007 / BE2-006.
+    text_b64: str = Field(..., max_length=6_000_000)
     separator: str | None = None  # auto-detect if None
     encoding: str | None = None
     has_header: bool | None = None
@@ -96,7 +103,8 @@ class BomMappingField(BaseModel):
 class BomImportCommitIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    text_b64: str
+    # See BomImportPreviewIn.text_b64 — same cap; SEC2-007 / BE2-006.
+    text_b64: str = Field(..., max_length=6_000_000)
     separator: str
     encoding: str
     has_header: bool
