@@ -107,9 +107,17 @@ export function archiveStorageKeys(
 /**
  * Keys to invalidate after a lot move or adjust-count.
  *
+ * Both ops change the part's total on-hand quantity, which means the
+ * parts list (drives `on_hand` column) and the three stock-rollup
+ * reports (low-stock, stock-value, expiring) all need to refresh.
+ * Same rationale as `archivePartKeys` — keep these in sync if you
+ * touch one.
+ *
  * @param lot         The lot object (must have at least `id` and `part_id`).
- * @param storageIds  Optional extra storage location IDs touched by the
- *                    operation (e.g. move destination and/or source).
+ * @param storageIds  Storage location IDs touched by the operation.
+ *                    For a move, callers must include BOTH source and
+ *                    destination — the source's "what's in this bin"
+ *                    and history views go stale otherwise.
  */
 export function lotMutationKeys(
   workspaceId: string | null | undefined,
@@ -117,10 +125,16 @@ export function lotMutationKeys(
   storageIds: string[] = [],
 ): unknown[][] {
   const keys: unknown[][] = [
+    wsKeyOf(workspaceId, "parts"),
     wsKeyOf(workspaceId, "lots"),
     wsKeyOf(workspaceId, "lot", lot.id),
-    wsKeyOf(workspaceId, "part", lot.part_id, "stock"),
+    // ["ws", ws, "part", partId] is a prefix match — TanStack invalidates
+    // every sub-key (`:stock`, `:lots`, `:history`, `:custom-fields`, …)
+    // off it, so don't enumerate them separately.
     wsKeyOf(workspaceId, "part", lot.part_id),
+    wsKeyOf(workspaceId, "report", "low-stock"),
+    wsKeyOf(workspaceId, "report", "stock-value"),
+    wsKeyOf(workspaceId, "report", "expiring"),
   ];
   for (const sid of storageIds) {
     keys.push(wsKeyOf(workspaceId, "storage", sid));

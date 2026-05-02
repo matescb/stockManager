@@ -51,6 +51,11 @@ export function LotInfo() {
   );
 }
 
+type PartStockResp = {
+  total_on_hand: number;
+  rows: { storage_location_id: string | null; lot_id: string | null; quantity: number }[];
+};
+
 export function LotMove() {
   const { lotId } = useParams<{ lotId: string }>();
   const { lot } = useOutletContext<{ lot: Lot }>();
@@ -58,6 +63,15 @@ export function LotMove() {
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
   const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
+  // The Lot resource itself doesn't carry a single storage_location_id
+  // (a lot can be split across bins via prior moves), so we read the
+  // part's stock breakdown to discover which bins currently hold this
+  // lot — those are the source bins the move will drain. Without this,
+  // the source bin's StorageInfo / StorageHistory go stale on success.
+  const { data: partStock } = useQuery({
+    queryKey: useWsKey("part", lot.part_id, "stock"),
+    queryFn: () => api.get<PartStockResp>(`/parts/${lot.part_id}/stock`),
+  });
   const [dest, setDest] = useState("");
   const [qty, setQty] = useState<number>(0);
   const [split, setSplit] = useState(false);
@@ -69,7 +83,10 @@ export function LotMove() {
       quantity: qty,
       split_lot: split,
     });
-    const storageIds = dest ? [dest] : [];
+    const sourceIds = (partStock?.rows ?? [])
+      .filter(r => r.lot_id === lot.id && r.storage_location_id)
+      .map(r => r.storage_location_id as string);
+    const storageIds = Array.from(new Set([...sourceIds, dest].filter(Boolean) as string[]));
     for (const k of lotMutationKeys(workspaceId, lot, storageIds))
       qc.invalidateQueries({ queryKey: k });
     nav(`/lots/${lotId}/info`);

@@ -106,11 +106,18 @@ describe("lotMutationKeys", () => {
     expect(keys.some(k => (k as unknown[]).includes(LOT_ID))).toBe(true);
   });
 
-  it("includes part stock and part detail keys", () => {
+  it("includes parts list and part detail keys", () => {
+    const keys = lotMutationKeys(WS, lot);
+    expect(keys.some(k => (k as unknown[]).includes("parts"))).toBe(true);
+    expect(keys.some(k => (k as unknown[]).includes(PART_ID))).toBe(true);
+  });
+
+  it("includes the three stock-rollup report keys", () => {
     const keys = lotMutationKeys(WS, lot);
     const flat = keys.map(k => (k as unknown[]).join(","));
-    expect(flat.some(s => s.includes("stock"))).toBe(true);
-    expect(flat.some(s => s.includes(PART_ID))).toBe(true);
+    expect(flat.some(s => s.includes("low-stock"))).toBe(true);
+    expect(flat.some(s => s.includes("stock-value"))).toBe(true);
+    expect(flat.some(s => s.includes("expiring"))).toBe(true);
   });
 
   it("appends a key per extra storageId", () => {
