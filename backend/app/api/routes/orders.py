@@ -6,12 +6,13 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy import and_, or_, select
 
-from app.api._helpers import assert_child_in_parent, require_resource_access
+from app.api._helpers import assert_child_in_parent, assert_in_workspace, require_resource_access
 from app.api.routes._activity import _DEFAULT_LIMIT, _MAX_LIMIT, build_activity
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.core.time import utcnow
 from app.domain.orders.models import Order, OrderEntry
+from app.domain.parts.models import Part
 from app.domain.stock.models import StockEntry
 from app.domain.orders.schemas import (
     OrderCreateIn,
@@ -24,6 +25,17 @@ from app.domain.orders.service import OrderError, receive
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _assert_part_live(db, ws_id: UUID, part_id) -> None:
+    """Assert that a part exists in the current workspace and is not archived.
+    Raises 404 if the part is missing or belongs to another workspace,
+    matching the pattern in projects.py (BE2-016)."""
+    if part_id is None:
+        return
+    part = assert_in_workspace(db, Part, part_id, ws_id, label="part")
+    if part.archived_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="part not found")
 
 
 def _serialize(o: Order, *, totals: tuple[int, int] | None = None) -> dict:
@@ -128,6 +140,7 @@ def create_order(payload: OrderCreateIn, db: DbSession, ws: CurrentWorkspace, us
     db.add(o)
     db.flush()
     for idx, ein in enumerate(payload.entries):
+        _assert_part_live(db, ws.id, ein.part_id)
         db.add(
             OrderEntry(
                 workspace_id=ws.id,
@@ -216,6 +229,7 @@ def restore_order(order_id: UUID, db: DbSession, ws: CurrentWorkspace, user: Cur
 @router.post("/{order_id}/entries", status_code=status.HTTP_201_CREATED)
 def add_entry(order_id: UUID, payload: OrderEntryIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     o = _get_order(db, ws.id, order_id)
+    _assert_part_live(db, ws.id, payload.part_id)
     next_idx = (
         db.execute(
             select(OrderEntry.order_index)
@@ -250,6 +264,8 @@ def patch_entry(order_id: UUID, entry_id: UUID, payload: OrderEntryPatch, db: Db
     o = _get_order(db, ws.id, order_id)
     e = assert_child_in_parent(db, OrderEntry, entry_id, o, parent_fk="order_id", label="entry")
     data = payload.model_dump(exclude_unset=True)
+    if "part_id" in data:
+        _assert_part_live(db, ws.id, data["part_id"])
     if "quantity_ordered" in data and data["quantity_ordered"] is not None:
         if data["quantity_ordered"] < e.quantity_received:
             raise HTTPException(

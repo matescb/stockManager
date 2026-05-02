@@ -589,16 +589,12 @@ def test_orders_isolation_get_and_archive_404_across_workspaces():
 
 
 def test_orders_create_rejects_foreign_part_id_via_entries():
-    """Create-order with an entries[].part_id from another workspace.
-    Without ws-validation, a B caller could embed A's part UUID in an
-    OrderEntry, leaking the existence-oracle and binding the entry to
+    """Create-order with an entries[].part_id from another workspace must
+    return 404. Without ws-validation, a B caller could embed A's part UUID
+    in an OrderEntry, leaking the existence-oracle and binding the entry to
     a foreign row."""
     a, b = _two_workspaces()
     part_a = _create_part(a, "A-part")
-    # Pydantic accepts the body — the question is whether the server
-    # validates the FK against the workspace. If it doesn't (today's
-    # state), the row lands; this test is the regression pin for when
-    # we tighten the receiving end.
     r = b.post(
         "/api/orders",
         json={
@@ -608,13 +604,22 @@ def test_orders_create_rejects_foreign_part_id_via_entries():
             ],
         },
     )
-    # If the server validates: 404. If it doesn't: 200 (today's
-    # behaviour, recorded for explicitness). Either is fine here — but
-    # the real isolation guarantee is `b.get("/api/parts")` MUST NOT
-    # include part_a, asserted next.
-    assert r.status_code in (200, 201, 404)
-    rows = b.get("/api/parts").json()["data"]
-    assert all(p["id"] != part_a for p in rows)
+    assert r.status_code == 404
+
+
+def test_orders_add_entry_rejects_foreign_part_id():
+    """POST /api/orders/{id}/entries with a part_id from another workspace
+    must return 404 (workspace isolation on add_entry)."""
+    a, b = _two_workspaces()
+    part_a = _create_part(a, "A-part-entry")
+    # B creates its own order
+    order_b = b.post("/api/orders", json={"name": "B-order"}).json()["data"]["id"]
+    # B tries to add an entry referencing A's part
+    r = b.post(
+        f"/api/orders/{order_b}/entries",
+        json={"part_id": part_a, "name": "smuggled", "quantity_ordered": 1},
+    )
+    assert r.status_code == 404
 
 
 def test_invitations_token_redemption_does_not_cross_workspaces():
