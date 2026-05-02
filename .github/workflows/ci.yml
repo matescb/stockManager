@@ -153,8 +153,22 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      # INFRA2-015: expose SENTRY_AUTH_TOKEN to `vite build` only on
+      # push to main (matching the upload step's gate below). The
+      # `vite.config.ts` `emitSourcemaps` gate keys off `SENTRY_AUTH_TOKEN`
+      # presence, so without this env block the build emits zero `.map`
+      # files and the subsequent upload step ships nothing — regressing
+      # INFRA2-010. PRs / feature branches still build with no token, so
+      # no `.map` files are emitted off-main. The token never enters any
+      # Docker build context — it only exists in the GitHub Actions runner
+      # env for these two CI steps.
       - name: Type-check + bundle
         working-directory: web
+        env:
+          SENTRY_AUTH_TOKEN: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.SENTRY_AUTH_TOKEN || '' }}
+          SENTRY_ORG: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.SENTRY_ORG || '' }}
+          SENTRY_PROJECT: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.SENTRY_PROJECT || '' }}
+          VITE_APP_VERSION: ${{ github.sha }}
         run: npm run build
 
       # INFRA2-010: upload sourcemaps to Sentry from CI so the auth token
