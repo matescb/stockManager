@@ -1,7 +1,7 @@
 """Add user_login_failures table for per-account login lockout (SEC2-014).
 
 Revision ID: 0028
-Revises: 0023
+Revises: 0025
 Create Date: 2026-05-02
 
 Per-account lockout:
@@ -20,7 +20,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision = "0028"
-down_revision = "0023"
+down_revision = "0025"
 branch_labels = None
 depends_on = None
 
