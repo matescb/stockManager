@@ -1,0 +1,7 @@
+src/components/scanner/ZxingScanner.tsx:361:30: The ref value 'videoRef.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'videoRef.current' to a variable inside the effect, and use that variable in the cleanup function. [Warning/react-hooks/exhaustive-deps]
+src/lib/bagCode.ts:164:14: Unexpected control character(s) in regular expression: \x1e, \x1d. [Error/no-control-regex]
+src/lib/bagCode.ts:91:22: Unexpected control character(s) in regular expression: \x1c, \x1d, \x1e, \x1f, \x04. [Error/no-control-regex]
+src/routes/orders/OrderDetail.tsx:54:9: 'storageById' is assigned a value but never used. Allowed unused vars must match /^_/u. [Warning/@typescript-eslint/no-unused-vars]
+src/routes/parts/ScanImport.tsx:37:8: 'ImportResultRow' is defined but never used. Allowed unused vars must match /^_/u. [Warning/@typescript-eslint/no-unused-vars]
+src/routes/storage/StorageDetail.tsx:1:35: 'NavLink' is defined but never used. Allowed unused vars must match /^_/u. [Warning/@typescript-eslint/no-unused-vars]
+src/routes/__tests__/responsive-grids.test.ts:29:7: 'BARE_GRID_COLS_2' is assigned a value but never used. Allowed unused vars must match /^_/u. [Warning/@typescript-eslint/no-unused-vars]

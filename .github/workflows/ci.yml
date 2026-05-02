@@ -111,12 +111,17 @@ jobs:
           uv sync --frozen --extra dev
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
-      # Static analysis gate — CQ-005 / issue #121. `--exit-zero` so
-      # the first land is non-blocking; flip off in a follow-up PR
-      # once the existing violations are triaged.
+      # Static analysis gate — CQ-005 / issue #253. Baseline-blocking:
+      # fails only on NEW violations not present in .ruff-baseline.txt.
+      # To update the baseline after intentional fixes, see
+      # docs/development.md — "Updating lint baselines".
       - name: ruff
         working-directory: backend
-        run: ruff check app --exit-zero
+        run: |
+          LINT_CMD="ruff check app --output-format=concise" \
+          BASELINE_FILE="../.ruff-baseline.txt" \
+          WORK_DIR="." \
+          bash ../scripts/lint-delta.sh
 
       # SEC2-018: fast pre-pytest gate — fail if any HTTPException passes
       # traceback / stack-trace data in its detail= argument.
@@ -177,12 +182,17 @@ jobs:
         working-directory: web
         run: npm ci
 
-      # Static analysis gate — CQ-005 / issue #121. `|| true` so the
-      # first land is non-blocking; flip off in a follow-up PR once
-      # the existing violations are triaged.
+      # Static analysis gate — CQ-005 / issue #253. Baseline-blocking:
+      # fails only on NEW violations not present in .eslint-baseline.txt.
+      # To update the baseline after intentional fixes, see
+      # docs/development.md — "Updating lint baselines".
       - name: eslint
         working-directory: web
-        run: npm run lint || true
+        run: |
+          LINT_CMD="npm run lint -- --format=unix" \
+          BASELINE_FILE="../.eslint-baseline.txt" \
+          WORK_DIR="." \
+          bash ../scripts/lint-delta.sh
 
       - name: Vitest
         working-directory: web

@@ -64,6 +64,42 @@ uv export --format requirements-txt --hashes --no-dev --no-emit-project \
     -o requirements.lock
 ```
 
+## Lint gates and baselines
+
+CI enforces lint via `scripts/lint-delta.sh`, which compares current linter
+output against checked-in baseline files and fails only on NEW violations.
+This means you can introduce a PR without being blocked by pre-existing
+warnings — but you must not add new ones.
+
+Baseline files live at the repo root:
+
+| File | Linter |
+|------|--------|
+| `.ruff-baseline.txt` | `ruff check app` (Python, runs from `backend/`) |
+| `.eslint-baseline.txt` | `eslint src --format=unix` (JS/TS, runs from `web/`) |
+
+### Updating lint baselines
+
+After fixing a batch of pre-existing violations, regenerate the baselines
+and commit them together with the fixes:
+
+```bash
+# Python (ruff)
+cd backend
+ruff check app --output-format=concise 2>/dev/null \
+  | grep -E '^app/' | sort > ../.ruff-baseline.txt
+
+# JS/TS (eslint)
+cd web
+npm run lint -- --format=unix 2>/dev/null \
+  | grep -E '^[^[:space:]].+:[0-9]+:[0-9]+:' \
+  | sed "s|^$(pwd)/||g" \
+  | sort > ../.eslint-baseline.txt
+```
+
+Commit both baseline files alongside the code fix. The CI delta check will
+then see the new (smaller) baseline and pass.
+
 ## Running tests outside Docker
 
 The backend test suite needs Postgres. With a local Postgres and
