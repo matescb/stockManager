@@ -235,11 +235,56 @@ jobs:
             --release "$RELEASE" \
             web/dist
 
+  prod-validate:
+    # INFRA2-012: validate docker-compose.prod.yml and build prod images so
+    # Dockerfile / compose regressions are caught in CI instead of at deploy
+    # time on the VPS (after git reset --hard has already swapped the tree).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      # Build a CI-safe .env from the checked-in example.  We substitute a
+      # syntactically valid Fernet key so `docker compose config` resolves
+      # every variable (the backend validator only rejects an empty key at
+      # *runtime*, not at config-parse time, but having a well-formed value
+      # avoids any compose-level "variable unset" warnings).
+      - name: Create CI env file
+        run: |
+          cp deploy/.env.prod.example .env.prod.ci
+          sed -i 's|^WORKSPACE_SECRETS_KEY=.*|WORKSPACE_SECRETS_KEY=ZDZkYjI4NzM0YTQ4MjNhODNhZGFkNzE3ZGVkMGY5YWU=|' .env.prod.ci
+
+      # Validate compose YAML / schema / variable substitution. Fails on
+      # malformed YAML, unknown keys, or missing required variables.
+      # The single-line JSON-array `command:` form (see CLAUDE.md "Things
+      # that have bitten us") is exactly what this catches.
+      - name: Validate docker-compose.prod.yml
+        run: docker compose -f docker-compose.prod.yml --env-file .env.prod.ci config -q
+
+      # Build the backend prod image. Catches broken COPY paths, missing
+      # apt packages, pip install failures.
+      - name: Build backend prod image
+        run: docker buildx build --load -f backend/Dockerfile backend/
+
+      # Build the web prod image (context = repo root, matching compose).
+      # Catches Dockerfile syntax errors, broken npm build, nginx config
+      # copy errors. SENTRY_AUTH_TOKEN is intentionally absent — the Vite
+      # plugin no-ops on an empty token (INFRA2-010).
+      - name: Build web prod image
+        run: docker buildx build --load -f web/Dockerfile.prod .
+
+      # Lint the in-container nginx config. Catches syntax errors in
+      # deploy/nginx-web.conf before they reach the running stack.
+      - name: Lint nginx config
+        run: |
+          docker run --rm \
+            -v "$PWD/deploy/nginx-web.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:alpine nginx -t
+
   deploy:
     # Only redeploy on green main pushes. PRs and feature branches just run
-    # the two test jobs above.
+    # the three test/validate jobs above.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [backend-tests, web-build]
+    needs: [backend-tests, web-build, prod-validate]
     runs-on: ubuntu-latest
     # Environment association. Today this just scopes any environment-level
     # secrets we add later; if a "Required reviewers" protection rule is
