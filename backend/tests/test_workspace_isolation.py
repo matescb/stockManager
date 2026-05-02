@@ -828,3 +828,26 @@ def test_match_entry_foreign_part_id_is_404():
         json={"part_id": part_a},
     )
     assert r.status_code == 404, r.text
+
+
+def test_audit_log_does_not_leak_cross_workspace_rows():
+    """GET /api/audit must only return rows belonging to the caller's
+    workspace, even if both workspaces have audit rows."""
+    a, b = _two_workspaces()
+    # A generates an audit row via bulk-delete.
+    pa = _create_part(a, "A-audit-part")
+    r_del = a.post("/api/parts/bulk-delete", json={"part_ids": [pa]})
+    assert r_del.status_code == 200, r_del.text
+
+    # B reads their log — must contain zero rows from A.
+    r_b = b.get("/api/audit")
+    assert r_b.status_code == 200, r_b.text
+    rows_b = r_b.json()["data"]
+    # None of B's rows may reference A's part ID.
+    a_part_ids_in_b = [
+        row for row in rows_b
+        if pa in (row.get("target_ids") or [])
+    ]
+    assert a_part_ids_in_b == [], (
+        f"Workspace A's audit rows leaked into workspace B's log: {a_part_ids_in_b}"
+    )
