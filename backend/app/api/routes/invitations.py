@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac as _hmac
 import secrets
 from datetime import datetime, timezone
 from typing import Literal
@@ -11,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
+from app.core.config import settings
 from app.core.deps import (
     CurrentUser,
     CurrentWorkspace,
@@ -27,10 +29,26 @@ router = APIRouter()
 
 
 def _hash_token(plaintext: str) -> str:
-    """SHA-256 hex digest. Used both at create time (to compute what to
-    store) and at accept time (to look up by what the caller supplied).
+    """SHA-256 hex digest of the plaintext token.
+
+    Used only to populate `token_hash` at creation time (for backward
+    compatibility — the unique index on `token_hash` still exists).
+    Accept flow no longer queries by this value; it uses `_hmac_token`
+    + `hmac.compare_digest` instead (SEC2-013).
     """
     return hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
+
+
+def _hmac_token(plaintext: str) -> str:
+    """HMAC-SHA-256 (keyed on SESSION_SECRET) hex digest of the plaintext.
+
+    SEC2-013: stored as `token_hmac` on the row. The accept flow looks
+    up by `id` (PK — no timing oracle on the SQL lookup) and then calls
+    `hmac.compare_digest(_hmac_token(supplied), row.token_hmac)` so the
+    comparison is constant-time regardless of the digest value.
+    """
+    key = settings().SESSION_SECRET.encode("utf-8")
+    return _hmac.new(key, plaintext.encode("utf-8"), "sha256").hexdigest()
 
 
 class InviteIn(BaseModel):
@@ -48,16 +66,25 @@ def _serialize(inv: WorkspaceInvitation, *, plaintext_token: str | None = None) 
     have it, because the DB stores only the hash. The caller is
     responsible for delivering the plaintext to the invitee out-of-band
     immediately (typically via the link embedded in the response).
+
+    SEC2-013: when a plaintext_token is provided the `token` field is
+    returned as the composite string "{invitation_id}:{plaintext_token}".
+    The accept endpoint splits this to obtain the PK for its DB lookup
+    (no timing oracle) and the plaintext for HMAC comparison.
     """
+    composite_token: str | None = None
+    if plaintext_token and inv.status == "pending":
+        composite_token = f"{inv.id}:{plaintext_token}"
+
     return {
         "id": str(inv.id),
         "workspace_id": str(inv.workspace_id),
         "email": inv.email,
         "role": inv.role,
         "status": inv.status,
-        # Only the create response carries the plaintext; all other
+        # Only the create response carries the composite token; all other
         # serialisations return None here.
-        "token": plaintext_token if inv.status == "pending" else None,
+        "token": composite_token,
         "created_at": inv.created_at.isoformat(),
         "accepted_at": inv.accepted_at.isoformat() if inv.accepted_at else None,
     }
@@ -122,8 +149,10 @@ def create_invitation(
         return ok(_serialize(existing))
 
     # Mint a new token. 32 bytes urlsafe ≈ 256 bits of entropy — well
-    # past brute-force feasibility. The hash goes to the DB; the
-    # plaintext goes back to the caller exactly once via the response.
+    # past brute-force feasibility. Both the SHA-256 hash (for backward
+    # compatibility / unique index) and the HMAC digest (SEC2-013, used
+    # at accept time with compare_digest) go to the DB; the plaintext
+    # goes back to the caller exactly once via the response.
     plaintext = secrets.token_urlsafe(32)
     # Cache workspace_id as a plain Python value before the savepoint so
     # we can query with it even if the session's object identity cache is
@@ -134,6 +163,7 @@ def create_invitation(
         email=email,
         role=payload.role,
         token_hash=_hash_token(plaintext),
+        token_hmac=_hmac_token(plaintext),
         invited_by=user.id,
     )
     db.add(inv)
@@ -220,6 +250,12 @@ def revoke_invitation(invitation_id: UUID, db: DbSession, ws: CurrentWorkspace):
 class AcceptIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    # SEC2-013: the token field now carries a composite value of the form
+    # "{invitation_id}:{plaintext_token}", produced by _serialize().  The
+    # accept handler splits on the first ":" to obtain the PK (for the
+    # DB lookup) and the plaintext (for HMAC comparison).  This keeps the
+    # frontend interface to a single opaque string while allowing a
+    # constant-time comparison path.
     token: str
 
 
@@ -230,19 +266,41 @@ class AcceptIn(BaseModel):
 @router.post("/accept")
 @limiter.limit("10/minute")
 def accept_invitation(request: Request, payload: AcceptIn, db: DbSession, user: CurrentUser):
-    # Look up by hash — the plaintext is never stored, so an attacker
-    # with a DB dump cannot mint a valid lookup query without first
-    # cracking the hash (infeasible at 256 bits).
-    inv = (
-        db.execute(
-            select(WorkspaceInvitation).where(
-                WorkspaceInvitation.token_hash == _hash_token(payload.token)
-            )
+    # SEC2-013: the composite token encodes "{invitation_id}:{plaintext}".
+    # Split on the first ":" only — the plaintext may theoretically
+    # contain ":" characters (urlsafe_b64 doesn't, but be defensive).
+    parts = payload.token.split(":", 1)
+    if len(parts) != 2:
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            ErrorCodes.INVITATION_NOT_FOUND,
+            "invitation not found",
         )
-        .scalars()
-        .first()
+    raw_id, plaintext = parts
+    try:
+        invitation_id = UUID(raw_id)
+    except ValueError:
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            ErrorCodes.INVITATION_NOT_FOUND,
+            "invitation not found",
+        )
+
+    # Look up by id (PK) — no timing oracle on the SQL side.
+    inv = db.get(WorkspaceInvitation, invitation_id)
+
+    # Compute the HMAC of the supplied plaintext before branching on whether
+    # the row exists or whether the HMAC matches.  This ensures we do the
+    # same amount of crypto work on every code path (avoids short-circuit
+    # timing leak on missing-row vs wrong-token).
+    supplied_hmac = _hmac_token(plaintext)
+
+    token_ok = (
+        inv is not None
+        and inv.token_hmac is not None
+        and _hmac.compare_digest(supplied_hmac, inv.token_hmac)
     )
-    if not inv:
+    if not token_ok:
         raise_http(
             status.HTTP_404_NOT_FOUND,
             ErrorCodes.INVITATION_NOT_FOUND,

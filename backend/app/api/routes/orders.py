@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import or_, select
 
-from app.api._helpers import require_resource_access
+from app.api._helpers import assert_child_in_parent, require_resource_access
 from app.api.routes._activity import build_activity
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
@@ -222,9 +222,7 @@ def add_entry(order_id: UUID, payload: OrderEntryIn, db: DbSession, ws: CurrentW
 @router.patch("/{order_id}/entries/{entry_id}")
 def patch_entry(order_id: UUID, entry_id: UUID, payload: OrderEntryPatch, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     o = _get_order(db, ws.id, order_id)
-    e = db.get(OrderEntry, entry_id)
-    if not e or e.workspace_id != ws.id or e.order_id != o.id:
-        raise HTTPException(status_code=404, detail="entry not found")
+    e = assert_child_in_parent(db, OrderEntry, entry_id, o, parent_fk="order_id", label="entry")
     data = payload.model_dump(exclude_unset=True)
     if "quantity_ordered" in data and data["quantity_ordered"] is not None:
         if data["quantity_ordered"] < e.quantity_received:
@@ -241,9 +239,7 @@ def patch_entry(order_id: UUID, entry_id: UUID, payload: OrderEntryPatch, db: Db
 @router.delete("/{order_id}/entries/{entry_id}")
 def del_entry(order_id: UUID, entry_id: UUID, db: DbSession, ws: CurrentWorkspace):
     o = _get_order(db, ws.id, order_id)
-    e = db.get(OrderEntry, entry_id)
-    if not e or e.workspace_id != ws.id or e.order_id != o.id:
-        raise HTTPException(status_code=404, detail="entry not found")
+    e = assert_child_in_parent(db, OrderEntry, entry_id, o, parent_fk="order_id", label="entry")
     if e.quantity_received > 0:
         raise HTTPException(status_code=400, detail="cannot delete entry with received stock")
     db.delete(e)
