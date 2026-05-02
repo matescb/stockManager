@@ -206,7 +206,7 @@ export function LowStockReport() {
     queryKey: useWsKey("report", "low-stock"),
     queryFn: () => api.get<LowStockRow[]>("/reports/low-stock"),
   });
-  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load low-stock report. {(error as Error)?.message}</div>;
+  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load low-stock report. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (isLoading) return <div className="text-muted">Loading…</div>;
   const rows = data ?? [];
 
@@ -275,7 +275,7 @@ export function StockValueReport() {
     queryKey: useWsKey("report", "stock-value"),
     queryFn: () => api.get<StockValue>("/reports/stock-value"),
   });
-  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load stock value report. {(error as Error)?.message}</div>;
+  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load stock value report. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (isLoading) return <div className="text-muted">Loading…</div>;
   if (!data) return null;
   return (

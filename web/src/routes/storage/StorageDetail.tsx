@@ -1,7 +1,7 @@
 import { Link, Outlet, useParams, NavLink, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ScanLine } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useWsKey, wsKeyOf, archiveStorageKeys } from "@/lib/queryKeys";
 import EntityHeader from "@/components/EntityHeader";
@@ -18,7 +18,7 @@ export function StorageDetailLayout() {
     queryFn: () => api.get<StorageLocation>(`/storage/${storageId}`),
     enabled: !!storageId,
   });
-  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load storage location. {(error as Error)?.message}</div>;
+  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load storage location. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (!data) return <div className="text-muted">Loading…</div>;
   const items = [
     { to: `/storage/${data.id}/info`, label: "Info" },
@@ -65,7 +65,7 @@ export function StorageInfo() {
     queryKey: useWsKey("storage", storageId, "parts"),
     queryFn: () => api.get<{ part_id: string; lot_id: string | null; quantity: number }[]>(`/storage/${storageId}/parts`),
   });
-  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load storage contents. {(error as Error)?.message}</div>;
+  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load storage contents. {error instanceof ApiError ? error.userMessage : ""}</div>;
   const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
   const partName = new Map(parts?.map(p => [p.id, p.name]) ?? []);
   return (

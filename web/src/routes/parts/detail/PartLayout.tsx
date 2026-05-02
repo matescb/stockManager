@@ -1,6 +1,6 @@
 import { Outlet, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
 import EntityHeader from "@/components/EntityHeader";
 import SubNav from "@/components/SubNav";
@@ -14,7 +14,7 @@ export default function PartLayout() {
     enabled: !!partId,
   });
 
-  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load part. {(error as Error)?.message}</div>;
+  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load part. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (!part) return <div className="text-muted">Loading…</div>;
   const items = [
     { to: `/parts/${part.id}/info`, label: "Part info" },

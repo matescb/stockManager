@@ -1,6 +1,6 @@
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
 import type { StorageLocation } from "@/types";
 
@@ -18,7 +18,7 @@ export default function PartStock() {
   const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
   const storageById = new Map(storage?.map(s => [s.id, s.name]) ?? []);
 
-  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load stock. {(error as Error)?.message}</div>;
+  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load stock. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (!data) return <div className="text-muted">Loading…</div>;
   return (
     <div>

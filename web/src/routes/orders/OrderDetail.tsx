@@ -128,7 +128,7 @@ export default function OrderDetail() {
     },
   });
 
-  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load order. {(error as Error)?.message}</div>;
+  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load order. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (!data) return <div className="text-muted">Loading…</div>;
   const { order, entries } = data;
   const isClosed = order.status === "received" || order.status === "cancelled" || !!order.archived_at;

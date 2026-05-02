@@ -151,7 +151,7 @@ export default function PartSpecs() {
       )}
 
       {isError ? (
-        <div className="text-red-600 text-sm">Failed to load specs. {(error as Error)?.message}</div>
+        <div className="text-red-600 text-sm">Failed to load specs. {error instanceof ApiError ? error.userMessage : ""}</div>
       ) : isLoading ? (
         <div className="text-muted text-sm">Loading…</div>
       ) : rows.length === 0 ? (

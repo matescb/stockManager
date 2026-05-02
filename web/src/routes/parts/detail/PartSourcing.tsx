@@ -110,7 +110,7 @@ export default function PartSourcing() {
         </div>
       </div>
       {isError ? (
-        <div className="text-red-600 text-sm">Failed to load sourcing data. {(error as Error)?.message}</div>
+        <div className="text-red-600 text-sm">Failed to load sourcing data. {error instanceof ApiError ? error.userMessage : ""}</div>
       ) : isLoading ? (
         <div className="text-muted text-sm">Loading…</div>
       ) : rows.length === 0 ? (
