@@ -12,7 +12,31 @@ class Base(DeclarativeBase):
     pass
 
 
-_engine = create_engine(settings().DATABASE_URL, future=True, pool_pre_ping=True)
+# Connection pool sizing — BE2-023
+#
+# Prod runs --workers 1 (see CLAUDE.md).  With a single process the
+# effective ceiling is pool_size + max_overflow = 30 connections, well
+# within Postgres's default max_connections=100.  If we ever bump
+# --workers we must revisit these numbers (or switch to PgBouncer).
+#
+#   pool_size=10       headroom over the implicit default of 5
+#   max_overflow=20    burst capacity; connections above pool_size are
+#                      closed when released rather than returned to pool
+#   pool_recycle=1800  recycle connections after 30 min — below most
+#                      cloud-provider idle-TCP-kill defaults (~60 min)
+#   pool_timeout=30    raise PoolTimeout rather than hanging forever
+#                      when all connections are checked out
+#   pool_pre_ping=True round-trip SELECT 1 on checkout; drops silently
+#                      recycled connections instead of surfacing an error
+_engine = create_engine(
+    settings().DATABASE_URL,
+    future=True,
+    pool_pre_ping=True,
+    pool_size=10,
+    max_overflow=20,
+    pool_recycle=1800,
+    pool_timeout=30,
+)
 SessionLocal = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=False, future=True)
 
 
