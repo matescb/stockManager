@@ -17,7 +17,7 @@
  *  - `other` type accepts any extension → null (ok)
  *  - `other` type still rejects oversized files → error string
  *  - humanSize helper edge cases
- *  - MAX_BYTES constant is 50 MB
+ *  - MAX_BYTES constant is 10 MiB (matches backend MAX_UPLOAD_BYTES)
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -43,8 +43,8 @@ function makeFileWithSize(name: string, size: number, type = ""): File {
 // MAX_BYTES
 // ---------------------------------------------------------------------------
 describe("MAX_BYTES", () => {
-  it("is 50 MB", () => {
-    expect(MAX_BYTES).toBe(50 * 1024 * 1024);
+  it("is 10 MiB (matches backend MAX_UPLOAD_BYTES)", () => {
+    expect(MAX_BYTES).toBe(10 * 1024 * 1024);
   });
 });
 
@@ -143,6 +143,16 @@ describe("validateFile — image", () => {
     expect(validateFile(f, "image")).toBeNull();
   });
 
+  it("rejects a .gif file (backend allow-list excludes GIF)", () => {
+    const f = makeFileWithSize("anim.gif", 2048, "image/gif");
+    expect(validateFile(f, "image")).not.toBeNull();
+  });
+
+  it("rejects a .svg file (backend allow-list excludes SVG to prevent XSS)", () => {
+    const f = makeFileWithSize("logo.svg", 2048, "image/svg+xml");
+    expect(validateFile(f, "image")).not.toBeNull();
+  });
+
   it("rejects a .pdf file for image type", () => {
     const f = makeFileWithSize("drawing.pdf", 2048, "application/pdf");
     const result = validateFile(f, "image");
@@ -167,9 +177,20 @@ describe("validateFile — invoice", () => {
     expect(validateFile(f, "invoice")).toBeNull();
   });
 
-  it("accepts a .xlsx invoice", () => {
-    const f = makeFileWithSize("inv.xlsx", 512, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  it("accepts a scanned .png invoice", () => {
+    const f = makeFileWithSize("inv.png", 512, "image/png");
     expect(validateFile(f, "invoice")).toBeNull();
+  });
+
+  it("accepts a .webp invoice", () => {
+    const f = makeFileWithSize("inv.webp", 512, "image/webp");
+    expect(validateFile(f, "invoice")).toBeNull();
+  });
+
+  it("rejects a .xlsx invoice (backend doesn't accept it)", () => {
+    const f = makeFileWithSize("inv.xlsx", 512, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    const result = validateFile(f, "invoice");
+    expect(result).not.toBeNull();
   });
 
   it("rejects a .mp4 file for invoice type", () => {
@@ -183,25 +204,27 @@ describe("validateFile — invoice", () => {
 // validateFile — cad
 // ---------------------------------------------------------------------------
 describe("validateFile — cad", () => {
-  it("accepts a .step file by extension", () => {
+  // The backend only accepts PNG/JPEG/WebP/PDF, so the cad bucket is
+  // limited to PDF (CAD drawing exports). Native CAD formats need a
+  // backend allow-list expansion before the FE can advertise them.
+  it("accepts a .pdf CAD export", () => {
+    const f = makeFileWithSize("drawing.pdf", 1024, "application/pdf");
+    expect(validateFile(f, "cad")).toBeNull();
+  });
+
+  it("rejects a .step file (backend allow-list excludes native CAD)", () => {
     const f = makeFileWithSize("part.step", 1024, "");
-    expect(validateFile(f, "cad")).toBeNull();
+    expect(validateFile(f, "cad")).not.toBeNull();
   });
 
-  it("accepts a .stl file by extension", () => {
+  it("rejects a .stl file (backend allow-list excludes native CAD)", () => {
     const f = makeFileWithSize("model.stl", 1024, "application/sla");
-    expect(validateFile(f, "cad")).toBeNull();
+    expect(validateFile(f, "cad")).not.toBeNull();
   });
 
-  it("accepts a .dxf file by extension", () => {
+  it("rejects a .dxf file (backend allow-list excludes native CAD)", () => {
     const f = makeFileWithSize("drawing.dxf", 1024, "");
-    expect(validateFile(f, "cad")).toBeNull();
-  });
-
-  it("rejects a .pdf for cad type", () => {
-    const f = makeFileWithSize("doc.pdf", 1024, "application/pdf");
-    const result = validateFile(f, "cad");
-    expect(result).not.toBeNull();
+    expect(validateFile(f, "cad")).not.toBeNull();
   });
 });
 
@@ -209,19 +232,22 @@ describe("validateFile — cad", () => {
 // validateFile — bom
 // ---------------------------------------------------------------------------
 describe("validateFile — bom", () => {
-  it("accepts a .csv BOM", () => {
+  // The backend only accepts PNG/JPEG/WebP/PDF, so the bom bucket is
+  // limited to PDF for now. Tabular BOM formats (.csv/.xlsx/.json) need
+  // a backend allow-list expansion before the FE can advertise them.
+  it("accepts a .pdf BOM", () => {
+    const f = makeFileWithSize("bom.pdf", 512, "application/pdf");
+    expect(validateFile(f, "bom")).toBeNull();
+  });
+
+  it("rejects a .csv BOM (backend allow-list excludes CSV)", () => {
     const f = makeFileWithSize("bom.csv", 512, "text/csv");
-    expect(validateFile(f, "bom")).toBeNull();
+    expect(validateFile(f, "bom")).not.toBeNull();
   });
 
-  it("accepts a .json BOM by extension", () => {
-    const f = makeFileWithSize("bom.json", 512, "");
-    expect(validateFile(f, "bom")).toBeNull();
-  });
-
-  it("accepts a .xlsx BOM", () => {
+  it("rejects a .xlsx BOM (backend allow-list excludes XLSX)", () => {
     const f = makeFileWithSize("bom.xlsx", 512, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    expect(validateFile(f, "bom")).toBeNull();
+    expect(validateFile(f, "bom")).not.toBeNull();
   });
 
   it("rejects a .jpg for bom type", () => {

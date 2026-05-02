@@ -25,8 +25,15 @@ type Props = {
   canWrite: boolean;
 };
 
-/** 50 MB hard cap — matches the backend's upload limit. */
-export const MAX_BYTES = 50 * 1024 * 1024;
+/**
+ * 10 MiB hard cap — matches `MAX_UPLOAD_BYTES` in
+ * `backend/app/core/config.py`. The backend rejects anything larger with
+ * a 413, so the FE guard exists purely to give a fast, in-browser error
+ * instead of waiting for the round-trip. If the backend cap is ever
+ * raised, bump this in lockstep (or, better, fetch it from a config
+ * endpoint).
+ */
+export const MAX_BYTES = 10 * 1024 * 1024;
 
 /**
  * Allowed MIME types and file extensions per file_type dropdown value.
@@ -34,8 +41,21 @@ export const MAX_BYTES = 50 * 1024 * 1024;
  * filename suffix because browsers on network shares may not populate
  * `file.type` correctly.
  *
+ * The backend's allow-list (`backend/app/api/routes/attachments.py`)
+ * accepts only PNG, JPEG, WebP, and PDF — and validates with magic-byte
+ * sniffing, so the declared MIME/extension is never trusted on its own.
+ * Server-side validation remains the source of truth; this FE guard just
+ * matches that allow-list so users get an immediate error for files the
+ * server is going to reject anyway.
+ *
+ * The `cad` and `bom` buckets are restricted to PDF for now — native CAD
+ * formats (.step/.stl/.dxf) and tabular BOMs (.csv/.xlsx) need a backend
+ * expansion before the FE can advertise them. Until then they fall under
+ * the `other` bucket if a user really has one to attach.
+ *
  * `other` is intentionally permissive — any extension is accepted
- * (still subject to MAX_BYTES).
+ * (still subject to MAX_BYTES, and the server still enforces its own
+ * MIME allow-list).
  */
 export const ALLOWED_MIME_FOR_TYPE: Record<
   FileType,
@@ -46,37 +66,20 @@ export const ALLOWED_MIME_FOR_TYPE: Record<
     exts: [".pdf"],
   },
   invoice: {
-    mimes: [
-      "application/pdf",
-      "image/jpeg",
-      "image/png",
-      "application/vnd.ms-excel",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ],
-    exts: [".pdf", ".jpg", ".jpeg", ".png", ".xls", ".xlsx"],
+    mimes: ["application/pdf", "image/jpeg", "image/png", "image/webp"],
+    exts: [".pdf", ".jpg", ".jpeg", ".png", ".webp"],
   },
   image: {
-    mimes: ["image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml"],
-    exts: [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"],
+    mimes: ["image/jpeg", "image/png", "image/webp"],
+    exts: [".jpg", ".jpeg", ".png", ".webp"],
   },
   cad: {
-    mimes: [
-      "model/step",
-      "application/sla",
-      "application/octet-stream",
-    ],
-    exts: [".step", ".stp", ".stl", ".dxf", ".dwg", ".f3d", ".iges", ".igs"],
+    mimes: ["application/pdf"],
+    exts: [".pdf"],
   },
   bom: {
-    mimes: [
-      "text/csv",
-      "application/csv",
-      "application/vnd.ms-excel",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "application/json",
-      "text/plain",
-    ],
-    exts: [".csv", ".xls", ".xlsx", ".json", ".txt", ".tsv"],
+    mimes: ["application/pdf"],
+    exts: [".pdf"],
   },
   other: {
     mimes: [],
