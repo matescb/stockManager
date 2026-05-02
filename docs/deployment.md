@@ -464,6 +464,40 @@ For point-in-time recovery, off-site replication, or retention policies look
 at `pgBackRest` or `barman` — proper tools for that job; this guide does not
 prescribe one.
 
+## Monitoring
+
+**Operator action required — this cannot be automated through CI.**
+
+Configure an external uptime check on [UptimeRobot](https://uptimerobot.com)
+(free tier, 5-minute interval):
+
+| Setting         | Value                                                         |
+|-----------------|---------------------------------------------------------------|
+| Monitor type    | HTTPS                                                         |
+| URL             | `https://parts.matescb.cz/api/health`                        |
+| Method          | GET                                                           |
+| Expected status | 200                                                           |
+| Keyword match   | `"status":"ok"` (present in response body)                    |
+| Interval        | 5 minutes                                                     |
+| TLS expiry      | Enable if the plan includes it (catches cert renewal failure) |
+
+**What this catches:** host-down, TLS-broken, Apache-crashed,
+container-crashed (any of these stops the HTTP response returning 200).
+
+**What this does NOT catch:** DB unreachable while the process is alive.
+The `/api/health` endpoint is currently shallow — it only confirms the
+process responds. Deepening it (e.g. a test DB query) is tracked in
+INFRA2-002 (#95).
+
+**Credentials:** store the UptimeRobot login in the same secrets escrow
+as other SaaS credentials (see #95 — secret rotation runbook). Do not put
+them in `.env.prod` or the repo.
+
+**Planned maintenance:** pause the monitor from the UptimeRobot dashboard
+before triggering a deploy that causes a longer-than-usual restart (e.g.
+a heavy migration). Resume it once `curl -fsS https://parts.matescb.cz/api/health`
+returns 200.
+
 ## Header hardening (SEC2-018)
 
 Two surfaces were tightened to avoid advertising the stack identity:
