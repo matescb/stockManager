@@ -3,7 +3,7 @@ FROM node:20-alpine
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN npm install || true
+RUN for i in 1 2 3; do npm ci --prefer-offline && break || sleep 5; done
 
 COPY . .
 
