@@ -26,7 +26,7 @@ export default function StorageCreate() {
       const res = await api.post<{ id: string }>("/storage", form);
       nav(`/storage/${res.id}/info`);
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Failed");
+      setErr(e instanceof ApiError ? e.userMessage : "Failed");
     } finally {
       setBusy(false);
     }

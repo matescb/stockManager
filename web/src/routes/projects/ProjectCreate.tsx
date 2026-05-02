@@ -16,7 +16,7 @@ export default function ProjectCreate() {
       const res = await api.post<{ id: string }>("/projects", { name, description: description || null });
       nav(`/projects/${res.id}/data`);
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Failed");
+      setErr(e instanceof ApiError ? e.userMessage : "Failed");
     } finally {
       setBusy(false);
     }

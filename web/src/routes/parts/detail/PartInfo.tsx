@@ -86,7 +86,7 @@ export default function PartInfo() {
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", part.id) });
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", part.id, "custom-fields") });
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Refresh failed");
+      toast.error(e instanceof ApiError ? e.userMessage : "Refresh failed");
     } finally {
       setRefreshing(false);
     }

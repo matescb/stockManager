@@ -110,7 +110,7 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
           : `Archived ${res.archived_ids.length} of ${ids.length}; ${res.skipped} skipped.`,
       );
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Bulk delete failed");
+      toast.error(e instanceof ApiError ? e.userMessage : "Bulk delete failed");
     } finally {
       setBusy(false);
     }

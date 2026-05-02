@@ -23,6 +23,7 @@ The test in step (1) does not replace step (2) — it only catches the
 case where step (1) was forgotten.
 """
 
+from app.domain.audit.models import AuditLog  # noqa: F401
 from app.domain.attachments.models import Attachment  # noqa: F401
 from app.domain.builds.models import Build  # noqa: F401
 from app.domain.custom_fields.models import CustomField  # noqa: F401

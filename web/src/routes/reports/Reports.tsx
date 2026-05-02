@@ -85,7 +85,7 @@ async function createRestockOrder(
     }
     nav(`/orders/${order.id}`);
   } catch (e) {
-    toast.error(e instanceof ApiError ? e.message : "Failed to create order");
+    toast.error(e instanceof ApiError ? e.userMessage : "Failed to create order");
   }
 }
 

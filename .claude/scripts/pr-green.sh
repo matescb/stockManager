@@ -27,6 +27,23 @@
 
 set -euo pipefail
 
+# GitHub computes `mergeable` lazily — the first API query just KICKS
+# OFF the computation, so a fresh `gh pr list` after a main-update will
+# return `mergeable=UNKNOWN` for most PRs. The browser hides this:
+# rendering the PR page triggers the recompute, so by the time you look
+# it's already `MERGEABLE`. The CLI doesn't get that benefit.
+#
+# Workaround: do TWO passes.
+#   Pass 1 — fetch everything; the query itself nudges GH to start
+#            computing mergeability for UNKNOWN PRs.
+#   Pass 2 — sleep briefly to let GH catch up, then refetch and apply
+#            the green-only filter against the now-resolved values.
+#
+# 4s is enough in practice for the typical queue size; bump if the
+# repo grows.
+gh pr list --state open --limit 100 --json number,mergeable --jq 'length' > /dev/null
+sleep 4
+
 # `--json comments` is the expensive field; gh fetches it lazily so
 # requesting it for every PR is fine for the queue sizes we deal with
 # (sub-100 open PRs). If it ever becomes slow, drop --json comments

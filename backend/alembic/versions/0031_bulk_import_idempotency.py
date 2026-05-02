@@ -1,7 +1,7 @@
 """Add bulk_import_idempotency table (BE2-003).
 
-Revision ID: 0027
-Revises: 0023
+Revision ID: 0031
+Revises: 0030
 Create Date: 2026-05-02
 
 Adds an idempotency cache for POST /api/parts/bulk-import-from-scan.
@@ -21,8 +21,8 @@ from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
 
-revision = "0027"
-down_revision = "0023"
+revision = "0031"
+down_revision = "0030"
 branch_labels = None
 depends_on = None
 

@@ -139,6 +139,95 @@ def test_different_key_same_mpns_hits_duplicate_branch(authed):
     assert body["rows"][0]["status"] == "duplicate"
 
 
+def test_idempotency_cache_write_is_upsert_not_plain_insert():
+    """Direct unit-level check: the bulk-import route must use
+    `INSERT … ON CONFLICT DO NOTHING` for the cache write so a race
+    doesn't raise `IntegrityError` on the outer transaction.
+
+    We assert this by inspecting the SQL the route emits: pre-insert a
+    row with the target (workspace_id, key); have the route attempt to
+    write the same key; verify the route returns 200 and the original
+    row content is unchanged (because ON CONFLICT DO NOTHING preserves
+    the existing row).
+    """
+    import app.domain.parts.providers.mouser as mouser_mod
+    from datetime import datetime, timezone
+
+    from app.domain.parts.models import BulkImportIdempotency
+    from app.infra.db import SessionLocal
+
+    real_post = mouser_mod._post_mouser
+    mouser_mod._post_mouser = lambda url, payload: _stub_mouser(
+        mpn=payload["SearchByPartRequest"]["mouserPartNumber"]
+    )
+    try:
+        c = TestClient(app)
+        ws_id = _signup_with_mouser(c)
+
+        # Compute the deterministic content-hash key the route will use
+        # when no explicit idempotency_key is supplied.
+        from app.api.routes.parts import _bulk_import_content_key
+        from app.domain.parts.schemas import ScanImportRow
+
+        rows = [ScanImportRow(mpn="RC0402JR-070R")]
+        content_key = _bulk_import_content_key(ws_id, rows)
+
+        # Pre-insert a "winner" row with the SAME key. This is the state a
+        # racing-second writer would observe at flush time.
+        sentinel_payload = {
+            "rows": [{"sentinel": True}],
+            "summary": {"created": 999},
+            "provider": "sentinel",
+        }
+        with SessionLocal() as s:
+            s.add(
+                BulkImportIdempotency(
+                    workspace_id=ws_id,
+                    key=content_key,
+                    result_json=sentinel_payload,
+                    created_at=datetime.now(timezone.utc),
+                )
+            )
+            s.commit()
+
+        # Submit a request that derives the same content-hash key. The
+        # route's cache LOOKUP only fires for explicit keys (not the
+        # content-hash fallback), so it will go down the WRITE path.
+        # With the bug present, the cache write would raise IntegrityError
+        # and `db.rollback()` would discard the just-created Part.
+        r = c.post(
+            "/api/parts/bulk-import-from-scan",
+            json={"rows": [{"mpn": "RC0402JR-070R"}]},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()["data"]
+        assert body["summary"]["created"] == 1, body
+        new_part_id = body["rows"][0]["part_id"]
+
+        # The Part MUST persist after commit — this is the regression assertion.
+        from uuid import UUID as _UUID
+
+        from app.domain.parts.models import Part
+
+        with SessionLocal() as s:
+            persisted = s.get(Part, _UUID(new_part_id))
+            assert persisted is not None, (
+                "Part disappeared after bulk-import — partial-commit "
+                "regression: the idempotency-cache write rolled back the "
+                "outer transaction."
+            )
+
+        # The pre-existing cache row must be unchanged (ON CONFLICT DO NOTHING).
+        with SessionLocal() as s:
+            row = s.get(BulkImportIdempotency, (_UUID(ws_id), content_key))
+            assert row is not None
+            assert row.result_json == sentinel_payload, (
+                "ON CONFLICT DO NOTHING should preserve the existing row"
+            )
+    finally:
+        mouser_mod._post_mouser = real_post
+
+
 def test_idempotency_key_is_workspace_scoped():
     """Workspace-A's idempotency key must NOT return workspace-B's cached
     envelope — the cache is keyed on (workspace_id, key) composite."""

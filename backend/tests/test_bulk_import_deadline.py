@@ -56,46 +56,30 @@ def test_per_row_timeout_marks_row_lookup_failed_neighbours_still_run(monkeypatc
     import app.api.routes.parts as parts_mod
     import app.domain.parts.providers.mouser as mouser_mod
 
-    # Make row 2 sleep past the per-row timeout by hanging the future submit.
-    # We patch the internal ThreadPoolExecutor.submit rather than the network
-    # layer so the hang is predictable regardless of OS scheduler behaviour.
-    import concurrent.futures as _cf
+    # Make row 2 hang past the per-row timeout by patching the provider-cache
+    # lookup to sleep, then lowering the per-row timeout so we don't actually
+    # wait. The route uses a function-scope ThreadPoolExecutor that submits
+    # `lookup_with_cache(provider, mpn)`; on TimeoutError we cancel the
+    # future and tag the row `lookup_failed`. Worker threads finish in the
+    # background — the test deliberately exercises that path.
+    import time as _time
 
-    real_submit = _cf.ThreadPoolExecutor.submit
-    call_count = {"n": 0}
+    import app.domain.parts.services.provider_cache as _pc
 
-    def slow_submit(self, fn, *args, **kwargs):
-        call_count["n"] += 1
-        if call_count["n"] == 2:
-            # Return a future that times out immediately by raising on .result().
-            fut: _cf.Future = _cf.Future()
-            # Cancelling a not-started future and then raising TimeoutError
-            # is equivalent to what we want.  Easier: just set exception.
-            import threading
+    real_lookup = _pc.lookup_with_cache
 
-            def _raise_timeout():
-                import time
-                time.sleep(100)  # never finishes
+    def maybe_slow_lookup(provider, mpn):
+        if "SLOW" in mpn:
+            _time.sleep(2.0)  # well past the 0.1s test timeout
+        return real_lookup(provider, mpn)
 
-            # Wrap in a real future that is "running" so cancel() won't work,
-            # then rely on the timeout parameter of fut.result() in the route.
-            # The cleanest approach: monkeypatch fut.result directly.
-            real_fut = real_submit(self, fn, *args, **kwargs)
-
-            class _TimeoutFuture:
-                def result(self, timeout=None):
-                    raise _cf.TimeoutError()
-
-            return _TimeoutFuture()
-        return real_submit(self, fn, *args, **kwargs)
-
-    monkeypatch.setattr(_cf.ThreadPoolExecutor, "submit", slow_submit)
+    monkeypatch.setattr(parts_mod, "lookup_with_cache", maybe_slow_lookup)
     monkeypatch.setattr(
         mouser_mod,
         "_post_mouser",
         lambda url, payload: _stub_mouser(payload["SearchByPartRequest"]["mouserPartNumber"]),
     )
-    # Also lower the per-row timeout so the test doesn't need to actually wait.
+    # Lower the per-row timeout so the test doesn't need to actually wait long.
     monkeypatch.setattr(parts_mod, "_BULK_IMPORT_ROW_TIMEOUT_S", 0.1)
 
     c = TestClient(app)

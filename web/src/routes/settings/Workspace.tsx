@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { useWsKey, wsKeyOf, wsScope } from "@/lib/queryKeys";
+import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useConfirm } from "@/components/ConfirmDialog";
 
 type Ws = {
@@ -89,7 +89,7 @@ export default function WorkspaceSettings() {
     if (created?.id) {
       await switchWorkspace(created.id);
     } else {
-      qc.invalidateQueries({ queryKey: wsScope(workspaceId) });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "ws", "current") });
     }
   }
 
@@ -107,7 +107,7 @@ export default function WorkspaceSettings() {
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "ws", "current") });
       toast.success("Workspace settings saved.");
     } catch (e) {
-      const m = e instanceof ApiError ? e.message : "Failed";
+      const m = e instanceof ApiError ? e.userMessage : "Failed";
       setErr(m);
       toast.error(m);
     }
@@ -132,7 +132,7 @@ export default function WorkspaceSettings() {
       refetchInvites();
       toast.success(`Invitation sent to ${sent}.`);
     } catch (e) {
-      const m = e instanceof ApiError ? e.message : "Failed";
+      const m = e instanceof ApiError ? e.userMessage : "Failed";
       setErr(m);
       toast.error(m);
     }
@@ -145,7 +145,7 @@ export default function WorkspaceSettings() {
       refetchMembers();
       toast.success("Member updated.");
     } catch (e) {
-      const m = e instanceof ApiError ? e.message : "Failed";
+      const m = e instanceof ApiError ? e.userMessage : "Failed";
       setErr(m);
       toast.error(m);
     }
@@ -163,7 +163,7 @@ export default function WorkspaceSettings() {
       refetchMembers();
       toast.success("Member removed.");
     } catch (e) {
-      const m = e instanceof ApiError ? e.message : "Failed";
+      const m = e instanceof ApiError ? e.userMessage : "Failed";
       setErr(m);
       toast.error(m);
     }
@@ -384,7 +384,7 @@ export default function WorkspaceSettings() {
                       setProviderSecret("");
                       toast.success("Credentials saved.");
                     } catch (e) {
-                      toast.error(e instanceof ApiError ? e.message : "Failed");
+                      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
                     } finally {
                       setProviderKeyBusy(false);
                     }
@@ -412,7 +412,7 @@ export default function WorkspaceSettings() {
                         qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "ws", "current") });
                         toast.success("Credentials cleared.");
                       } catch (e) {
-                        toast.error(e instanceof ApiError ? e.message : "Failed");
+                        toast.error(e instanceof ApiError ? e.userMessage : "Failed");
                       } finally {
                         setProviderKeyBusy(false);
                       }
@@ -455,7 +455,7 @@ export default function WorkspaceSettings() {
                       setProviderKey("");
                       toast.success(providerKey ? "API key saved." : "API key cleared.");
                     } catch (e) {
-                      toast.error(e instanceof ApiError ? e.message : "Failed");
+                      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
                     } finally {
                       setProviderKeyBusy(false);
                     }
@@ -518,7 +518,7 @@ export default function WorkspaceSettings() {
                       setScannerLicense("");
                       toast.success(scannerLicense ? "License key saved." : "License key cleared.");
                     } catch (e) {
-                      toast.error(e instanceof ApiError ? e.message : "Failed");
+                      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
                     } finally {
                       setScannerBusy(false);
                     }

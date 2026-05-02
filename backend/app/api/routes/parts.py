@@ -27,9 +27,11 @@ from app.core.pagination import decode_cursor, paginate
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import Envelope, ok
 from app.core.secrets import decrypt
+from app.domain.audit.service import log as _audit_log
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import BulkImportIdempotency, Part, PartMetaMember, PartSubstitute
 from app.domain.parts.providers import make_provider
+from app.domain.parts.services.provider_cache import lookup_fresh, lookup_with_cache
 from app.domain.parts.schemas import (
     BulkDeleteIn,
     MetaMemberIn,
@@ -390,42 +392,118 @@ def patch_part(part_id: UUID, payload: PartPatch, db: DbSession, ws: CurrentWork
 # which fired the role check first and turned the response into a
 # membership oracle (BE2-009).
 @router.post("/{part_id}/archive")
-def archive_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+def archive_part(
+    request: Request,
+    part_id: UUID,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     p = require_resource_access(db, Part, part_id, ws=ws, user=user, role="admin", label="part")
     p.archived_at = datetime.now(timezone.utc)
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="part.archived",
+        target_type="part",
+        target_ids=[p.id],
+        request_id=getattr(request.state, "request_id", None),
+    )
     return ok(None, "archived")
 
 
 @router.post("/{part_id}/restore")
-def restore_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+def restore_part(
+    request: Request,
+    part_id: UUID,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     p = require_resource_access(db, Part, part_id, ws=ws, user=user, role="admin", label="part")
     p.archived_at = None
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="part.restored",
+        target_type="part",
+        target_ids=[p.id],
+        request_id=getattr(request.state, "request_id", None),
+    )
     return ok(None, "restored")
 
 
 @router.post("/bulk-delete", dependencies=[Depends(require_role("admin"))])
 @limiter.limit("30/minute", key_func=workspace_key)
-def bulk_delete_parts(request: Request, payload: BulkDeleteIn, db: DbSession, ws: CurrentWorkspace):
-    """Soft-delete (archive) the listed parts in one shot. Hard-deleting
-    would foreign-key-cascade into stock_entries / lots / order_entries
-    / bom_entries — the user can already filter `/parts/archived` to
-    review or restore. Workspace-scoped: ids that don't belong are
-    silently skipped (no information leak about other workspaces)."""
+def bulk_delete_parts(
+    request: Request,
+    payload: BulkDeleteIn,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
+    """Soft-delete (archive) the listed parts in one shot.
+
+    Hard-deleting would foreign-key-cascade into stock_entries / lots /
+    order_entries / bom_entries — the user can already filter
+    `/parts/archived` to review or restore.
+
+    Workspace-scoped: ids that don't belong to this workspace are not
+    visible and land in ``not_found_ids`` (no information leak about
+    other workspaces — the shape is the same as for truly missing IDs).
+
+    Response buckets:
+    - ``archived_ids``       — IDs that were active and are now archived.
+    - ``already_archived_ids`` — IDs that existed in this workspace but
+                               were already archived (no-op).
+    - ``not_found_ids``      — IDs not found in this workspace (either
+                               truly missing OR owned by another workspace
+                               — deliberately indistinguishable).
+    """
     now = datetime.now(timezone.utc)
+    requested = set(payload.part_ids)
+
     rows = (
         db.query(Part)
-        .filter(Part.workspace_id == ws.id, Part.id.in_(payload.part_ids))
+        .filter(Part.workspace_id == ws.id, Part.id.in_(requested))
         .all()
     )
+    found_ids = {p.id for p in rows}
+
     archived_ids = []
+    already_archived_ids = []
     for p in rows:
         if p.archived_at is None:
             p.archived_at = now
-            archived_ids.append(str(p.id))
+            archived_ids.append(p.id)
+        else:
+            already_archived_ids.append(p.id)
+
+    not_found_ids = [pid for pid in requested if pid not in found_ids]
+
+    # Emit one audit row for the whole bulk operation.
+    all_touched = archived_ids + already_archived_ids
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="part.bulk_archived",
+        target_type="part",
+        target_ids=all_touched or None,
+        comment=(
+            f"not_found={len(not_found_ids)} "
+            f"already_archived={len(already_archived_ids)}"
+        ) if (not_found_ids or already_archived_ids) else None,
+        request_id=getattr(request.state, "request_id", None),
+    )
+
     return ok(
         {
-            "archived_ids": archived_ids,
-            "skipped": len(payload.part_ids) - len(archived_ids),
+            "archived_ids": [str(i) for i in archived_ids],
+            "already_archived_ids": [str(i) for i in already_archived_ids],
+            "not_found_ids": [str(i) for i in not_found_ids],
         },
         f"archived {len(archived_ids)}",
     )
@@ -694,7 +772,10 @@ def refresh_from_provider(
             detail="no parts provider configured (set one in Workspace settings)",
         )
 
-    out = provider.lookup_mpn(p.mpn.strip())
+    # Use lookup_fresh (not lookup_with_cache) — the operator explicitly
+    # triggered a refresh, so we always hit upstream.  The fresh result is
+    # written back to the cache so subsequent lookup_with_cache calls see it.
+    out = lookup_fresh(provider, p.mpn.strip())
     if not out.get("found") or not out.get("result"):
         return ok(
             {
@@ -944,6 +1025,20 @@ def bulk_import_from_scan(
     # ------------------------------------------------------------------
     deadline = monotonic() + _BULK_IMPORT_REQUEST_DEADLINE_S
 
+    # Function-scope executor for per-row provider timeouts. We deliberately
+    # do NOT use `with ThreadPoolExecutor(...) as pool:` at row scope — that
+    # calls `shutdown(wait=True)` on exit, which blocks waiting for any
+    # timed-out worker thread to finish its hung HTTP call (defeating the
+    # bounded-blocking goal). Instead we hold a single executor for the
+    # whole request, abandon timed-out futures, and tear down with
+    # `wait=False` + `cancel_futures=True` at the end so the request
+    # returns even if a worker is still hung. Hung worker threads will
+    # finish on the provider's own socket timeout and exit cleanly.
+    _bulk_import_executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=2,
+        thread_name_prefix="bulk-import-lookup",
+    )
+
     out_rows: list[dict] = []
     for row in payload.rows:
         # Check wall-clock budget before starting each row.
@@ -1037,26 +1132,37 @@ def bulk_import_from_scan(
             continue
 
         # Provider lookup with per-row timeout. The provider classes are
-        # synchronous HTTP; wrap in a ThreadPoolExecutor future so we can
-        # enforce a hard timeout without rewriting them. On timeout the row
-        # resolves as `lookup_failed` with a `timeout` reason so the
-        # operator knows which MPN to investigate, and the rest of the
-        # batch still runs. We capture unexpected exceptions to Sentry as
-        # belt-and-braces — the row still resolves with `lookup_failed`.
+        # synchronous HTTP; submit to a function-scope ThreadPoolExecutor
+        # future so we can enforce a hard timeout without rewriting them.
+        #
+        # IMPORTANT: the executor is created ONCE for the whole request
+        # (see _bulk_import_executor below) and we deliberately do NOT
+        # `shutdown(wait=True)` between rows. A `with ThreadPoolExecutor(...)`
+        # block at row scope would block on shutdown waiting for the
+        # timed-out worker thread to finish its hung HTTP call — which
+        # defeats the entire bounded-blocking goal under prod's --workers 1.
+        # On timeout we abandon the future (the worker thread leaks for
+        # the duration of the provider socket timeout, but the request
+        # continues) and surface the row as `lookup_failed`.
+        # We capture unexpected exceptions to Sentry as belt-and-braces —
+        # the row still resolves with `lookup_failed`.
         row_budget = deadline - monotonic()
         actual_timeout = min(_BULK_IMPORT_ROW_TIMEOUT_S, max(0.5, row_budget))
         lookup: dict | None = None
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                fut = pool.submit(provider.lookup_mpn, mpn)
+            fut = _bulk_import_executor.submit(lookup_with_cache, provider, mpn)
+            try:
                 lookup = fut.result(timeout=actual_timeout)
-        except concurrent.futures.TimeoutError:
-            out_rows.append({
-                "mpn": mpn,
-                "status": "lookup_failed",
-                "error": f"provider timeout after {actual_timeout:.1f}s",
-            })
-            continue
+            except concurrent.futures.TimeoutError:
+                # Cancel if still queued; if running, the worker thread
+                # will finish in the background and its result is dropped.
+                fut.cancel()
+                out_rows.append({
+                    "mpn": mpn,
+                    "status": "lookup_failed",
+                    "error": f"provider timeout after {actual_timeout:.1f}s",
+                })
+                continue
         except Exception as exc:
             try:  # local import keeps this path zero-cost when SENTRY_DSN is empty
                 import sentry_sdk
@@ -1117,6 +1223,14 @@ def bulk_import_from_scan(
             "stock_error": stock_error,
         })
 
+    # Tear down the executor without waiting for any hung worker thread.
+    # `cancel_futures=True` cancels still-queued futures; running ones
+    # are abandoned (their result is discarded; thread finishes when its
+    # underlying socket times out). This is the critical bit that keeps
+    # the per-row timeout bounded: a `with` block at row scope (or a
+    # `wait=True` shutdown here) would re-introduce the wall-clock pin.
+    _bulk_import_executor.shutdown(wait=False, cancel_futures=True)
+
     # `bulk_import_from_scan` keeps an explicit terminal commit even
     # though `get_db` commits on clean exit (BE2-010). Savepoint
     # releases aren't independently durable — they only become durable
@@ -1140,20 +1254,29 @@ def bulk_import_from_scan(
 
     # Write idempotency cache entry before committing so a concurrent
     # identical request (race window is tiny) sees the result immediately.
-    # Use INSERT … ON CONFLICT DO NOTHING so a race between two concurrent
-    # first-time calls for the same key doesn't raise an IntegrityError.
-    try:
-        cache_row = BulkImportIdempotency(
+    #
+    # CRITICAL: this MUST be a true `INSERT … ON CONFLICT DO NOTHING`
+    # (postgres dialect upsert), NOT plain ORM `add`/`flush`. On the race
+    # path (two concurrent requests with the same key reach this point
+    # together) a plain `flush()` would raise `IntegrityError` on the
+    # composite-PK conflict — and a Session-level `db.rollback()` here
+    # would unwind the OUTER transaction, discarding every per-row
+    # savepoint write. The response would still report
+    # `summary: {created: N, …}` while ZERO Parts persist — that's the
+    # exact partial-commit divergence this PR is supposed to fix.
+    # `on_conflict_do_nothing` makes the second writer a silent no-op
+    # at the SQL level so the outer tx stays intact.
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    db.execute(
+        pg_insert(BulkImportIdempotency.__table__)
+        .values(
             workspace_id=ws.id,
             key=idempotency_key,
             result_json=result_payload,
             created_at=datetime.now(timezone.utc),
         )
-        db.add(cache_row)
-        db.flush()
-    except Exception:
-        # Idempotency write failure must not abort the import result.
-        db.rollback()
+        .on_conflict_do_nothing(index_elements=["workspace_id", "key"])
+    )
 
     db.commit()
     return ok(result_payload)
