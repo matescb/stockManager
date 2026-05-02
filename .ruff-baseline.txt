@@ -1,10 +1,11 @@
+[*] 45 fixable with the `--fix` option.
 app/api/routes/_activity.py:33:1: I001 [*] Import block is un-sorted or un-formatted
 app/api/routes/attachments.py:1:1: I001 [*] Import block is un-sorted or un-formatted
 app/api/routes/attachments.py:17:5: F401 [*] `app.core.deps.CurrentUser` imported but unused
 app/api/routes/attachments.py:8:20: F401 [*] `typing.Annotated` imported but unused
-app/api/routes/auth.py:165:101: E501 Line too long (111 > 100)
-app/api/routes/auth.py:329:101: E501 Line too long (107 > 100)
-app/api/routes/bom_presets.py:86:101: E501 Line too long (112 > 100)
+app/api/routes/auth.py:137:101: E501 Line too long (111 > 100)
+app/api/routes/auth.py:301:101: E501 Line too long (107 > 100)
+app/api/routes/bom_presets.py:72:101: E501 Line too long (112 > 100)
 app/api/routes/builds.py:112:101: E501 Line too long (111 > 100)
 app/api/routes/builds.py:188:16: F821 Undefined name `datetime`
 app/api/routes/builds.py:191:25: F821 Undefined name `datetime`
@@ -15,24 +16,22 @@ app/api/routes/catalog.py:173:101: E501 Line too long (149 > 100)
 app/api/routes/catalog.py:211:101: E501 Line too long (101 > 100)
 app/api/routes/catalog.py:214:101: E501 Line too long (108 > 100)
 app/api/routes/catalog.py:6:1: I001 [*] Import block is un-sorted or un-formatted
-app/api/routes/custom_fields.py:51:101: E501 Line too long (101 > 100)
-app/api/routes/invitations.py:421:101: E501 Line too long (129 > 100)
-app/api/routes/lots.py:107:101: E501 Line too long (105 > 100)
-app/api/routes/lots.py:108:5: E741 Ambiguous variable name: `l`
-app/api/routes/lots.py:127:101: E501 Line too long (107 > 100)
-app/api/routes/lots.py:128:5: E741 Ambiguous variable name: `l`
-app/api/routes/lots.py:144:101: E501 Line too long (109 > 100)
-app/api/routes/lots.py:145:5: E741 Ambiguous variable name: `l`
-app/api/routes/lots.py:152:101: E501 Line too long (101 > 100)
-app/api/routes/lots.py:25:16: E741 Ambiguous variable name: `l`
+app/api/routes/custom_fields.py:42:101: E501 Line too long (101 > 100)
+app/api/routes/invitations.py:401:101: E501 Line too long (129 > 100)
+app/api/routes/lots.py:100:5: E741 Ambiguous variable name: `l`
+app/api/routes/lots.py:111:101: E501 Line too long (107 > 100)
+app/api/routes/lots.py:112:5: E741 Ambiguous variable name: `l`
+app/api/routes/lots.py:147:5: E741 Ambiguous variable name: `l`
+app/api/routes/lots.py:27:16: E741 Ambiguous variable name: `l`
 app/api/routes/lots.py:3:22: F401 [*] `datetime.datetime` imported but unused
 app/api/routes/lots.py:3:32: F401 [*] `datetime.timezone` imported but unused
-app/api/routes/lots.py:37:101: E501 Line too long (104 > 100)
-app/api/routes/lots.py:59:9: E741 Ambiguous variable name: `l`
-app/api/routes/lots.py:66:5: E741 Ambiguous variable name: `l`
-app/api/routes/lots.py:74:5: E741 Ambiguous variable name: `l`
-app/api/routes/lots.py:90:101: E501 Line too long (103 > 100)
-app/api/routes/lots.py:91:5: E741 Ambiguous variable name: `l`
+app/api/routes/lots.py:39:101: E501 Line too long (104 > 100)
+app/api/routes/lots.py:61:9: E741 Ambiguous variable name: `l`
+app/api/routes/lots.py:68:5: E741 Ambiguous variable name: `l`
+app/api/routes/lots.py:76:5: E741 Ambiguous variable name: `l`
+app/api/routes/lots.py:82:101: E501 Line too long (103 > 100)
+app/api/routes/lots.py:83:5: E741 Ambiguous variable name: `l`
+app/api/routes/lots.py:99:101: E501 Line too long (105 > 100)
 app/api/routes/orders.py:111:101: E501 Line too long (102 > 100)
 app/api/routes/orders.py:114:101: E501 Line too long (110 > 100)
 app/api/routes/orders.py:1:1: I001 [*] Import block is un-sorted or un-formatted
@@ -43,21 +42,19 @@ app/api/routes/orders.py:263:101: E501 Line too long (130 > 100)
 app/api/routes/orders.py:292:101: E501 Line too long (110 > 100)
 app/api/routes/orders.py:316:16: F821 Undefined name `datetime`
 app/api/routes/orders.py:319:25: F821 Undefined name `datetime`
-app/api/routes/parts.py:1:1: I001 [*] Import block is un-sorted or un-formatted
-app/api/routes/parts.py:1279:101: E501 Line too long (104 > 100)
-app/api/routes/parts.py:225:101: E501 Line too long (102 > 100)
-app/api/routes/parts.py:226:101: E501 Line too long (104 > 100)
-app/api/routes/parts.py:324:101: E501 Line too long (106 > 100)
-app/api/routes/parts.py:338:101: E501 Line too long (114 > 100)
-app/api/routes/parts.py:407:1: I001 [*] Import block is un-sorted or un-formatted
-app/api/routes/parts.py:44:5: F401 [*] `app.domain.parts.schemas.ScanImportRow` imported but unused
-app/api/routes/parts.py:592:101: E501 Line too long (111 > 100)
-app/api/routes/parts.py:60:42: F401 [*] `app.domain.workspaces.models.Workspace` imported but unused
-app/api/routes/parts.py:608:101: E501 Line too long (115 > 100)
-app/api/routes/parts.py:618:101: E501 Line too long (112 > 100)
-app/api/routes/parts.py:626:17: E741 Ambiguous variable name: `l`
-app/api/routes/parts.py:739:1: I001 [*] Import block is un-sorted or un-formatted
-app/api/routes/parts.py:739:43: F401 [*] `sqlalchemy.tuple_` imported but unused
+app/api/routes/parts_assets.py:9:1: I001 [*] Import block is un-sorted or un-formatted
+app/api/routes/parts_core.py:119:101: E501 Line too long (102 > 100)
+app/api/routes/parts_core.py:120:101: E501 Line too long (104 > 100)
+app/api/routes/parts_core.py:218:101: E501 Line too long (106 > 100)
+app/api/routes/parts_core.py:232:101: E501 Line too long (114 > 100)
+app/api/routes/parts_core.py:301:1: I001 [*] Import block is un-sorted or un-formatted
+app/api/routes/parts_core.py:486:101: E501 Line too long (111 > 100)
+app/api/routes/parts_core.py:502:101: E501 Line too long (115 > 100)
+app/api/routes/parts_core.py:512:101: E501 Line too long (112 > 100)
+app/api/routes/parts_core.py:520:17: E741 Ambiguous variable name: `l`
+app/api/routes/parts_core.py:6:1: I001 [*] Import block is un-sorted or un-formatted
+app/api/routes/parts_core.py:633:1: I001 [*] Import block is un-sorted or un-formatted
+app/api/routes/parts_scan.py:396:101: E501 Line too long (104 > 100)
 app/api/routes/_parts_shared.py:14:1: I001 [*] Import block is un-sorted or un-formatted
 app/api/routes/_parts_shared.py:67:101: E501 Line too long (117 > 100)
 app/api/routes/projects.py:109:101: E501 Line too long (117 > 100)
@@ -66,7 +63,7 @@ app/api/routes/projects.py:171:101: E501 Line too long (148 > 100)
 app/api/routes/projects.py:188:101: E501 Line too long (109 > 100)
 app/api/routes/projects.py:228:101: E501 Line too long (130 > 100)
 app/api/routes/projects.py:260:101: E501 Line too long (117 > 100)
-app/api/routes/projects.py:276:101: E501 Line too long (129 > 100)
+app/api/routes/projects.py:270:101: E501 Line too long (129 > 100)
 app/api/routes/projects.py:36:101: E501 Line too long (126 > 100)
 app/api/routes/projects.py:70:101: E501 Line too long (106 > 100)
 app/api/routes/projects.py:79:101: E501 Line too long (101 > 100)
@@ -81,16 +78,18 @@ app/api/routes/search.py:85:101: E501 Line too long (103 > 100)
 app/api/routes/sentry_tunnel.py:24:1: I001 [*] Import block is un-sorted or un-formatted
 app/api/routes/stock.py:1:1: I001 [*] Import block is un-sorted or un-formatted
 app/api/routes/stock.py:62:101: E501 Line too long (101 > 100)
-app/api/routes/storage.py:103:101: E501 Line too long (115 > 100)
 app/api/routes/storage.py:1:1: I001 [*] Import block is un-sorted or un-formatted
-app/api/routes/storage.py:172:101: E501 Line too long (117 > 100)
-app/api/routes/storage.py:64:101: E501 Line too long (107 > 100)
-app/api/routes/storage.py:68:101: E501 Line too long (105 > 100)
-app/api/routes/tags.py:113:101: E501 Line too long (113 > 100)
-app/api/routes/tags.py:43:101: E501 Line too long (111 > 100)
-app/api/routes/workspaces.py:423:101: E501 Line too long (112 > 100)
-app/api/routes/workspaces.py:51:101: E501 Line too long (117 > 100)
-app/api/routes/workspaces.py:86:101: E501 Line too long (124 > 100)
+app/api/routes/storage.py:193:101: E501 Line too long (101 > 100)
+app/api/routes/storage.py:46:101: E501 Line too long (107 > 100)
+app/api/routes/storage.py:50:101: E501 Line too long (105 > 100)
+app/api/routes/storage.py:85:101: E501 Line too long (115 > 100)
+app/api/routes/tags.py:36:101: E501 Line too long (111 > 100)
+app/api/routes/tags.py:98:101: E501 Line too long (113 > 100)
+app/api/routes/workspaces.py:1:1: I001 [*] Import block is un-sorted or un-formatted
+app/api/routes/workspaces.py:21:101: E501 Line too long (104 > 100)
+app/api/routes/workspaces.py:379:101: E501 Line too long (112 > 100)
+app/api/routes/workspaces.py:43:101: E501 Line too long (117 > 100)
+app/api/routes/workspaces.py:78:101: E501 Line too long (124 > 100)
 app/core/config.py:1:1: I001 [*] Import block is un-sorted or un-formatted
 app/core/config.py:153:101: E501 Line too long (107 > 100)
 app/core/errors.py:37:1: I001 [*] Import block is un-sorted or un-formatted
@@ -112,9 +111,11 @@ app/domain/builds/service.py:25:1: E402 Module level import not at top of file
 app/domain/builds/service.py:26:1: E402 Module level import not at top of file
 app/domain/builds/service.py:27:1: E402 Module level import not at top of file
 app/domain/builds/service.py:9:21: F401 [*] `decimal.Decimal` imported but unused
+app/domain/custom_fields/schemas.py:10:1: I001 [*] Import block is un-sorted or un-formatted
 app/domain/lots/models.py:1:1: I001 [*] Import block is un-sorted or un-formatted
 app/domain/lots/models.py:24:101: E501 Line too long (112 > 100)
 app/domain/lots/models.py:27:101: E501 Line too long (105 > 100)
+app/domain/lots/schemas.py:10:1: I001 [*] Import block is un-sorted or un-formatted
 app/domain/_mixins.py:15:101: E501 Line too long (122 > 100)
 app/domain/_mixins.py:18:101: E501 Line too long (103 > 100)
 app/domain/_mixins.py:19:101: E501 Line too long (103 > 100)
@@ -160,21 +161,29 @@ app/domain/stock/service.py:284:101: E501 Line too long (102 > 100)
 app/domain/stock/service.py:385:101: E501 Line too long (106 > 100)
 app/domain/stock/service.py:416:101: E501 Line too long (109 > 100)
 app/domain/stock/service.py:587:101: E501 Line too long (101 > 100)
+app/domain/storage/schemas.py:10:1: I001 [*] Import block is un-sorted or un-formatted
+app/domain/tags/schemas.py:10:1: I001 [*] Import block is un-sorted or un-formatted
 app/domain/users/models.py:34:101: E501 Line too long (112 > 100)
+app/domain/users/schemas.py:10:1: I001 [*] Import block is un-sorted or un-formatted
 app/domain/workspaces/models.py:101:101: E501 Line too long (103 > 100)
 app/domain/workspaces/models.py:104:101: E501 Line too long (104 > 100)
 app/domain/workspaces/models.py:29:101: E501 Line too long (107 > 100)
 app/domain/workspaces/models.py:62:101: E501 Line too long (122 > 100)
 app/domain/workspaces/models.py:63:101: E501 Line too long (112 > 100)
 app/domain/workspaces/models.py:87:101: E501 Line too long (122 > 100)
+app/domain/workspaces/schemas.py:11:1: I001 [*] Import block is un-sorted or un-formatted
 app/main.py:101:1: E402 Module level import not at top of file
-app/main.py:123:1: E402 Module level import not at top of file
-app/main.py:124:1: E402 Module level import not at top of file
 app/main.py:125:1: E402 Module level import not at top of file
 app/main.py:126:1: E402 Module level import not at top of file
-app/main.py:366:101: E501 Line too long (102 > 100)
-app/main.py:369:101: E501 Line too long (105 > 100)
-app/main.py:372:101: E501 Line too long (102 > 100)
-app/main.py:373:101: E501 Line too long (114 > 100)
-app/main.py:379:101: E501 Line too long (114 > 100)
-app/main.py:380:101: E501 Line too long (120 > 100)
+app/main.py:127:1: E402 Module level import not at top of file
+app/main.py:128:1: E402 Module level import not at top of file
+app/main.py:367:101: E501 Line too long (101 > 100)
+app/main.py:368:101: E501 Line too long (103 > 100)
+app/main.py:369:101: E501 Line too long (101 > 100)
+app/main.py:370:101: E501 Line too long (102 > 100)
+app/main.py:373:101: E501 Line too long (105 > 100)
+app/main.py:376:101: E501 Line too long (102 > 100)
+app/main.py:377:101: E501 Line too long (114 > 100)
+app/main.py:383:101: E501 Line too long (114 > 100)
+app/main.py:384:101: E501 Line too long (120 > 100)
+Found 187 errors.
