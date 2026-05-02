@@ -39,6 +39,20 @@ TEST_DATABASE_URL="postgresql+psycopg://stockmgr:stockmgr@127.0.0.1:5432/stockmg
 The `tests/conftest.py` fixture nukes & recreates the public schema between
 tests, so re-running the suite does not require manual cleanup.
 
+### Slow tests
+
+The migration round-trip suite (`tests/test_migrations.py`,
+TEST-007) is marked `@pytest.mark.slow` and excluded by the default
+`pytest` invocation. To run it:
+
+```bash
+TEST_DATABASE_URL=…  python -m pytest -m slow -q
+```
+
+The round-trip uses a sibling DB (`<your_test_db>_migration_rt`)
+created on first run so concurrent test runs don't trample each
+other. Override the URL via `MIGRATION_TEST_DATABASE_URL` if needed.
+
 ## Migrations
 
 The schema is managed by Alembic. Migrations are linear (one chain,

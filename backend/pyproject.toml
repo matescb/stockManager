@@ -43,3 +43,11 @@ include = ["app*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# `slow` marker for tests that take meaningful wall time (e.g. the
+# migration round-trip in tests/test_migrations.py). Default `pytest`
+# excludes them; CI runs an explicit `pytest -m slow` step. See
+# TEST-007 / issue #109.
+markers = [
+    "slow: long-running test (excluded by default; run with `-m slow`)",
+]
+addopts = "-m 'not slow'"
