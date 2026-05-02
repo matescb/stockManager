@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -48,6 +49,7 @@ from app.domain.storage.models import StorageLocation
 from app.domain.workspaces.models import Workspace
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 # PartIn, PartPatch, BulkDeleteIn, ScanImportIn etc. live in
@@ -342,8 +344,35 @@ def patch_part(part_id: UUID, payload: PartPatch, db: DbSession, ws: CurrentWork
 # membership oracle (BE2-009).
 @router.post("/{part_id}/archive")
 def archive_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+    from app.domain._polymorphic_cleanup import purge_polymorphic as _poly_counts
+    from sqlalchemy import func, select as sa_select
+    from app.domain.attachments.models import Attachment
+    from app.domain.custom_fields.models import CustomField as CF
+    from app.domain.tags.models import TagLink
+
     p = require_resource_access(db, Part, part_id, ws=ws, user=user, role="admin", label="part")
     p.archived_at = datetime.now(timezone.utc)
+
+    # Observability: log how many polymorphic rows are associated with the
+    # archived part so operators can gauge orphan risk without a full scan.
+    def _count(Model, ws_id, obj_id):
+        return db.execute(
+            sa_select(func.count()).select_from(Model).where(
+                Model.workspace_id == ws_id,
+                Model.object_id == obj_id,
+            )
+        ).scalar_one()
+
+    logger.info(
+        "part archived",
+        extra={
+            "workspace_id": str(ws.id),
+            "part_id": str(p.id),
+            "polymorphic_attachments": _count(Attachment, ws.id, p.id),
+            "polymorphic_custom_fields": _count(CF, ws.id, p.id),
+            "polymorphic_tag_links": _count(TagLink, ws.id, p.id),
+        },
+    )
     return ok(None, "archived")
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -23,6 +24,7 @@ from app.domain.projects.schemas import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _serialize(p: Project) -> dict:
@@ -114,10 +116,34 @@ def patch_project(project_id: UUID, payload: ProjectPatchIn, db: DbSession, ws: 
 # workspace's project_id gets 404, not 403.
 @router.post("/{project_id}/archive")
 def archive_project(project_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+    from sqlalchemy import func, select as sa_select
+    from app.domain.attachments.models import Attachment
+    from app.domain.custom_fields.models import CustomField as CF
+    from app.domain.tags.models import TagLink
+
     p = require_resource_access(
         db, Project, project_id, ws=ws, user=user, role="admin", label="project"
     )
     p.archived_at = datetime.now(timezone.utc)
+
+    def _count(Model, ws_id, obj_id):
+        return db.execute(
+            sa_select(func.count()).select_from(Model).where(
+                Model.workspace_id == ws_id,
+                Model.object_id == obj_id,
+            )
+        ).scalar_one()
+
+    logger.info(
+        "project archived",
+        extra={
+            "workspace_id": str(ws.id),
+            "project_id": str(p.id),
+            "polymorphic_attachments": _count(Attachment, ws.id, p.id),
+            "polymorphic_custom_fields": _count(CF, ws.id, p.id),
+            "polymorphic_tag_links": _count(TagLink, ws.id, p.id),
+        },
+    )
     return ok(None, "archived")
 
 
