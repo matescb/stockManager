@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hmac as _hmac
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from uuid import UUID
 
 from app.core.time import utcnow
@@ -158,7 +158,7 @@ def signup(
         db.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="owner", status="active"))
 
         sess = create_session_row(db, user.id)
-        user.last_login_at = datetime.now(timezone.utc)
+        user.last_login_at = utcnow()
 
         _set_session_cookie(response, sess.token)
         log.info("signup (immediate)", extra={"user_id": str(user.id), "workspace_id": str(ws.id)})
@@ -170,7 +170,7 @@ def signup(
 
     # Reap expired pending rows for this email before checking for an
     # active pending one, so old unverified attempts don't block a retry.
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=_VERIFY_TTL_HOURS)
+    cutoff = utcnow() - timedelta(hours=_VERIFY_TTL_HOURS)
     db.query(PendingUser).filter(
         PendingUser.email == payload.email,
         PendingUser.created_at < cutoff,
@@ -275,7 +275,7 @@ def verify(
             "verification link already used",
         )
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=_VERIFY_TTL_HOURS)
+    cutoff = utcnow() - timedelta(hours=_VERIFY_TTL_HOURS)
     if pending.created_at < cutoff:
         raise_http(
             status.HTTP_400_BAD_REQUEST,
@@ -292,7 +292,7 @@ def verify(
         )
 
     # Promote: create User + Workspace + WorkspaceMember in one transaction.
-    pending.verified_at = datetime.now(timezone.utc)
+    pending.verified_at = utcnow()
 
     user = User(
         email=pending.email,
