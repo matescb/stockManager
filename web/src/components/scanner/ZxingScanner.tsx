@@ -200,10 +200,11 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
         };
         try {
           stream = await navigator.mediaDevices.getUserMedia(constraints);
-        } catch (e: any) {
+        } catch (e: unknown) {
           // The saved deviceId may no longer exist (different host, camera
           // unplugged, etc.). Drop the preference and fall back to defaults.
-          if (deviceId && e?.name === "OverconstrainedError") {
+          const errName = e instanceof Error ? e.name : null;
+          if (deviceId && errName === "OverconstrainedError") {
             try { localStorage.removeItem(DEVICE_PREF_KEY); } catch {}
             stream = await navigator.mediaDevices.getUserMedia({
               video: { facingMode: { ideal: "environment" } },
@@ -317,13 +318,14 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
           }
         };
         timer = window.setTimeout(tick, SCAN_PERIOD_MS);
-      } catch (e: any) {
+      } catch (e: unknown) {
         if (stopped) return;
         // Map the standardised DOMException names to user-friendly UI
         // states. NotAllowedError fires when the browser-level prompt is
         // denied OR when the site's permission was previously dismissed
         // and the prompt didn't reappear. Both want the same remediation.
-        const name = e?.name as string | undefined;
+        const name = e instanceof Error ? e.name : undefined;
+        const message = e instanceof Error ? e.message : String(e);
         if (name === "NotAllowedError" || name === "PermissionDeniedError") {
           setStatus({
             text: "Camera access denied — click the camera icon in your browser's address bar to allow it, then Try again.",
@@ -341,7 +343,7 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
           });
         } else {
           setStatus({
-            text: e?.message ?? "Failed to start scanner.",
+            text: message || "Failed to start scanner.",
             kind: "err",
           });
         }

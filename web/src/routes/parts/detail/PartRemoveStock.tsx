@@ -6,6 +6,18 @@ import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import type { StorageLocation } from "@/types";
 
+/**
+ * Mirror of `backend/app/domain/stock/schemas.py::RemoveStockIn`
+ * (extra="forbid").
+ */
+type RemoveStockRequest = {
+  part_id: string;
+  quantity: number;
+  storage_location_id?: string;
+  lot_id?: string;
+  comments?: string;
+};
+
 type StockRow = {
   storage_location_id: string | null;
   lot_id: string | null;
@@ -86,14 +98,14 @@ export default function PartRemoveStock() {
     }
     setBusy(true);
     try {
-      const payload: any = {
-        part_id: partId,
+      const payload: RemoveStockRequest = {
+        part_id: partId!,
         quantity: Number(qty),
         comments: comments || undefined,
       };
       if (selected.storage_location_id) payload.storage_location_id = selected.storage_location_id;
       if (selected.lot_id) payload.lot_id = selected.lot_id;
-      await api.post("/stock/remove", payload);
+      await api.post<unknown, RemoveStockRequest>("/stock/remove", payload);
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId) });
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId, "stock") });
       nav(`/parts/${partId}/stock`);

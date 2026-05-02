@@ -39,16 +39,25 @@ async function rawRequest(path: string, init: RequestInit = {}): Promise<unknown
     headers.set("content-type", "application/json");
   }
   const res = await fetch(`${BASE}${path}`, { ...init, headers, credentials: "include" });
-  let body: any = null;
+  let body: unknown = null;
   const ct = res.headers.get("content-type") || "";
   if (ct.includes("application/json")) {
     body = await res.json();
   }
   if (!res.ok) {
-    const msg = body?.status?.message || res.statusText;
-    throw new ApiError(res.status, body, msg);
+    // The body, when present, is the `{data:null, status:{...}, errors?}`
+    // envelope; narrow on the shape rather than reaching through `any`.
+    const errBody = (body && typeof body === "object" ? (body as ApiErr) : null);
+    const msg = errBody?.status?.message || res.statusText;
+    throw new ApiError(res.status, errBody, msg);
   }
-  return body?.data ?? null;
+  // Successful envelope — body is `{data, status}`. Pull `.data` after a
+  // structural check so a non-conforming response surfaces as `null`
+  // rather than crashing the caller.
+  if (body && typeof body === "object" && "data" in body) {
+    return (body as { data: unknown }).data ?? null;
+  }
+  return null;
 }
 
 // Unsafe legacy cast — kept for back-compat while call sites migrate.
@@ -96,14 +105,19 @@ export type ApiOptions = { signal?: AbortSignal };
 
 export const api = {
   // --- legacy untyped flavour ---
+  // The body is typed via an explicit generic `B = unknown`. Untyped
+  // call-sites still compile (TS infers `B = unknown`); typed call-sites
+  // can pass `<{id: string}, AddStockRequest>` so a backend Pydantic
+  // change that drops a field surfaces as a TS error in the form
+  // builder rather than silent FE/BE drift.
   get: <T>(p: string, opts?: ApiOptions) => request<T>(p, { signal: opts?.signal }),
-  post: <T>(p: string, body?: any, opts?: ApiOptions) =>
+  post: <T, B = unknown>(p: string, body?: B, opts?: ApiOptions) =>
     request<T>(p, {
       method: "POST",
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal: opts?.signal,
     }),
-  patch: <T>(p: string, body?: any, opts?: ApiOptions) =>
+  patch: <T, B = unknown>(p: string, body?: B, opts?: ApiOptions) =>
     request<T>(p, {
       method: "PATCH",
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -118,13 +132,13 @@ export const api = {
   parsed: {
     get: <S extends ZodType>(p: string, schema: S, opts?: ApiOptions) =>
       parsedRequest(p, schema, { signal: opts?.signal }),
-    post: <S extends ZodType>(p: string, schema: S, body?: any, opts?: ApiOptions) =>
+    post: <S extends ZodType, B = unknown>(p: string, schema: S, body?: B, opts?: ApiOptions) =>
       parsedRequest(p, schema, {
         method: "POST",
         body: body !== undefined ? JSON.stringify(body) : undefined,
         signal: opts?.signal,
       }),
-    patch: <S extends ZodType>(p: string, schema: S, body?: any, opts?: ApiOptions) =>
+    patch: <S extends ZodType, B = unknown>(p: string, schema: S, body?: B, opts?: ApiOptions) =>
       parsedRequest(p, schema, {
         method: "PATCH",
         body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -134,3 +148,40 @@ export const api = {
       parsedRequest(p, schema, { method: "DELETE", signal: opts?.signal }),
   },
 };
+
+/**
+ * Shape spread by `core/responses.py::http_exception_handler` onto the
+ * 409 response body when create-part collides on the partial unique
+ * MPN index (CLAUDE.md hard invariant). The dict is assembled in
+ * `parts.py::create_part`'s `HTTPException(detail={…})` block.
+ */
+export type MpnConflictDetail = {
+  message: string;
+  existing_id: string;
+  existing_name: string;
+};
+
+/**
+ * Narrow an unknown caught error to the MPN conflict body if and only
+ * if it's an `ApiError(409)` whose body carries `existing_id` and
+ * `existing_name` strings. Returns `null` for any other shape so call
+ * sites don't have to reach through `any`.
+ *
+ * Use at the catch site:
+ *   const detail = getConflictDetail(err);
+ *   if (detail) showConflictDialog(detail.existing_name, detail.existing_id);
+ */
+export function getConflictDetail(err: unknown): MpnConflictDetail | null {
+  if (!(err instanceof ApiError) || err.status !== 409 || !err.body) return null;
+  // The HTTPException(detail={…}) dict is spread onto the envelope by
+  // the server-side handler, so the top-level body has the fields
+  // directly (NOT under a nested `detail` key).
+  const b = err.body as Record<string, unknown>;
+  if (typeof b.existing_id !== "string" || typeof b.existing_name !== "string") return null;
+  const message = typeof b.message === "string" ? b.message : "";
+  return {
+    message,
+    existing_id: b.existing_id,
+    existing_name: b.existing_name,
+  };
+}
