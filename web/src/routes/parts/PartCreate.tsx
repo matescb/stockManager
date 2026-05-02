@@ -54,6 +54,10 @@ export default function PartCreate() {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [specs, setSpecs] = useState<ProviderSpec[]>([]);
   const [hasLookup, setHasLookup] = useState(false);
+  // When refresh-from-provider fails after a successful create, we surface
+  // an inline banner instead of silently swallowing the error. The part
+  // is valid — just missing provider-side fields — so we never DELETE it.
+  const [refreshFailed, setRefreshFailed] = useState<{ partId: string } | null>(null);
   const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
 
   // FE2-006: gate concurrent submits via mutationKey so a double-click
@@ -67,14 +71,15 @@ export default function PartCreate() {
       // If the user successfully ran the MPN lookup and the part is
       // linked-type with an MPN, re-run the lookup against the new
       // part to populate provider data with proper source='provider'
-      // tagging + last_refresh_at + linked_provider. Failures here are
-      // non-fatal — the part already exists and the user can hit
-      // Refresh on PartInfo later.
+      // tagging + last_refresh_at + linked_provider.
       if (hasLookup && form.part_type === "linked" && form.mpn.trim()) {
         try {
           await api.post(`/parts/${res.id}/refresh-from-provider`);
         } catch {
-          /* non-fatal */
+          // The part was created successfully — don't navigate away.
+          // Surface a banner so the user can retry or open the part anyway.
+          setRefreshFailed({ partId: res.id });
+          return;
         }
       }
       nav(`/parts/${res.id}/info`);
@@ -83,6 +88,11 @@ export default function PartCreate() {
       const detail = getConflictDetail(e);
       if (detail) {
         setConflict({ id: detail.existing_id, name: detail.existing_name });
+        // Reset stale lookup preview so the next MPN attempt starts clean.
+        setHasLookup(false);
+        setSpecs([]);
+        setImageUrl(null);
+        setDatasheetUrl(null);
         setErr(null);
         return;
       }
@@ -111,6 +121,7 @@ export default function PartCreate() {
     e.preventDefault();
     setErr(null);
     setConflict(null);
+    setRefreshFailed(null);
     const payload: PartCreateRequest = {
       part_type: form.part_type,
       manufacturer: form.manufacturer,
@@ -130,10 +141,34 @@ export default function PartCreate() {
 
   const busy = createMutation.isPending;
 
+  async function retryRefresh() {
+    if (!refreshFailed) return;
+    try {
+      await api.post(`/parts/${refreshFailed.partId}/refresh-from-provider`);
+      setRefreshFailed(null);
+      nav(`/parts/${refreshFailed.partId}/info`);
+    } catch {
+      // Keep the banner visible — user can try again or open anyway.
+    }
+  }
+
   return (
     <form onSubmit={submit} className="max-w-2xl card p-4 space-y-3">
       <h1 className="text-xl font-semibold">Create part</h1>
       {err && <div className="text-danger text-sm">{err}</div>}
+      {refreshFailed && (
+        <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm space-y-2">
+          <p>Provider data couldn&apos;t be fetched. The part was created — retry refresh or open it and try again later.</p>
+          <div className="flex gap-2">
+            <button type="button" className="btn-primary" onClick={retryRefresh}>
+              Retry refresh
+            </button>
+            <button type="button" className="btn" onClick={() => nav(`/parts/${refreshFailed.partId}/info`)}>
+              Open part anyway
+            </button>
+          </div>
+        </div>
+      )}
       {conflict && (
         <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
           MPN <span className="font-mono">{form.mpn}</span> is already used
@@ -234,7 +269,7 @@ export default function PartCreate() {
         </select>
       </div>
       <div className="flex gap-2">
-        <button className="btn-primary" disabled={busy}>{busy ? "Creating…" : "Create"}</button>
+        <button className="btn-primary" disabled={busy || !!refreshFailed}>{busy ? "Creating…" : "Create"}</button>
         <button type="button" className="btn" onClick={() => nav("/parts")}>Cancel</button>
       </div>
     </form>
