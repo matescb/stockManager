@@ -219,6 +219,17 @@ are not yet viewer-gated; that's a deliberate follow-up.
 
 ## Future work (not implemented)
 
+- **User deletion** — there is no `DELETE /api/users/{id}` endpoint
+  today. `workspaces.owner_user_id` carries `ondelete='RESTRICT'` (every
+  other user-facing FK is `SET NULL` for audit columns or `CASCADE` for
+  membership), so the workspace owner row cannot disappear without an
+  ownership reassignment. When the endpoint lands it must call
+  `app.domain.users.service.assert_user_deletable(db, user_id)` *before*
+  issuing the SQL delete; the helper raises a structured 409 with
+  `{ code: "owns_workspaces", workspaces: [...] }` so the caller can
+  prompt for reassign-or-archive instead of letting a Postgres
+  `ForeignKeyViolation` bubble into a 500. See
+  `tests/test_user_deletion_guard.py` for the contract.
 - **Per-endpoint RBAC tightening** — Phase 10 introduced roles and
   invitations and gates the member-management surface. Mutating data
   endpoints (parts/stock/projects/…) currently sit behind a single
