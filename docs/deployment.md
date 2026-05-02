@@ -194,13 +194,21 @@ unless you're rebuilding the host, or migrating to a fresh VPS.
 
 8. **Add GitHub Actions secrets** so the deploy job can reach the VPS:
 
-   | Secret           | Value                                                                |
-   |------------------|----------------------------------------------------------------------|
-   | `DEPLOY_HOST`    | `37.205.15.171`                                                      |
-   | `DEPLOY_USER`    | `deploy`                                                             |
-   | `DEPLOY_SSH_KEY` | full contents of `/home/deploy/.ssh/id_ed25519` (the **private** key) |
+   | Secret                | Value                                                                         |
+   |-----------------------|-------------------------------------------------------------------------------|
+   | `DEPLOY_HOST`         | `37.205.15.171`                                                               |
+   | `DEPLOY_USER`         | `deploy`                                                                      |
+   | `DEPLOY_SSH_KEY`      | full contents of `/home/deploy/.ssh/id_ed25519` (the **private** key)         |
+   | `SENTRY_AUTH_TOKEN`   | Sentry auth token with `project:write` + `project:releases` scope            |
+   | `SENTRY_ORG`          | Sentry organisation slug                                                      |
+   | `SENTRY_PROJECT`      | Sentry project slug                                                           |
 
    Set them at <https://github.com/matescb/stockManager/settings/secrets/actions>.
+
+   **Note (INFRA2-010):** `SENTRY_AUTH_TOKEN` must live only in GitHub Actions
+   secrets. It must **not** appear in `.env.prod` or as a Docker build arg —
+   doing so would embed it in the layer cache. The sourcemap upload runs in the
+   `web-build` CI job, after `npm run build`, gated on push to `main`.
 
 The next push to `main` triggers the first end-to-end automated deploy.
 
@@ -209,7 +217,7 @@ The next push to `main` triggers the first end-to-end automated deploy.
 `.github/workflows/ci.yml`. Three jobs:
 
 - **`backend-tests`** — postgres:16-alpine service container, `pip install -e ".[dev]"`, `pytest -q --tb=short`. Runs on every push and PR.
-- **`web-build`** — `npm ci && npm run build`. The build's `tsc -b` step also catches TypeScript errors. Runs on every push and PR.
+- **`web-build`** — `npm ci && npm run build`, followed on `push` to `main` by a Sentry sourcemap upload step (`npx @sentry/cli sourcemaps upload`). The build's `tsc -b` step also catches TypeScript errors. Runs on every push and PR; the sourcemap upload is gated on push to `main` only. `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, and `SENTRY_PROJECT` are GitHub Actions secrets used by the upload step — they must **not** appear in `.env.prod` or `docker-compose.prod.yml` build args (INFRA2-010).
 - **`deploy`** — gated on `github.event_name == 'push' && github.ref == 'refs/heads/main'` and `needs: [backend-tests, web-build]`. Uses `appleboy/ssh-action@v1.0.3` to SSH in and run the pull/up/prune script. Concurrency-grouped on `ci-refs/heads/main` with `cancel-in-progress: false` so consecutive pushes queue rather than abort an in-flight `docker compose up --build`.
 
 The deploy script body is intentionally tiny:

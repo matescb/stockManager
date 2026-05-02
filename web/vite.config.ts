@@ -13,11 +13,11 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 // only HTTP exception.
 const useHttps = process.env.VITE_HTTPS === "1";
 
-// Source maps for Sentry. Hidden mode produces .map files alongside the
-// bundle but omits the //# sourceMappingURL= comment, so users can't
-// fetch them from the browser — only Sentry can, via direct upload. The
-// plugin no-ops cleanly when SENTRY_AUTH_TOKEN is unset, so dev builds
-// don't need the token.
+// Source-map upload is handled by the CI web-build job (INFRA2-010) via
+// `npx @sentry/cli sourcemaps upload` after `npm run build`. The
+// sentryVitePlugin is retained as a no-op path for any developer who
+// still has SENTRY_AUTH_TOKEN set locally; the build always produces
+// hidden sourcemaps so CI can upload them regardless.
 const sentryToken = process.env.SENTRY_AUTH_TOKEN;
 const sentryOrg = process.env.SENTRY_ORG;
 const sentryProject = process.env.SENTRY_PROJECT;
@@ -41,7 +41,11 @@ export default defineConfig({
     exclude: ["**/node_modules/**", "**/dist/**", "**/e2e/**"],
   },
   build: {
-    sourcemap: enableSentryUpload ? "hidden" : false,
+    // Always produce hidden sourcemaps so the CI job can upload them to
+    // Sentry. "hidden" omits the //# sourceMappingURL= footer so browsers
+    // don't fetch them; Dockerfile.prod strips the .map files before the
+    // nginx image is assembled (Infra CRIT-5).
+    sourcemap: "hidden",
     rollupOptions: {
       output: {
         // Carve heavy third-party deps into their own cached chunks so
