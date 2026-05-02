@@ -111,6 +111,9 @@ them, that's the bug.
   PartSourcing tabs split on this boundary; the same key list lives
   server-side in `backend/app/domain/parts/services/provider.py`.
   Adding a new catalog field needs both sides.
+- **No `verify=False` on httpx clients.** CI greps for `verify=False`,
+  `trust_env=False`, `ssl=False` under `backend/app/`. Annotate with
+  `# noqa: tls-verify` if intentional (e.g. internal test doubles).
 
 ## Things that have bitten us — don't undo
 

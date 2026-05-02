@@ -69,6 +69,16 @@ jobs:
         working-directory: backend
         run: python scripts/check_no_traceback_leaks.py
 
+      # SEC2-020: reject any verify=False/trust_env=False/ssl=False in httpx
+      # calls. Annotate with # noqa: tls-verify if the bypass is intentional.
+      - name: TLS verify guard
+        working-directory: backend
+        run: |
+          if grep -RnE "verify=False|trust_env=False|ssl=False" app/ --include="*.py" | grep -v "# noqa: tls-verify"; then
+            echo "ERROR: Found verify=False/trust_env=False/ssl=False in httpx calls. Annotate with # noqa: tls-verify if intentional."
+            exit 1
+          fi
+
       - name: pytest
         working-directory: backend
         env:
