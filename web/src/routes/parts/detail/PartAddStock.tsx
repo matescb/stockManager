@@ -87,7 +87,7 @@ export default function PartAddStock() {
     <form onSubmit={submit} className="card p-4 max-w-2xl space-y-3">
       <h3 className="text-md font-semibold">Add stock</h3>
       {err && <div className="text-danger text-sm">{err}</div>}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="label">Quantity *</label>
           <input className="input" type="number" min={1} required value={qty || ""} onChange={e => setQty(Number(e.target.value))} />
@@ -128,7 +128,7 @@ export default function PartAddStock() {
           </div>
         )}
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="label">Lot name (optional)</label>
           <input className="input" value={lotName} onChange={e => setLotName(e.target.value)} placeholder="LOT-2026-001" />

@@ -186,7 +186,7 @@ export default function WorkspaceSettings() {
       {err && <div className="card p-3 text-danger text-sm mb-3">{err}</div>}
       {cur && (
         <div className="card p-4 mb-4 space-y-3 text-sm">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="label">Name</label>
               <input
@@ -208,7 +208,7 @@ export default function WorkspaceSettings() {
               />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
