@@ -121,5 +121,39 @@ jobs:
             # deploys.
             export SENTRY_RELEASE
             SENTRY_RELEASE=$(git rev-parse --short=12 HEAD)
+
+            # Pre-deploy DB snapshot (INFRA2-001 / Infra CRIT-1).
+            # Runs before `docker compose up` so the pre-migration state
+            # of the running Postgres is captured. Fails loud — if the
+            # dump can't be written, the deploy aborts here and the old
+            # containers keep serving the old code.
+            bash deploy/predeploy-dump.sh "${SENTRY_RELEASE}"
+
             docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
             docker image prune -f
+
+            # Post-deploy health gate (INFRA2-002 / Infra HIGH-1/7/8).
+            # Polls the public health endpoint until 200 — covers the
+            # rebuild window plus alembic upgrade plus first-request
+            # warm-up. The 30 × 5s = 150s ceiling is generous for our
+            # one-worker stack; tighten if it routinely takes less.
+            # On failure the SSH script exits non-zero, which fails the
+            # deploy job and surfaces in GitHub Actions instead of
+            # leaving prod broken with a green CI badge.
+            echo "post-deploy health gate"
+            ok=0
+            for i in $(seq 1 30); do
+              if curl -fsS https://parts.matescb.cz/api/health > /dev/null 2>&1; then
+                echo "  /api/health OK after ${i} attempts ($((i*5))s)"
+                ok=1
+                break
+              fi
+              sleep 5
+            done
+            if [ "${ok}" -ne 1 ]; then
+              echo "post-deploy health gate FAILED — last response:"
+              curl -v https://parts.matescb.cz/api/health || true
+              echo "--- backend logs (tail) ---"
+              docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=80 backend || true
+              exit 1
+            fi
