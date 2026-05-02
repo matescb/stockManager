@@ -1,0 +1,258 @@
+"""Migration round-trip safety net (TEST-007 / issue #109).
+
+`tests/conftest.py` only ever runs `command.upgrade(..., "head")`,
+so a bad `downgrade()` is invisible until someone needs to roll back
+in prod — i.e. when reproducing it locally is hardest. Combined with
+auto-deploy + no staging (per CLAUDE.md), a botched migration with
+broken downgrade is a one-way door.
+
+This module pins the migration chain end-to-end:
+
+  - `test_upgrade_head_then_downgrade_base_then_upgrade_head` — the
+    full sweep, asserts every step exits cleanly and the final-upgrade
+    schema matches the initial-upgrade schema.
+  - `test_per_revision_round_trip` — for each revision, upgrade to it,
+    snapshot, downgrade to its parent, then upgrade back; assert the
+    snapshots match.
+  - `test_downgrade_to_base_leaves_only_alembic_version` — after
+    `downgrade base`, only `alembic_version` survives in the public
+    schema.
+
+The tests are slow (re-running migrations on a dedicated DB), so
+they're marked `@pytest.mark.slow` and excluded by the default
+`pytest` invocation. CI runs them via `pytest -m slow`.
+
+The test uses a separate database (`stockmgr_migration_test`) so
+concurrent test runs don't trample the regular suite's schema.
+
+Per CLAUDE.md: if this test surfaces a broken `downgrade()` in a
+shipped revision, the fix path is **a new migration that re-adds
+whatever was incorrectly dropped**, not editing the existing file.
+File new issues per migration.
+"""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+from alembic import command
+from alembic.config import Config as AlembicConfig
+from alembic.script import ScriptDirectory
+from sqlalchemy import create_engine, inspect, text
+
+
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
+
+# Use a dedicated DB so the round-trip's drop-everything dance can't
+# step on the regular fixture's schema. Override via env var if the
+# operator wants to point at a specific DB (e.g. for debugging).
+_DEFAULT_URL = os.environ.get(
+    "MIGRATION_TEST_DATABASE_URL",
+    None,
+)
+
+
+def _migration_db_url() -> str:
+    """Return the DB URL the round-trip test should use. Derives a
+    sibling DB name from `DATABASE_URL` so the test never touches the
+    regular test DB by accident."""
+    if _DEFAULT_URL:
+        return _DEFAULT_URL
+    base = os.environ.get(
+        "DATABASE_URL",
+        os.environ.get(
+            "TEST_DATABASE_URL",
+            "postgresql+psycopg://stockmgr:stockmgr@db:5432/stockmgr_test",
+        ),
+    )
+    head, db_name = base.rsplit("/", 1)
+    # Append a suffix unique to this test module.
+    return f"{head}/{db_name}_migration_rt"
+
+
+def _alembic_config(url: str) -> AlembicConfig:
+    cfg = AlembicConfig(str(_BACKEND_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(_BACKEND_ROOT / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", url)
+    return cfg
+
+
+def _ensure_db_exists(url: str) -> None:
+    """Create the round-trip DB if it doesn't already exist."""
+    eng = create_engine(url, future=True)
+    try:
+        with eng.connect():
+            pass
+    except Exception:
+        head, db_name = url.rsplit("/", 1)
+        admin_url = head + "/postgres"
+        admin = create_engine(admin_url, isolation_level="AUTOCOMMIT", future=True)
+        with admin.connect() as conn:
+            conn.exec_driver_sql(f'CREATE DATABASE "{db_name}"')
+        admin.dispose()
+    finally:
+        eng.dispose()
+
+
+def _reset_schema(url: str) -> None:
+    eng = create_engine(url, future=True)
+    try:
+        with eng.begin() as conn:
+            conn.exec_driver_sql("DROP SCHEMA IF EXISTS public CASCADE")
+            conn.exec_driver_sql("CREATE SCHEMA public")
+    finally:
+        eng.dispose()
+
+
+def _snapshot_schema(url: str) -> dict:
+    """Capture a deterministic schema snapshot. Includes table names,
+    column shapes, indexes, and foreign keys — everything that a
+    correct `downgrade()` followed by `upgrade()` should round-trip.
+
+    Keys are sorted at every level so dict-equality compares the
+    structural shape, not insertion order."""
+    eng = create_engine(url, future=True)
+    try:
+        insp = inspect(eng)
+        snap: dict = {}
+        for table in sorted(insp.get_table_names()):
+            cols = sorted(
+                (
+                    c["name"],
+                    str(c["type"]),
+                    bool(c.get("nullable", True)),
+                )
+                for c in insp.get_columns(table)
+            )
+            indexes = sorted(
+                (
+                    i["name"],
+                    tuple(i.get("column_names") or ()),
+                    bool(i.get("unique", False)),
+                )
+                for i in insp.get_indexes(table)
+            )
+            fks = sorted(
+                (
+                    fk.get("name") or "",
+                    fk.get("referred_table") or "",
+                    tuple(fk.get("constrained_columns") or ()),
+                    tuple(fk.get("referred_columns") or ()),
+                )
+                for fk in insp.get_foreign_keys(table)
+            )
+            snap[table] = {
+                "columns": cols,
+                "indexes": indexes,
+                "foreign_keys": fks,
+            }
+        return snap
+    finally:
+        eng.dispose()
+
+
+@pytest.fixture(scope="module")
+def round_trip_url() -> str:
+    url = _migration_db_url()
+    _ensure_db_exists(url)
+    _reset_schema(url)
+    return url
+
+
+# ---------------------------------------------------------------------------
+# The actual round-trip tests. All marked slow — excluded by default
+# pytest invocation; run with `pytest -m slow`.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.slow
+def test_upgrade_head_then_downgrade_base_then_upgrade_head(
+    round_trip_url: str,
+) -> None:
+    """Full chain sweep. The most basic safety net: every revision in
+    the chain must apply and reverse without raising, and the final
+    schema must match the schema after a clean `upgrade head`."""
+    cfg = _alembic_config(round_trip_url)
+
+    _reset_schema(round_trip_url)
+    command.upgrade(cfg, "head")
+    initial_snap = _snapshot_schema(round_trip_url)
+
+    command.downgrade(cfg, "base")
+    command.upgrade(cfg, "head")
+    final_snap = _snapshot_schema(round_trip_url)
+
+    assert initial_snap == final_snap, (
+        "schema after downgrade-base + upgrade-head differs from "
+        "initial upgrade-head; some downgrade() leaked state. "
+        "Tables that diverged: "
+        f"{sorted(set(initial_snap) ^ set(final_snap))}"
+    )
+
+
+@pytest.mark.slow
+def test_downgrade_to_base_leaves_only_alembic_version(
+    round_trip_url: str,
+) -> None:
+    """After `downgrade base`, the public schema should be empty
+    except for `alembic_version` (alembic's own tracking table). If
+    anything else remains, a `downgrade()` is leaking tables."""
+    cfg = _alembic_config(round_trip_url)
+
+    _reset_schema(round_trip_url)
+    command.upgrade(cfg, "head")
+    command.downgrade(cfg, "base")
+
+    eng = create_engine(round_trip_url, future=True)
+    try:
+        insp = inspect(eng)
+        remaining = sorted(insp.get_table_names())
+    finally:
+        eng.dispose()
+
+    # alembic_version may or may not survive depending on alembic's
+    # version; some flavours drop it on the final downgrade. Any other
+    # table is a leak.
+    leftover = [t for t in remaining if t != "alembic_version"]
+    assert leftover == [], (
+        f"downgrade base left tables behind: {leftover}. Some "
+        "migration's downgrade() is incomplete."
+    )
+
+
+@pytest.mark.slow
+def test_per_revision_round_trip(round_trip_url: str) -> None:
+    """For each revision, upgrade to it, snapshot, downgrade to its
+    parent, then upgrade back to it. Assert the snapshots match. This
+    isolates which revision's `downgrade()` leaks if anything fails."""
+    cfg = _alembic_config(round_trip_url)
+    script = ScriptDirectory.from_config(cfg)
+
+    # Walk in dependency order — newest-to-oldest from `walk_revisions`.
+    revisions = list(reversed(list(script.walk_revisions())))
+
+    _reset_schema(round_trip_url)
+    command.upgrade(cfg, "base")  # establishes alembic_version table
+
+    for rev in revisions:
+        # Upgrade to this revision.
+        command.upgrade(cfg, rev.revision)
+        before = _snapshot_schema(round_trip_url)
+
+        # Downgrade to parent (or base if this is the first rev).
+        target = rev.down_revision or "base"
+        # Skip if the down_revision is a tuple (merge revision); this
+        # repo's chain is linear so it shouldn't happen, but pin it.
+        if isinstance(target, tuple):
+            pytest.skip(f"merge revision {rev.revision} not supported")
+        command.downgrade(cfg, target)
+
+        # Re-upgrade and snapshot again.
+        command.upgrade(cfg, rev.revision)
+        after = _snapshot_schema(round_trip_url)
+
+        assert before == after, (
+            f"revision {rev.revision} ({rev.doc!r}) round-trip diverged. "
+            f"Tables changed: {sorted(set(before) ^ set(after))}"
+        )
