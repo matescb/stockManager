@@ -75,8 +75,9 @@ def _make_workspace(db) -> str:
     user_id = uuid.uuid4()
     db.execute(
         text(
-            "INSERT INTO users (id, email, name, password_hash, created_at) "
-            "VALUES (:i, :e, 't', 'x', now())"
+            "INSERT INTO users (id, email, name, password_hash, locale, "
+            "                   timezone, created_at) "
+            "VALUES (:i, :e, 't', 'x', 'en', 'UTC', now())"
         ),
         {"i": user_id, "e": f"u-{user_id.hex[:6]}@x.com"},
     )
