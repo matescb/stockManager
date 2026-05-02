@@ -8,9 +8,14 @@ should produce a body with:
     "data": null,
     "status": {"category": <derived-from-status-code>, "message": <str>},
     "code": <stable-machine-readable-string>,
-    "message": <human-readable-string>,
     ...optional spread fields (e.g. existing_id on a 409)
   }
+
+The `message` field of the dict-form `detail` is consumed into
+`status.message` by `core/responses.http_exception_handler`; every
+other key in the detail (including `code`) is spread onto the
+top-level body. So `status.message` carries the human-readable
+reason and the top-level `code` carries the machine-readable one.
 
 The `category` axis comes from `core/responses._category_for_status`;
 `code` is the stable string the FE switches on. They are intentionally
@@ -35,9 +40,10 @@ def _assert_error_envelope(body: dict, *, expected_category: str, expected_code:
     status_block = body.get("status")
     assert isinstance(status_block, dict), f"expected dict status, got {body!r}"
     assert status_block.get("category") == expected_category, body
+    # `message` is consumed into status.message; carries the human reason.
     assert isinstance(status_block.get("message"), str) and status_block["message"], body
+    # `code` is spread onto top-level; carries the stable machine string.
     assert body.get("code") == expected_code, body
-    assert isinstance(body.get("message"), str) and body["message"], body
 
 
 def test_auth_login_invalid_credentials_envelope():
@@ -55,10 +61,13 @@ def test_auth_login_invalid_credentials_envelope():
 
 
 def test_auth_signup_weak_password_envelope():
+    # Use a password that passes Pydantic min_length=8 but trips
+    # validate_password_strength — that's the path that goes through
+    # raise_http(AUTH_WEAK_PASSWORD). "admin1234" is on the breach list.
     c = TestClient(app)
     r = c.post(
         "/api/auth/signup",
-        json={"email": f"u-{uuid.uuid4().hex[:6]}@x.com", "name": "U", "password": "short"},
+        json={"email": f"u-{uuid.uuid4().hex[:6]}@x.com", "name": "U", "password": "admin1234"},
     )
     assert r.status_code == 400
     _assert_error_envelope(
