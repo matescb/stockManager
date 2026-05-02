@@ -221,8 +221,8 @@ export default function OrderDetail() {
         {adding && (
           <div className="grid grid-cols-5 gap-2 mb-3 items-end">
             <div className="col-span-2">
-              <label className="label">Part</label>
-              <select className="input" value={newPartId} onChange={e => setNewPartId(e.target.value)}>
+              <label className="label" htmlFor="order-entry-part">Part</label>
+              <select id="order-entry-part" className="input" value={newPartId} onChange={e => setNewPartId(e.target.value)}>
                 <option value="">— free text —</option>
                 {parts?.filter(p => !p.archived_at).map(p => (
                   <option key={p.id} value={p.id}>{p.name}{p.mpn ? ` — ${p.mpn}` : ""}</option>
@@ -230,16 +230,16 @@ export default function OrderDetail() {
               </select>
             </div>
             <div>
-              <label className="label">Free-text name</label>
-              <input className="input" value={newName} onChange={e => setNewName(e.target.value)} disabled={!!newPartId} />
+              <label className="label" htmlFor="order-entry-free-name">Free-text name</label>
+              <input id="order-entry-free-name" className="input" value={newName} onChange={e => setNewName(e.target.value)} disabled={!!newPartId} />
             </div>
             <div>
-              <label className="label">Qty</label>
-              <input className="input" type="number" min={1} value={newQty} onChange={e => setNewQty(Number(e.target.value))} />
+              <label className="label" htmlFor="order-entry-qty">Qty</label>
+              <input id="order-entry-qty" className="input" type="number" min={1} value={newQty} onChange={e => setNewQty(Number(e.target.value))} />
             </div>
             <div>
-              <label className="label">Unit price</label>
-              <input className="input" type="number" step="0.0001" value={newPrice} onChange={e => setNewPrice(e.target.value)} />
+              <label className="label" htmlFor="order-entry-price">Unit price</label>
+              <input id="order-entry-price" className="input" type="number" step="0.0001" value={newPrice} onChange={e => setNewPrice(e.target.value)} />
             </div>
             <div className="col-span-5">
               {/* Disable on isPending — this is the OrderDetail double-submit
@@ -346,8 +346,8 @@ export default function OrderDetail() {
           </table>
           <div className="grid grid-cols-3 gap-2 mt-3 items-end">
             <div>
-              <label className="label">Received on</label>
-              <input className="input" type="date" value={receivedOn} onChange={e => setReceivedOn(e.target.value)} />
+              <label className="label" htmlFor="order-receive-on">Received on</label>
+              <input id="order-receive-on" className="input" type="date" value={receivedOn} onChange={e => setReceivedOn(e.target.value)} />
             </div>
             <div className="col-span-2 flex justify-end">
               <button

@@ -74,15 +74,15 @@ export function LotMove() {
   return (
     <form onSubmit={submit} className="card p-4 max-w-xl space-y-3">
       <div>
-        <label className="label">Destination *</label>
-        <select className="input" required value={dest} onChange={e => setDest(e.target.value)}>
+        <label className="label" htmlFor="lot-move-dest">Destination *</label>
+        <select id="lot-move-dest" className="input" required value={dest} onChange={e => setDest(e.target.value)}>
           <option value="">— select —</option>
           {storage?.filter(s => !s.archived_at).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
       </div>
       <div>
-        <label className="label">Quantity *</label>
-        <input className="input" type="number" min={1} required value={qty || ""} onChange={e => setQty(Number(e.target.value))} />
+        <label className="label" htmlFor="lot-move-qty">Quantity *</label>
+        <input id="lot-move-qty" className="input" type="number" min={1} required value={qty || ""} onChange={e => setQty(Number(e.target.value))} />
       </div>
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={split} onChange={e => setSplit(e.target.checked)} />
@@ -107,12 +107,12 @@ export function LotAdjust() {
   return (
     <form onSubmit={submit} className="card p-4 max-w-xl space-y-3">
       <div>
-        <label className="label">Counted quantity</label>
-        <input className="input" type="number" required value={actual || ""} onChange={e => setActual(Number(e.target.value))} />
+        <label className="label" htmlFor="lot-adjust-qty">Counted quantity</label>
+        <input id="lot-adjust-qty" className="input" type="number" required value={actual || ""} onChange={e => setActual(Number(e.target.value))} />
       </div>
       <div>
-        <label className="label">Comments</label>
-        <textarea className="input" rows={2} value={comments} onChange={e => setComments(e.target.value)} />
+        <label className="label" htmlFor="lot-adjust-comments">Comments</label>
+        <textarea id="lot-adjust-comments" className="input" rows={2} value={comments} onChange={e => setComments(e.target.value)} />
       </div>
       <button className="btn-primary">Adjust</button>
     </form>

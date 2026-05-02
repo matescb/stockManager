@@ -180,8 +180,8 @@ export default function PartCreate() {
       )}
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="label">Type</label>
-          <select className="input" value={form.part_type} onChange={e => set("part_type", e.target.value as "linked" | "local" | "meta" | "sub_assembly")}>
+          <label className="label" htmlFor="part-create-type">Type</label>
+          <select id="part-create-type" className="input" value={form.part_type} onChange={e => set("part_type", e.target.value as "linked" | "local" | "meta" | "sub_assembly")}>
             <option value="linked">Linked (MPN)</option>
             <option value="local">Local</option>
             <option value="meta">Meta-part</option>
@@ -189,13 +189,14 @@ export default function PartCreate() {
           </select>
         </div>
         <div>
-          <label className="label">Footprint</label>
-          <input className="input" value={form.footprint} onChange={e => set("footprint", e.target.value)} placeholder="0402, SOIC-8…" />
+          <label className="label" htmlFor="part-create-footprint">Footprint</label>
+          <input id="part-create-footprint" className="input" value={form.footprint} onChange={e => set("footprint", e.target.value)} placeholder="0402, SOIC-8…" />
         </div>
       </div>
       <div>
-        <label className="label">Name</label>
+        <label className="label" htmlFor="part-create-name">Name</label>
         <input
+          id="part-create-name"
           className="input"
           value={form.name}
           onChange={e => set("name", e.target.value)}
@@ -207,13 +208,13 @@ export default function PartCreate() {
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="label">Manufacturer</label>
-          <input className="input" value={form.manufacturer} onChange={e => set("manufacturer", e.target.value)} />
+          <label className="label" htmlFor="part-create-manufacturer">Manufacturer</label>
+          <input id="part-create-manufacturer" className="input" value={form.manufacturer} onChange={e => set("manufacturer", e.target.value)} />
         </div>
         <div>
-          <label className="label">MPN</label>
+          <label className="label" htmlFor="part-create-mpn">MPN</label>
           <div className="flex items-end gap-2">
-            <input className="input flex-1" value={form.mpn} onChange={e => set("mpn", e.target.value)} />
+            <input id="part-create-mpn" className="input flex-1" value={form.mpn} onChange={e => set("mpn", e.target.value)} />
             {form.part_type === "linked" && <MpnLookup mpn={form.mpn} onResult={applyLookup} />}
           </div>
           {datasheetUrl && (
@@ -250,20 +251,20 @@ export default function PartCreate() {
         </div>
       )}
       <div>
-        <label className="label">Internal part number</label>
-        <input className="input" value={form.internal_part_number} onChange={e => set("internal_part_number", e.target.value)} />
+        <label className="label" htmlFor="part-create-ipn">Internal part number</label>
+        <input id="part-create-ipn" className="input" value={form.internal_part_number} onChange={e => set("internal_part_number", e.target.value)} />
       </div>
       <div>
-        <label className="label">Description</label>
-        <textarea className="input" rows={3} value={form.description} onChange={e => set("description", e.target.value)} />
+        <label className="label" htmlFor="part-create-description">Description</label>
+        <textarea id="part-create-description" className="input" rows={3} value={form.description} onChange={e => set("description", e.target.value)} />
       </div>
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={form.serialized} onChange={e => set("serialized", e.target.checked)} />
         Serialized (one unit per lot, requires serial number — only enforced when the workspace has serial tracking on)
       </label>
       <div>
-        <label className="label">Default storage location</label>
-        <select className="input" value={form.default_storage_location_id} onChange={e => set("default_storage_location_id", e.target.value)}>
+        <label className="label" htmlFor="part-create-default-storage">Default storage location</label>
+        <select id="part-create-default-storage" className="input" value={form.default_storage_location_id} onChange={e => set("default_storage_location_id", e.target.value)}>
           <option value="">— none —</option>
           {storage?.filter(s => !s.archived_at).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>

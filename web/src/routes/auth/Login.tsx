@@ -63,8 +63,9 @@ export default function Login() {
           </div>
         )}
         <div>
-          <label className="label">Email</label>
+          <label className="label" htmlFor="login-email">Email</label>
           <input
+            id="login-email"
             className="input"
             type="email"
             autoComplete="email"
@@ -74,8 +75,9 @@ export default function Login() {
           />
         </div>
         <div>
-          <label className="label">Password</label>
+          <label className="label" htmlFor="login-password">Password</label>
           <input
+            id="login-password"
             className="input"
             type="password"
             autoComplete="current-password"

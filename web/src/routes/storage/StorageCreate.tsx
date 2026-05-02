@@ -37,12 +37,12 @@ export default function StorageCreate() {
       <h1 className="text-xl font-semibold">Create storage location</h1>
       {err && <div className="text-danger text-sm">{err}</div>}
       <div>
-        <label className="label">Name *</label>
-        <input className="input" required value={form.name} onChange={e => set("name", e.target.value)} />
+        <label className="label" htmlFor="storage-create-name">Name *</label>
+        <input id="storage-create-name" className="input" required value={form.name} onChange={e => set("name", e.target.value)} />
       </div>
       <div>
-        <label className="label">Description</label>
-        <textarea className="input" rows={3} value={form.description} onChange={e => set("description", e.target.value)} />
+        <label className="label" htmlFor="storage-create-description">Description</label>
+        <textarea id="storage-create-description" className="input" rows={3} value={form.description} onChange={e => set("description", e.target.value)} />
       </div>
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={form.single_part_only} onChange={e => set("single_part_only", e.target.checked)} />
