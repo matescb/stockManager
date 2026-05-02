@@ -1,6 +1,6 @@
 """workspace_invitations
 
-Revision ID: 24ac5d07a692
+Revision ID: 0005
 Revises: 0004
 Create Date: 2026-04-28 19:42:21.016290
 

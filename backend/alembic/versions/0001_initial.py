@@ -1,6 +1,6 @@
 """initial schema
 
-Revision ID: 2a3353f8b5fe
+Revision ID: 0001
 Revises: 
 Create Date: 2026-04-28 19:14:05.605721
 
