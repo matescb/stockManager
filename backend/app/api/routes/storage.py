@@ -169,9 +169,9 @@ def storage_parts(storage_id: UUID, db: DbSession, ws: CurrentWorkspace):
 
 
 @router.get("/{storage_id}/history")
-def storage_history(storage_id: UUID, db: DbSession, ws: CurrentWorkspace):
+def storage_history(storage_id: UUID, db: DbSession, ws: CurrentWorkspace, limit: int = Query(default=200, le=1000)):
     s = _get(db, ws.id, storage_id)
-    rows = history_for_storage(db, workspace_id=ws.id, storage_location_id=s.id)
+    rows = history_for_storage(db, workspace_id=ws.id, storage_location_id=s.id, limit=limit)
     return ok(
         [
             {

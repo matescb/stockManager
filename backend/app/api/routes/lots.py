@@ -141,9 +141,9 @@ def adjust_lot(lot_id: UUID, payload: LotAdjustIn, db: DbSession, ws: CurrentWor
 
 
 @router.get("/{lot_id}/history")
-def lot_history(lot_id: UUID, db: DbSession, ws: CurrentWorkspace):
+def lot_history(lot_id: UUID, db: DbSession, ws: CurrentWorkspace, limit: int = Query(default=200, le=1000)):
     l = _get(db, ws.id, lot_id)
-    rows = history_for_lot(db, workspace_id=ws.id, lot_id=l.id)
+    rows = history_for_lot(db, workspace_id=ws.id, lot_id=l.id, limit=limit)
     return ok(
         [
             {

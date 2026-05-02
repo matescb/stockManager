@@ -92,7 +92,7 @@ export function StorageHistory() {
   const { storageId } = useParams();
   const { data } = useQuery({
     queryKey: useWsKey("storage", storageId, "history"),
-    queryFn: () => api.get<StockEntry[]>(`/storage/${storageId}/history`),
+    queryFn: () => api.get<StockEntry[]>(`/storage/${storageId}/history?limit=200`),
   });
   const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
   const partName = new Map(parts?.map(p => [p.id, p.name]) ?? []);

@@ -121,7 +121,7 @@ export function LotAdjust() {
 
 export function LotHistory() {
   const { lotId } = useParams();
-  const { data } = useQuery({ queryKey: useWsKey("lot", lotId, "history"), queryFn: () => api.get<StockEntry[]>(`/lots/${lotId}/history`) });
+  const { data } = useQuery({ queryKey: useWsKey("lot", lotId, "history"), queryFn: () => api.get<StockEntry[]>(`/lots/${lotId}/history?limit=200`) });
   return (
     <div className="card overflow-hidden">
       <table className="table">

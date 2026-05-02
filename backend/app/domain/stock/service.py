@@ -679,24 +679,30 @@ def history_for_part(
     )
 
 
-def history_for_lot(db: Session, *, workspace_id: UUID, lot_id: UUID) -> list[StockEntry]:
+def history_for_lot(
+    db: Session, *, workspace_id: UUID, lot_id: UUID, limit: int = 200
+) -> list[StockEntry]:
     return list(
         db.execute(
             select(StockEntry)
             .where(StockEntry.workspace_id == workspace_id)
             .where(StockEntry.lot_id == lot_id)
             .order_by(StockEntry.occurred_at.desc())
+            .limit(limit)
         ).scalars()
     )
 
 
-def history_for_storage(db: Session, *, workspace_id: UUID, storage_location_id: UUID) -> list[StockEntry]:
+def history_for_storage(
+    db: Session, *, workspace_id: UUID, storage_location_id: UUID, limit: int = 200
+) -> list[StockEntry]:
     return list(
         db.execute(
             select(StockEntry)
             .where(StockEntry.workspace_id == workspace_id)
             .where(StockEntry.storage_location_id == storage_location_id)
             .order_by(StockEntry.occurred_at.desc())
+            .limit(limit)
         ).scalars()
     )
 
