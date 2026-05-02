@@ -52,7 +52,7 @@ recommended-next-5 below targets the v1 PARTIAL set first.
 |--:|---|---|---|---|---|
 | 1 | Sec CRIT-1 | Attachment XSS via SVG/HTML; served same-origin | RESOLVED | PR #4 (`965ccf6`) | `SEC2-006` / `SEC2-011` extend the same hardening to the **provider-asset** path which still lacks parity. |
 | 2 | BE CRIT-1 | Stock TOCTOU; ledger can go negative | PARTIAL → closing in #28 | PR #11 (`4d27f96`) | `BE2-001` `add_stock` skipped the lock; `BE2-008` `release_reservations` skipped; `DB-002` trigger NULL-bucket diverges from service. |
-| 3 | Infra CRIT-2 | Backups never tested, never encrypted, never off-site | DEFERRED | — | `INFRA2-003` (Critical). User paused this thread; not related to the "Phase 11 — printable labels" workstream tracked in `MEMORY.md`. The deferred item is the encrypted off-host backups + restore drill. |
+| 3 | Infra CRIT-2 | Backups never tested, never encrypted, never off-site | RESOLVED | [matescb/vps-backup](https://github.com/matescb/vps-backup) (`15b4a24`) | `INFRA2-003` closed. Backups now run via the project-agnostic vps-backup service: pg_dump + assets tar piped through `age -r`, pushed to a VPSfree NAS dataset over NFS at `/mnt/nas-backups/`, GFS-pruned (14d / 8w / 6m). Restore drill validated end-to-end on 2026-05-02 (smoke test + manual round-trip decrypt). Local fallback retained 7 days. See `docs/deployment.md#backups`. |
 | 4 | Infra CRIT-1 | No rollback path; no pre-deploy `pg_dump` | OPEN | — | `INFRA2-001` (Critical). Recommended PR #4 in the next-5 below splits this from the off-host story. |
 | 5 | BE CRIT-6 | `bulk_import_from_scan` not transactional; swallows provider errors | PARTIAL | PR #6 (`44ff344`) | `BE2-003` flags no wall-clock budget, no idempotency key, no row-count cap, blocking `--workers 1`. |
 | 6 | BE CRIT-3 | BOM consume substitute double-counting across entries | RESOLVED | PR #8 (`5d1e30a`) | (not re-flagged) |
@@ -253,7 +253,7 @@ After these five, the next tier is: CSRF middleware (`SEC2-001`) + `/api/workspa
 
 | v1 ID | Title | Reason |
 |---|---|---|
-| Infra CRIT-1 + CRIT-2 + HIGH-9 | Backup hardening (encrypted, off-host, restore drill) | User paused 2026-04-30; resume on explicit ask. v2 elevates `INFRA2-001` (pre-deploy dump) and `INFRA2-003` (off-host) to Critical; PR #4 above unbundles the local pre-deploy dump from the off-host story so it can ship without unblocking the larger plan. |
+| Infra CRIT-1 + HIGH-9 | Backup hardening — pre-deploy dump + concurrent-run lock | `INFRA2-003` (off-host) shipped 2026-05-02 via [matescb/vps-backup](https://github.com/matescb/vps-backup) with restore drill; `INFRA2-001` (pre-deploy `pg_dump`) is already wired in CI via `deploy/predeploy-dump.sh`. `INFRA2-014` (concurrent-run lock on the backup script) remains as a sub-item — low priority since cron is the only caller and runs are 24h apart. |
 | Arch CRIT-2 | `barcodeReader/` graveyard incl. suspected license blob | User direction 2026-05-01: "fake key and it probably won't be used as scanner at all." Files remain in tree but are not load-bearing. |
 | Arch CRIT-3 | `web/public/scandit/*` overrides node_modules wasm | Same direction as above. Inert as long as Scandit isn't the active scanner. |
 
