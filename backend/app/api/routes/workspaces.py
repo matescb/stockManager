@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import secrets
 from typing import Literal
 from uuid import UUID
@@ -86,14 +88,30 @@ def create_workspace(
     return ok({"id": str(ws.id), "name": ws.name})
 
 
-def _catalog_url(ws: Workspace) -> str | None:
-    if ws.catalog_enabled and ws.catalog_token:
-        return f"/catalog/{ws.catalog_token}"
-    return None
+def _hmac_token(token: str) -> str:
+    """Compute HMAC-SHA256 of *token* keyed by SESSION_SECRET."""
+    secret = settings().SESSION_SECRET
+    return hmac.new(
+        secret.encode(),
+        token.encode(),
+        hashlib.sha256,
+    ).hexdigest()
 
 
-def _serialize_workspace(ws: Workspace) -> dict:
-    return {
+def _serialize_workspace(ws: Workspace, new_token: str | None = None) -> dict:
+    """Serialize a workspace for API responses.
+
+    SEC2-008: the plaintext catalog_token is no longer echoed in read
+    responses — only `catalog_token_set: bool` is exposed so clients know
+    whether a token exists without ever seeing it.
+
+    When the caller supplies *new_token* (the freshly minted plaintext
+    returned exactly once at regeneration time) it is included in the
+    response as `catalog_token_plaintext`.  The frontend must show it
+    once in a copy-once modal; subsequent GET /workspaces/current calls
+    will NOT include it.
+    """
+    out: dict = {
         "id": str(ws.id),
         "name": ws.name,
         "kind": ws.kind,
@@ -101,7 +119,8 @@ def _serialize_workspace(ws: Workspace) -> dict:
         "lot_control_enabled": ws.lot_control_enabled,
         "serial_tracking_enabled": ws.serial_tracking_enabled,
         "catalog_enabled": bool(ws.catalog_enabled),
-        "catalog_url": _catalog_url(ws),
+        # Only expose whether a token is set — never the plaintext or hash.
+        "catalog_token_set": bool(ws.catalog_token_hash),
         "parts_provider": ws.parts_provider or "none",
         # Never echo the API key/secret. Just say whether each is set.
         "has_parts_provider_api_key": bool(ws.parts_provider_api_key),
@@ -110,6 +129,10 @@ def _serialize_workspace(ws: Workspace) -> dict:
         # Same secret-handling pattern as the parts-provider key.
         "has_scanner_license_key": bool(ws.scanner_license_key),
     }
+    if new_token is not None:
+        # Shown once — the frontend must present a copy-once UI.
+        out["catalog_token_plaintext"] = new_token
+    return out
 
 
 @router.get("/current")
@@ -182,9 +205,18 @@ def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace):
         setattr(ws, k, v)
     # Mint a token when enabling the catalog for the first time, or when the
     # caller explicitly asks for a fresh one while it's enabled.
-    if ws.catalog_enabled and (regenerate or not ws.catalog_token or not was_enabled):
-        ws.catalog_token = secrets.token_urlsafe(32)
-    return ok(_serialize_workspace(ws))
+    #
+    # SEC2-008: the plaintext token is returned exactly once in the response
+    # and is never stored.  Only the HMAC-SHA256 hash is persisted so the DB
+    # column can't be exploited via a timing side-channel.
+    new_token: str | None = None
+    if ws.catalog_enabled and (regenerate or not ws.catalog_token_hash or not was_enabled):
+        new_token = secrets.token_urlsafe(32)
+        # Keep catalog_token for backward-compat / rollback; primary lookup
+        # uses catalog_token_hash exclusively.
+        ws.catalog_token = new_token
+        ws.catalog_token_hash = _hmac_token(new_token)
+    return ok(_serialize_workspace(ws, new_token=new_token))
 
 
 @router.get("/members")
