@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Column, Index, String
+from sqlalchemy import BigInteger, Column, Index, String, text
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.domain._mixins import WorkspaceOwned
@@ -11,6 +11,14 @@ class Attachment(WorkspaceOwned, Base):
     __tablename__ = "attachments"
     __table_args__ = (
         Index("ix_attach_object", "workspace_id", "object_type", "object_id"),
+        # (workspace_id, archived_at) partial composite added in
+        # alembic 0018 (DB-004) for the universal active-row filter.
+        Index(
+            "ix_attachments_ws_archived",
+            "workspace_id",
+            "archived_at",
+            postgresql_where=text("archived_at IS NULL"),
+        ),
     )
 
     object_type = Column(String(40), nullable=False)

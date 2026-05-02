@@ -38,6 +38,21 @@ class Part(WorkspaceOwned, Base):
         ),
         Index("ix_parts_ws_ipn", "workspace_id", "internal_part_number"),
         Index("ix_parts_ws_archived", "workspace_id", "archived_at"),
+        # pg_trgm GIN indexes for ILIKE %q% search (alembic 0018, BE2-018).
+        # Single-column GIN; planner bitmap-ANDs with the (workspace_id,
+        # archived_at) btree above for the per-workspace filter.
+        Index(
+            "ix_parts_ws_name_trgm",
+            "name",
+            postgresql_using="gin",
+            postgresql_ops={"name": "gin_trgm_ops"},
+        ),
+        Index(
+            "ix_parts_ws_mpn_trgm",
+            "mpn",
+            postgresql_using="gin",
+            postgresql_ops={"mpn": "gin_trgm_ops"},
+        ),
     )
 
     part_type = Column(String(20), nullable=False, default="local")  # linked|local|meta|sub_assembly

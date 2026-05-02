@@ -52,10 +52,25 @@ class StockEntry(Base):
     currency = Column(String(3), nullable=True)
     operation_type = Column(String(40), nullable=False)
     related_entry_id = Column(UUID(as_uuid=True), ForeignKey("stock_entries.id", ondelete="SET NULL"), nullable=True)
-    order_id = Column(UUID(as_uuid=True), nullable=True)
-    order_entry_id = Column(UUID(as_uuid=True), nullable=True)
+    # Cross-table refs: FK + ON DELETE SET NULL added in alembic 0018
+    # (DB-001 / BE2-002). Constraint names are pinned so downgrade can
+    # drop them by name.
+    order_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("orders.id", ondelete="SET NULL", name="fk_stock_entries_order_id"),
+        nullable=True,
+    )
+    order_entry_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("order_entries.id", ondelete="SET NULL", name="fk_stock_entries_order_entry_id"),
+        nullable=True,
+    )
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
-    build_id = Column(UUID(as_uuid=True), nullable=True)
+    build_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("builds.id", ondelete="SET NULL", name="fk_stock_entries_build_id"),
+        nullable=True,
+    )
     comments = Column(Text, nullable=True)
     # sha256 hex digest of the raw bag code that produced this entry, only
     # set by the scan-import flow. Used to recognise re-scans so the
