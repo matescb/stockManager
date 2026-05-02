@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { useWsKey, wsKeyOf, wsScope } from "@/lib/queryKeys";
+import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useConfirm } from "@/components/ConfirmDialog";
 
 type Ws = {
@@ -89,7 +89,7 @@ export default function WorkspaceSettings() {
     if (created?.id) {
       await switchWorkspace(created.id);
     } else {
-      qc.invalidateQueries({ queryKey: wsScope(workspaceId) });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "ws", "current") });
     }
   }
 
@@ -107,7 +107,7 @@ export default function WorkspaceSettings() {
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "ws", "current") });
       toast.success("Workspace settings saved.");
     } catch (e) {
-      const m = e instanceof ApiError ? e.message : "Failed";
+      const m = e instanceof ApiError ? e.userMessage : "Failed";
       setErr(m);
       toast.error(m);
     }
@@ -132,7 +132,7 @@ export default function WorkspaceSettings() {
       refetchInvites();
       toast.success(`Invitation sent to ${sent}.`);
     } catch (e) {
-      const m = e instanceof ApiError ? e.message : "Failed";
+      const m = e instanceof ApiError ? e.userMessage : "Failed";
       setErr(m);
       toast.error(m);
     }
@@ -145,7 +145,7 @@ export default function WorkspaceSettings() {
       refetchMembers();
       toast.success("Member updated.");
     } catch (e) {
-      const m = e instanceof ApiError ? e.message : "Failed";
+      const m = e instanceof ApiError ? e.userMessage : "Failed";
       setErr(m);
       toast.error(m);
     }
@@ -163,7 +163,7 @@ export default function WorkspaceSettings() {
       refetchMembers();
       toast.success("Member removed.");
     } catch (e) {
-      const m = e instanceof ApiError ? e.message : "Failed";
+      const m = e instanceof ApiError ? e.userMessage : "Failed";
       setErr(m);
       toast.error(m);
     }
@@ -186,18 +186,20 @@ export default function WorkspaceSettings() {
       {err && <div className="card p-3 text-danger text-sm mb-3">{err}</div>}
       {cur && (
         <div className="card p-4 mb-4 space-y-3 text-sm">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="label">Name</label>
+              <label className="label" htmlFor="workspace-name">Name</label>
               <input
+                id="workspace-name"
                 className="input"
                 defaultValue={cur.name}
                 onBlur={e => e.target.value && e.target.value !== cur.name && patch({ name: e.target.value })}
               />
             </div>
             <div>
-              <label className="label">Default currency</label>
+              <label className="label" htmlFor="workspace-currency">Default currency</label>
               <input
+                id="workspace-currency"
                 className="input"
                 maxLength={3}
                 defaultValue={cur.currency_default}
@@ -208,7 +210,7 @@ export default function WorkspaceSettings() {
               />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -382,7 +384,7 @@ export default function WorkspaceSettings() {
                       setProviderSecret("");
                       toast.success("Credentials saved.");
                     } catch (e) {
-                      toast.error(e instanceof ApiError ? e.message : "Failed");
+                      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
                     } finally {
                       setProviderKeyBusy(false);
                     }
@@ -410,7 +412,7 @@ export default function WorkspaceSettings() {
                         qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "ws", "current") });
                         toast.success("Credentials cleared.");
                       } catch (e) {
-                        toast.error(e instanceof ApiError ? e.message : "Failed");
+                        toast.error(e instanceof ApiError ? e.userMessage : "Failed");
                       } finally {
                         setProviderKeyBusy(false);
                       }
@@ -453,7 +455,7 @@ export default function WorkspaceSettings() {
                       setProviderKey("");
                       toast.success(providerKey ? "API key saved." : "API key cleared.");
                     } catch (e) {
-                      toast.error(e instanceof ApiError ? e.message : "Failed");
+                      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
                     } finally {
                       setProviderKeyBusy(false);
                     }
@@ -516,7 +518,7 @@ export default function WorkspaceSettings() {
                       setScannerLicense("");
                       toast.success(scannerLicense ? "License key saved." : "License key cleared.");
                     } catch (e) {
-                      toast.error(e instanceof ApiError ? e.message : "Failed");
+                      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
                     } finally {
                       setScannerBusy(false);
                     }
@@ -571,12 +573,12 @@ export default function WorkspaceSettings() {
       <div className="card p-4 mb-4 space-y-3">
         <div className="flex gap-2 items-end">
           <div className="flex-1">
-            <label className="label">Email</label>
-            <input className="input" type="email" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="teammate@example.com" />
+            <label className="label" htmlFor="invite-email">Email</label>
+            <input id="invite-email" className="input" type="email" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="teammate@example.com" />
           </div>
           <div>
-            <label className="label">Role</label>
-            <select className="input" value={inviteRole} onChange={e => setInviteRole(e.target.value as "admin" | "member" | "viewer")}>
+            <label className="label" htmlFor="invite-role">Role</label>
+            <select id="invite-role" className="input" value={inviteRole} onChange={e => setInviteRole(e.target.value as "admin" | "member" | "viewer")}>
               <option value="admin">admin</option>
               <option value="member">member</option>
               <option value="viewer">viewer</option>

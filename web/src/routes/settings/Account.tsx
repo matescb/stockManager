@@ -27,7 +27,7 @@ export default function Account() {
       await refresh();
       await switchWorkspace(out.workspace_id);
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Failed");
+      setErr(e instanceof ApiError ? e.userMessage : "Failed");
     } finally {
       setBusy(false);
     }

@@ -14,6 +14,13 @@
 # Errors are surfaced via the cron log + the script's non-zero exit code.
 # The cron daemon emails root on failure if MTA is configured.
 #
+# Dead-man's-switch alerting (optional, but strongly recommended):
+#   Set BACKUP_HEALTHCHECK_OK_URL and BACKUP_HEALTHCHECK_FAIL_URL in .env.prod
+#   to ping a monitoring service (e.g. healthchecks.io) on success/failure.
+#   If only OK_URL is set the service alerts you when pings stop arriving.
+#   If FAIL_URL is also set the service alerts immediately on each failure.
+#   Leave both empty to rely solely on cron mail (the previous behaviour).
+#
 # Prerequisites:
 #   - age must be installed on the VPS (https://github.com/FiloSottile/age)
 #     Install: https://github.com/FiloSottile/age/releases — pick the static
@@ -22,6 +29,20 @@
 #   - The corresponding age private key must be escrowed off-VPS
 
 set -euo pipefail
+
+# ---- Dead-man's-switch URLs (optional) ----
+# Read from .env.prod if present; fall back to empty (no-op).
+BACKUP_HEALTHCHECK_OK_URL="${BACKUP_HEALTHCHECK_OK_URL:-}"
+BACKUP_HEALTHCHECK_FAIL_URL="${BACKUP_HEALTHCHECK_FAIL_URL:-}"
+
+on_failure() {
+    local rc=$?
+    if [ -n "$BACKUP_HEALTHCHECK_FAIL_URL" ]; then
+        curl -fsS --max-time 10 "$BACKUP_HEALTHCHECK_FAIL_URL" >/dev/null 2>&1 || true
+    fi
+    exit $rc
+}
+trap on_failure ERR
 
 REPO_DIR="/srv/stockmanager"
 BACKUP_DIR="/srv/backups/stockmanager"
@@ -128,3 +149,8 @@ find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'db-*.sql.gz.age' -mtime "+${RETA
 find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'uploads-*.tar.gz.age' -mtime "+${RETAIN_DAYS}" -delete
 
 echo "$(date -Iseconds)  backup OK"
+
+# ---- Dead-man's-switch: ping success URL ----
+if [ -n "$BACKUP_HEALTHCHECK_OK_URL" ]; then
+    curl -fsS --max-time 10 "$BACKUP_HEALTHCHECK_OK_URL" >/dev/null || echo "warning: backup OK ping failed"
+fi

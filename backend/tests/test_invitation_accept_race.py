@@ -17,6 +17,9 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
+pytestmark = pytest.mark.real_db
+
+
 def _signup(c: TestClient, email: str | None = None) -> tuple[str, str]:
     email = email or f"u-{uuid.uuid4().hex[:8]}@x.com"
     r = c.post(

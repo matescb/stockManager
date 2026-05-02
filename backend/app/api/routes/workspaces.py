@@ -16,6 +16,7 @@ from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter
 from app.core.responses import ok
 from app.core.secrets import decrypt, encrypt
+from app.domain.audit.service import log as _audit_log
 from app.domain.users.models import User
 from app.domain.workspaces.models import Workspace, WorkspaceMember
 
@@ -182,10 +183,15 @@ class WorkspacePatch(BaseModel):
 
 
 @router.patch("/current", dependencies=[Depends(require_role("admin"))])
-def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace):
+def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     data = payload.model_dump(exclude_unset=True)
     regenerate = bool(data.pop("regenerate_catalog_token", False))
     was_enabled = bool(ws.catalog_enabled)
+
+    # Track which credential fields were changed so we can emit a
+    # single audit row.  NEVER store the plaintext values in the audit
+    # log — only the field names.
+    _credential_fields_changed: list[str] = []
 
     # parts_provider_api_key / _api_secret need special handling so ''
     # actually clears (rather than being stored as an empty string).
@@ -194,12 +200,15 @@ def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace):
     if "parts_provider_api_key" in data:
         new_key = data.pop("parts_provider_api_key")
         ws.parts_provider_api_key = encrypt(new_key) if new_key else None
+        _credential_fields_changed.append("parts_provider_api_key")
     if "parts_provider_api_secret" in data:
         new_secret = data.pop("parts_provider_api_secret")
         ws.parts_provider_api_secret = encrypt(new_secret) if new_secret else None
+        _credential_fields_changed.append("parts_provider_api_secret")
     if "scanner_license_key" in data:
         new_license = data.pop("scanner_license_key")
         ws.scanner_license_key = encrypt(new_license) if new_license else None
+        _credential_fields_changed.append("scanner_license_key")
 
     for k, v in data.items():
         setattr(ws, k, v)
@@ -216,6 +225,19 @@ def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace):
         # uses catalog_token_hash exclusively.
         ws.catalog_token = new_token
         ws.catalog_token_hash = _hmac_token(new_token)
+
+    if _credential_fields_changed:
+        # Audit credential rotation — ONLY field names, never values.
+        _audit_log(
+            db,
+            ws=ws,
+            user=user,
+            action="workspace.credentials_rotated",
+            target_type="workspace",
+            target_ids=[ws.id],
+            comment=f"fields={','.join(_credential_fields_changed)}",
+        )
+
     return ok(_serialize_workspace(ws, new_token=new_token))
 
 

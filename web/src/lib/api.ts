@@ -23,13 +23,38 @@ export type ApiErr = { data: null; status: { category: string; message: string }
 
 const BASE = "/api";
 
+/**
+ * Map a backend `status.category` value to a safe, human-readable string
+ * that can be shown directly in the UI without leaking server internals.
+ * The raw `message` is kept on `ApiError.message` for Sentry / console.
+ */
+export function categoryToUserMessage(category: string | undefined | null): string {
+  switch (category) {
+    case "unauthenticated":
+      return "Session expired. Please sign in again.";
+    case "forbidden":
+      return "You don't have permission to do that.";
+    case "not_found":
+      return "Not found.";
+    case "conflict":
+      return "That's a duplicate or conflicts with existing data.";
+    case "validation_error":
+      return "Some fields don't look right. Check the form and retry.";
+    default:
+      return "Something went wrong. Try again, or refresh.";
+  }
+}
+
 export class ApiError extends Error {
   status: number;
   body: ApiErr | null;
+  /** Safe, human-readable message for display in toasts and banners. */
+  userMessage: string;
   constructor(status: number, body: ApiErr | null, message: string) {
     super(message);
     this.status = status;
     this.body = body;
+    this.userMessage = categoryToUserMessage(body?.status?.category);
   }
 }
 
@@ -102,6 +127,38 @@ async function parsedRequest<S extends ZodType>(
  *   makes the wrappers usable from raw `useEffect` blocks too.
  */
 export type ApiOptions = { signal?: AbortSignal };
+
+/**
+ * Fetch a paged endpoint that returns `{items: T[], next_cursor: string | null}`.
+ *
+ * Unwraps the outer `{data, status}` envelope, then returns the typed
+ * inner payload.  Throws `ApiError` on non-2xx exactly like `api.get`.
+ *
+ * Usage:
+ *   const page = await getPaged<Part>("/parts?limit=50");
+ *   // page.items: Part[]
+ *   // page.next_cursor: string | null
+ */
+export type PagedResponse<T> = { items: T[]; next_cursor: string | null };
+
+export async function getPaged<T>(
+  path: string,
+  opts?: ApiOptions,
+): Promise<PagedResponse<T>> {
+  const data = await rawRequest(path, { signal: opts?.signal });
+  // The outer envelope is already unwrapped by rawRequest; `data` is the
+  // inner payload `{items, next_cursor}`.
+  if (
+    data &&
+    typeof data === "object" &&
+    "items" in data &&
+    Array.isArray((data as { items: unknown }).items)
+  ) {
+    return data as PagedResponse<T>;
+  }
+  // Fallback: treat as empty page (should not happen with a conforming server).
+  return { items: [], next_cursor: null };
+}
 
 export const api = {
   // --- legacy untyped flavour ---

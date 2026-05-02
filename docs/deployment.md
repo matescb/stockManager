@@ -578,6 +578,29 @@ Each artifact is `age`-encrypted with the recipient public key stored in
 idempotent and fail-loud — non-zero exit → cron emails root if MTA is
 configured.
 
+### Dead-man's-switch alerting (INFRA-006)
+
+Cron mail is unreliable because it requires a working MTA and is often
+silently lost. `backup.sh` now supports explicit ping-on-success /
+ping-on-failure via two optional env vars in `.env.prod`:
+
+| Variable | Purpose |
+|---|---|
+| `BACKUP_HEALTHCHECK_OK_URL` | Pinged at the end of a successful run |
+| `BACKUP_HEALTHCHECK_FAIL_URL` | Pinged immediately via `trap ERR` on any non-zero exit |
+
+Recommended service: [healthchecks.io](https://healthchecks.io) (free tier is
+sufficient). Create one check, copy its ping URL into `BACKUP_HEALTHCHECK_OK_URL`,
+and copy the `/fail` endpoint URL into `BACKUP_HEALTHCHECK_FAIL_URL`. This gives
+two alert modes:
+
+- **Missed-ping alert** — the check goes "Late" if the backup didn't run at all
+  (cron failed, host was down, etc.).
+- **Explicit failure alert** — immediate notification when the script itself errors.
+
+Both vars default to empty; leaving them unset preserves the previous cron-mail-only
+behaviour.
+
 ### Recipient key + private-key escrow
 
 **Operator action required before first backup run:**

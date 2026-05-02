@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ScanLine } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { useWsKey, wsKeyOf, wsScope } from "@/lib/queryKeys";
+import { useWsKey, wsKeyOf, archiveStorageKeys } from "@/lib/queryKeys";
 import EntityHeader from "@/components/EntityHeader";
 import SubNav from "@/components/SubNav";
 import type { StorageLocation, Part, StockEntry } from "@/types";
@@ -158,12 +158,14 @@ export function StorageOther() {
   if (!data) return null;
   async function arch() {
     await api.post(`/storage/${storageId}/archive`);
-    qc.invalidateQueries({ queryKey: wsScope(workspaceId) });
+    for (const k of archiveStorageKeys(workspaceId, storageId!))
+      qc.invalidateQueries({ queryKey: k });
     nav("/storage");
   }
   async function restore() {
     await api.post(`/storage/${storageId}/restore`);
-    qc.invalidateQueries({ queryKey: wsScope(workspaceId) });
+    for (const k of archiveStorageKeys(workspaceId, storageId!))
+      qc.invalidateQueries({ queryKey: k });
   }
   return (
     <div className="card p-4 max-w-xl">

@@ -145,9 +145,15 @@ def _parse_quantity(s: str) -> float:
     if not s:
         return 1.0
     try:
-        return float(s)
+        v = float(s)
     except ValueError:
         return 1.0
+    # Defensive clamp: zero/negative quantities are invalid in a BOM row.
+    # Return 1.0 as a safe default so the import continues rather than
+    # aborting the whole batch over a single bad cell.
+    if v <= 0:
+        return 1.0
+    return v
 
 
 def _parse_dnp(s: str) -> bool:

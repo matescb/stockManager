@@ -22,9 +22,25 @@ to avoid accidentally starting the dev stack with no `SESSION_SECRET` set.
 The `Makefile` also exposes `prod-up`, `prod-logs`, and `prod-rebuild`
 targets for the prod compose file.
 
+## Backend dependencies (uv)
+
+The backend uses [uv](https://docs.astral.sh/uv/) for dependency
+management. The lockfile `backend/uv.lock` pins every transitive dep so
+builds are reproducible across dev machines, CI, and prod.
+
+**Adding or changing a dependency:**
+
+1. Edit `backend/pyproject.toml` (update the version constraint or add
+   a new entry).
+2. Run `cd backend && uv lock` to regenerate `uv.lock`.
+3. Commit both `pyproject.toml` and `uv.lock` together.
+
+Never edit `uv.lock` by hand.
+
 ## Running tests outside Docker
 
-The backend test suite needs Postgres. With a local Postgres:
+The backend test suite needs Postgres. With a local Postgres and
+[uv installed](https://docs.astral.sh/uv/getting-started/installation/):
 
 ```bash
 sudo apt-get install -y postgresql
@@ -34,15 +50,38 @@ CREATE USER stockmgr WITH PASSWORD 'stockmgr' CREATEDB;
 CREATE DATABASE stockmgr_test OWNER stockmgr;
 SQL
 
-python3 -m venv .venv
-.venv/bin/pip install -e backend -e backend[dev]
+cd backend
+uv sync --frozen --extra dev
 
 TEST_DATABASE_URL="postgresql+psycopg://stockmgr:stockmgr@127.0.0.1:5432/stockmgr_test" \
-    .venv/bin/python -m pytest -q
+    uv run python -m pytest -q
 ```
 
-The `tests/conftest.py` fixture nukes & recreates the public schema between
-tests, so re-running the suite does not require manual cleanup.
+### Fixture isolation
+
+`tests/conftest.py` runs Alembic to head **once per pytest session** (in
+the session-scope `engine` fixture). Per-test isolation comes from the
+SQLAlchemy "Joining a Session into an External Transaction" pattern:
+the `db` fixture opens a connection, begins an outer transaction, opens
+a SAVEPOINT, and listens for `after_transaction_end` to restart the
+savepoint whenever inner code commits. At teardown the outer
+transaction is rolled back, so every row written during the test
+evaporates — including writes made by route handlers that call
+`db.commit()` (those land on a SAVEPOINT, not the outer transaction).
+
+`client` and `authed_client` both depend on `db`, so HTTP tests get
+clean state by construction. Direct `SessionLocal()` use inside a test
+also lands on the same connection (we monkey-patch `SessionLocal` for
+the duration of the test).
+
+The one exception is tests that need real cross-connection commits —
+`test_stock_concurrency.py` spawns threads that each open a separate
+HTTP client and need to see each other's writes. That file rolls its
+own `authed` fixture and goes through the production code paths; if
+you write a similar test, request the `real_db` fixture instead of
+`db`. `real_db` does a hard schema reset and Alembic upgrade and is
+~1000× slower per test — only use it when the savepoint pattern truly
+can't model the test.
 
 ### Slow tests
 
