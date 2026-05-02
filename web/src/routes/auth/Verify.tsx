@@ -48,7 +48,7 @@ export default function Verify() {
         setState("error");
         setErrMsg(
           e instanceof ApiError
-            ? e.message
+            ? e.userMessage
             : "Verification failed — please try again.",
         );
       });
