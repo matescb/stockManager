@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.errors import ErrorCodes, raise_http
 from app.domain.workspaces.models import Workspace
 
 
@@ -43,13 +43,14 @@ def assert_user_deletable(db: Session, user_id: uuid.UUID) -> None:
     )
     if not owned:
         return
-    raise HTTPException(
-        status_code=409,
-        detail={
-            "message": "user owns workspaces",
-            "code": "owns_workspaces",
-            "workspaces": [
-                {"id": str(ws_id), "name": ws_name} for ws_id, ws_name in owned
-            ],
-        },
+    # Code is the historical un-namespaced "owns_workspaces" — preserved
+    # via ErrorCodes.USER_OWNS_WORKSPACES so existing FE / test
+    # assertions keep working.
+    raise_http(
+        409,
+        ErrorCodes.USER_OWNS_WORKSPACES,
+        "user owns workspaces",
+        workspaces=[
+            {"id": str(ws_id), "name": ws_name} for ws_id, ws_name in owned
+        ],
     )

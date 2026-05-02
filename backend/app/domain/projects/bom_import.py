@@ -9,10 +9,11 @@ from typing import Iterable
 from uuid import UUID
 
 import chardet
-from fastapi import HTTPException, status
+from fastapi import status
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
+from app.core.errors import ErrorCodes, raise_http
 from app.domain.parts.models import Part, PartCadKey
 from app.domain.projects.models import Project, ProjectEntry
 from app.domain.projects.schemas import (
@@ -37,18 +38,24 @@ _MAX_ROW_COUNT = 10_000
 def _decode_b64(b64: str) -> bytes:
     raw = base64.b64decode(b64)
     if len(raw) > _MAX_DECODED_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"BOM payload exceeds {_MAX_DECODED_BYTES} bytes after decode",
+        raise_http(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            ErrorCodes.BOM_TOO_LARGE,
+            f"BOM payload exceeds {_MAX_DECODED_BYTES} bytes after decode",
+            max_bytes=_MAX_DECODED_BYTES,
+            actual_bytes=len(raw),
         )
     return raw
 
 
 def _enforce_row_cap(rows: list) -> None:
     if len(rows) > _MAX_ROW_COUNT:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"BOM exceeds {_MAX_ROW_COUNT} rows; split the import",
+        raise_http(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            ErrorCodes.BOM_TOO_MANY_ROWS,
+            f"BOM exceeds {_MAX_ROW_COUNT} rows; split the import",
+            max_rows=_MAX_ROW_COUNT,
+            actual_rows=len(rows),
         )
 
 

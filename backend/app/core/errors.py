@@ -121,3 +121,32 @@ class ErrorCodes:
     SENTRY_TUNNEL_MALFORMED_HEADER = "sentry_tunnel.malformed_header"
     SENTRY_TUNNEL_MISSING_DSN = "sentry_tunnel.missing_dsn"
     SENTRY_TUNNEL_DSN_MISMATCH = "sentry_tunnel.dsn_mismatch"
+
+    # Auth / session — deps.py
+    AUTH_NOT_AUTHENTICATED = "auth.not_authenticated"
+    AUTH_INVALID_SESSION = "auth.invalid_session"
+    AUTH_SESSION_EXPIRED = "auth.session_expired"
+    AUTH_SESSION_IDLE_TIMEOUT = "auth.session_idle_timeout"
+    AUTH_USER_MISSING = "auth.user_missing"
+
+    # Generic resource lookup — _helpers.py / require_resource_access.
+    # Prefer a domain-specific 404 code where one exists (e.g.
+    # WORKSPACE_NOT_FOUND); use this on the polymorphic helpers where
+    # the model is generic over workspace-owned types.
+    RESOURCE_NOT_FOUND = "resource.not_found"
+    RESOURCE_UNKNOWN_OBJECT_TYPE = "resource.unknown_object_type"
+    RESOURCE_INSUFFICIENT_ROLE = "resource.insufficient_role"
+
+    # Workspace dependency-injection edge cases (deps.py).
+    # WORKSPACE_NONE: caller has no active membership in any workspace
+    # at all — distinct from WORKSPACE_NOT_FOUND, which is "this id
+    # doesn't resolve to one of your workspaces".
+    WORKSPACE_NONE = "workspace.none"
+
+    # User-domain delete guard. Historical un-namespaced code; the FE
+    # / tests already depend on this exact string, so it is preserved.
+    USER_OWNS_WORKSPACES = "owns_workspaces"
+
+    # BOM importer (domain/projects/bom_import.py).
+    BOM_TOO_LARGE = "bom.too_large"
+    BOM_TOO_MANY_ROWS = "bom.too_many_rows"

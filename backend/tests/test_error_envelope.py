@@ -174,6 +174,20 @@ def test_invitation_accept_unknown_token_envelope():
     )
 
 
+def test_get_current_user_no_cookie_envelope():
+    """deps.get_current_user without a session cookie surfaces a stable
+    auth.not_authenticated 401 — pins the PR2 migration of core/deps.py.
+    Hit any authed route; /api/auth/me is the cheapest one."""
+    c = TestClient(app)
+    r = c.get("/api/auth/me")
+    assert r.status_code == 401
+    _assert_error_envelope(
+        r.json(),
+        expected_category="unauthenticated",
+        expected_code="auth.not_authenticated",
+    )
+
+
 @pytest.mark.parametrize("missing_field", ["email", "password"])
 def test_pydantic_422_does_not_have_code_field(missing_field):
     """Pydantic-generated 422s flow through `validation_exception_handler`,
