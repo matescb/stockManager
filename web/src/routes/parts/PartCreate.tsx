@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError, getConflictDetail } from "@/lib/api";
+import { useApiMutation } from "@/lib/mutations";
 import { useQuery } from "@tanstack/react-query";
 import { useWsKey } from "@/lib/queryKeys";
 import type { MpnLookupResult, ProviderSpec, StorageLocation } from "@/types";
@@ -44,7 +45,6 @@ export default function PartCreate() {
   // part's id + name; we surface a link straight to it instead of forcing
   // the operator to manually search.
   const [conflict, setConflict] = useState<{ id: string; name: string } | null>(null);
-  const [busy, setBusy] = useState(false);
   // The lookup preview lets the user see what will be loaded from the
   // provider before clicking Create. After the part exists, we run a
   // single refresh-from-provider call which writes all the provider
@@ -55,6 +55,40 @@ export default function PartCreate() {
   const [specs, setSpecs] = useState<ProviderSpec[]>([]);
   const [hasLookup, setHasLookup] = useState(false);
   const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
+
+  // FE2-006: gate concurrent submits via mutationKey so a double-click
+  // on Create can't post two parts; the 409 conflict-link branch stays
+  // in `onError`, just routed through `getConflictDetail(error)`.
+  const createMutation = useApiMutation<{ id: string }, PartCreateRequest>({
+    mutationKey: ["parts", "create"],
+    mutationFn: (payload) =>
+      api.post<{ id: string }, PartCreateRequest>("/parts", payload),
+    onSuccess: async (res) => {
+      // If the user successfully ran the MPN lookup and the part is
+      // linked-type with an MPN, re-run the lookup against the new
+      // part to populate provider data with proper source='provider'
+      // tagging + last_refresh_at + linked_provider. Failures here are
+      // non-fatal — the part already exists and the user can hit
+      // Refresh on PartInfo later.
+      if (hasLookup && form.part_type === "linked" && form.mpn.trim()) {
+        try {
+          await api.post(`/parts/${res.id}/refresh-from-provider`);
+        } catch {
+          /* non-fatal */
+        }
+      }
+      nav(`/parts/${res.id}/info`);
+    },
+    onError: (e) => {
+      const detail = getConflictDetail(e);
+      if (detail) {
+        setConflict({ id: detail.existing_id, name: detail.existing_name });
+        setErr(null);
+        return;
+      }
+      setErr(e instanceof ApiError ? e.message : "Failed");
+    },
+  });
 
   function set<K extends keyof typeof form>(k: K, v: (typeof form)[K]) {
     setForm(f => ({ ...f, [k]: v }));
@@ -73,54 +107,28 @@ export default function PartCreate() {
     setHasLookup(true);
   }
 
-  async function submit(e: React.FormEvent) {
+  function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
     setConflict(null);
-    setBusy(true);
-    try {
-      const payload: PartCreateRequest = {
-        part_type: form.part_type,
-        manufacturer: form.manufacturer,
-        mpn: form.mpn,
-        internal_part_number: form.internal_part_number,
-        description: form.description,
-        footprint: form.footprint,
-        serialized: form.serialized,
-      };
-      if (form.default_storage_location_id) {
-        payload.default_storage_location_id = form.default_storage_location_id;
-      }
-      // Send blank name as undefined so the server defaults it to mpn.
-      if (form.name?.trim()) payload.name = form.name;
-      const res = await api.post<{ id: string }, PartCreateRequest>("/parts", payload);
-
-      // If the user successfully ran the MPN lookup and the part is
-      // linked-type with an MPN, re-run the lookup against the new
-      // part to populate provider data with proper source='provider'
-      // tagging + last_refresh_at + linked_provider. Failures here are
-      // non-fatal — the part already exists and the user can hit
-      // Refresh on PartInfo later.
-      if (hasLookup && form.part_type === "linked" && form.mpn.trim()) {
-        try {
-          await api.post(`/parts/${res.id}/refresh-from-provider`);
-        } catch {
-          /* non-fatal */
-        }
-      }
-      nav(`/parts/${res.id}/info`);
-    } catch (e) {
-      const detail = getConflictDetail(e);
-      if (detail) {
-        setConflict({ id: detail.existing_id, name: detail.existing_name });
-        setErr(null);
-        return;
-      }
-      setErr(e instanceof ApiError ? e.message : "Failed");
-    } finally {
-      setBusy(false);
+    const payload: PartCreateRequest = {
+      part_type: form.part_type,
+      manufacturer: form.manufacturer,
+      mpn: form.mpn,
+      internal_part_number: form.internal_part_number,
+      description: form.description,
+      footprint: form.footprint,
+      serialized: form.serialized,
+    };
+    if (form.default_storage_location_id) {
+      payload.default_storage_location_id = form.default_storage_location_id;
     }
+    // Send blank name as undefined so the server defaults it to mpn.
+    if (form.name?.trim()) payload.name = form.name;
+    createMutation.mutate(payload);
   }
+
+  const busy = createMutation.isPending;
 
   return (
     <form onSubmit={submit} className="max-w-2xl card p-4 space-y-3">

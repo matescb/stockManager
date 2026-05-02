@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
+import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import type { StorageLocation } from "@/types";
@@ -42,38 +43,45 @@ export default function PartAddStock() {
   const [serial, setSerial] = useState("");
   const [comments, setComments] = useState("");
   const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setErr(null);
-    setBusy(true);
-    try {
-      const payload: AddStockRequest = {
-        part_id: partId!,
-        quantity: Number(qty),
-        comments: comments || undefined,
-      };
-      if (location) payload.storage_location_id = location;
-      if (priceMode !== "none") {
-        payload.price = {
-          mode: priceMode,
-          currency,
-          unit_price: priceMode === "per_component" ? Number(unitPrice) : undefined,
-          total_price: priceMode === "entire_lot" ? Number(totalPrice) : undefined,
-        };
-      }
-      if (lotName || serial) payload.lot = { name: lotName || undefined, serial_number: serial || undefined };
-      await api.post<unknown, AddStockRequest>("/stock/add", payload);
+  // FE2-006: stock-add is the most damaging double-submit on the
+  // ledger model — two concurrent requests would append two
+  // `stock_entries` rows. Key on the part to hard-block double POST.
+  const addMutation = useApiMutation<unknown, AddStockRequest>({
+    mutationKey: ["part", partId, "stock-add"],
+    mutationFn: (payload) => api.post<unknown, AddStockRequest>("/stock/add", payload),
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId) });
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
       nav(`/parts/${partId}/stock`);
-    } catch (e) {
+    },
+    onError: (e) => {
       setErr(e instanceof ApiError ? e.message : "Failed");
-    } finally {
-      setBusy(false);
+    },
+  });
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setErr(null);
+    const payload: AddStockRequest = {
+      part_id: partId!,
+      quantity: Number(qty),
+      comments: comments || undefined,
+    };
+    if (location) payload.storage_location_id = location;
+    if (priceMode !== "none") {
+      payload.price = {
+        mode: priceMode,
+        currency,
+        unit_price: priceMode === "per_component" ? Number(unitPrice) : undefined,
+        total_price: priceMode === "entire_lot" ? Number(totalPrice) : undefined,
+      };
     }
+    if (lotName || serial) payload.lot = { name: lotName || undefined, serial_number: serial || undefined };
+    addMutation.mutate(payload);
   }
+
+  const busy = addMutation.isPending;
 
   return (
     <form onSubmit={submit} className="card p-4 max-w-2xl space-y-3">

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
+import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import type { StorageLocation } from "@/types";
@@ -54,7 +55,6 @@ export default function PartRemoveStock() {
   const [qty, setQty] = useState<number>(0);
   const [comments, setComments] = useState("");
   const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
   // Only rows with positive quantity are valid sources — you can't
   // remove from somewhere that has nothing.
@@ -85,7 +85,23 @@ export default function PartRemoveStock() {
   const selected = sources.find(r => rowKey(r) === sourceKey) ?? null;
   const maxQty = selected?.quantity ?? 0;
 
-  async function submit(e: React.FormEvent) {
+  // FE2-006: ledger remove also appends an entry — same double-submit
+  // hazard as add. Single mutationKey per part is enough since the
+  // form only has one in-flight remove at a time.
+  const removeMutation = useApiMutation<unknown, RemoveStockRequest>({
+    mutationKey: ["part", partId, "stock-remove"],
+    mutationFn: (payload) => api.post<unknown, RemoveStockRequest>("/stock/remove", payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId) });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId, "stock") });
+      nav(`/parts/${partId}/stock`);
+    },
+    onError: (e) => {
+      setErr(e instanceof ApiError ? e.message : "Failed");
+    },
+  });
+
+  function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
     if (!selected) {
@@ -96,25 +112,17 @@ export default function PartRemoveStock() {
       setErr(`Quantity must be between 1 and ${maxQty}.`);
       return;
     }
-    setBusy(true);
-    try {
-      const payload: RemoveStockRequest = {
-        part_id: partId!,
-        quantity: Number(qty),
-        comments: comments || undefined,
-      };
-      if (selected.storage_location_id) payload.storage_location_id = selected.storage_location_id;
-      if (selected.lot_id) payload.lot_id = selected.lot_id;
-      await api.post<unknown, RemoveStockRequest>("/stock/remove", payload);
-      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId) });
-      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId, "stock") });
-      nav(`/parts/${partId}/stock`);
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Failed");
-    } finally {
-      setBusy(false);
-    }
+    const payload: RemoveStockRequest = {
+      part_id: partId!,
+      quantity: Number(qty),
+      comments: comments || undefined,
+    };
+    if (selected.storage_location_id) payload.storage_location_id = selected.storage_location_id;
+    if (selected.lot_id) payload.lot_id = selected.lot_id;
+    removeMutation.mutate(payload);
   }
+
+  const busy = removeMutation.isPending;
 
   return (
     <form onSubmit={submit} className="card p-4 max-w-2xl space-y-3">

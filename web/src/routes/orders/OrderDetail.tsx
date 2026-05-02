@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
+import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import EntityHeader from "@/components/EntityHeader";
@@ -13,6 +14,26 @@ import { useConfirm } from "@/components/ConfirmDialog";
 import type { Order, OrderEntry, Part, StorageLocation } from "@/types";
 
 type DetailOut = { order: Order; entries: OrderEntry[] };
+
+type AddEntryRequest = {
+  part_id?: string;
+  name?: string;
+  quantity_ordered: number;
+  unit_price?: string;
+  currency?: string;
+};
+
+type ReceiveLine = {
+  order_entry_id: string;
+  quantity: number;
+  storage_location_id?: string;
+  serial_number?: string;
+};
+
+type ReceiveRequest = {
+  received_on?: string;
+  lines: ReceiveLine[];
+};
 
 export default function OrderDetail() {
   const { orderId } = useParams<{ orderId: string }>();
@@ -41,46 +62,100 @@ export default function OrderDetail() {
   // Per-entry receive state
   const [receiveLines, setReceiveLines] = useState<Record<string, { qty: number; storage: string; serial?: string }>>({});
   const [receivedOn, setReceivedOn] = useState("");
-  const [busy, setBusy] = useState(false);
+  // Inline error surface — preserved for the handful of branches that
+  // still want a banner (e.g. "enter a quantity on at least one row");
+  // mutation failures route through `mutation.error` instead.
   const [err, setErr] = useState<string | null>(null);
 
-  if (!data) return <div className="text-muted">Loading…</div>;
-  const { order, entries } = data;
-  const isClosed = order.status === "received" || order.status === "cancelled" || !!order.archived_at;
-
-  async function addEntry() {
-    setErr(null);
-    try {
-      await api.post(`/orders/${orderId}/entries`, {
-        part_id: newPartId || undefined,
-        name: newName || undefined,
-        quantity_ordered: newQty,
-        unit_price: newPrice ? newPrice : undefined,
-        currency: order.currency || undefined,
-      });
+  // ---- Mutations (FE2-006) -------------------------------------------------
+  // `mutationKey` ties concurrent submits from the same user/tab to one
+  // in-flight POST so a double-click on "Add" can't append the same line
+  // twice (the original bug called out in the issue body). The Add
+  // button is also gated on `isPending` for belt-and-braces UX.
+  const addEntryMutation = useApiMutation<{ id: string } | unknown, AddEntryRequest>({
+    mutationKey: ["order", orderId, "add-entry"],
+    mutationFn: (input) =>
+      api.post<{ id: string }, AddEntryRequest>(`/orders/${orderId}/entries`, input),
+    onSuccess: () => {
       setAdding(false);
       setNewPartId("");
       setNewName("");
       setNewQty(1);
       setNewPrice("");
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "order", orderId) });
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Failed");
-    }
+    },
+  });
+
+  const removeEntryMutation = useApiMutation<unknown, string>({
+    // Per-entry key — different entries can be deleted concurrently,
+    // but the same entry can't be deleted twice in flight.
+    mutationFn: (entryId) => api.delete(`/orders/${orderId}/entries/${entryId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "order", orderId) });
+      toast.success("Entry deleted.");
+    },
+    onError: (e) => {
+      toast.error(e instanceof ApiError ? e.message : "Delete failed");
+    },
+  });
+
+  const receiveMutation = useApiMutation<unknown, ReceiveRequest>({
+    mutationKey: ["order", orderId, "receive"],
+    mutationFn: (input) => api.post(`/orders/${orderId}/receive`, input),
+    onSuccess: (_data, vars) => {
+      const totalQty = vars.lines.reduce((s, l) => s + l.quantity, 0);
+      setReceiveLines({});
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "order", orderId) });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
+      toast.success(`Received ${totalQty} unit${totalQty === 1 ? "" : "s"}.`);
+    },
+    onError: (e) => {
+      const msg = e instanceof ApiError ? e.message : "Receive failed";
+      setErr(msg);
+      toast.error(msg);
+    },
+  });
+
+  const archiveMutation = useApiMutation<unknown, { wasArchived: boolean }>({
+    mutationKey: ["order", orderId, "archive"],
+    mutationFn: ({ wasArchived }) =>
+      api.post(`/orders/${orderId}/${wasArchived ? "restore" : "archive"}`),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "order", orderId) });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "orders") });
+      toast.success(vars.wasArchived ? "Order restored." : "Order archived.");
+      if (!vars.wasArchived) nav("/orders");
+    },
+  });
+
+  if (!data) return <div className="text-muted">Loading…</div>;
+  const { order, entries } = data;
+  const isClosed = order.status === "received" || order.status === "cancelled" || !!order.archived_at;
+
+  function addEntry() {
+    setErr(null);
+    addEntryMutation.mutate(
+      {
+        part_id: newPartId || undefined,
+        name: newName || undefined,
+        quantity_ordered: newQty,
+        unit_price: newPrice ? newPrice : undefined,
+        currency: order.currency || undefined,
+      },
+      {
+        onError: (e) => {
+          setErr(e instanceof ApiError ? e.message : "Failed");
+        },
+      },
+    );
   }
 
   async function removeEntry(entryId: string) {
     if (!(await confirm({ message: "Delete this entry?", severity: "danger" }))) return;
-    try {
-      await api.delete(`/orders/${orderId}/entries/${entryId}`);
-      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "order", orderId) });
-      toast.success("Entry deleted.");
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Delete failed");
-    }
+    removeEntryMutation.mutate(entryId);
   }
 
-  async function doReceive() {
+  function doReceive() {
     const lines = Object.entries(receiveLines)
       .filter(([, v]) => v.qty > 0)
       .map(([entryId, v]) => ({
@@ -93,34 +168,15 @@ export default function OrderDetail() {
       setErr("Enter a quantity on at least one row.");
       return;
     }
-    setBusy(true);
     setErr(null);
-    try {
-      const totalQty = lines.reduce((s, l) => s + l.quantity, 0);
-      await api.post(`/orders/${orderId}/receive`, {
-        received_on: receivedOn || undefined,
-        lines,
-      });
-      setReceiveLines({});
-      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "order", orderId) });
-      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
-      toast.success(`Received ${totalQty} unit${totalQty === 1 ? "" : "s"}.`);
-    } catch (e) {
-      const msg = e instanceof ApiError ? e.message : "Receive failed";
-      setErr(msg);
-      toast.error(msg);
-    } finally {
-      setBusy(false);
-    }
+    receiveMutation.mutate({
+      received_on: receivedOn || undefined,
+      lines,
+    });
   }
 
-  async function doArchive() {
-    const wasArchived = !!order.archived_at;
-    await api.post(`/orders/${orderId}/${wasArchived ? "restore" : "archive"}`);
-    qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "order", orderId) });
-    qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "orders") });
-    toast.success(wasArchived ? "Order restored." : "Order archived.");
-    if (!order.archived_at) nav("/orders");
+  function doArchive() {
+    archiveMutation.mutate({ wasArchived: !!order.archived_at });
   }
 
   return (
@@ -145,7 +201,7 @@ export default function OrderDetail() {
           ...(order.currency ? [{ label: "Currency", value: order.currency } as const] : []),
         ]}
         actions={
-          <button className="btn" onClick={doArchive}>
+          <button className="btn" onClick={doArchive} disabled={archiveMutation.isPending}>
             {order.archived_at ? "Restore" : "Archive"}
           </button>
         }
@@ -186,7 +242,12 @@ export default function OrderDetail() {
               <input className="input" type="number" step="0.0001" value={newPrice} onChange={e => setNewPrice(e.target.value)} />
             </div>
             <div className="col-span-5">
-              <button className="btn-primary" onClick={addEntry}>Add</button>
+              {/* Disable on isPending — this is the OrderDetail double-submit
+                  fix called out in the issue body. The mutationKey on the
+                  hook is the second line of defence. */}
+              <button className="btn-primary" onClick={addEntry} disabled={addEntryMutation.isPending}>
+                {addEntryMutation.isPending ? "Adding…" : "Add"}
+              </button>
             </div>
           </div>
         )}
@@ -207,7 +268,13 @@ export default function OrderDetail() {
             {
               key: "actions", header: "", accessor: () => "",
               render: r => !isClosed && r.quantity_received === 0 ? (
-                <button className="btn-danger text-xs" onClick={() => removeEntry(r.id)}>Delete</button>
+                <button
+                  className="btn-danger text-xs"
+                  onClick={() => removeEntry(r.id)}
+                  disabled={removeEntryMutation.isPending && removeEntryMutation.variables === r.id}
+                >
+                  Delete
+                </button>
               ) : null,
             },
           ]}
@@ -283,7 +350,13 @@ export default function OrderDetail() {
               <input className="input" type="date" value={receivedOn} onChange={e => setReceivedOn(e.target.value)} />
             </div>
             <div className="col-span-2 flex justify-end">
-              <button className="btn-primary" onClick={doReceive} disabled={busy}>{busy ? "Receiving…" : "Receive"}</button>
+              <button
+                className="btn-primary"
+                onClick={doReceive}
+                disabled={receiveMutation.isPending}
+              >
+                {receiveMutation.isPending ? "Receiving…" : "Receive"}
+              </button>
             </div>
           </div>
         </div>
