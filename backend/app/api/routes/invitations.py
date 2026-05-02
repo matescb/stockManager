@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from pydantic import BaseModel, ConfigDict, EmailStr
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.deps import (
     CurrentUser,
@@ -73,13 +73,25 @@ def create_invitation(
     ws: CurrentWorkspace,
     user: CurrentUser,
 ):
-    # Already a member?
+    # Email is case-insensitive per RFC 5321 §2.4. We normalise to lower
+    # for both the membership/duplicate-pending lookups and the row
+    # insert so the partial composite index landed in alembic 0020
+    # (`lower(email) WHERE status = 'pending'`) actually gets used. The
+    # admin signup UI already passes lowercased values through Pydantic's
+    # EmailStr in practice, but the explicit `.lower()` here pins the
+    # contract regardless of upstream input. DB-014 / issue #105.
+    email = payload.email.lower()
+
+    # Already a member? Compare via lower() because users.email is not
+    # normalised at signup (Pydantic EmailStr does not lowercase the
+    # local part), so a row stored as `Foo@Example.com` would otherwise
+    # bypass the dedupe and we'd mint a duplicate invitation.
     existing_member = (
         db.execute(
             select(WorkspaceMember, User)
             .join(User, User.id == WorkspaceMember.user_id)
             .where(WorkspaceMember.workspace_id == ws.id)
-            .where(User.email == payload.email)
+            .where(func.lower(User.email) == email)
         )
         .first()
     )
@@ -99,7 +111,7 @@ def create_invitation(
         db.execute(
             select(WorkspaceInvitation)
             .where(WorkspaceInvitation.workspace_id == ws.id)
-            .where(WorkspaceInvitation.email == payload.email)
+            .where(WorkspaceInvitation.email == email)
             .where(WorkspaceInvitation.status == "pending")
         )
         .scalars()
@@ -114,7 +126,7 @@ def create_invitation(
     plaintext = secrets.token_urlsafe(32)
     inv = WorkspaceInvitation(
         workspace_id=ws.id,
-        email=payload.email,
+        email=email,
         role=payload.role,
         token_hash=_hash_token(plaintext),
         invited_by=user.id,
