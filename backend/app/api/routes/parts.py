@@ -5,7 +5,7 @@ from uuid import UUID
 
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
 from sqlalchemy import or_, select
 
@@ -18,6 +18,7 @@ from app.api.routes._parts_shared import (
 )
 from app.core.config import settings
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
+from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import Envelope, ok
 from app.core.secrets import decrypt
 from app.domain.custom_fields.models import CustomField
@@ -354,7 +355,8 @@ def restore_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace, user: Curre
 
 
 @router.post("/bulk-delete", dependencies=[Depends(require_role("admin"))])
-def bulk_delete_parts(payload: BulkDeleteIn, db: DbSession, ws: CurrentWorkspace):
+@limiter.limit("30/minute", key_func=workspace_key)
+def bulk_delete_parts(request: Request, payload: BulkDeleteIn, db: DbSession, ws: CurrentWorkspace):
     """Soft-delete (archive) the listed parts in one shot. Hard-deleting
     would foreign-key-cascade into stock_entries / lots / order_entries
     / bom_entries — the user can already filter `/parts/archived` to
@@ -572,7 +574,9 @@ _PROVIDER_RESERVED_KEYS = ("image_url", "datasheet_url")
 
 
 @router.post("/{part_id}/refresh-from-provider")
+@limiter.limit("60/minute", key_func=workspace_key)
 def refresh_from_provider(
+    request: Request,
     part_id: UUID,
     db: DbSession,
     ws: CurrentWorkspace,
@@ -729,7 +733,9 @@ def refresh_from_provider(
 
 
 @router.post("/bulk-import-from-scan")
+@limiter.limit("10/minute", key_func=workspace_key)
 def bulk_import_from_scan(
+    request: Request,
     payload: ScanImportIn,
     db: DbSession,
     ws: CurrentWorkspace,

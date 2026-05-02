@@ -201,13 +201,45 @@ app = FastAPI(
 )
 
 # Rate limiter wired before CORS so 429 responses still get the right headers.
-from slowapi import _rate_limit_exceeded_handler  # noqa: E402
 from slowapi.errors import RateLimitExceeded  # noqa: E402
 
 from app.core.ratelimit import limiter  # noqa: E402
 
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    """Return a 429 in the standard {data, status} envelope (SEC2-017).
+
+    slowapi's default handler returns ``{"error": "..."}`` which violates
+    the API-envelope invariant. We replace it here and inject
+    ``retry_after_seconds`` from the limit's own expiry window so the
+    frontend can surface "try again in N seconds" without parsing the
+    ``Retry-After`` header."""
+    from fastapi.responses import JSONResponse
+
+    from app.core.responses import err
+
+    # The limit object carries the window size in seconds via get_expiry().
+    retry_after: int | None = None
+    try:
+        retry_after = int(exc.limit.limit.get_expiry())
+    except Exception:
+        pass
+
+    body = err("rate_limited", f"rate limit exceeded: {exc.detail}")
+    if retry_after is not None:
+        body["retry_after_seconds"] = retry_after
+
+    response = JSONResponse(content=body, status_code=429)
+    # Let slowapi inject its standard Retry-After / X-RateLimit-* headers.
+    response = request.app.state.limiter._inject_headers(
+        response, request.state.view_rate_limit
+    )
+    return response
+
+
+app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
 
 # SEC2-001 — CSRF Origin/Referer guard. Cookie auth is otherwise wide
 # open to a malicious page on another origin issuing a state-changing

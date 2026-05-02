@@ -138,6 +138,10 @@ def get_current_workspace(
             ErrorCodes.WORKSPACE_NOT_FOUND,
             "workspace not found",
         )
+    # SEC2-017: expose workspace_id on request state so rate-limit key
+    # functions can bucket by workspace rather than IP alone. This is
+    # safe to set here because we've already verified membership above.
+    request.state.workspace_id = str(chosen.id)
     return chosen
 
 
