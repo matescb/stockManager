@@ -115,6 +115,9 @@ def create_invitation(
         invited_by=user.id,
     )
     db.add(inv)
+    # Flush so the Python-side `created_at = default=_utcnow` populates
+    # before _serialize reads it. The dep commits on clean exit.
+    db.flush()
     return ok(_serialize(inv, plaintext_token=plaintext))
 
 
