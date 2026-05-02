@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useMemo, useState } from "react";
+import React, { ReactNode, useEffect, useMemo, useState } from "react";
 import { Rows3, Rows4 } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -38,6 +38,28 @@ export function buildCsv(headers: string[], rows: string[][]): string {
   const body = rows.map(r => r.map(c => escapeCsvCell(c)).join(",")).join("\r\n");
   // U+FEFF BOM so Excel detects UTF-8 instead of misreading as cp1252.
   return "﻿" + head + "\r\n" + body;
+}
+
+/**
+ * Build an aria-label for a clickable row by taking the first textual column
+ * value from the row. Falls back to "Open row" when no text can be found.
+ */
+export function rowAriaLabel<T>(row: T, columns: Column<T>[]): string {
+  for (const col of columns) {
+    if (col.accessor) {
+      const v = col.accessor(row);
+      if (v != null && String(v).trim() !== "") return `Open ${String(v)}`;
+    } else if (!col.render) {
+      const v = (row as Record<string, unknown>)[col.key];
+      if (v != null) {
+        const t = typeof v;
+        if ((t === "string" || t === "number" || t === "boolean") && String(v).trim() !== "") {
+          return `Open ${String(v)}`;
+        }
+      }
+    }
+  }
+  return "Open row";
 }
 
 /** Prune a selection set to ids that still appear in the row list. */
@@ -368,8 +390,19 @@ export function DataTable<T>({
               <tr
                 key={id}
                 onClick={() => onRowClick?.(r)}
+                {...(onRowClick ? {
+                  role: "button",
+                  tabIndex: 0,
+                  "aria-label": rowAriaLabel(r, visibleCols),
+                  onKeyDown: (e: React.KeyboardEvent<HTMLTableRowElement>) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      if (e.key === " ") e.preventDefault();
+                      onRowClick(r);
+                    }
+                  },
+                } : {})}
                 className={cn(
-                  onRowClick && "cursor-pointer",
+                  onRowClick && "cursor-pointer focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none",
                   // Subtle zebra striping — only odd rows pick up panel2.
                   i % 2 === 1 && "bg-panel2/40",
                   isSel && "bg-accent/10",
@@ -379,6 +412,9 @@ export function DataTable<T>({
                   <td
                     className={cn(padCls, "w-8 text-center")}
                     onClick={e => e.stopPropagation()}
+                    onKeyDown={(e: React.KeyboardEvent<HTMLTableCellElement>) => {
+                      if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+                    }}
                   >
                     <input
                       type="checkbox"

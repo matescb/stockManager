@@ -29,7 +29,7 @@ export default function OrderCreate() {
       });
       nav(`/orders/${o.id}`);
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Failed");
+      setErr(e instanceof ApiError ? e.userMessage : "Failed");
     } finally {
       setBusy(false);
     }
@@ -40,30 +40,30 @@ export default function OrderCreate() {
       <h3 className="text-md font-semibold">New order</h3>
       {err && <div className="text-danger text-sm">{err}</div>}
       <div>
-        <label className="label">Name *</label>
-        <input className="input" required value={name} onChange={e => setName(e.target.value)} placeholder="PO-2026-001" />
+        <label className="label" htmlFor="order-create-name">Name *</label>
+        <input id="order-create-name" className="input" required value={name} onChange={e => setName(e.target.value)} placeholder="PO-2026-001" />
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label className="label">Supplier</label>
-          <input className="input" value={supplier} onChange={e => setSupplier(e.target.value)} />
+          <label className="label" htmlFor="order-create-supplier">Supplier</label>
+          <input id="order-create-supplier" className="input" value={supplier} onChange={e => setSupplier(e.target.value)} />
         </div>
         <div>
-          <label className="label">Currency</label>
-          <input className="input" maxLength={3} value={currency} onChange={e => setCurrency(e.target.value.toUpperCase())} />
+          <label className="label" htmlFor="order-create-currency">Currency</label>
+          <input id="order-create-currency" className="input" maxLength={3} value={currency} onChange={e => setCurrency(e.target.value.toUpperCase())} />
         </div>
         <div>
-          <label className="label">Ordered on</label>
-          <input className="input" type="date" value={orderedOn} onChange={e => setOrderedOn(e.target.value)} />
+          <label className="label" htmlFor="order-create-ordered-on">Ordered on</label>
+          <input id="order-create-ordered-on" className="input" type="date" value={orderedOn} onChange={e => setOrderedOn(e.target.value)} />
         </div>
         <div>
-          <label className="label">Expected on</label>
-          <input className="input" type="date" value={expectedOn} onChange={e => setExpectedOn(e.target.value)} />
+          <label className="label" htmlFor="order-create-expected-on">Expected on</label>
+          <input id="order-create-expected-on" className="input" type="date" value={expectedOn} onChange={e => setExpectedOn(e.target.value)} />
         </div>
       </div>
       <div>
-        <label className="label">Comments</label>
-        <textarea className="input" rows={2} value={comments} onChange={e => setComments(e.target.value)} />
+        <label className="label" htmlFor="order-create-comments">Comments</label>
+        <textarea id="order-create-comments" className="input" rows={2} value={comments} onChange={e => setComments(e.target.value)} />
       </div>
       <div>
         <button className="btn-primary" disabled={busy}>{busy ? "Creating…" : "Create order"}</button>

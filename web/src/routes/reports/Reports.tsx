@@ -85,7 +85,7 @@ async function createRestockOrder(
     }
     nav(`/orders/${order.id}`);
   } catch (e) {
-    toast.error(e instanceof ApiError ? e.message : "Failed to create order");
+    toast.error(e instanceof ApiError ? e.userMessage : "Failed to create order");
   }
 }
 
@@ -353,15 +353,15 @@ export function BomShortageReport() {
     <div className="space-y-3">
       <div className="card p-4 flex gap-3 items-end max-w-2xl">
         <div className="flex-1">
-          <label className="label">Project</label>
-          <select className="input" value={projectId} onChange={e => setProjectId(e.target.value)}>
+          <label className="label" htmlFor="report-bom-project">Project</label>
+          <select id="report-bom-project" className="input" value={projectId} onChange={e => setProjectId(e.target.value)}>
             <option value="">— pick —</option>
             {projects?.filter(p => !p.archived_at).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </div>
         <div>
-          <label className="label">Build quantity</label>
-          <input className="input" type="number" min={1} value={qty} onChange={e => setQty(Number(e.target.value))} />
+          <label className="label" htmlFor="report-bom-qty">Build quantity</label>
+          <input id="report-bom-qty" className="input" type="number" min={1} value={qty} onChange={e => setQty(Number(e.target.value))} />
         </div>
       </div>
       {data && (
@@ -415,8 +415,8 @@ export function ExpiringLotsReport() {
     <div className="space-y-3">
       <div className="card p-4 flex gap-3 items-end max-w-md">
         <div className="flex-1">
-          <label className="label">Window (days)</label>
-          <input className="input" type="number" min={0} max={3650} value={days} onChange={e => setDays(Number(e.target.value))} />
+          <label className="label" htmlFor="report-expiring-days">Window (days)</label>
+          <input id="report-expiring-days" className="input" type="number" min={0} max={3650} value={days} onChange={e => setDays(Number(e.target.value))} />
         </div>
       </div>
       <DataTable
