@@ -57,6 +57,18 @@ services:
         condition: service_healthy
     expose:
       - "8000"
+    # INFRA2-002 / INFRA-001: a healthy container in compose's eyes means
+    # "/api/health returns 200." Failures during start_period don't count
+    # against retries — alembic upgrade + DB connect on first boot can
+    # take >10s, so we give it 60s before any miss is fatal. `web` waits
+    # on this via depends_on.condition below, eliminating the post-deploy
+    # 502 window where nginx came up before the backend.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
     # --proxy-headers + --forwarded-allow-ips='*' make uvicorn rewrite
     # request.client.host from the X-Forwarded-For header that Apache
     # populates. Without it, every request looks like it came from the
@@ -109,8 +121,13 @@ services:
         SENTRY_ORG: ${SENTRY_ORG:-}
         SENTRY_PROJECT: ${SENTRY_PROJECT:-}
     restart: unless-stopped
+    # `service_healthy` (rather than the bare `- backend`) makes the web
+    # container hold off until the backend's healthcheck reports green.
+    # Closes the post-deploy 502 window where nginx was already serving
+    # but the backend hadn't finished alembic upgrade.
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     # Loopback-only host port. Apache (on the host) reverse-proxies
     # parts.matescb.cz → 127.0.0.1:8091. See deploy/parts.matescb.cz.conf.
     ports:

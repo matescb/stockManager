@@ -188,4 +188,47 @@ app.include_router(catalog.router, prefix="/catalog", tags=["catalog"])
 
 @app.get("/api/health")
 def health():
-    return {"data": {"status": "ok"}, "status": {"category": "ok", "message": "OK"}}
+    """Liveness + DB + uploads-volume check.
+
+    Used by three callers:
+    - the docker-compose backend healthcheck (controls when `web` starts,
+      and what `docker compose ps` reports for status),
+    - the post-deploy CI gate (`curl /api/health` retried after `docker
+      compose up` so a failed migration / missing env / DB outage fails
+      the deploy instead of returning a green CI result on a broken prod),
+    - manual smoke after operator-driven changes.
+
+    Returns 503 with structured detail when a check fails so the caller
+    can distinguish `app not started yet` (connection refused) from
+    `app up but DB unreachable`. INFRA2-002 / INFRA-001 / Infra HIGH-1.
+    """
+    from sqlalchemy import text
+
+    from app.infra.db import get_engine
+
+    db_ok = True
+    db_detail: str | None = None
+    try:
+        with get_engine().connect() as conn:
+            conn.execute(text("SELECT 1")).scalar_one()
+    except Exception as e:  # noqa: BLE001 — surface any DB-side error generically
+        db_ok = False
+        db_detail = type(e).__name__
+
+    upload_dir = settings().UPLOAD_DIR
+    uploads_ok = os.path.isdir(upload_dir) and os.access(upload_dir, os.W_OK)
+
+    if db_ok and uploads_ok:
+        return {
+            "data": {"status": "ok", "db": "ok", "uploads": "ok"},
+            "status": {"category": "ok", "message": "OK"},
+        }
+
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "message": "service unhealthy",
+            "db": "ok" if db_ok else f"error: {db_detail}",
+            "uploads": "ok" if uploads_ok else f"not writable: {upload_dir}",
+        },
+    )
