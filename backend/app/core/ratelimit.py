@@ -12,6 +12,7 @@ so the wiring is always exercised.
 """
 from __future__ import annotations
 
+from fastapi import Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -22,3 +23,16 @@ limiter = Limiter(
     key_func=get_remote_address,
     enabled=settings().APP_ENV == "prod",
 )
+
+
+def workspace_key(request: Request) -> str:
+    """Rate-limit key that buckets by workspace rather than IP.
+
+    Preferred over IP-only keying for provider-fanout endpoints because
+    members in the same corporate NAT share one IP but each workspace's
+    paid API quota is independent. Falls back to IP when workspace_id
+    isn't available (unauthenticated paths, startup probes, etc.)."""
+    ws_id = getattr(request.state, "workspace_id", None)
+    if ws_id:
+        return f"ws:{ws_id}"
+    return get_remote_address(request)
