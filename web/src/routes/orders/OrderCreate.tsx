@@ -1,38 +1,58 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { useApiMutation } from "@/lib/mutations";
+import { wsKeyOf } from "@/lib/queryKeys";
 import type { Order } from "@/types";
+
+type OrderCreatePayload = {
+  name: string;
+  supplier?: string;
+  currency?: string;
+  ordered_on?: string;
+  expected_on?: string;
+  comments?: string;
+};
 
 export default function OrderCreate() {
   const nav = useNavigate();
+  const qc = useQueryClient();
+  const { workspaceId } = useAuth();
   const [name, setName] = useState("");
   const [supplier, setSupplier] = useState("");
   const [currency, setCurrency] = useState("USD");
   const [orderedOn, setOrderedOn] = useState("");
   const [expectedOn, setExpectedOn] = useState("");
   const [comments, setComments] = useState("");
-  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setErr(null);
-    try {
-      const o = await api.post<Order>("/orders", {
-        name,
-        supplier: supplier || undefined,
-        currency: currency || undefined,
-        ordered_on: orderedOn || undefined,
-        expected_on: expectedOn || undefined,
-        comments: comments || undefined,
-      });
+  const createMutation = useApiMutation<Order, OrderCreatePayload>({
+    mutationKey: ["order", "create"],
+    mutationFn: (payload) => api.post<Order>("/orders", payload),
+    onSuccess: (o) => {
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "orders") });
       nav(`/orders/${o.id}`);
-    } catch (e) {
+    },
+    onError: (e) => {
       setErr(e instanceof ApiError ? e.userMessage : "Failed");
-    } finally {
-      setBusy(false);
-    }
+    },
+  });
+
+  const busy = createMutation.isPending;
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setErr(null);
+    createMutation.mutate({
+      name,
+      supplier: supplier || undefined,
+      currency: currency || undefined,
+      ordered_on: orderedOn || undefined,
+      expected_on: expectedOn || undefined,
+      comments: comments || undefined,
+    });
   }
 
   return (

@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Plus, RotateCcw, Trash2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
+import { useApiMutation } from "@/lib/mutations";
 import { isSpecKey } from "@/lib/providerCatalog";
 import { useWsKey } from "@/lib/queryKeys";
 import { useConfirm } from "@/components/ConfirmDialog";
@@ -54,32 +55,36 @@ export default function PartSpecs() {
 
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("");
-  const [busy, setBusy] = useState(false);
 
-  async function add() {
+  const addMutation = useApiMutation<unknown, { object_type: string; object_id: string; key: string; value: string }>({
+    mutationKey: ["part", part.id, "spec-add"],
+    mutationFn: (payload) => api.post("/custom-fields", payload),
+    onSuccess: () => {
+      setNewKey("");
+      setNewValue("");
+      qc.invalidateQueries({ queryKey });
+      toast.success("Spec added.");
+    },
+    onError: (e) => {
+      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
+    },
+  });
+
+  const busy = addMutation.isPending;
+
+  function add() {
     const k = newKey.trim();
     const v = newValue.trim();
     if (!k) {
       toast.error("Key is required.");
       return;
     }
-    setBusy(true);
-    try {
-      await api.post("/custom-fields", {
-        object_type: "part",
-        object_id: part.id,
-        key: k,
-        value: v,
-      });
-      setNewKey("");
-      setNewValue("");
-      qc.invalidateQueries({ queryKey });
-      toast.success("Spec added.");
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
-    } finally {
-      setBusy(false);
-    }
+    addMutation.mutate({
+      object_type: "part",
+      object_id: part.id,
+      key: k,
+      value: v,
+    });
   }
 
   async function update(row: CustomFieldRow, newValueText: string) {
