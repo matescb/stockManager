@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Query, status
 from sqlalchemy import or_, select
 
 from app.api._helpers import assert_child_in_parent, assert_in_workspace, require_resource_access
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
+from app.core.errors import ErrorCodes, raise_http
 from app.core.responses import ok
 from app.core.time import utcnow
 from app.domain.parts.models import Part
@@ -96,7 +97,7 @@ def create_project(payload: ProjectCreateIn, db: DbSession, ws: CurrentWorkspace
 def _get(db, ws_id, pid) -> Project:
     p = db.get(Project, pid)
     if not p or p.workspace_id != ws_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="project not found")
+        raise_http(status.HTTP_404_NOT_FOUND, code=ErrorCodes.PROJECT_NOT_FOUND, message="project not found")
     return p
 
 
@@ -181,7 +182,7 @@ def _assert_part_live(db, part_id: UUID, workspace_id: UUID) -> None:
     "this id exists, just retired" (BE2-016)."""
     part = assert_in_workspace(db, Part, part_id, workspace_id, label="part")
     if part.archived_at is not None:
-        raise HTTPException(status_code=404, detail="part not found")
+        raise_http(404, code=ErrorCodes.PART_NOT_FOUND, message="part not found")
 
 
 @router.post("/{project_id}/entries")
@@ -274,7 +275,7 @@ def match_entry(project_id: UUID, entry_id: UUID, payload: MatchEntryIn, db: DbS
     if part.archived_at is not None:
         # Match the new add/patch_entry guard — match-bind an archived
         # part is the same BE2-016 vector with a different verb.
-        raise HTTPException(status_code=404, detail="part not found")
+        raise_http(404, code=ErrorCodes.PART_NOT_FOUND, message="part not found")
     e.part_id = part.id
     e.entry_type = "part"
     e.updated_by = user.id

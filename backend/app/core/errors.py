@@ -156,3 +156,37 @@ class ErrorCodes:
     BOM_TOO_MANY_ROWS = "bom.too_many_rows"
     # DB-005 / migration 0032 — fractional BOM quantity rejected.
     BOM_FRACTIONAL_QUANTITY = "bom.fractional_quantity"
+
+    # Lots router.
+    LOT_NOT_FOUND = "lot.not_found"
+    LOT_INVALID_EXPIRATION_DATE = "lot.invalid_expiration_date"
+    LOT_MOVE_STOCK_ERROR = "lot.move_stock_error"
+    LOT_ADJUST_STOCK_ERROR = "lot.adjust_stock_error"
+
+    # Storage router.
+    STORAGE_NOT_FOUND = "storage.not_found"
+    STORAGE_HAS_STOCK = "storage.has_stock"
+
+    # Attachments router.
+    ATTACHMENT_TOO_LARGE = "attachment.too_large"
+    ATTACHMENT_EMPTY = "attachment.empty"
+    ATTACHMENT_UNSUPPORTED_TYPE = "attachment.unsupported_type"
+    ATTACHMENT_CONTENT_TYPE_MISMATCH = "attachment.content_type_mismatch"
+
+    # Parts shared helpers.
+    PART_NOT_FOUND = "part.not_found"
+
+    # Projects router.
+    PROJECT_NOT_FOUND = "project.not_found"
+
+    # BOM presets router.
+    BOM_PRESET_NOT_FOUND = "bom_preset.not_found"
+
+    # Reports router.
+    REPORT_PROJECT_NOT_FOUND = "report.project_not_found"
+
+    # Catalog router.
+    CATALOG_NOT_FOUND = "catalog.not_found"
+
+    # Custom fields router.
+    CUSTOM_FIELD_NOT_OVERRIDE = "custom_field.not_override"

@@ -9,7 +9,7 @@ import hashlib
 import hmac
 from html import escape
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import select
 
@@ -17,6 +17,7 @@ import datetime
 
 from app.core.config import settings
 from app.core.deps import DbSession
+from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter
 from app.core.responses import ok
 from app.domain.parts.models import Part
@@ -92,7 +93,7 @@ def _resolve_workspace(db, token: str, request: Request | None = None) -> Worksp
     only for rollback safety; it must never be a live auth source.
     """
     if not token:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="catalog not found")
+        raise_http(status.HTTP_404_NOT_FOUND, code=ErrorCodes.CATALOG_NOT_FOUND, message="catalog not found")
     digest = _hmac_token(token)
 
     # --- Child table lookup (SEC2-019) — sole source of truth ---
@@ -118,7 +119,7 @@ def _resolve_workspace(db, token: str, request: Request | None = None) -> Worksp
                 pass
             return ws
 
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="catalog not found")
+    raise_http(status.HTTP_404_NOT_FOUND, code=ErrorCodes.CATALOG_NOT_FOUND, message="catalog not found")
 
 
 def _published_parts(db, workspace_id) -> list[Part]:

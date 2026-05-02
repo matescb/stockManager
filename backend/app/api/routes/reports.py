@@ -5,10 +5,11 @@ from collections import defaultdict
 from datetime import date, timedelta
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 from sqlalchemy import select
 
 from app.core.deps import CurrentWorkspace, DbSession
+from app.core.errors import ErrorCodes, raise_http
 from app.core.responses import ok
 from app.domain.builds.service import shortage_analysis
 from app.domain.lots.models import Lot
@@ -79,7 +80,7 @@ def bom_shortage(
     Same engine as Build detail — no build is created."""
     project = db.get(Project, project_id)
     if not project or project.workspace_id != ws.id:
-        raise HTTPException(status_code=404, detail="project not found")
+        raise_http(404, code=ErrorCodes.REPORT_PROJECT_NOT_FOUND, message="project not found")
     rows = shortage_analysis(db, workspace_id=ws.id, project=project, build_quantity=quantity)
     total_short = sum(r["short_by"] for r in rows)
     return ok({"project_id": str(project_id), "quantity": quantity, "rows": rows, "total_short": total_short})
