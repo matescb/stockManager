@@ -18,6 +18,7 @@ from app.api.routes._parts_shared import (
 )
 from app.core.config import settings
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
+from app.core.pagination import decode_cursor, paginate
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import Envelope, ok
 from app.core.secrets import decrypt
@@ -148,8 +149,20 @@ def list_parts(
     q: str | None = Query(default=None),
     archived: bool = Query(default=False),
     mpn: str | None = Query(default=None),
-    limit: int = Query(default=200, le=1000),
-) -> Envelope[list[dict]]:
+    limit: int = Query(default=50, le=200),
+    cursor: str | None = Query(default=None),
+) -> Envelope[dict]:
+    """List parts with cursor-based pagination.
+
+    Returns ``{items: [...], next_cursor: str | null}``.
+    Pass ``?cursor=<next_cursor>`` from the previous response to fetch
+    the next page.  ``next_cursor`` is null when no further pages exist.
+
+    The ``cursor`` is an HMAC-signed blob — tampering returns 400.
+    Every query is scoped to the current workspace (CLAUDE.md invariant).
+    """
+    decoded_cursor = decode_cursor(cursor) if cursor else None
+
     stmt = select(Part).where(Part.workspace_id == ws.id)
     stmt = stmt.where(Part.archived_at.is_(None) if not archived else Part.archived_at.is_not(None))
     if mpn:
@@ -165,20 +178,28 @@ def list_parts(
                 Part.description.ilike(like),
             )
         )
-    stmt = stmt.order_by(Part.name).limit(limit)
-    parts = list(db.execute(stmt).scalars())
+
+    parts, next_cursor = paginate(
+        db,
+        stmt,
+        sort_col=Part.name,
+        id_col=Part.id,
+        cursor=decoded_cursor,
+        limit=limit,
+    )
+
     image_urls = _image_urls_for_parts(db, ws.id, [p.id for p in parts])
-    out = []
+    items = []
     for p in parts:
         on_hand = total_for_part(db, workspace_id=ws.id, part_id=p.id)
         reserved = reserved_quantity(db, workspace_id=ws.id, part_id=p.id)
-        out.append(_serialize(
+        items.append(_serialize(
             p,
             on_hand=on_hand,
             reserved=reserved,
             image_url=image_urls.get(p.id),
         ))
-    return ok(out)
+    return ok({"items": items, "next_cursor": next_cursor})
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

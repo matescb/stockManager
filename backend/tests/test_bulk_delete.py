@@ -50,10 +50,10 @@ def test_bulk_delete_archives_listed_parts(authed):
     assert body["skipped"] == 0
 
     # B is still present in the active list; A and C only show in /archived.
-    actives = [p["id"] for p in authed.get("/api/parts").json()["data"]]
+    actives = [p["id"] for p in authed.get("/api/parts").json()["data"]["items"]]
     assert b in actives
     assert a not in actives and c not in actives
-    archived_ids = [p["id"] for p in authed.get("/api/parts?archived=true").json()["data"]]
+    archived_ids = [p["id"] for p in authed.get("/api/parts?archived=true").json()["data"]["items"]]
     assert sorted(archived_ids) == sorted([a, c])
 
 
@@ -109,6 +109,6 @@ def test_list_parts_includes_image_url(authed):
         },
     )
     assert r.status_code in (200, 201), r.text
-    listed = authed.get("/api/parts").json()["data"]
+    listed = authed.get("/api/parts").json()["data"]["items"]
     row = next(r for r in listed if r["id"] == pid)
     assert row["image_url"] == "/api/parts/assets/abc/image.png"

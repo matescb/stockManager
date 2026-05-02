@@ -103,6 +103,38 @@ async function parsedRequest<S extends ZodType>(
  */
 export type ApiOptions = { signal?: AbortSignal };
 
+/**
+ * Fetch a paged endpoint that returns `{items: T[], next_cursor: string | null}`.
+ *
+ * Unwraps the outer `{data, status}` envelope, then returns the typed
+ * inner payload.  Throws `ApiError` on non-2xx exactly like `api.get`.
+ *
+ * Usage:
+ *   const page = await getPaged<Part>("/parts?limit=50");
+ *   // page.items: Part[]
+ *   // page.next_cursor: string | null
+ */
+export type PagedResponse<T> = { items: T[]; next_cursor: string | null };
+
+export async function getPaged<T>(
+  path: string,
+  opts?: ApiOptions,
+): Promise<PagedResponse<T>> {
+  const data = await rawRequest(path, { signal: opts?.signal });
+  // The outer envelope is already unwrapped by rawRequest; `data` is the
+  // inner payload `{items, next_cursor}`.
+  if (
+    data &&
+    typeof data === "object" &&
+    "items" in data &&
+    Array.isArray((data as { items: unknown }).items)
+  ) {
+    return data as PagedResponse<T>;
+  }
+  // Fallback: treat as empty page (should not happen with a conforming server).
+  return { items: [], next_cursor: null };
+}
+
 export const api = {
   // --- legacy untyped flavour ---
   // The body is typed via an explicit generic `B = unknown`. Untyped

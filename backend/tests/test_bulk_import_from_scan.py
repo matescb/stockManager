@@ -397,7 +397,7 @@ def test_bulk_import_row_failure_does_not_roll_back_other_rows(authed, monkeypat
 
     # Surviving rows must actually be in the DB — not just claimed
     # in the response.
-    listed = authed.get("/api/parts").json()["data"]
+    listed = authed.get("/api/parts").json()["data"]["items"]
     mpns = {p["mpn"] for p in listed}
     assert "RC0402JR-070R" in mpns
     assert "RC0402JR-070M" in mpns
