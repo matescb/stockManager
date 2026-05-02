@@ -31,6 +31,9 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    # Used by tests/test_ci_workflow.py (TEST-014 / issue #116) to parse
+    # .github/workflows/ci.yml. Test-only — runtime app doesn't import yaml.
+    "pyyaml>=6.0",
 ]
 
 [build-system]
