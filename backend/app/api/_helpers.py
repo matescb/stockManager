@@ -1,23 +1,31 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Any
+from typing import TypeVar
 from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.core.deps import _ROLE_RANK, _membership_role
+from app.domain._mixins import WorkspaceOwned
+
+# Generic type variable bound to WorkspaceOwned. Replaces the previous
+# `Any`-typed signatures so a typo (`Parts` instead of `Part`) is caught
+# by a static type-checker — these helpers ARE the workspace-isolation
+# contract, so the typing here is load-bearing for code-review.
+T = TypeVar("T", bound=WorkspaceOwned)
 
 
 def assert_in_workspace(
-    db,
-    Model: Any,
+    db: Session,
+    Model: type[T],
     id_: UUID,
     workspace_id: UUID,
     *,
     label: str | None = None,
-) -> Any:
+) -> T:
     """Look up a workspace-owned row by id, scoped to the current workspace.
 
     Returns the row on success; raises 404 if it does not exist *or* belongs
@@ -42,7 +50,7 @@ def assert_in_workspace(
 # reference the new object type and the cross-tenant write guard remains
 # load-bearing.
 @lru_cache(maxsize=1)
-def _polymorphic_resolvers() -> dict[str, Any]:
+def _polymorphic_resolvers() -> dict[str, type[WorkspaceOwned]]:
     # Lazy + cached: keeps the API layer from creating a hard import-time
     # dependency on the parts domain, and avoids rebuilding the dict on
     # every attachment upload / custom-field write / tag link. Adding a
@@ -56,11 +64,11 @@ def _polymorphic_resolvers() -> dict[str, Any]:
 
 
 def assert_polymorphic_in_workspace(
-    db,
+    db: Session,
     object_type: str,
     object_id: UUID,
     workspace_id: UUID,
-) -> Any:
+) -> WorkspaceOwned:
     """Resolve a polymorphic (object_type, object_id) reference against the
     current workspace.
 
@@ -81,15 +89,15 @@ def assert_polymorphic_in_workspace(
 
 
 def require_resource_access(
-    db: Any,
-    Model: Any,
+    db: Session,
+    Model: type[T],
     id_: UUID,
     *,
-    user: Any,
-    ws: Any,
+    user,
+    ws,
     role: str = "member",
     label: str | None = None,
-) -> Any:
+) -> T:
     """Resolve a workspace-owned resource by id and gate on the caller's
     role — in the right order so the response status leaks no info.
 
