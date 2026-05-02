@@ -103,7 +103,7 @@ export default function PartAddStock() {
       <div className="grid grid-cols-3 gap-3">
         <div>
           <label className="label">Price mode</label>
-          <select className="input" value={priceMode} onChange={e => setPriceMode(e.target.value as any)}>
+          <select className="input" value={priceMode} onChange={e => setPriceMode(e.target.value as "none" | "per_component" | "entire_lot")}>
             <option value="none">No price</option>
             <option value="per_component">Per component</option>
             <option value="entire_lot">Entire lot</option>

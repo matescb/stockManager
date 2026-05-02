@@ -11,7 +11,7 @@ type Ctx = {
 
 const STORAGE_KEY = "theme";
 
-const ThemeCtx = createContext<Ctx>({} as any);
+const ThemeCtx = createContext<Ctx | undefined>(undefined);
 
 function readPref(): ThemePreference {
   const v = localStorage.getItem(STORAGE_KEY);
@@ -79,6 +79,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useTheme() {
-  return useContext(ThemeCtx);
+export function useTheme(): Ctx {
+  const ctx = useContext(ThemeCtx);
+  if (!ctx) throw new Error("useTheme must be used inside <ThemeProvider>");
+  return ctx;
 }

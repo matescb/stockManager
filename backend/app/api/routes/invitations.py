@@ -10,6 +10,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request, status
 from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.core.deps import (
@@ -153,8 +154,12 @@ def create_invitation(
     # at accept time with compare_digest) go to the DB; the plaintext
     # goes back to the caller exactly once via the response.
     plaintext = secrets.token_urlsafe(32)
+    # Cache workspace_id as a plain Python value before the savepoint so
+    # we can query with it even if the session's object identity cache is
+    # partially expired after a savepoint rollback (BE2-020 / #65).
+    ws_id = ws.id
     inv = WorkspaceInvitation(
-        workspace_id=ws.id,
+        workspace_id=ws_id,
         email=email,
         role=payload.role,
         token_hash=_hash_token(plaintext),
@@ -162,9 +167,43 @@ def create_invitation(
         invited_by=user.id,
     )
     db.add(inv)
-    # Flush so the Python-side `created_at = default=_utcnow` populates
-    # before _serialize reads it. The dep commits on clean exit.
-    db.flush()
+    # Wrap in a savepoint so an IntegrityError from concurrent creates
+    # doesn't poison the outer transaction (BE2-020 / #65). If two
+    # requests race past the existence check above, the second will hit
+    # uq_workspace_invitation_pending and land here; we roll back the
+    # savepoint and re-fetch the row the winner just inserted.
+    #
+    # SQLAlchemy 2.0 note: after IntegrityError exits begin_nested(),
+    # the savepoint is rolled back, but the session marks itself as
+    # needing a rollback (PendingRollbackError). We call db.rollback()
+    # to restore the session to a clean state, then re-SELECT within a
+    # fresh implicit transaction. The outer begin_nested() pattern used
+    # in bulk_import differs because it never needs to continue using the
+    # session after the catch.
+    try:
+        with db.begin_nested():
+            db.flush()
+    except IntegrityError:
+        # Rollback clears the PendingRollbackError state. This rolls
+        # back the entire outer transaction, but since we haven't flushed
+        # anything meaningful (the conflicting inv was rejected), the
+        # only thing we lose is the duplicate row we were trying to add.
+        db.rollback()
+        # Re-SELECT the winning row using cached plain-Python IDs.
+        existing = (
+            db.execute(
+                select(WorkspaceInvitation)
+                .where(WorkspaceInvitation.workspace_id == ws_id)
+                .where(WorkspaceInvitation.email == email)
+                .where(WorkspaceInvitation.status == "pending")
+            )
+            .scalars()
+            .first()
+        )
+        # If we can't find the row (shouldn't happen), fall through and
+        # let the outer transaction fail naturally.
+        if existing:
+            return ok(_serialize(existing))
     return ok(_serialize(inv, plaintext_token=plaintext))
 
 
@@ -281,29 +320,72 @@ def accept_invitation(request: Request, payload: AcceptIn, db: DbSession, user: 
             "invitation is for a different email",
         )
 
+    # Cache plain-Python values before the savepoint so we can query
+    # with them even if session identity-map objects are partially
+    # invalidated after a savepoint rollback (BE2-020 / #65).
+    inv_workspace_id = inv.workspace_id
+    inv_role = inv.role
+    user_id = user.id
+
     # Already a member?
-    existing = (
+    existing_member = (
         db.query(WorkspaceMember)
         .filter(
-            WorkspaceMember.workspace_id == inv.workspace_id,
-            WorkspaceMember.user_id == user.id,
+            WorkspaceMember.workspace_id == inv_workspace_id,
+            WorkspaceMember.user_id == user_id,
         )
         .first()
     )
-    if existing:
-        existing.status = "active"
-        existing.role = inv.role
+    if existing_member:
+        existing_member.status = "active"
+        existing_member.role = inv_role
     else:
-        db.add(
-            WorkspaceMember(
-                workspace_id=inv.workspace_id,
-                user_id=user.id,
-                role=inv.role,
-                status="active",
-            )
+        new_member = WorkspaceMember(
+            workspace_id=inv_workspace_id,
+            user_id=user_id,
+            role=inv_role,
+            status="active",
         )
+        db.add(new_member)
     inv.status = "accepted"
     inv.accepted_at = datetime.now(timezone.utc)
-    inv.accepted_by = user.id
-    ws = db.get(Workspace, inv.workspace_id)
-    return ok({"workspace_id": str(inv.workspace_id), "workspace_name": ws.name if ws else None, "role": inv.role})
+    inv.accepted_by = user_id
+
+    # Wrap the membership insert in a savepoint so that two concurrent
+    # accepts for the same token both succeed (BE2-020 / #65). If two
+    # requests race past the membership existence check above, the second
+    # will hit uq_workspace_member on flush. Roll back the savepoint,
+    # re-fetch the existing member row and re-apply role/status — the
+    # net result is idempotent (the user is active in the workspace).
+    #
+    # SQLAlchemy 2.0 note: after IntegrityError exits begin_nested(),
+    # the session marks itself as needing a full rollback. We call
+    # db.rollback() to restore a clean state, then re-apply writes.
+    inv_id = inv.id  # cache before rollback discards ORM identity
+    try:
+        with db.begin_nested():
+            db.flush()
+    except IntegrityError:
+        db.rollback()
+        # Re-fetch the member that the winning concurrent request created,
+        # and ensure it has the right role/status.
+        colliding_member = (
+            db.query(WorkspaceMember)
+            .filter(
+                WorkspaceMember.workspace_id == inv_workspace_id,
+                WorkspaceMember.user_id == user_id,
+            )
+            .first()
+        )
+        if colliding_member:
+            colliding_member.status = "active"
+            colliding_member.role = inv_role
+        # The invitation status update was rolled back too; re-apply.
+        fresh_inv = db.get(WorkspaceInvitation, inv_id)
+        if fresh_inv and fresh_inv.status != "accepted":
+            fresh_inv.status = "accepted"
+            fresh_inv.accepted_at = datetime.now(timezone.utc)
+            fresh_inv.accepted_by = user_id
+
+    workspace = db.get(Workspace, inv_workspace_id)
+    return ok({"workspace_id": str(inv_workspace_id), "workspace_name": workspace.name if workspace else None, "role": inv_role})

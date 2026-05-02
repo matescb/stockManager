@@ -524,7 +524,7 @@ export default function WorkspaceSettings() {
           </div>
           <div>
             <label className="label">Role</label>
-            <select className="input" value={inviteRole} onChange={e => setInviteRole(e.target.value as any)}>
+            <select className="input" value={inviteRole} onChange={e => setInviteRole(e.target.value as "admin" | "member" | "viewer")}>
               <option value="admin">admin</option>
               <option value="member">member</option>
               <option value="viewer">viewer</option>

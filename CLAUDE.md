@@ -24,18 +24,23 @@ Don't restate things from there in code or new docs — link to it.
 ### Dev loop (Docker)
 
 ```bash
-docker compose up --build       # http://localhost:5173, API at :8000/api
+cp .env.example .env   # first time only — set SESSION_SECRET
+make dev-up            # http://localhost:5173, API at :8000/api
 ```
 
 Backend container runs `alembic upgrade head` before uvicorn — no manual
 migrate step in dev. Web container runs `vite --reload`.
 
+The dev compose file is `docker-compose.dev.yml`; the prod compose file is
+`docker-compose.prod.yml`. The `Makefile` wraps both so neither is the
+implicit default (avoids running the dev stack on prod by muscle memory).
+
 ### Tests
 
 ```bash
-docker compose exec backend pytest               # all backend tests
-docker compose exec backend pytest -k <name>     # single test by name
-cd web && npm test                                # vitest (currently sparse)
+docker compose -f docker-compose.dev.yml exec backend pytest               # all backend tests
+docker compose -f docker-compose.dev.yml exec backend pytest -k <name>     # single test by name
+cd web && npm test                                                           # vitest (currently sparse)
 ```
 
 Outside Docker, the backend test suite needs a real Postgres (no SQLite
