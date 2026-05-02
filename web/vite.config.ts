@@ -23,6 +23,13 @@ const sentryOrg = process.env.SENTRY_ORG;
 const sentryProject = process.env.SENTRY_PROJECT;
 const enableSentryUpload = Boolean(sentryToken && sentryOrg && sentryProject);
 
+// INFRA2-015: Only emit sourcemaps when SENTRY_AUTH_TOKEN is present
+// (i.e. in CI, where they're uploaded to Sentry immediately after build).
+// VPS builds run without the token, so no .map files ever reach the
+// Docker build cache. Dockerfile.prod's `find -name '*.map' -delete` step
+// remains as belt-and-braces for any edge-case local builds.
+const emitSourcemaps = Boolean(sentryToken);
+
 export default defineConfig({
   // @ts-expect-error vitest config lives next to vite's; types come from vitest/config
   test: {
@@ -58,11 +65,12 @@ export default defineConfig({
     },
   },
   build: {
-    // Always produce hidden sourcemaps so the CI job can upload them to
-    // Sentry. "hidden" omits the //# sourceMappingURL= footer so browsers
-    // don't fetch them; Dockerfile.prod strips the .map files before the
-    // nginx image is assembled (Infra CRIT-5).
-    sourcemap: "hidden",
+    // Emit hidden sourcemaps only when SENTRY_AUTH_TOKEN is set (CI).
+    // "hidden" omits the //# sourceMappingURL= footer so browsers don't
+    // fetch them; the CI job uploads them to Sentry immediately after
+    // `npm run build`. VPS builds run without the token so no .map files
+    // ever reach the Docker build-cache (INFRA2-015 / Infra CRIT-5).
+    sourcemap: emitSourcemaps ? "hidden" : false,
     rollupOptions: {
       output: {
         // Carve heavy third-party deps into their own cached chunks so

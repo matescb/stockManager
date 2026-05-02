@@ -27,7 +27,8 @@ You make a change → push to `main` → it ships. There is no manual deploy.
   GitHub Actions: .github/workflows/ci.yml
         ├─ backend-tests   (pytest, postgres:16 service container)
         ├─ web-build       (npm ci && npm run build)
-        └─ deploy          (only if both ✅, only on push to main)
+        ├─ prod-validate   (compose config -q + buildx builds + nginx -t)
+        └─ deploy          (only if all three ✅, only on push to main)
                   │
                   ▼ ssh deploy@vps
               cd /srv/stockmanager
@@ -45,8 +46,9 @@ You make a change → push to `main` → it ships. There is no manual deploy.
 
 Practical consequences:
 
-- **Pull requests / feature branches** run only the two test jobs. Use them
-  as a pre-merge gate; nothing reaches prod until the branch is merged.
+- **Pull requests / feature branches** run all three non-deploy jobs
+  (`backend-tests`, `web-build`, `prod-validate`). Use them as a pre-merge
+  gate; nothing reaches prod until the branch is merged.
 - **A new alembic migration** under `backend/alembic/versions/` ships
   automatically — no manual step. The backend container's CMD runs
   `alembic upgrade head` before uvicorn boots, so by the time the new
@@ -63,8 +65,8 @@ Practical consequences:
   3. For long migrations use [Drain mode](#drain-mode-for-destructive-migrations)
      to show users a static maintenance page while the schema changes run.
 - **Red CI** keeps prod on the previous version: the deploy job is gated
-  on `needs: [backend-tests, web-build]` and won't start if either failed.
-  GitHub emails on red.
+  on `needs: [backend-tests, web-build, prod-validate]` and won't start if
+  any of them failed. GitHub emails on red.
 - **Secrets / env changes don't go through CI.** `.env.prod` lives only on
   the VPS; rotating `SESSION_SECRET` or changing `CORS_ORIGINS` is an SSH
   task (see [Operations → Changing env vars](#changing-env-vars)).
@@ -222,11 +224,19 @@ The next push to `main` triggers the first end-to-end automated deploy.
 
 ## CI/CD details
 
-`.github/workflows/ci.yml`. Three jobs:
+`.github/workflows/ci.yml`. Six jobs:
 
+- **`lockfile-drift`** (SEC2-016) — installs `uv`, runs `uv lock --check`
+  (fails if `pyproject.toml` diverges from `uv.lock`), and re-exports
+  `requirements.lock` to detect stale hashes. Runs on every push and PR,
+  before the heavier `backend-tests` job.
+- **`pip-audit`** (SEC2-016) — scans `requirements.lock` with
+  `pip-audit --require-hashes` for HIGH/CRITICAL CVEs. Depends on
+  `lockfile-drift` so it always audits the verified-current set.
 - **`backend-tests`** — postgres:16-alpine service container, `pip install -e ".[dev]"`, `pytest -q --tb=short`. Runs on every push and PR.
 - **`web-build`** — `npm ci && npm run build`, followed on `push` to `main` by a Sentry sourcemap upload step (`npx @sentry/cli sourcemaps upload`). The build's `tsc -b` step also catches TypeScript errors. Runs on every push and PR; the sourcemap upload is gated on push to `main` only. `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, and `SENTRY_PROJECT` are GitHub Actions secrets used by the upload step — they must **not** appear in `.env.prod` or `docker-compose.prod.yml` build args (INFRA2-010).
-- **`deploy`** — gated on `github.event_name == 'push' && github.ref == 'refs/heads/main'` and `needs: [backend-tests, web-build]`. Uses `appleboy/ssh-action@v1.0.3` to SSH in and run the pull/up/prune script. Concurrency-grouped on `ci-refs/heads/main` with `cancel-in-progress: false` so consecutive pushes queue rather than abort an in-flight `docker compose up --build`.
+- **`prod-validate`** (INFRA2-012) — validates the prod artefacts that the two test jobs above don't exercise: (1) `docker compose -f docker-compose.prod.yml config -q` catches YAML/schema/variable errors in `docker-compose.prod.yml` (including the single-line JSON-array `command:` form that previously broke in production); (2) `docker buildx build` of `backend/Dockerfile` and `web/Dockerfile.prod` catches Dockerfile regressions; (3) `docker run nginx:alpine nginx -t` lints `deploy/nginx-web.conf`. Uses a throw-away CI env file derived from `deploy/.env.prod.example` — no real secrets are required. Runs on every push and PR.
+- **`deploy`** — gated on `github.event_name == 'push' && github.ref == 'refs/heads/main'` and `needs: [backend-tests, web-build, prod-validate]`. Uses `appleboy/ssh-action@v1.0.3` to SSH in and run the pull/up/prune script. Concurrency-grouped on `ci-refs/heads/main` with `cancel-in-progress: false` so consecutive pushes queue rather than abort an in-flight `docker compose up --build`.
 
 The deploy script body is intentionally tiny:
 
@@ -265,16 +275,16 @@ genuine version intent.
 
 ### Required status checks
 
-Even though the `backend-tests` and `web-build` jobs run on every PR
-(`pull_request:` trigger), GitHub will still let a contributor merge a
-red PR unless branch protection is configured. To make the gate
+Even though the `backend-tests`, `web-build`, and `prod-validate` jobs run
+on every PR (`pull_request:` trigger), GitHub will still let a contributor
+merge a red PR unless branch protection is configured. To make the gate
 load-bearing:
 
 1. GitHub UI → Settings → Branches → Branch protection rules → Add rule.
 2. Branch name pattern: `main`.
 3. Tick **Require status checks to pass before merging** and pick
-   `backend-tests` plus `web-build` from the list (they only appear
-   after their first successful run).
+   `backend-tests`, `web-build`, and `prod-validate` from the list (they
+   only appear after their first successful run).
 4. Optional: tick **Require branches to be up to date before merging**
    if you want a fresh-rebase requirement on top.
 
@@ -352,10 +362,23 @@ sudo -u deploy docker compose -f docker-compose.prod.yml logs -f web
 
 ### psql shell
 
+The `$POSTGRES_USER` / `$POSTGRES_DB` variables must expand **inside the
+container**, not in your host shell (where they are almost certainly unset).
+Use `sh -c '...'` with single quotes so the shell that receives the command
+is the one inside the container, where those variables are already set by
+the postgres image:
+
 ```bash
 cd /srv/stockmanager
 sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
-    exec db psql -U "$POSTGRES_USER" "$POSTGRES_DB"
+    exec db sh -c 'exec psql -U "$POSTGRES_USER" "$POSTGRES_DB"'
+```
+
+Or use the helper script (handles the single-quoting and `sudo -u deploy`
+for you):
+
+```bash
+sudo /srv/stockmanager/deploy/db-shell.sh
 ```
 
 ### Ad-hoc alembic command
@@ -443,6 +466,23 @@ Always use `docker compose -f docker-compose.prod.yml` explicitly on the VPS —
 the repo no longer has a bare `docker-compose.yml` default, so muscle-memory
 `docker compose up -d` without a `-f` flag will error rather than silently
 start the dev stack.
+
+### Wrapper scripts in deploy/
+
+Two helper scripts live in `deploy/` to make the common ops tasks
+less error-prone:
+
+| Script | Purpose |
+|--------|---------|
+| `deploy/db-shell.sh` | Open an interactive `psql` session inside the running `db` container. Reads credentials from `.env.prod` so they never expand in the host shell. |
+| `deploy/db-restore.sh` | Decrypt and restore a `pg_dump` backup. Prompts for confirmation before overwriting. |
+
+Both scripts are designed to be run as root from anywhere on the VPS:
+
+```bash
+sudo /srv/stockmanager/deploy/db-shell.sh
+sudo /srv/stockmanager/deploy/db-restore.sh /path/to/key.txt /path/to/db-YYYY-MM-DD.sql.gz.age
+```
 
 ### Apache vhost edits
 
@@ -552,6 +592,19 @@ container would serve the expired cert until the next `docker compose up`.
 - **Validate** with
   `certbot renew --dry-run --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/stockmanager-reload.sh`.
 
+**BOM / scan-import timeouts (INFRA2-019).** Both proxy layers must agree:
+the in-container nginx sets `proxy_read_timeout 5m` / `proxy_send_timeout 5m`
+for `POST /api/projects/*/bom/import` and `POST /api/parts/bulk-import-from-scan`
+(see `deploy/nginx-web.conf`), and **both** Apache vhosts (`:80` and `:443`)
+set `timeout=300` on their `ProxyPass` directives (see
+`deploy/parts.matescb.cz.conf` and `deploy/parts.matescb.cz-le-ssl.conf`).
+Production HTTPS traffic terminates on the `:443` vhost, so the SSL file is
+the load-bearing one for live BOM/scan-import calls; the `:80` vhost mainly
+serves the HTTP→HTTPS redirect plus `/.well-known` for cert renewal. If you
+change one, keep the other in sync. **The Apache vhost change is not
+auto-deployed** — after merging, run the `cp` + `systemctl reload apache2`
+commands above on the VPS for **both** files.
+
 ## Backups
 
 Two volumes need covering:
@@ -655,13 +708,26 @@ All restore commands assume the private key file is available at
 
 Restore the DB (DESTRUCTIVE — overwrites the existing one):
 
+Use the helper script — it prompts for confirmation, reads credentials from
+`.env.prod` directly so the variables never expand in the host shell, and
+handles the `sudo -u deploy` and single-quoting correctly:
+
+```bash
+sudo /srv/stockmanager/deploy/db-restore.sh \
+    /path/to/backup-key.txt \
+    /srv/backups/stockmanager/db-2026-04-30.sql.gz.age
+```
+
+If you need the raw pipeline instead (e.g. piping from stdin), use `sh -c`
+so the variable references expand **inside** the container:
+
 ```bash
 age -d -i /path/to/backup-key.txt \
     /srv/backups/stockmanager/db-2026-04-30.sql.gz.age \
     | gunzip -c \
     | sudo -u deploy docker compose -f /srv/stockmanager/docker-compose.prod.yml \
         --env-file /srv/stockmanager/.env.prod exec -T db \
-        psql -U "$POSTGRES_USER" "$POSTGRES_DB"
+        sh -c 'exec psql -U "$POSTGRES_USER" "$POSTGRES_DB"'
 ```
 
 Restore the uploads volume (DESTRUCTIVE — replaces existing files):
@@ -712,6 +778,54 @@ them in `.env.prod` or the repo.
 before triggering a deploy that causes a longer-than-usual restart (e.g.
 a heavy migration). Resume it once `curl -fsS https://parts.matescb.cz/api/health`
 returns 200.
+
+## Base image pinning (INFRA2-015)
+
+All three Docker base images are pinned by digest, not tag, so a compromised
+or republished `node:20-alpine` / `nginx:alpine` / `python:3.12-slim` tag can
+never silently change what we build:
+
+| File | Stage | Image |
+|------|-------|-------|
+| `backend/Dockerfile` | builder | `python:3.12@sha256:…` |
+| `backend/Dockerfile` | runtime | `python:3.12-slim@sha256:…` |
+| `web/Dockerfile.prod` | build | `node:20-alpine@sha256:…` |
+| `web/Dockerfile.prod` | runtime | `nginx:alpine@sha256:…` |
+
+### Bumping a digest
+
+Resolve the current manifest-list digest (multi-arch index):
+
+```bash
+curl -s "https://registry.hub.docker.com/v2/repositories/library/<image>/tags/<tag>" \
+    | python3 -c "import sys,json; print(json.load(sys.stdin)['digest'])"
+```
+
+Then update the `@sha256:` line in the Dockerfile and the `# Digest pinned on`
+comment. Open as a normal PR — CI's `backend-tests` and `web-build` jobs will
+exercise the new image.
+
+### Dependabot
+
+`.github/dependabot.yml` configures weekly Dependabot PRs for the `docker`
+ecosystem targeting `backend/` and `web/` directories. Dependabot will open
+PRs automatically when newer digests are available. Review and merge them like
+any dependency-bump PR; CI gates protect against regressions.
+
+### Buildkit cache hygiene
+
+The VPS build cache accumulates layers from previous builds. If you need to
+evict stale layers (e.g. after a security incident or after rotating secrets
+from build args), run on the VPS:
+
+```bash
+docker buildx prune -af
+```
+
+This forces a full cold rebuild on the next deploy. After INFRA2-015 landed,
+sourcemaps are no longer emitted during VPS builds (only in CI where
+`SENTRY_AUTH_TOKEN` is set), so the build cache no longer accumulates `.map`
+files.
 
 ## Header hardening (SEC2-018)
 

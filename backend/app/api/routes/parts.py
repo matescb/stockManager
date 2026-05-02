@@ -3,6 +3,7 @@ from __future__ import annotations
 import concurrent.futures
 import hashlib
 import json
+import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
@@ -27,6 +28,7 @@ from app.core.pagination import decode_cursor, paginate
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import Envelope, ok
 from app.core.secrets import decrypt
+from app.core.time import utcnow
 from app.domain.audit.service import log as _audit_log
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import BulkImportIdempotency, Part, PartMetaMember, PartSubstitute
@@ -57,6 +59,7 @@ from app.domain.storage.models import StorageLocation
 from app.domain.workspaces.models import Workspace
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 # PartIn, PartPatch, BulkDeleteIn, ScanImportIn etc. live in
@@ -399,8 +402,35 @@ def archive_part(
     ws: CurrentWorkspace,
     user: CurrentUser,
 ):
+    from sqlalchemy import func, select as sa_select
+    from app.domain.attachments.models import Attachment
+    from app.domain.custom_fields.models import CustomField as CF
+    from app.domain.tags.models import TagLink
+
     p = require_resource_access(db, Part, part_id, ws=ws, user=user, role="admin", label="part")
-    p.archived_at = datetime.now(timezone.utc)
+    p.archived_at = utcnow()
+
+    # Observability: log how many polymorphic rows are associated with the
+    # archived part so operators can gauge orphan risk without a full scan.
+    def _count(Model, ws_id, obj_id):
+        return db.execute(
+            sa_select(func.count()).select_from(Model).where(
+                Model.workspace_id == ws_id,
+                Model.object_id == obj_id,
+            )
+        ).scalar_one()
+
+    logger.info(
+        "part archived",
+        extra={
+            "workspace_id": str(ws.id),
+            "part_id": str(p.id),
+            "polymorphic_attachments": _count(Attachment, ws.id, p.id),
+            "polymorphic_custom_fields": _count(CF, ws.id, p.id),
+            "polymorphic_tag_links": _count(TagLink, ws.id, p.id),
+        },
+    )
+
     _audit_log(
         db,
         ws=ws,
@@ -462,7 +492,7 @@ def bulk_delete_parts(
                                truly missing OR owned by another workspace
                                — deliberately indistinguishable).
     """
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     requested = set(payload.part_ids)
 
     rows = (
@@ -801,7 +831,7 @@ def refresh_from_provider(
             p.description = new_desc
     p.linked_provider = provider.name
     p.linked_external_id = r.get("mpn") or p.linked_external_id
-    p.last_refresh_at = datetime.now(timezone.utc)
+    p.last_refresh_at = utcnow()
     p.updated_by = user.id
 
     # Reconcile spec rows. For each provider-supplied (key, value):
@@ -1318,7 +1348,7 @@ def _import_one_scan_row(
         serialized=False,
         linked_provider=provider_name,
         linked_external_id=(r.get("mpn") or mpn),
-        last_refresh_at=datetime.now(timezone.utc),
+        last_refresh_at=utcnow(),
         description_locally_edited=False,
         created_by=user.id,
         updated_by=user.id,

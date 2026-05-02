@@ -138,6 +138,7 @@ export function DataTable<T>({
   rowKey,
   onRowClick,
   searchPlaceholder,
+  initialSearch,
   empty,
   exportFilename,
   tableId,
@@ -146,7 +147,7 @@ export function DataTable<T>({
 }: Props<T>) {
   const persisted = useMemo(() => loadPersisted(tableId), [tableId]);
 
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(initialSearch ?? "");
   const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
   const [hidden, setHidden] = useState<Record<string, boolean>>(
     () =>
@@ -389,10 +390,9 @@ export function DataTable<T>({
               return (
               <tr
                 key={id}
+                tabIndex={onRowClick ? 0 : undefined}
                 onClick={() => onRowClick?.(r)}
                 {...(onRowClick ? {
-                  role: "button",
-                  tabIndex: 0,
                   "aria-label": rowAriaLabel(r, visibleCols),
                   onKeyDown: (e: React.KeyboardEvent<HTMLTableRowElement>) => {
                     if (e.key === "Enter" || e.key === " ") {

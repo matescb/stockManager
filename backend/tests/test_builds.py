@@ -300,15 +300,16 @@ def test_non_substitute_rejected(authed):
 # BE-007: BOM entry quantity validation tests --------------------------------
 
 
-def test_bom_entry_rejects_zero_quantity(authed):
+def test_bom_entry_accepts_zero_quantity(authed):
+    # DB-005 / migration 0031: schema is `int = Field(ge=0)`, so 0 is valid
+    # (e.g. a placeholder BOM line with quantity to be filled later).
     c = authed
     r = c.post("/api/projects", json={"name": "QV-Zero"})
     pid = r.json()["data"]["id"]
     part_id = _create_part(c, "R1k-QV")
 
     r = c.post(f"/api/projects/{pid}/entries", json={"part_id": part_id, "quantity": 0})
-    assert r.status_code == 422
-    assert r.json()["status"]["category"] == "validation_error"
+    assert r.status_code in (200, 201)
 
 
 def test_bom_entry_rejects_negative_quantity(authed):
@@ -322,17 +323,21 @@ def test_bom_entry_rejects_negative_quantity(authed):
     assert r.json()["status"]["category"] == "validation_error"
 
 
-def test_bom_entry_accepts_fractional_quantity(authed):
+def test_bom_entry_rejects_fractional_quantity(authed):
+    # DB-005 / migration 0032: BOM quantities are integer-only; fractional
+    # rejected at Pydantic layer with 422.
     c = authed
     r = c.post("/api/projects", json={"name": "QV-Frac"})
     pid = r.json()["data"]["id"]
     part_id = _create_part(c, "R1k-QVF")
 
     r = c.post(f"/api/projects/{pid}/entries", json={"part_id": part_id, "quantity": 0.5})
-    assert r.status_code in (200, 201)
+    assert r.status_code == 422
+    assert r.json()["status"]["category"] == "validation_error"
 
 
-def test_bom_entry_patch_rejects_zero_quantity(authed):
+def test_bom_entry_patch_accepts_zero_quantity(authed):
+    # DB-005 / migration 0031: zero is a valid quantity post-migration.
     c = authed
     proj_id = _create_project_with_bom(
         c, "QV-PatchZero",
@@ -341,8 +346,7 @@ def test_bom_entry_patch_rejects_zero_quantity(authed):
     entry_id = c.get(f"/api/projects/{proj_id}/entries").json()["data"][0]["id"]
 
     r = c.patch(f"/api/projects/{proj_id}/entries/{entry_id}", json={"quantity": 0})
-    assert r.status_code == 422
-    assert r.json()["status"]["category"] == "validation_error"
+    assert r.status_code == 200
 
 
 def test_bom_entry_patch_rejects_negative_quantity(authed):

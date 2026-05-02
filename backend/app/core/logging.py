@@ -31,6 +31,25 @@ from typing import Any
 _CONFIGURED = False
 
 
+class RequestIdFilter(logging.Filter):
+    """Inject the current request-id (from the contextvar set by
+    `RequestIdMiddleware`) into every log record while a request is
+    being handled.  Records emitted outside a request context get
+    ``request_id=None`` so downstream log shippers can filter on it."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Local import to avoid a circular import at module load time
+        # (request_id.py → logging.py on configure_logging, but
+        # logging.py would need request_id.py only at call time).
+        try:
+            from app.core.request_id import request_id_var  # noqa: PLC0415
+
+            record.request_id = request_id_var.get()
+        except Exception:  # noqa: BLE001
+            record.request_id = None
+        return True
+
+
 class _JsonFormatter(logging.Formatter):
     """Compact JSON-per-line formatter. No multi-line stack traces in
     the body; tracebacks land in `traceback` as a single string."""
@@ -90,6 +109,7 @@ def configure_logging() -> None:
     # — rip them out and replace with ours so format is consistent.
     for h in list(root.handlers):
         root.removeHandler(h)
+    handler.addFilter(RequestIdFilter())
     root.addHandler(handler)
 
     # Quiet down noisy stdlib / lib loggers — these are too chatty at

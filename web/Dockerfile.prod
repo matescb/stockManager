@@ -7,7 +7,8 @@
 # so this file can copy both `web/` (sources) and `deploy/nginx-web.conf`.
 
 # ---- build stage ----
-FROM node:20-alpine AS build
+# Digest pinned on 2026-05-02; bump via Dependabot (docker ecosystem).
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS build
 
 WORKDIR /app
 
@@ -38,7 +39,8 @@ RUN npm run build
 
 
 # ---- runtime stage ----
-FROM nginx:alpine AS runtime
+# Digest pinned on 2026-05-02; bump via Dependabot (docker ecosystem).
+FROM nginx:alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de AS runtime
 
 # Replace the default site with our SPA-aware config (try_files → index.html).
 COPY deploy/nginx-web.conf /etc/nginx/conf.d/default.conf

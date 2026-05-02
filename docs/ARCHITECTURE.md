@@ -106,6 +106,17 @@ Operations are the unit of audit. Reading the full ledger for a part
 gives the entire stock history; aggregating the ledger gives any
 current view.
 
+### Integer-only quantities (DB-005 / migration 0032)
+
+All quantity fields throughout the system are integers — `stock_entries.
+quantity_delta`, `project_entries.quantity`, and `order_entries.
+quantity_ordered` / `quantity_received`. This matches the electronics
+domain (no fractional component counts are needed) and eliminates the
+precision-loss path that existed when `project_entries.quantity` was
+`Numeric(18,6)` while the ledger column was `Integer`. BOM imports that
+contain fractional quantity values are rejected at the API layer with a
+422 before any rows are written.
+
 ### Lot lifecycle
 
 A `Lot` is a *batch* of a part with a particular provenance:
@@ -190,6 +201,41 @@ Each domain folder contains:
   file itself is the "yes, this is where schemas live" signal.
 - `service.py` — pure DB-touching logic that the route layer wraps in
   HTTPException-mapping try/excepts *(only for non-trivial flows like stock, orders, builds)*
+
+### Polymorphic tables contract
+
+`attachments`, `custom_fields`, and `tag_links` are cross-cutting tables
+that reference their parent via a `(object_type, object_id)` pair. There
+is intentionally **no FK on `object_id`** — a single FK would bind the
+column to one parent table, defeating the polymorphic design.
+
+Because there is no FK, there is no automatic ON DELETE behaviour. The
+rules are:
+
+1. **Writes** — every INSERT/UPDATE on these tables must be preceded by
+   a call to `assert_polymorphic_in_workspace()` (in
+   `backend/app/api/_helpers.py`). This validates the object_type, resolves
+   the parent row, and verifies workspace ownership in one step. The
+   resolver registry (`_polymorphic_resolvers()`) is the single place to
+   register new object types.
+
+2. **Orphan cleanup** — when a parent row is hard-deleted, call
+   `purge_polymorphic(db, workspace_id=…, object_type=…, object_id=…)`
+   from `backend/app/domain/_polymorphic_cleanup.py`. Every DELETE inside
+   filters by `workspace_id` (workspace-isolation invariant from CLAUDE.md).
+   The function returns a `dict[str, int]` of row counts per table; log it
+   for observability. Currently parents are soft-archived rather than
+   hard-deleted, so orphans accumulate only on rare explicit hard-deletes.
+
+3. **Indexes** — migration 0033 added `(workspace_id, object_id)` indexes
+   on all three tables so the cleanup query and the orphan-report script
+   (`backend/scripts/report_polymorphic_orphans.py`) can run efficiently
+   without scanning the full table.
+
+4. **Observability** — archive endpoints (parts, projects, orders) log a
+   structured line with the associated polymorphic row counts at archive
+   time. Run `scripts/report_polymorphic_orphans.py` against prod to get
+   a full snapshot without any writes.
 
 ## Migrations
 

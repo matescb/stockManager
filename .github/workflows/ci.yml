@@ -20,6 +20,51 @@ permissions:
   contents: read
 
 jobs:
+  lockfile-drift:
+    # SEC2-016: fail fast if pyproject.toml and uv.lock have diverged,
+    # or if requirements.lock is out of sync with uv.lock.  Runs before
+    # the heavier backend-tests job so the signal is immediate.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Check uv.lock is up to date
+        working-directory: backend
+        run: uv lock --check
+
+      - name: Check requirements.lock matches uv.lock
+        working-directory: backend
+        run: |
+          uv export --format requirements-txt --hashes --no-dev --no-emit-project -o /tmp/requirements_fresh.lock
+          if ! diff -u <(grep -v '^#' requirements.lock) <(grep -v '^#' /tmp/requirements_fresh.lock); then
+            echo "requirements.lock is stale — run: cd backend && uv export --format requirements-txt --hashes --no-dev --no-emit-project -o requirements.lock"
+            exit 1
+          fi
+
+  pip-audit:
+    # SEC2-016: scan the locked dependency set for HIGH/CRITICAL CVEs.
+    # Runs after the lockfile is verified to be current.
+    needs: [lockfile-drift]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit dependencies
+        working-directory: backend
+        # --require-hashes mode means pip-audit operates on the pinned set,
+        # not whatever the resolver might pick up at audit time.
+        run: pip-audit --requirement requirements.lock --skip-editable
+
   backend-tests:
     runs-on: ubuntu-latest
     # Restate the minimum required permissions explicitly on each job so the
@@ -153,8 +198,22 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      # INFRA2-015: expose SENTRY_AUTH_TOKEN to `vite build` only on
+      # push to main (matching the upload step's gate below). The
+      # `vite.config.ts` `emitSourcemaps` gate keys off `SENTRY_AUTH_TOKEN`
+      # presence, so without this env block the build emits zero `.map`
+      # files and the subsequent upload step ships nothing — regressing
+      # INFRA2-010. PRs / feature branches still build with no token, so
+      # no `.map` files are emitted off-main. The token never enters any
+      # Docker build context — it only exists in the GitHub Actions runner
+      # env for these two CI steps.
       - name: Type-check + bundle
         working-directory: web
+        env:
+          SENTRY_AUTH_TOKEN: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.SENTRY_AUTH_TOKEN || '' }}
+          SENTRY_ORG: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.SENTRY_ORG || '' }}
+          SENTRY_PROJECT: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.SENTRY_PROJECT || '' }}
+          VITE_APP_VERSION: ${{ github.sha }}
         run: npm run build
 
       # INFRA2-010: upload sourcemaps to Sentry from CI so the auth token
@@ -176,11 +235,79 @@ jobs:
             --release "$RELEASE" \
             web/dist
 
+  prod-validate:
+    # INFRA2-012: validate docker-compose.prod.yml and build prod images so
+    # Dockerfile / compose regressions are caught in CI instead of at deploy
+    # time on the VPS (after git reset --hard has already swapped the tree).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      # Build a CI-safe .env from the checked-in example.  We substitute a
+      # syntactically valid Fernet key so `docker compose config` resolves
+      # every variable (the backend validator only rejects an empty key at
+      # *runtime*, not at config-parse time, but having a well-formed value
+      # avoids any compose-level "variable unset" warnings).
+      - name: Create CI env file
+        run: |
+          cp deploy/.env.prod.example .env.prod.ci
+          sed -i 's|^WORKSPACE_SECRETS_KEY=.*|WORKSPACE_SECRETS_KEY=ZDZkYjI4NzM0YTQ4MjNhODNhZGFkNzE3ZGVkMGY5YWU=|' .env.prod.ci
+
+      # Validate compose YAML / schema / variable substitution. Fails on
+      # malformed YAML, unknown keys, or missing required variables.
+      - name: Validate docker-compose.prod.yml
+        run: docker compose -f docker-compose.prod.yml --env-file .env.prod.ci config -q
+
+      # Assert backend `command:` in the *raw* compose YAML is a list,
+      # not a YAML folded scalar (string). See CLAUDE.md "Things that
+      # have bitten us": a YAML folded scalar (`>`) silently turns
+      # indented continuation lines into separate shell commands, which
+      # once made slowapi bucket every client by the docker bridge IP.
+      # The plain `config -q` step above accepts both forms (both are
+      # valid compose schema), so we need this explicit shape check on
+      # the source file.
+      - name: Assert backend command is a list (regression guard)
+        run: |
+          python3 -c "
+          import sys, yaml
+          cfg = yaml.safe_load(open('docker-compose.prod.yml'))
+          cmd = cfg['services']['backend'].get('command')
+          if not isinstance(cmd, list):
+              sys.exit(
+                  f'backend.command must be a YAML list (JSON-array form), '
+                  f'got {type(cmd).__name__}: {cmd!r}. See CLAUDE.md -> '
+                  f'Things that have bitten us (folded-scalar regression).'
+              )
+          if not any('uvicorn' in str(p) for p in cmd):
+              sys.exit(f'backend.command does not invoke uvicorn: {cmd!r}')
+          "
+
+      # Build the backend prod image. Catches broken COPY paths, missing
+      # apt packages, pip install failures.
+      - name: Build backend prod image
+        run: docker buildx build --load -f backend/Dockerfile backend/
+
+      # Build the web prod image (context = repo root, matching compose).
+      # Catches Dockerfile syntax errors, broken npm build, nginx config
+      # copy errors. SENTRY_AUTH_TOKEN is intentionally absent — the Vite
+      # plugin no-ops on an empty token (INFRA2-010).
+      - name: Build web prod image
+        run: docker buildx build --load -f web/Dockerfile.prod .
+
+      # Lint the in-container nginx config. Catches syntax errors in
+      # deploy/nginx-web.conf before they reach the running stack.
+      - name: Lint nginx config
+        run: |
+          docker run --rm \
+            --add-host backend:127.0.0.1 \
+            -v "$PWD/deploy/nginx-web.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:alpine nginx -t
+
   deploy:
     # Only redeploy on green main pushes. PRs and feature branches just run
-    # the two test jobs above.
+    # the three test/validate jobs above.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [backend-tests, web-build]
+    needs: [backend-tests, web-build, prod-validate]
     runs-on: ubuntu-latest
     # Environment association. Today this just scopes any environment-level
     # secrets we add later; if a "Required reviewers" protection rule is

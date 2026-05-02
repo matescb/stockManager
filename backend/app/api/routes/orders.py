@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -10,6 +10,7 @@ from app.api._helpers import assert_child_in_parent, require_resource_access
 from app.api.routes._activity import _DEFAULT_LIMIT, _MAX_LIMIT, build_activity
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
+from app.core.time import utcnow
 from app.domain.orders.models import Order, OrderEntry
 from app.domain.stock.models import StockEntry
 from app.domain.orders.schemas import (
@@ -22,6 +23,7 @@ from app.domain.orders.schemas import (
 from app.domain.orders.service import OrderError, receive
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _serialize(o: Order, *, totals: tuple[int, int] | None = None) -> dict:
@@ -171,10 +173,34 @@ def patch_order(order_id: UUID, payload: OrderPatchIn, db: DbSession, ws: Curren
 # workspace's order_id gets 404, not 403.
 @router.post("/{order_id}/archive")
 def archive_order(order_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+    from sqlalchemy import func, select as sa_select
+    from app.domain.attachments.models import Attachment
+    from app.domain.custom_fields.models import CustomField as CF
+    from app.domain.tags.models import TagLink
+
     o = require_resource_access(
         db, Order, order_id, ws=ws, user=user, role="admin", label="order"
     )
-    o.archived_at = datetime.now(timezone.utc)
+    o.archived_at = utcnow()
+
+    def _count(Model, ws_id, obj_id):
+        return db.execute(
+            sa_select(func.count()).select_from(Model).where(
+                Model.workspace_id == ws_id,
+                Model.object_id == obj_id,
+            )
+        ).scalar_one()
+
+    logger.info(
+        "order archived",
+        extra={
+            "workspace_id": str(ws.id),
+            "order_id": str(o.id),
+            "polymorphic_attachments": _count(Attachment, ws.id, o.id),
+            "polymorphic_custom_fields": _count(CF, ws.id, o.id),
+            "polymorphic_tag_links": _count(TagLink, ws.id, o.id),
+        },
+    )
     return ok(None, "archived")
 
 

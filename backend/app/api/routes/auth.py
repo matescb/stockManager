@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hmac as _hmac
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response, status
@@ -27,6 +27,7 @@ from app.core.logging import get_logger
 from app.core.mail import send_verification_email
 from app.core.ratelimit import limiter
 from app.core.responses import Envelope, ok
+from app.core.time import utcnow
 from app.domain.users.models import PendingUser, User
 from app.domain.workspaces.models import Workspace, WorkspaceMember
 
@@ -156,7 +157,7 @@ def signup(
         db.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="owner", status="active"))
 
         sess = create_session_row(db, user.id)
-        user.last_login_at = datetime.now(timezone.utc)
+        user.last_login_at = utcnow()
 
         _set_session_cookie(response, sess.token)
         log.info("signup (immediate)", extra={"user_id": str(user.id), "workspace_id": str(ws.id)})
@@ -168,7 +169,7 @@ def signup(
 
     # Reap expired pending rows for this email before checking for an
     # active pending one, so old unverified attempts don't block a retry.
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=_VERIFY_TTL_HOURS)
+    cutoff = utcnow() - timedelta(hours=_VERIFY_TTL_HOURS)
     db.query(PendingUser).filter(
         PendingUser.email == payload.email,
         PendingUser.created_at < cutoff,
@@ -273,7 +274,7 @@ def verify(
             "verification link already used",
         )
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=_VERIFY_TTL_HOURS)
+    cutoff = utcnow() - timedelta(hours=_VERIFY_TTL_HOURS)
     if pending.created_at < cutoff:
         raise_http(
             status.HTTP_400_BAD_REQUEST,
@@ -290,7 +291,7 @@ def verify(
         )
 
     # Promote: create User + Workspace + WorkspaceMember in one transaction.
-    pending.verified_at = datetime.now(timezone.utc)
+    pending.verified_at = utcnow()
 
     user = User(
         email=pending.email,
@@ -317,7 +318,7 @@ def verify(
     )
 
     sess = create_session_row(db, user.id)
-    user.last_login_at = datetime.now(timezone.utc)
+    user.last_login_at = utcnow()
 
     _set_session_cookie(response, sess.token)
     log.info(
@@ -387,7 +388,7 @@ def login(
     # SEC2-015 — session rotation on login.
     revoke_all_user_sessions(db, user.id)
     sess = create_session_row(db, user.id)
-    user.last_login_at = datetime.now(timezone.utc)
+    user.last_login_at = utcnow()
     _set_session_cookie(response, sess.token)
     log.info("login", extra={"user_id": str(user.id)})
     return ok({"user": {"id": str(user.id), "email": user.email, "name": user.name}})
