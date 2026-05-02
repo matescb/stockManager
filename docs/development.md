@@ -63,9 +63,52 @@ Migrations stopped corresponding 1:1 with phase docs after `0005` —
 the per-phase doc model retired with Phase 10. Post-`0005` migrations
 are described in `CHANGELOG.md` instead.
 
+### Cyclic foreign keys
+
 The `parts ↔ projects` circular FK is broken with `use_alter=True` on
-`Project.associated_subassembly_part_id`; `0001` emits an explicit
-`op.create_foreign_key(...)` after both tables exist.
+`Project.associated_subassembly_part_id`. Today this is the only
+cyclic FK in the schema, but the convention is enforced only by
+precedent — any future cycle MUST follow the same three steps or
+`alembic downgrade` will fail mid-way. DB-012 / issue #103.
+
+1. **Inside the `create_table` call**, declare the FK with
+   `ForeignKeyConstraint(..., use_alter=True, name="fk_<table>_<col>")`
+   so SQLAlchemy emits a deferred constraint instead of trying to
+   resolve the cycle inline. See `0001_initial.py:128`.
+2. **After both `create_table` calls** in the same `upgrade()` body,
+   emit an explicit `op.create_foreign_key(name=..., ...,
+   use_alter=True)`. See `0001_initial.py:382-388`.
+3. **At the top of `downgrade()`**, drop the alter-FK *before* any
+   `drop_table`. Otherwise the table-drop fails because the FK still
+   references it. See `0001_initial.py:394`.
+
+Worked example shape (the canonical names live in `0001_initial.py`):
+
+```python
+# inside create_table
+sa.ForeignKeyConstraint(
+    ["associated_subassembly_part_id"], ["parts.id"],
+    use_alter=True,
+    name="fk_projects_associated_subassembly_part",
+)
+
+# in upgrade(), after both tables exist
+op.create_foreign_key(
+    "fk_projects_associated_subassembly_part",
+    "projects", "parts",
+    ["associated_subassembly_part_id"], ["id"],
+    use_alter=True,
+)
+
+# in downgrade(), FIRST line
+op.drop_constraint(
+    "fk_projects_associated_subassembly_part",
+    "projects", type_="foreignkey",
+)
+```
+
+Round-trip coverage of this codepath beyond `tests/conftest.py`'s
+fresh-schema rebuild is tracked in #109 (TEST-007).
 
 To autogenerate a new revision after a model change:
 
