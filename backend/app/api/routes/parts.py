@@ -153,6 +153,22 @@ def _serialize(
 # ---------------------------------------------------------------------------
 
 
+# MIME-by-extension map for the serve route. Anything not in this set
+# is treated as an opaque binary and forced to download as an attachment
+# — which keeps a future provider-asset-MIME drift (e.g. an HTML page
+# erroneously saved with a .bin extension) from rendering inline. SVG is
+# intentionally absent; SEC2-006 / SEC2-011.
+_ASSET_MIME_BY_EXT: dict[str, str] = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "gif": "image/gif",
+    "webp": "image/webp",
+    "pdf": "application/pdf",
+}
+_INLINE_EXTS: frozenset[str] = frozenset({"jpg", "jpeg", "png", "gif", "webp"})
+
+
 @router.get("/assets/{ws_id}/{filename}")
 def get_provider_asset(
     ws_id: UUID,
@@ -173,20 +189,40 @@ def get_provider_asset(
     if not os.path.isfile(abs_path):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="asset not found")
 
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    served_mime = _ASSET_MIME_BY_EXT.get(ext, "application/octet-stream")
+    # Image MIMEs may stay inline so <img> tags work; everything else
+    # (PDFs, opaque binaries) is forced to download to neuter any
+    # MIME-confusion path. Mirrors the attachments.py pattern.
+    inline = ext in _INLINE_EXTS
     headers = {
         # Content-addressed → safe to cache for a year, never re-revalidate.
         "Cache-Control": "public, max-age=31536000, immutable",
+        # Belt-and-braces against a future bug that lets a MIME differ
+        # from the served extension.
+        "X-Content-Type-Options": "nosniff",
     }
     if name:
-        # `inline` keeps PDF / image preview working; the filename only
-        # comes into play when the user does Save As. Restrict to a safe
+        # `inline` keeps image preview working; the filename only comes
+        # into play when the user does Save As. Restrict to a safe
         # subset and append the original extension so the saved file
         # opens in the right viewer.
         safe = "".join(c for c in name if c.isalnum() or c in "._-")[:80] or "datasheet"
-        ext = filename.rsplit(".", 1)[-1] if "." in filename else ""
         ext_suffix = f".{ext}" if ext and not safe.lower().endswith(f".{ext.lower()}") else ""
-        headers["Content-Disposition"] = f'inline; filename="{safe}{ext_suffix}"'
-    return FileResponse(abs_path, headers=headers)
+        disposition_type = "inline" if inline else "attachment"
+        headers["Content-Disposition"] = f'{disposition_type}; filename="{safe}{ext_suffix}"'
+        return FileResponse(abs_path, media_type=served_mime, headers=headers)
+
+    if inline:
+        return FileResponse(abs_path, media_type=served_mime, headers=headers)
+    # Non-image, no caller-supplied filename — still force attachment so
+    # an `evil.bin` lands as a download rather than a rendered page.
+    return FileResponse(
+        abs_path,
+        media_type=served_mime,
+        headers=headers,
+        content_disposition_type="attachment",
+    )
 
 
 @router.get("")

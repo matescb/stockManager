@@ -116,6 +116,29 @@ def archive_storage(storage_id: UUID, db: DbSession, ws: CurrentWorkspace, user:
     s = require_resource_access(
         db, StorageLocation, storage_id, ws=ws, user=user, role="admin", label="storage",
     )
+    # BE2-014 — archiving a storage that still holds stock would orphan
+    # those rows in a location the UI hides. Refuse with a structured
+    # 409 listing what's still inside so the operator can move it first.
+    # Runs after the auth gate so an attacker probing for ws-membership
+    # doesn't learn whether a foreign storage has stock.
+    on_hand = stock_for_storage(db, workspace_id=ws.id, storage_location_id=s.id)
+    blocking = [
+        {
+            "part_id": str(r["part_id"]),
+            "lot_id": str(r["lot_id"]) if r["lot_id"] else None,
+            "quantity": int(r["quantity"]),
+        }
+        for r in on_hand
+        if int(r["quantity"]) > 0
+    ]
+    if blocking:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "storage still holds on-hand stock; move or remove it first",
+                "blocking": blocking,
+            },
+        )
     s.archived_at = datetime.now(timezone.utc)
     return ok(None, "archived")
 

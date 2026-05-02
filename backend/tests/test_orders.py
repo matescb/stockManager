@@ -163,3 +163,37 @@ def test_archive_restore(authed):
     out_arch = authed.get("/api/orders?archived=true").json()["data"]
     assert any(o["id"] == r["id"] for o in out_arch)
     assert authed.post(f"/api/orders/{r['id']}/restore").status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# BE2-013 — quantity_ordered must be >= 1
+# ---------------------------------------------------------------------------
+
+
+def test_create_with_zero_quantity_rejected(part_and_storage):
+    c, part_id, _ = part_and_storage
+    r = c.post(
+        "/api/orders",
+        json={"name": "PO-zero", "entries": [{"part_id": part_id, "quantity_ordered": 0}]},
+    )
+    assert r.status_code == 422, r.text
+
+
+def test_create_with_negative_quantity_rejected(part_and_storage):
+    c, part_id, _ = part_and_storage
+    r = c.post(
+        "/api/orders",
+        json={"name": "PO-neg", "entries": [{"part_id": part_id, "quantity_ordered": -5}]},
+    )
+    assert r.status_code == 422, r.text
+
+
+def test_patch_entry_to_zero_quantity_rejected(part_and_storage):
+    c, part_id, _ = part_and_storage
+    r = c.post(
+        "/api/orders",
+        json={"name": "PO-pat", "entries": [{"part_id": part_id, "quantity_ordered": 5}]},
+    ).json()["data"]
+    entry_id = c.get(f"/api/orders/{r['id']}").json()["data"]["entries"][0]["id"]
+    p = c.patch(f"/api/orders/{r['id']}/entries/{entry_id}", json={"quantity_ordered": 0})
+    assert p.status_code == 422, p.text

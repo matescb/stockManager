@@ -67,7 +67,11 @@ class BomImportPreviewIn(BaseModel):
     """Step 1: parse the upload, return preview rows + suggested separator."""
     model_config = ConfigDict(extra="forbid")
 
-    text_b64: str
+    # Cap base64 input at 5 MB (≈3.75 MB of raw bytes after decode); the
+    # importer asserts the decoded size separately so a payload that
+    # squeaks under this limit but expands oddly still trips the
+    # post-decode guard. SEC2-007 / BE2-006.
+    text_b64: str = Field(..., max_length=5_000_000)
     separator: str | None = None  # auto-detect if None
     encoding: str | None = None
     has_header: bool | None = None
@@ -96,7 +100,8 @@ class BomMappingField(BaseModel):
 class BomImportCommitIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    text_b64: str
+    # See BomImportPreviewIn.text_b64 — same cap; SEC2-007 / BE2-006.
+    text_b64: str = Field(..., max_length=5_000_000)
     separator: str
     encoding: str
     has_header: bool

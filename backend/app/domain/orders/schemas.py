@@ -13,7 +13,9 @@ class OrderEntryIn(BaseModel):
 
     part_id: UUID | None = None
     name: str | None = None
-    quantity_ordered: int = Field(ge=0)
+    # BE2-013 — ordering zero of something is always a mistake; reject
+    # at the schema layer rather than letting it land as a phantom row.
+    quantity_ordered: int = Field(..., ge=1)
     unit_price: Decimal | None = None
     currency: str | None = None
     comments: str | None = None
@@ -24,7 +26,7 @@ class OrderEntryPatch(BaseModel):
 
     part_id: UUID | None = None
     name: str | None = None
-    quantity_ordered: int | None = None
+    quantity_ordered: int | None = Field(default=None, ge=1)
     unit_price: Decimal | None = None
     currency: str | None = None
     comments: str | None = None

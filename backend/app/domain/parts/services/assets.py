@@ -5,9 +5,27 @@ The helper is content-addressed (sha256 of body), idempotent, and
 fail-tolerant: a network timeout or oversize body returns `None` and
 the caller falls back to the original remote URL — i.e. the worst case
 is the same as today's behaviour, never worse.
+
+Hardening notes (SEC2-006):
+- Host allow-list. We only follow URLs whose hostname is on the
+  shipped-provider allow-list AND whose DNS resolves to a
+  globally-routable IP. This blocks SSRF into RFC1918 / loopback /
+  link-local / metadata-service ranges.
+- No redirects. `httpx.Client(..., follow_redirects=False)`. A 30x
+  upstream is a refusal — we don't want a future Mouser CDN swap to
+  silently broaden the egress surface, and the allow-list check would
+  be useless if we then chased a Location: header to anywhere.
+- No SVG. SVG is XML and can carry `<script>` / `xlink:href` payloads
+  that the browser will execute when it renders the file inline. We
+  drop `image/svg+xml` from the MIME map entirely; an upstream that
+  serves SVG ends up written with `.bin` (and our serve route forces
+  `Content-Disposition: attachment` for non-image MIMEs anyway).
 """
 from __future__ import annotations
 
+import ipaddress
+import logging
+import socket
 import hashlib
 import os
 from urllib.parse import urlparse
@@ -17,20 +35,41 @@ import httpx
 from app.core.config import settings
 
 
+log = logging.getLogger(__name__)
+
+
 _TIMEOUT_SEC = 10.0
 _MAX_BYTES = 10 * 1024 * 1024  # 10 MB ceiling — datasheet PDFs are usually 1-3 MB
 
 # Content-Type → file extension. Falls through to URL-suffix inference
-# for anything that doesn't match.
+# for anything that doesn't match. SVG is intentionally absent — see
+# the module docstring.
 _EXT_BY_MIME: dict[str, str] = {
     "image/jpeg": "jpg",
     "image/jpg": "jpg",
     "image/png": "png",
     "image/gif": "gif",
     "image/webp": "webp",
-    "image/svg+xml": "svg",
     "application/pdf": "pdf",
 }
+
+# Hostnames the helper is permitted to fetch from. Keep this narrow:
+# every entry here is part of the SSRF surface. New providers must be
+# added explicitly, never via wildcards.
+_ALLOWED_HOSTS: frozenset[str] = frozenset(
+    {
+        # Mouser
+        "www.mouser.com",
+        "mouser.com",
+        "media.mouser.com",
+        "eu.mouser.com",
+        # DigiKey
+        "www.digikey.com",
+        "digikey.com",
+        "media.digikey.com",
+        "mediacdn.digikey.com",
+    }
+)
 
 
 def _ext_from_url(url: str) -> str | None:
@@ -45,9 +84,17 @@ def _ext_from_url(url: str) -> str | None:
 
 def _ext_from_response(resp: httpx.Response, url: str) -> str:
     ct = (resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+    if ct == "image/svg+xml":
+        # Explicit refusal — the file lands as `.bin` and the serve
+        # route forces an `attachment` disposition for non-images.
+        log.warning("provider asset rejected: SVG content-type from %s", url)
+        return "bin"
     if ct in _EXT_BY_MIME:
         return _EXT_BY_MIME[ct]
     by_url = _ext_from_url(url)
+    if by_url == "svg":
+        log.warning("provider asset rejected: .svg URL suffix from %s", url)
+        return "bin"
     if by_url:
         return by_url
     # Fallback — write something rather than refuse. Browsers infer from
@@ -55,9 +102,35 @@ def _ext_from_response(resp: httpx.Response, url: str) -> str:
     return "bin"
 
 
+def _host_is_allowed(host: str) -> bool:
+    """True if `host` is on the explicit provider allow-list AND its
+    A-record resolves to a globally routable IP."""
+    if not host:
+        return False
+    if host.lower() not in _ALLOWED_HOSTS:
+        return False
+    try:
+        ip_str = socket.gethostbyname(host)
+    except OSError:
+        return False
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return False
+    # `is_global` excludes private (RFC1918), loopback, link-local,
+    # multicast, reserved, and the AWS metadata range (169.254/16).
+    return ip.is_global
+
+
 def _http_get(url: str) -> httpx.Response:
-    """Network seam — patched by tests."""
-    with httpx.Client(timeout=_TIMEOUT_SEC, follow_redirects=True) as client:
+    """Network seam — patched by tests.
+
+    `follow_redirects=False` is load-bearing: a 30x upstream is treated
+    as a refusal (returns the redirect itself, which the caller rejects
+    because `status_code != 200`). Auto-following would void the host
+    allow-list since the Location: header could point anywhere.
+    """
+    with httpx.Client(timeout=_TIMEOUT_SEC, follow_redirects=False) as client:
         return client.get(url)
 
 
@@ -71,17 +144,26 @@ def fetch_provider_asset(url: str, workspace_id: str, kind: str) -> str | None:
 
     Returns None on:
       - empty / non-http URL
-      - HTTP error (4xx/5xx)
+      - host not on the provider allow-list
+      - host resolves to a non-public IP (SSRF guard)
+      - HTTP error (4xx/5xx) or 30x redirect
       - body > _MAX_BYTES
       - any network exception
     Caller should fall back to the original URL in those cases.
     """
     if not url or not url.lower().startswith(("http://", "https://")):
         return None
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if not _host_is_allowed(host):
+        log.warning("provider asset rejected: host not allow-listed (%s)", host)
+        return None
     try:
         resp = _http_get(url)
     except Exception:
         return None
+    # 30x is treated as a refusal — we don't follow redirects (see
+    # `_http_get` docstring).
     if resp.status_code != 200:
         return None
     body = resp.content

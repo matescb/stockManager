@@ -7,16 +7,35 @@ from __future__ import annotations
 
 from html import escape
 
-from fastapi import APIRouter, HTTPException, status
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import select
 
 from app.core.deps import DbSession
+from app.core.ratelimit import limiter
 from app.core.responses import ok
 from app.domain.parts.models import Part
 from app.domain.workspaces.models import Workspace
 
 router = APIRouter()
+
+
+# Same-origin headers for the public catalog responses (SEC2-009). The
+# nginx layer already attaches these for the SPA bundle, but the catalog
+# is fetched directly from FastAPI in some flows (e.g. the JSON endpoint
+# proxied through Apache without going through nginx) so we attach them
+# here too. Cheap and idempotent; nginx duplicates collapse.
+_CATALOG_HEADERS: dict[str, str] = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "same-origin",
+    "Content-Security-Policy": (
+        "default-src 'self'; img-src 'self' data:; "
+        "style-src 'self' 'unsafe-inline'; script-src 'none'; "
+        "frame-ancestors 'none'"
+    ),
+    "Permissions-Policy": "()",
+}
 
 
 def _resolve_workspace(db, token: str) -> Workspace:
@@ -134,19 +153,26 @@ def _render_html(ws: Workspace, parts: list[Part]) -> str:
 
 
 @router.get("/{token}", response_class=HTMLResponse)
-def catalog_html(token: str, db: DbSession):
+@limiter.limit("60/minute")
+def catalog_html(request: Request, token: str, db: DbSession):
     ws = _resolve_workspace(db, token)
     parts = _published_parts(db, ws.id)
-    return HTMLResponse(content=_render_html(ws, parts), status_code=200)
+    return HTMLResponse(
+        content=_render_html(ws, parts),
+        status_code=200,
+        headers=_CATALOG_HEADERS,
+    )
 
 
 @router.get("/{token}/parts.json")
-def catalog_json(token: str, db: DbSession):
+@limiter.limit("60/minute")
+def catalog_json(request: Request, token: str, db: DbSession):
     ws = _resolve_workspace(db, token)
     parts = _published_parts(db, ws.id)
-    return ok(
+    body = ok(
         {
             "workspace": {"id": str(ws.id), "name": ws.name},
             "parts": [_part_dict(p) for p in parts],
         }
     )
+    return JSONResponse(content=body, headers=_CATALOG_HEADERS)
