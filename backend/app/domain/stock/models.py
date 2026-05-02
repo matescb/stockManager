@@ -12,6 +12,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -36,7 +37,16 @@ class StockEntry(Base):
         # the same bag up again should let the operator consume from
         # the lot it created instead of double-importing. See
         # alembic 0012 + bagSignature() in web/src/lib/bagCode.ts.
-        Index("ix_stock_ws_bag_signature", "workspace_id", "bag_signature"),
+        # Partial predicate (DB-008 / alembic 0019) — only scan-import
+        # rows ever populate `bag_signature`, so the index excludes the
+        # ~99% of NULL rows and stops paying insert-time cost on every
+        # ledger write.
+        Index(
+            "ix_stock_ws_bag_signature",
+            "workspace_id",
+            "bag_signature",
+            postgresql_where=text("bag_signature IS NOT NULL"),
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
