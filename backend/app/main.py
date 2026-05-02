@@ -121,6 +121,7 @@ from app.api.routes import (
 )
 from app.core.config import settings
 from app.core.deps import require_member_for_writes
+from app.core.request_id import RequestIdMiddleware
 from app.core.responses import http_exception_handler, validation_exception_handler
 
 _is_prod = settings().APP_ENV == "prod"
@@ -313,6 +314,11 @@ class CsrfOriginMiddleware(BaseHTTPMiddleware):
             )
         return await call_next(request)
 
+
+# RequestIdMiddleware must run BEFORE CORS / CSRF so request.state.request_id
+# is set even when those middlewares short-circuit the request.
+# BE2-012 / issue #61.
+app.add_middleware(RequestIdMiddleware)
 
 app.add_middleware(
     CsrfOriginMiddleware,
