@@ -1,22 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Literal
 from uuid import UUID
 
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import or_, select
 
 from app.api._helpers import assert_in_workspace, require_resource_access
 from app.api.routes._activity import build_activity
 from app.api.routes._parts_shared import (
-    BulkDeleteIn,
-    PartIn,
-    PartPatch,
     get_part as _get_part,
     image_urls_for_parts as _image_urls_for_parts,
     serialize_part as _serialize,
@@ -28,6 +23,16 @@ from app.core.secrets import decrypt
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part, PartMetaMember, PartSubstitute
 from app.domain.parts.providers import make_provider
+from app.domain.parts.schemas import (
+    BulkDeleteIn,
+    MetaMemberIn,
+    PartIn,
+    PartPatch,
+    QuickRemoveBagIn,
+    ScanImportIn,
+    ScanImportRow,
+    SubstituteIn,
+)
 from app.domain.parts.services.assets import fetch_provider_asset
 from app.domain.stock.models import StockEntry
 from app.domain.stock.schemas import AddStockIn, LotInput
@@ -44,10 +49,12 @@ from app.domain.workspaces.models import Workspace
 router = APIRouter()
 
 
-# PartIn, PartPatch, BulkDeleteIn, _image_urls_for_parts, _serialize,
-# and _get_part are imported from `_parts_shared` so subsequent split
-# files (parts_assets, parts_provider, parts_bulk per #118) can share
-# them without duplicating. See `app/api/routes/_parts_shared.py`.
+# PartIn, PartPatch, BulkDeleteIn, ScanImportIn etc. live in
+# `app.domain.parts.schemas` (CQ-006). Helper functions
+# `_image_urls_for_parts`, `_serialize`, `_get_part` live in
+# `_parts_shared` so subsequent split files (parts_assets,
+# parts_provider, parts_bulk per #118) can share them without
+# duplicating.
 
 
 # ---------------------------------------------------------------------------
@@ -451,13 +458,6 @@ def part_lots(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
     )
 
 
-class SubstituteIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    substitute_part_id: UUID
-    direction: Literal["one_way", "bidirectional"] = "bidirectional"
-
-
 @router.post("/{part_id}/substitutes")
 def add_substitute(part_id: UUID, payload: SubstituteIn, db: DbSession, ws: CurrentWorkspace):
     # Both sides must be live parts — `_get_part` defaults to refusing
@@ -489,12 +489,6 @@ def del_substitute(part_id: UUID, substitute_id: UUID, db: DbSession, ws: Curren
 
 
 # ---- Meta-part members ----------------------------------------------------
-
-
-class MetaMemberIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    member_part_id: UUID
 
 
 @router.get("/{meta_id}/members")
@@ -732,33 +726,6 @@ def refresh_from_provider(
 # a stock entry. The endpoint returns one status row per input so the
 # UI can show a per-row outcome banner ("created", "duplicate", "no match").
 # ---------------------------------------------------------------------------
-
-
-class ScanImportRow(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    mpn: str = Field(min_length=1, max_length=200)
-    quantity: int | None = Field(default=None, ge=0)
-    storage_location_id: UUID | None = None
-    # Traceability fields lifted from the bag's 2D code. The frontend
-    # synthesises these strings from the parsed DIs (10D/1T → lot_name,
-    # K/1K/14K/11K → comments). All optional — the import works without
-    # them, you just lose the audit trail.
-    lot_name: str | None = Field(default=None, max_length=200)
-    lot_serial: str | None = Field(default=None, max_length=200)
-    comments: str | None = Field(default=None, max_length=1000)
-    # sha256 hex of the normalised raw bag code. When the workspace has
-    # already imported a bag with this signature, the row resolves with
-    # status='bag_rescan' carrying the prior import's part/lot/location/qty
-    # so the frontend can offer an inline "remove qty from this bag"
-    # affordance instead of double-importing.
-    bag_signature: str | None = Field(default=None, max_length=64)
-
-
-class ScanImportIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    rows: list[ScanImportRow] = Field(min_length=1, max_length=200)
 
 
 @router.post("/bulk-import-from-scan")
@@ -1079,19 +1046,6 @@ def _import_one_scan_row(
             stock_error = str(exc)
 
     return p, qty_added, stock_error
-
-
-class QuickRemoveBagIn(BaseModel):
-    """Inline-consume from a recognised re-scanned bag. The frontend
-    sends back the lot/location/qty hint it got from the bag_rescan
-    row in /bulk-import-from-scan; we run remove_stock with those
-    coordinates targeting the named lot+location."""
-    model_config = ConfigDict(extra="forbid")
-
-    quantity: int = Field(gt=0)
-    lot_id: UUID | None = None
-    storage_location_id: UUID | None = None
-    comments: str | None = Field(default=None, max_length=1000)
 
 
 @router.post("/{part_id}/quick-remove-bag")
