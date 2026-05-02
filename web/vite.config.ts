@@ -39,6 +39,23 @@ export default defineConfig({
     // not vitest — exclude it explicitly so vitest doesn't try to load
     // the spec files.
     exclude: ["**/node_modules/**", "**/dist/**", "**/e2e/**"],
+    // TEST-013 / issue #115. CI runs `vitest run --coverage`; output
+    // lives in web/coverage/ and is uploaded as an artifact. No
+    // fail-under yet (issue says ratchet later).
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "html", "lcov"],
+      reportsDirectory: "./coverage",
+      exclude: [
+        "**/*.d.ts",
+        "**/*.config.*",
+        "**/scripts/**",
+        "**/__tests__/**",
+        "**/*.test.{ts,tsx}",
+        "node_modules/**",
+        "dist/**",
+      ],
+    },
   },
   build: {
     // Always produce hidden sourcemaps so the CI job can upload them to

@@ -48,6 +48,8 @@ uploads/
 *.sqlite3
 .coverage
 htmlcov/
+coverage.xml
+web/coverage/
 
 # Claude Code local artifacts (transcript exports, scratch logs).
 /2*-this-session-*.txt
