@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import {
   Plus,
   Minus,
@@ -49,6 +49,12 @@ export type ActivityEntry = {
   storage_location_id: string | null;
   order_id: string | null;
   build_id: string | null;
+};
+
+type ActivityPage = {
+  events: ActivityEntry[];
+  next_before_occurred_at?: string;
+  next_before_id?: string;
 };
 
 type Props = {
@@ -136,10 +142,44 @@ function summary(e: ActivityEntry): string {
 }
 
 export default function ActivityTimeline({ endpoint }: Props) {
-  const { data, isLoading } = useQuery({
+  const {
+    data,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery<ActivityPage>({
     queryKey: useWsKey("activity", endpoint),
-    queryFn: () => api.get<ActivityEntry[]>(endpoint),
+    queryFn: ({ pageParam }) => {
+      let url = endpoint;
+      if (
+        pageParam &&
+        typeof pageParam === "object" &&
+        "before_occurred_at" in pageParam &&
+        "before_id" in pageParam
+      ) {
+        const p = pageParam as { before_occurred_at: string; before_id: string };
+        const qs = new URLSearchParams({
+          before_occurred_at: p.before_occurred_at,
+          before_id: p.before_id,
+        });
+        url = `${endpoint}?${qs.toString()}`;
+      }
+      return api.get<ActivityPage>(url);
+    },
+    initialPageParam: null,
+    getNextPageParam: (lastPage) => {
+      if (lastPage.next_before_occurred_at && lastPage.next_before_id) {
+        return {
+          before_occurred_at: lastPage.next_before_occurred_at,
+          before_id: lastPage.next_before_id,
+        };
+      }
+      return undefined;
+    },
   });
+
+  const allEvents = data?.pages.flatMap((p) => p.events) ?? [];
 
   return (
     <div className="card p-4">
@@ -150,12 +190,12 @@ export default function ActivityTimeline({ endpoint }: Props) {
 
       {isLoading ? (
         <div className="text-muted text-sm">Loading…</div>
-      ) : !data || data.length === 0 ? (
+      ) : allEvents.length === 0 ? (
         <div className="text-muted text-sm">No activity yet.</div>
       ) : (
         <>
           <ul className="space-y-2">
-            {data.map((e, i) => (
+            {allEvents.map((e, i) => (
               <li key={i} className="flex items-start gap-3 text-sm">
                 <div className="mt-0.5 shrink-0 w-6 h-6 rounded-full bg-panel2 flex items-center justify-center">
                   {iconFor(e)}
@@ -175,9 +215,15 @@ export default function ActivityTimeline({ endpoint }: Props) {
               </li>
             ))}
           </ul>
-          {data.length >= 200 && (
-            <div className="text-xs text-muted mt-3">
-              Showing the most recent 200 events.
+          {hasNextPage && (
+            <div className="mt-3 flex justify-center">
+              <button
+                className="btn text-xs"
+                onClick={() => fetchNextPage()}
+                disabled={isFetchingNextPage}
+              >
+                {isFetchingNextPage ? "Loading…" : "Load older"}
+              </button>
             </div>
           )}
         </>
