@@ -489,14 +489,14 @@ def move_stock(
         if any_other:
             raise StockError("destination is single-part-only and holds another part")
 
-    # Pre-assign UUIDs so both StockEntry rows can carry their cross-
-    # reference (`related_entry_id`) at insert time. The previous shape
-    # flushed the OUT side, then the IN side, then mutated the OUT side
-    # again to fill in its `related_entry_id` — three flushes and a
-    # window where the OUT side existed without a back-pointer
-    # (BE2-007). One `db.add_all([...]); db.flush()` after this
-    # assignment lands both rows atomically with consistent
-    # back-pointers.
+    # Pre-assign UUIDs so the two StockEntry rows can reference each
+    # other via `related_entry_id`. The actual write strategy is a
+    # three-step write under a savepoint (per-block comments below
+    # spell out the ordering) — `related_entry_id` has a non-deferrable
+    # FK to `stock_entries.id`, so a single `add_all` flush would
+    # violate the constraint on whichever row insert went second.
+    # The savepoint contains the partial state so an outside transaction
+    # never observes a dangling back-pointer (BE2-007).
     out_id = uuid.uuid4()
     in_id = uuid.uuid4()
 

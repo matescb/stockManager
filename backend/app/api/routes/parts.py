@@ -1011,13 +1011,14 @@ def bulk_import_from_scan(
         })
 
     # `bulk_import_from_scan` keeps an explicit terminal commit even
-    # though `get_db` commits on clean exit (BE2-010). The reason is
-    # the per-row savepoints above: each successful row's
-    # `db.begin_nested()` is released into the OUTER transaction, and
-    # we want every accumulated savepoint to be durable BEFORE we
-    # serialise `out_rows` into the response. The dep's commit on
-    # clean exit is then a no-op. If a future refactor moves the
-    # response build inside the loop, this stays load-bearing.
+    # though `get_db` commits on clean exit (BE2-010). Savepoint
+    # releases aren't independently durable — they only become durable
+    # at the OUTER transaction's commit. The real reason is response-
+    # build robustness: if anything between this point and the dep's
+    # final commit raises (an unexpected serialisation error, a Sentry
+    # tag enrich that hits a network blip), we don't want to lose a
+    # batch of imports the operator already saw on the scanner. Commit
+    # here pins the batch; the dep's commit on clean exit is a no-op.
     db.commit()
     summary = {
         "created":        sum(1 for r in out_rows if r["status"] == "created"),
