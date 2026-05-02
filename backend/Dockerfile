@@ -1,6 +1,7 @@
 # ── Stage 1: builder ────────────────────────────────────────────────────────
 # Full Debian image so we can compile C extensions (psycopg, cryptography, …).
-FROM python:3.12 AS builder
+# Digest pinned on 2026-05-02; bump via Dependabot (docker ecosystem).
+FROM python:3.12@sha256:29cdc34ede8cd9716d1f40a8200447355ae210c05a539c1b0262ccc5fcaf183c AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential libpq-dev \
@@ -19,7 +20,8 @@ RUN pip install --upgrade pip pip-tools \
 
 # ── Stage 2: runtime ────────────────────────────────────────────────────────
 # Slim image — only the runtime libs, no compiler toolchain.
-FROM python:3.12-slim
+# Digest pinned on 2026-05-02; bump via Dependabot (docker ecosystem).
+FROM python:3.12-slim@sha256:46cb7cc2877e60fbd5e21a9ae6115c30ace7a077b9f8772da879e4590c18c2e3
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

@@ -690,6 +690,54 @@ before triggering a deploy that causes a longer-than-usual restart (e.g.
 a heavy migration). Resume it once `curl -fsS https://parts.matescb.cz/api/health`
 returns 200.
 
+## Base image pinning (INFRA2-015)
+
+All three Docker base images are pinned by digest, not tag, so a compromised
+or republished `node:20-alpine` / `nginx:alpine` / `python:3.12-slim` tag can
+never silently change what we build:
+
+| File | Stage | Image |
+|------|-------|-------|
+| `backend/Dockerfile` | builder | `python:3.12@sha256:…` |
+| `backend/Dockerfile` | runtime | `python:3.12-slim@sha256:…` |
+| `web/Dockerfile.prod` | build | `node:20-alpine@sha256:…` |
+| `web/Dockerfile.prod` | runtime | `nginx:alpine@sha256:…` |
+
+### Bumping a digest
+
+Resolve the current manifest-list digest (multi-arch index):
+
+```bash
+curl -s "https://registry.hub.docker.com/v2/repositories/library/<image>/tags/<tag>" \
+    | python3 -c "import sys,json; print(json.load(sys.stdin)['digest'])"
+```
+
+Then update the `@sha256:` line in the Dockerfile and the `# Digest pinned on`
+comment. Open as a normal PR — CI's `backend-tests` and `web-build` jobs will
+exercise the new image.
+
+### Dependabot
+
+`.github/dependabot.yml` configures weekly Dependabot PRs for the `docker`
+ecosystem targeting `backend/` and `web/` directories. Dependabot will open
+PRs automatically when newer digests are available. Review and merge them like
+any dependency-bump PR; CI gates protect against regressions.
+
+### Buildkit cache hygiene
+
+The VPS build cache accumulates layers from previous builds. If you need to
+evict stale layers (e.g. after a security incident or after rotating secrets
+from build args), run on the VPS:
+
+```bash
+docker buildx prune -af
+```
+
+This forces a full cold rebuild on the next deploy. After INFRA2-015 landed,
+sourcemaps are no longer emitted during VPS builds (only in CI where
+`SENTRY_AUTH_TOKEN` is set), so the build cache no longer accumulates `.map`
+files.
+
 ## Header hardening (SEC2-018)
 
 Two surfaces were tightened to avoid advertising the stack identity:
