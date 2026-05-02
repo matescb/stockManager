@@ -1,6 +1,6 @@
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
 import { formatDateTime } from "@/lib/format";
 import type { StockEntry, StorageLocation } from "@/types";
@@ -8,7 +8,7 @@ import { DataTable } from "@/components/DataTable";
 
 export default function PartHistory() {
   const { partId } = useParams();
-  const { data } = useQuery({
+  const { data, isError, error } = useQuery({
     queryKey: useWsKey("part", partId, "history"),
     queryFn: async () => {
       // history endpoint is global; filter client-side by part for now
@@ -18,6 +18,7 @@ export default function PartHistory() {
   });
   const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
   const sName = new Map(storage?.map(s => [s.id, s.name]) ?? []);
+  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load history. {error instanceof ApiError ? error.userMessage : ""}</div>;
   return (
     <DataTable
       rows={data ?? []}

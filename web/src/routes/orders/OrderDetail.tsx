@@ -42,7 +42,7 @@ export default function OrderDetail() {
   const confirm = useConfirm();
   const { workspaceId } = useAuth();
 
-  const { data } = useQuery({
+  const { data, isError, error } = useQuery({
     queryKey: useWsKey("order", orderId),
     queryFn: () => api.get<DetailOut>(`/orders/${orderId}`),
     enabled: !!orderId,
@@ -128,6 +128,7 @@ export default function OrderDetail() {
     },
   });
 
+  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load order. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (!data) return <div className="text-muted">Loading…</div>;
   const { order, entries } = data;
   const isClosed = order.status === "received" || order.status === "cancelled" || !!order.archived_at;

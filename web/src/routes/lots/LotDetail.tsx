@@ -1,7 +1,7 @@
 import { Outlet, useParams, useNavigate, useOutletContext } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useWsKey, lotMutationKeys } from "@/lib/queryKeys";
 import { formatDateTime } from "@/lib/format";
@@ -11,8 +11,9 @@ import type { Lot, Part, StockEntry, StorageLocation } from "@/types";
 
 export function LotLayout() {
   const { lotId } = useParams<{ lotId: string }>();
-  const { data } = useQuery({ queryKey: useWsKey("lot", lotId), queryFn: () => api.get<Lot>(`/lots/${lotId}`), enabled: !!lotId });
+  const { data, isError, error } = useQuery({ queryKey: useWsKey("lot", lotId), queryFn: () => api.get<Lot>(`/lots/${lotId}`), enabled: !!lotId });
   const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
+  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load lot. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (!data) return <div className="text-muted">Loading…</div>;
   const part = parts?.find(p => p.id === data.part_id);
   const items = [
@@ -143,7 +144,8 @@ export function LotAdjust() {
 
 export function LotHistory() {
   const { lotId } = useParams();
-  const { data } = useQuery({ queryKey: useWsKey("lot", lotId, "history"), queryFn: () => api.get<StockEntry[]>(`/lots/${lotId}/history?limit=200`) });
+  const { data, isError, error } = useQuery({ queryKey: useWsKey("lot", lotId, "history"), queryFn: () => api.get<StockEntry[]>(`/lots/${lotId}/history?limit=200`) });
+  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load history. {error instanceof ApiError ? error.userMessage : ""}</div>;
   return (
     <div className="card overflow-hidden">
       <table className="table">

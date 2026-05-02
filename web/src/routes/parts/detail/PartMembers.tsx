@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
+import QueryStateBoundary from "@/components/QueryStateBoundary";
 import type { Part } from "@/types";
 
 type Member = { id: string; member_part_id: string };
@@ -12,10 +13,11 @@ export default function PartMembers() {
   const { partId } = useParams();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
-  const { data: members } = useQuery({
+  const membersQuery = useQuery({
     queryKey: useWsKey("part", partId, "members"),
     queryFn: () => api.get<Member[]>(`/parts/${partId}/members`),
   });
+  const { data: members } = membersQuery;
   const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
   const partsById = new Map(parts?.map(p => [p.id, p]) ?? []);
 
@@ -41,6 +43,7 @@ export default function PartMembers() {
   return (
     <div className="card p-4 max-w-2xl">
       <h3 className="text-md font-semibold mb-2">Meta-part members</h3>
+      <QueryStateBoundary query={membersQuery} resourceLabel="members">
       <p className="text-sm text-muted mb-3">
         A meta-part stands for any of its members. When a BOM line uses this meta-part,
         a build can consume from any member's stock.
@@ -70,6 +73,7 @@ export default function PartMembers() {
         </select>
         <button className="btn-primary" onClick={add}>Add</button>
       </div>
+      </QueryStateBoundary>
     </div>
   );
 }

@@ -6,15 +6,17 @@ import { useWsKey } from "@/lib/queryKeys";
 import { formatDateTime } from "@/lib/format";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
+import QueryStateBoundary from "@/components/QueryStateBoundary";
 import type { Build } from "@/types";
 
 export default function ProjectBuilds() {
   const { projectId } = useParams<{ projectId: string }>();
-  const { data } = useQuery({
+  const buildsQuery = useQuery({
     queryKey: useWsKey("builds", { project: projectId }),
     queryFn: () => api.get<Build[]>(`/builds?project_id=${projectId}`),
     enabled: !!projectId,
   });
+  const { data } = buildsQuery;
 
   return (
     <div>
@@ -22,6 +24,7 @@ export default function ProjectBuilds() {
         <h3 className="text-md font-semibold">Builds against this project</h3>
         <Link to={`/builds/create?project_id=${projectId}`} className="btn-primary ml-auto">+ Build</Link>
       </div>
+      <QueryStateBoundary query={buildsQuery} resourceLabel="builds">
       <DataTable
         rows={data ?? []}
         rowKey={r => r.id}
@@ -46,6 +49,7 @@ export default function ProjectBuilds() {
           },
         ]}
       />
+      </QueryStateBoundary>
     </div>
   );
 }
