@@ -227,7 +227,7 @@ rules are:
    for observability. Currently parents are soft-archived rather than
    hard-deleted, so orphans accumulate only on rare explicit hard-deletes.
 
-3. **Indexes** — migration 0031 added `(workspace_id, object_id)` indexes
+3. **Indexes** — migration 0033 added `(workspace_id, object_id)` indexes
    on all three tables so the cleanup query and the orphan-report script
    (`backend/scripts/report_polymorphic_orphans.py`) can run efficiently
    without scanning the full table.
