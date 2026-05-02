@@ -428,23 +428,73 @@ installed under root cron on the VPS:
 It writes timestamped artifacts to `/srv/backups/stockmanager/`:
 
 ```
-db-2026-04-30.sql.gz
-uploads-2026-04-30.tar.gz
+db-2026-04-30.sql.gz.age
+uploads-2026-04-30.tar.gz.age
 ```
 
-…and prunes anything older than 30 days. The script is idempotent and
-fail-loud — non-zero exit → cron emails root if MTA is configured.
+Each artifact is `age`-encrypted with the recipient public key stored in
+`.env.prod`. …and prunes anything older than 30 days. The script is
+idempotent and fail-loud — non-zero exit → cron emails root if MTA is
+configured.
 
-Run it manually any time before a risky operation:
+### Recipient key + private-key escrow
 
-```bash
-/srv/stockmanager/deploy/backup.sh
-```
+**Operator action required before first backup run:**
+
+1. **Install `age` on the VPS** (small static binary, no runtime deps):
+
+   ```bash
+   curl -Lo /usr/local/bin/age \
+       https://github.com/FiloSottile/age/releases/latest/download/age-linux-amd64
+   curl -Lo /usr/local/bin/age-keygen \
+       https://github.com/FiloSottile/age/releases/latest/download/age-linux-amd64
+   chmod +x /usr/local/bin/age /usr/local/bin/age-keygen
+   ```
+
+   Adjust the release URL to the latest version from
+   <https://github.com/FiloSottile/age/releases>.
+
+2. **Generate a keypair on a secure, off-VPS machine:**
+
+   ```bash
+   age-keygen -o backup-key.txt
+   # Public key: age1xxxx...
+   ```
+
+   The file `backup-key.txt` contains both the private key (secret) and
+   the public key (safe to share).
+
+3. **Add the public key to `.env.prod` on the VPS:**
+
+   ```bash
+   sudo -u deploy $EDITOR /srv/stockmanager/.env.prod
+   # Set BACKUP_AGE_RECIPIENT=age1xxxx...  (the public key printed above)
+   ```
+
+4. **Escrow the private key off-VPS.** Store `backup-key.txt` in a secure
+   location — a password manager, encrypted offline storage, or a secrets
+   manager. The VPS holds only the public key; restoring backups requires
+   the private key to be brought in manually.
+
+5. **Verify the first nightly backup** by checking
+   `/var/log/stockmanager-backup.log` the morning after, or run the script
+   manually:
+
+   ```bash
+   /srv/stockmanager/deploy/backup.sh
+   ```
+
+### Restore (encrypted backups)
+
+All restore commands assume the private key file is available at
+`/path/to/backup-key.txt` on the machine performing the restore.
 
 Restore the DB (DESTRUCTIVE — overwrites the existing one):
 
 ```bash
-gunzip -c /srv/backups/stockmanager/db-2026-04-30.sql.gz \
+age -d -i /path/to/backup-key.txt \
+    /srv/backups/stockmanager/db-2026-04-30.sql.gz.age \
+    | gunzip -c \
     | sudo -u deploy docker compose -f /srv/stockmanager/docker-compose.prod.yml \
         --env-file /srv/stockmanager/.env.prod exec -T db \
         psql -U "$POSTGRES_USER" "$POSTGRES_DB"
@@ -453,11 +503,12 @@ gunzip -c /srv/backups/stockmanager/db-2026-04-30.sql.gz \
 Restore the uploads volume (DESTRUCTIVE — replaces existing files):
 
 ```bash
-docker run --rm \
-    -v stockmanager_uploads:/u \
-    -v /srv/backups/stockmanager:/in \
-    alpine \
-    sh -c "rm -rf /u/* && tar xzf /in/uploads-2026-04-30.tar.gz -C /u"
+age -d -i /path/to/backup-key.txt \
+    /srv/backups/stockmanager/uploads-2026-04-30.tar.gz.age \
+    | docker run --rm -i \
+        -v stockmanager_uploads:/u \
+        alpine \
+        sh -c "rm -rf /u/* && tar xzf - -C /u"
 ```
 
 For point-in-time recovery, off-site replication, or retention policies look
