@@ -11,6 +11,7 @@ document covers:
 - [CI/CD details](#cicd-details) — secrets, jobs, gating.
 - [Operations](#operations) — logs, psql, alembic, env changes, rollback.
 - [Backups](#backups).
+- [Health endpoint](#health-endpoint) — response shapes for `GET /api/health`.
 
 The dev compose (`docker-compose.dev.yml`) is unsuitable for production: it ships
 uvicorn `--reload`, the Vite dev server, and will refuse to start without a
@@ -177,6 +178,8 @@ unless you're rebuilding the host, or migrating to a fresh VPS.
    sudo -u deploy docker compose -f docker-compose.prod.yml \
        --env-file .env.prod up -d --build
    curl -fsS http://127.0.0.1:8091/api/health
+   # 200 → {"data":{"status":"ok","db":"ok","uploads":"ok"},...}
+   # 503 → structured body; see ## Health endpoint below
    ```
 
 6. **Add the Apache vhost.**
@@ -187,6 +190,8 @@ unless you're rebuilding the host, or migrating to a fresh VPS.
    a2ensite parts.matescb.cz
    apache2ctl configtest && systemctl reload apache2
    curl -fsS -H "Host: parts.matescb.cz" http://127.0.0.1/api/health
+   # 200 → {"data":{"status":"ok","db":"ok","uploads":"ok"},...}
+   # 503 → structured body; see ## Health endpoint below
    ```
 
 7. **Issue the TLS cert.** Certbot edits the :80 vhost in place to add a
@@ -197,6 +202,8 @@ unless you're rebuilding the host, or migrating to a fresh VPS.
    certbot --apache -d parts.matescb.cz \
        --non-interactive --agree-tos -m matyas.skvor@gmail.com --redirect
    curl -fsS https://parts.matescb.cz/api/health
+   # 200 → {"data":{"status":"ok","db":"ok","uploads":"ok"},...}
+   # 503 → structured body; see ## Health endpoint below
    ```
 
    Renewal is automated by the certbot systemd timer that ships with the
@@ -533,6 +540,8 @@ sudo apache2ctl configtest && sudo systemctl reload apache2
 # 3. Verify: browsing the site shows the maintenance page;
 #    /api/health still returns 200.
 curl -s https://parts.matescb.cz/api/health
+# 200 → {"data":{"status":"ok","db":"ok","uploads":"ok"},...}
+# 503 → structured body; see ## Health endpoint below
 ```
 
 **Take a pre-migration snapshot**
@@ -571,6 +580,8 @@ sudo apache2ctl configtest && sudo systemctl reload apache2
 
 ```bash
 curl -s https://parts.matescb.cz/api/health
+# 200 → {"data":{"status":"ok","db":"ok","uploads":"ok"},...}
+# 503 → structured body; see ## Health endpoint below
 ```
 
 ### If you ever move TLS into the docker stack
@@ -783,12 +794,9 @@ Configure an external uptime check on [UptimeRobot](https://uptimerobot.com)
 | TLS expiry      | Enable if the plan includes it (catches cert renewal failure) |
 
 **What this catches:** host-down, TLS-broken, Apache-crashed,
-container-crashed (any of these stops the HTTP response returning 200).
-
-**What this does NOT catch:** DB unreachable while the process is alive.
-The `/api/health` endpoint is currently shallow — it only confirms the
-process responds. Deepening it (e.g. a test DB query) is tracked in
-INFRA2-002 (#95).
+container-crashed, DB unreachable, and uploads volume not writable (any of
+these causes `/api/health` to return 503). See [Health endpoint](#health-endpoint)
+for the full response shapes.
 
 **Credentials:** store the UptimeRobot login in the same secrets escrow
 as other SaaS credentials (see #95 — secret rotation runbook). Do not put
@@ -797,7 +805,74 @@ them in `.env.prod` or the repo.
 **Planned maintenance:** pause the monitor from the UptimeRobot dashboard
 before triggering a deploy that causes a longer-than-usual restart (e.g.
 a heavy migration). Resume it once `curl -fsS https://parts.matescb.cz/api/health`
-returns 200.
+returns 200 (200 body: `{"data":{"status":"ok","db":"ok","uploads":"ok"},...}`; 503
+returns a structured body — see [Health endpoint](#health-endpoint)).
+
+## Health endpoint
+
+`GET /api/health` is the single liveness + readiness probe for the stack.
+It runs two checks synchronously:
+
+1. **Database**: executes `SELECT 1` via the SQLAlchemy engine. Any exception
+   (connection refused, auth failure, timeout) marks the check failed and
+   surfaces the Python exception class name in the response.
+2. **Uploads volume**: calls `os.access(UPLOAD_DIR, os.W_OK)` to confirm the
+   volume is mounted and the process can write to it.
+
+Both checks must pass for a 200 response.
+
+### 200 — healthy
+
+```json
+{
+  "data": { "status": "ok", "db": "ok", "uploads": "ok" },
+  "status": { "category": "ok", "message": "OK" }
+}
+```
+
+### 503 — unhealthy
+
+The `detail` dict is spread by `core/responses.py::http_exception_handler`
+onto the standard `{data: null, status: {...}}` envelope. Example where the
+DB is unreachable:
+
+```json
+{
+  "data": null,
+  "status": {
+    "category": "server_error",
+    "message": "service unhealthy"
+  },
+  "db": "error: OperationalError",
+  "uploads": "ok"
+}
+```
+
+Example where the uploads volume is missing or read-only (DB is fine):
+
+```json
+{
+  "data": null,
+  "status": {
+    "category": "server_error",
+    "message": "service unhealthy"
+  },
+  "db": "ok",
+  "uploads": "not writable: /data/uploads"
+}
+```
+
+The `db` field is either `"ok"` or `"error: <ExceptionClassName>"`.
+The `uploads` field is either `"ok"` or `"not writable: <path>"`.
+
+### Callers
+
+| Caller | Notes |
+|--------|-------|
+| `docker-compose.prod.yml` healthcheck | Controls when the `web` container starts; determines `docker compose ps` status for the `backend` service. |
+| Post-deploy CI gate | `curl /api/health` retried in the deploy script so a failed migration, missing env var, or DB outage fails the deploy job rather than returning a green CI result on a broken prod. |
+| UptimeRobot external monitor | 5-minute interval; see [Monitoring](#monitoring). |
+| Manual smoke | Run `curl -fsS https://parts.matescb.cz/api/health` after any operator-driven change to confirm the stack is healthy. |
 
 ## Base image pinning (INFRA2-015)
 
