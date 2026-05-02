@@ -138,6 +138,7 @@ export function DataTable<T>({
   rowKey,
   onRowClick,
   searchPlaceholder,
+  initialSearch,
   empty,
   exportFilename,
   tableId,
@@ -146,7 +147,7 @@ export function DataTable<T>({
 }: Props<T>) {
   const persisted = useMemo(() => loadPersisted(tableId), [tableId]);
 
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(initialSearch ?? "");
   const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
   const [hidden, setHidden] = useState<Record<string, boolean>>(
     () =>
