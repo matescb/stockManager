@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import AppShell from "@/components/layout/AppShell";
@@ -130,6 +130,18 @@ function Gate() {
 
 const lazyFallback = <RouteSkeleton variant="table" />;
 
+/**
+ * Per-route Suspense boundary. Used as the `element` of a <Route> so the
+ * skeleton shows in-place (instead of unmounting the whole authed shell)
+ * while a lazy chunk is fetched. Cannot wrap <Route> directly inside
+ * <Routes> — react-router-dom v6 requires every direct child of <Routes>
+ * to be a <Route> or <React.Fragment>, so any Suspense boundary needs to
+ * live *inside* a route element.
+ */
+function LazyRoute({ children }: { children: ReactNode }) {
+  return <Suspense fallback={lazyFallback}>{children}</Suspense>;
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -195,45 +207,44 @@ export default function App() {
               <Route path="history" element={<LotHistory />} />
             </Route>
 
-            <Suspense fallback={<RouteSkeleton variant="table" />}>
-              <Route path="/orders" element={<OrdersList />} />
-              <Route path="/orders/archived" element={<OrdersList archived />} />
-              <Route path="/orders/create" element={<OrderCreate />} />
-              <Route path="/orders/:orderId" element={<OrderDetail />} />
-            </Suspense>
+            {/* Lazy-loaded sections. Each <Route element> is its own
+                Suspense boundary so the fallback shows in-place while
+                only that route's chunk is in flight (and so the
+                fallback is a valid child of <Routes> — wrapping a
+                <Route> in <Suspense> directly inside <Routes> is a
+                react-router-dom v6 invariant violation: every direct
+                child of <Routes> must be a <Route> or <Fragment>). */}
+            <Route path="/orders" element={<LazyRoute><OrdersList /></LazyRoute>} />
+            <Route path="/orders/archived" element={<LazyRoute><OrdersList archived /></LazyRoute>} />
+            <Route path="/orders/create" element={<LazyRoute><OrderCreate /></LazyRoute>} />
+            <Route path="/orders/:orderId" element={<LazyRoute><OrderDetail /></LazyRoute>} />
 
-            <Suspense fallback={<RouteSkeleton variant="table" />}>
-              <Route path="/builds" element={<BuildsList />} />
-              <Route path="/builds/archived" element={<BuildsList archived />} />
-              <Route path="/builds/create" element={<BuildCreate />} />
-              <Route path="/builds/:buildId" element={<BuildDetail />} />
-            </Suspense>
+            <Route path="/builds" element={<LazyRoute><BuildsList /></LazyRoute>} />
+            <Route path="/builds/archived" element={<LazyRoute><BuildsList archived /></LazyRoute>} />
+            <Route path="/builds/create" element={<LazyRoute><BuildCreate /></LazyRoute>} />
+            <Route path="/builds/:buildId" element={<LazyRoute><BuildDetail /></LazyRoute>} />
 
-            <Suspense fallback={<RouteSkeleton variant="table" />}>
-              <Route path="/reports" element={<ReportsLayout />}>
-                <Route index element={<LowStockReport />} />
-                <Route path="value" element={<StockValueReport />} />
-                <Route path="bom" element={<BomShortageReport />} />
-                <Route path="expiring" element={<ExpiringLotsReport />} />
-              </Route>
-            </Suspense>
+            <Route path="/reports" element={<LazyRoute><ReportsLayout /></LazyRoute>}>
+              <Route index element={<LazyRoute><LowStockReport /></LazyRoute>} />
+              <Route path="value" element={<LazyRoute><StockValueReport /></LazyRoute>} />
+              <Route path="bom" element={<LazyRoute><BomShortageReport /></LazyRoute>} />
+              <Route path="expiring" element={<LazyRoute><ExpiringLotsReport /></LazyRoute>} />
+            </Route>
 
-            <Suspense fallback={<RouteSkeleton variant="table" />}>
-              <Route path="/projects" element={<ProjectsList />} />
-              <Route path="/projects/archived" element={<ProjectsList archived />} />
-              <Route path="/projects/create" element={<ProjectCreate />} />
-              <Route path="/projects/:projectId" element={<ProjectLayout />}>
-                <Route index element={<Navigate to="data" replace />} />
-                <Route path="data" element={<ProjectData />} />
-                <Route path="bom" element={<ProjectBOM />} />
-                <Route path="import" element={<ProjectImport />} />
-                <Route path="builds" element={<ProjectBuilds />} />
-                <Route path="other" element={<ProjectOther />} />
-              </Route>
-            </Suspense>
+            <Route path="/projects" element={<LazyRoute><ProjectsList /></LazyRoute>} />
+            <Route path="/projects/archived" element={<LazyRoute><ProjectsList archived /></LazyRoute>} />
+            <Route path="/projects/create" element={<LazyRoute><ProjectCreate /></LazyRoute>} />
+            <Route path="/projects/:projectId" element={<LazyRoute><ProjectLayout /></LazyRoute>}>
+              <Route index element={<Navigate to="data" replace />} />
+              <Route path="data" element={<LazyRoute><ProjectData /></LazyRoute>} />
+              <Route path="bom" element={<LazyRoute><ProjectBOM /></LazyRoute>} />
+              <Route path="import" element={<LazyRoute><ProjectImport /></LazyRoute>} />
+              <Route path="builds" element={<LazyRoute><ProjectBuilds /></LazyRoute>} />
+              <Route path="other" element={<LazyRoute><ProjectOther /></LazyRoute>} />
+            </Route>
 
-            <Route path="/settings/account" element={<Account />} />
-            <Route path="/settings/workspace" element={<WorkspaceSettings />} />
+            <Route path="/settings/account" element={<LazyRoute><Account /></LazyRoute>} />
+            <Route path="/settings/workspace" element={<LazyRoute><WorkspaceSettings /></LazyRoute>} />
 
             <Route path="*" element={<NotFound />} />
           </Route>
