@@ -170,12 +170,14 @@ def test_two_workspaces_have_independent_buckets(monkeypatch, limiter_enabled):
 
 
 # ---------------------------------------------------------------------------
-# bulk-import-from-scan limit (10/minute)
+# bulk-import-from-scan limit (5/minute — tightened in BE2-003)
 # ---------------------------------------------------------------------------
 
 
 def test_bulk_import_rate_limit(monkeypatch, limiter_enabled):
-    """11th call to bulk-import-from-scan within a minute returns 429."""
+    """6th call to bulk-import-from-scan within a minute returns 429.
+    The limit was tightened from 10/min to 5/min in BE2-003 to bound
+    worst-case worker occupancy (BE2-003 / issue #59)."""
     fake_response = {
         "Errors": [],
         "SearchResults": {"NumberOfResult": 0, "Parts": []},
@@ -188,7 +190,7 @@ def test_bulk_import_rate_limit(monkeypatch, limiter_enabled):
     c, _ = _signup()
     _enable_mouser(c)
 
-    for i in range(10):
+    for i in range(5):
         r = c.post(
             "/api/parts/bulk-import-from-scan",
             json={"rows": [{"mpn": f"mpn-{i}", "quantity": None}]},

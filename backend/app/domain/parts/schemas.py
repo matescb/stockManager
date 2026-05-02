@@ -130,7 +130,16 @@ class ScanImportRow(BaseModel):
 class ScanImportIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    rows: list[ScanImportRow] = Field(min_length=1, max_length=200)
+    # Row cap at 50: bounds worst-case wall-clock latency at ~300 ms/lookup
+    # × 50 = 25 s peak, well inside a 60 s deadline budget. Typical bag
+    # deliveries are under 50 unique MPNs; operators wanting larger imports
+    # can split across multiple calls (BE2-003).
+    rows: list[ScanImportRow] = Field(min_length=1, max_length=50)
+    # Optional FE-supplied idempotency key (UUID4 generated once per submit
+    # attempt, re-sent unchanged on retry). When absent the server derives
+    # a content-hash from the row contents. A retry with the same key
+    # returns the cached envelope without creating new Parts (BE2-003).
+    idempotency_key: str | None = Field(default=None, max_length=64)
 
 
 class QuickRemoveBagIn(BaseModel):

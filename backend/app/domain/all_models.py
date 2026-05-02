@@ -29,6 +29,7 @@ from app.domain.custom_fields.models import CustomField  # noqa: F401
 from app.domain.lots.models import Lot  # noqa: F401
 from app.domain.orders.models import Order, OrderEntry  # noqa: F401
 from app.domain.parts.models import (  # noqa: F401
+    BulkImportIdempotency,
     Part,
     PartCadKey,
     PartMetaMember,

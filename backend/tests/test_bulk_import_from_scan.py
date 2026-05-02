@@ -337,6 +337,7 @@ def test_bulk_import_mixed_batch_returns_per_row_status(authed, monkeypatch):
         "lookup_failed": 1,
         "invalid": 0,
         "row_failed": 0,
+        "deadline_exceeded": 0,
     }
 
 
