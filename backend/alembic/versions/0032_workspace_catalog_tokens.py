@@ -1,7 +1,7 @@
 """Multi-token catalog access: workspace_catalog_tokens child table.
 
 Revision ID: 0032
-Revises: 0023
+Revises: 0031
 Create Date: 2026-05-02
 
 SEC2-019 / issue #77.
@@ -33,7 +33,7 @@ import sqlalchemy as sa
 
 
 revision = "0032"
-down_revision = ("0025", "0029")
+down_revision = "0031"
 branch_labels = None
 depends_on = None
 
