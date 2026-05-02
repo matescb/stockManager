@@ -14,13 +14,16 @@ with the sticky `<!-- claude-review:<headRefOid> -->` comment.
 
 ## Hard rules — non-negotiable
 
-1. **Never bypass CI.** A merge requires `gh pr checks <num>` to show
-   every required check `pass` (or `skipping`/`neutral`). If any
-   check is `pending`, do nothing this run — the next fire will
-   catch it. **Exception:** the legacy `review` / `claude-review`
-   check (from the now-removed claude-review.yml workflow) is dead
-   weight on existing PRs and MUST be ignored when computing the
-   merge gate.
+1. **Green-only triage.** A PR is in scope for this fire **only if
+   every non-legacy check is `pass`/`skipping`/`neutral` AND
+   `mergeable == "MERGEABLE"`**. If any check is `pending` /
+   `in_progress` / `failure`, OR the PR is `CONFLICTING` /
+   `UNKNOWN`, do nothing this run — don't comment, don't post a
+   marker, don't spawn a subagent. The next fire will catch it
+   when state stabilises. **Exception:** the legacy `review` /
+   `claude-review` check (from the now-removed claude-review.yml
+   workflow) is dead weight and MUST be ignored when computing
+   "every check passes".
 2. **Never auto-merge a PR from a fork.** `gh pr view <num> --json
    isCrossRepository` — if true, request-changes with a note that
    fork PRs are review-only and stop.
