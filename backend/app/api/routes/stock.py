@@ -10,6 +10,7 @@ from app.domain.stock.schemas import (
     MoveStockIn,
     RemoveStockIn,
 )
+from app.domain.parts.services.bag_signature import compute_bag_signature
 from app.domain.stock.service import (
     StockConflictError,
     StockError,
@@ -49,6 +50,17 @@ def _serialize_entry(e):
 def add(
     payload: AddStockIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser
 ) -> Envelope[dict]:
+    # Server-side bag_signature verification (BE2-015).  When raw_bag_code is
+    # supplied alongside bag_signature, recompute the digest and reject on
+    # mismatch.  When raw_bag_code is absent the client-supplied signature is
+    # accepted verbatim (back-compat for callers that only send bag_signature).
+    if payload.bag_signature and payload.raw_bag_code is not None:
+        expected = compute_bag_signature(payload.raw_bag_code)
+        if expected != payload.bag_signature:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"message": "bag_signature does not match recomputed digest of raw_bag_code"},
+            )
     try:
         e = add_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
     except StockConflictError as exc:

@@ -44,7 +44,7 @@ export default function Signup() {
       await refresh();
       nav(fromPath || "/parts", { replace: true });
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Signup failed");
+      setErr(e instanceof ApiError ? e.userMessage : "Signup failed");
     } finally {
       setBusy(false);
     }
@@ -88,8 +88,9 @@ export default function Signup() {
           </div>
         )}
         <div>
-          <label className="label">Name</label>
+          <label className="label" htmlFor="signup-name">Name</label>
           <input
+            id="signup-name"
             className="input"
             required
             value={name}
@@ -98,8 +99,9 @@ export default function Signup() {
           />
         </div>
         <div>
-          <label className="label">Email</label>
+          <label className="label" htmlFor="signup-email">Email</label>
           <input
+            id="signup-email"
             className="input"
             type="email"
             required
@@ -109,8 +111,9 @@ export default function Signup() {
           />
         </div>
         <div>
-          <label className="label">Password (min 8)</label>
+          <label className="label" htmlFor="signup-password">Password (min 8)</label>
           <input
+            id="signup-password"
             className="input"
             type="password"
             required
@@ -121,8 +124,9 @@ export default function Signup() {
           />
         </div>
         <div>
-          <label className="label">Workspace name (optional)</label>
+          <label className="label" htmlFor="signup-workspace-name">Workspace name (optional)</label>
           <input
+            id="signup-workspace-name"
             className="input"
             value={workspaceName}
             onChange={e => setWorkspaceName(e.target.value)}

@@ -153,7 +153,7 @@ export default function ProjectImport() {
       refetchPresets();
       toast.success(`Preset "${name}" saved.`);
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Failed to save preset");
+      toast.error(e instanceof ApiError ? e.userMessage : "Failed to save preset");
     }
   }
 
@@ -200,7 +200,7 @@ export default function ProjectImport() {
       setStep("mapping");
     } catch (e) {
       setUploadProgress(null);
-      setErr(e instanceof ApiError ? e.message : "Failed to parse");
+      setErr(e instanceof ApiError ? e.userMessage : "Failed to parse");
     } finally {
       setBusy(false);
     }
@@ -237,7 +237,7 @@ export default function ProjectImport() {
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "project", projectId, "entries") });
       setStep("done");
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Import failed");
+      setErr(e instanceof ApiError ? e.userMessage : "Import failed");
     } finally {
       setBusy(false);
     }
@@ -297,8 +297,8 @@ export default function ProjectImport() {
           <h3 className="text-md font-semibold">Step 2 — column mapping & preview</h3>
           <div className="grid grid-cols-4 gap-3">
             <div>
-              <label className="label">Separator</label>
-              <select className="input" value={separator} onChange={e => setSeparator(e.target.value)}>
+              <label className="label" htmlFor="import-separator">Separator</label>
+              <select id="import-separator" className="input" value={separator} onChange={e => setSeparator(e.target.value)}>
                 <option value=",">, (comma)</option>
                 <option value=";">; (semicolon)</option>
                 <option value={"\t"}>tab</option>
@@ -306,19 +306,19 @@ export default function ProjectImport() {
               </select>
             </div>
             <div>
-              <label className="label">Encoding</label>
-              <input className="input" value={encoding} onChange={e => setEncoding(e.target.value)} />
+              <label className="label" htmlFor="import-encoding">Encoding</label>
+              <input id="import-encoding" className="input" value={encoding} onChange={e => setEncoding(e.target.value)} />
             </div>
             <div>
-              <label className="label">First row is header</label>
-              <select className="input" value={hasHeader ? "yes" : "no"} onChange={e => setHasHeader(e.target.value === "yes")}>
+              <label className="label" htmlFor="import-has-header">First row is header</label>
+              <select id="import-has-header" className="input" value={hasHeader ? "yes" : "no"} onChange={e => setHasHeader(e.target.value === "yes")}>
                 <option value="yes">Yes</option>
                 <option value="no">No</option>
               </select>
             </div>
             <div>
-              <label className="label">Designator separator</label>
-              <input className="input" value={designatorSep} onChange={e => setDesignatorSep(e.target.value)} />
+              <label className="label" htmlFor="import-designator-sep">Designator separator</label>
+              <input id="import-designator-sep" className="input" value={designatorSep} onChange={e => setDesignatorSep(e.target.value)} />
             </div>
           </div>
           <div className="flex gap-2 items-center">

@@ -6,6 +6,10 @@ pytest against Postgres-16, and gates `deploy` on green
 `backend-tests` + `web-build`. This test makes that contract explicit
 so a future workflow rewrite can't silently drop the PR gate (which
 would let backend regressions ship to prod via the `main` push trigger).
+
+INFRA-004: also asserts that the backend-tests job uses `uv sync` (not
+bare `pip install -e`) and that a `uv lock --check` freshness step is
+present.
 """
 from __future__ import annotations
 
@@ -16,6 +20,7 @@ import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CI_PATH = _REPO_ROOT / ".github" / "workflows" / "ci.yml"
+_UV_LOCK_PATH = _REPO_ROOT / "backend" / "uv.lock"
 
 
 def _load() -> dict:
@@ -59,3 +64,39 @@ def test_deploy_gates_on_green_main():
         needs = [needs]
     assert "backend-tests" in needs, "deploy does not depend on backend-tests"
     assert "web-build" in needs, "deploy does not depend on web-build"
+
+
+# ── INFRA-004: reproducible backend builds via uv lockfile ──────────────────
+
+
+def test_uv_lock_file_exists():
+    """backend/uv.lock must be committed so builds are reproducible."""
+    assert _UV_LOCK_PATH.exists(), (
+        f"backend/uv.lock not found at {_UV_LOCK_PATH}; "
+        "run `cd backend && uv lock` and commit the result"
+    )
+
+
+def test_ci_uses_uv_sync_not_pip_install():
+    """backend-tests job must install via `uv sync`, not bare `pip install -e`."""
+    data = _load()
+    job = data["jobs"]["backend-tests"]
+    runs = [step.get("run", "") for step in job["steps"] if "run" in step]
+    all_run_text = "\n".join(runs)
+    assert "uv sync" in all_run_text, (
+        "backend-tests job does not use `uv sync`; update ci.yml"
+    )
+    assert "pip install -e" not in all_run_text, (
+        "backend-tests job still uses `pip install -e`; replace with `uv sync`"
+    )
+
+
+def test_ci_has_uv_lock_check_step():
+    """backend-tests job must have a `uv lock --check` freshness step."""
+    data = _load()
+    job = data["jobs"]["backend-tests"]
+    runs = [step.get("run", "") for step in job["steps"] if "run" in step]
+    assert any("uv lock --check" in r for r in runs), (
+        "no `uv lock --check` step found in backend-tests job; "
+        "add it so CI fails when uv.lock is stale"
+    )
