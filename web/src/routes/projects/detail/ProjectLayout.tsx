@@ -22,7 +22,7 @@ export default function ProjectLayout() {
     <div>
       <EntityHeader title={data.name} subtitle={data.description ?? ""} idCode={data.id} />
       <SubNav items={items} />
-      <Outlet context={{ project: data }} />
+      <Outlet key={data.id} context={{ project: data }} />
     </div>
   );
 }

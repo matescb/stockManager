@@ -84,7 +84,7 @@ export default function PartLayout() {
         imageUrl={part.image_url}
       />
       <SubNav items={items} />
-      <Outlet context={{ part }} />
+      <Outlet key={part.id} context={{ part }} />
     </div>
   );
 }

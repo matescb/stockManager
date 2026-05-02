@@ -54,7 +54,7 @@ export function StorageDetailLayout() {
         }
       />
       <SubNav items={items} />
-      <Outlet context={{ storage: data }} />
+      <Outlet key={data.id} context={{ storage: data }} />
     </div>
   );
 }
