@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ScrollText } from "lucide-react";
 import { api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
+import { formatDateTime } from "@/lib/format";
 import type { Part, StockEntry, StorageLocation } from "@/types";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
@@ -30,7 +31,7 @@ export default function StockHistory() {
         }
         exportFilename="stock-history"
         columns={[
-          { key: "occurred_at", header: "Date", accessor: r => r.occurred_at, render: r => new Date(r.occurred_at).toLocaleString() },
+          { key: "occurred_at", header: "Date", accessor: r => r.occurred_at, render: r => formatDateTime(r.occurred_at) },
           { key: "operation_type", header: "Op", accessor: r => r.operation_type },
           { key: "part", header: "Part", accessor: r => partName.get(r.part_id) || r.part_id, render: r => <Link className="text-accent" to={`/parts/${r.part_id}/info`}>{partName.get(r.part_id) || r.part_id}</Link> },
           { key: "qty", header: "Δ", accessor: r => r.quantity_delta },

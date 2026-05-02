@@ -8,6 +8,7 @@ import EntityHeader from "@/components/EntityHeader";
 import SubNav from "@/components/SubNav";
 import type { StorageLocation, Part, StockEntry } from "@/types";
 import { DataTable } from "@/components/DataTable";
+import { formatDateTime } from "@/lib/format";
 
 export function StorageDetailLayout() {
   const { storageId } = useParams<{ storageId: string }>();
@@ -102,7 +103,7 @@ export function StorageHistory() {
       tableId="storage-history"
       empty="No history."
       columns={[
-        { key: "occurred_at", header: "Date", accessor: r => r.occurred_at, render: r => new Date(r.occurred_at).toLocaleString() },
+        { key: "occurred_at", header: "Date", accessor: r => r.occurred_at, render: r => formatDateTime(r.occurred_at) },
         { key: "operation_type", header: "Op", accessor: r => r.operation_type },
         { key: "part", header: "Part", accessor: r => partName.get(r.part_id) || r.part_id },
         { key: "qty", header: "Δ", accessor: r => r.quantity_delta },

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useWsKey, wsScope } from "@/lib/queryKeys";
+import { formatDateTime } from "@/lib/format";
 import EntityHeader from "@/components/EntityHeader";
 import SubNav from "@/components/SubNav";
 import type { Lot, Part, StockEntry, StorageLocation } from "@/types";
@@ -128,7 +129,7 @@ export function LotHistory() {
         <tbody>
           {(data ?? []).map(e => (
             <tr key={e.id}>
-              <td>{new Date(e.occurred_at).toLocaleString()}</td>
+              <td>{formatDateTime(e.occurred_at)}</td>
               <td>{e.operation_type}</td>
               <td className={e.quantity_delta < 0 ? "text-danger" : "text-accent"}>{e.quantity_delta > 0 ? "+" : ""}{e.quantity_delta}</td>
               <td className="font-mono text-xs">{e.storage_location_id ?? "—"}</td>

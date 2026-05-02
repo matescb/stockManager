@@ -5,6 +5,7 @@ import { Trash2, Download, UploadCloud, Paperclip } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
 import { useConfirm } from "@/components/ConfirmDialog";
+import { formatDateTime } from "@/lib/format";
 
 type Attachment = {
   id: string;
@@ -157,7 +158,7 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
                   <span className="pill text-[10px] uppercase">{a.file_type}</span>
                 </div>
                 <div className="text-xs text-muted">
-                  {humanSize(a.size_bytes)} · {new Date(a.created_at).toLocaleString()}
+                  {humanSize(a.size_bytes)} · {formatDateTime(a.created_at)}
                 </div>
               </div>
               <a
