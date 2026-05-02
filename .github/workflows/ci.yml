@@ -339,6 +339,13 @@ jobs:
       - name: Create dev .env
         run: cp .env.example .env
 
+      # Run npm ci BEFORE docker compose so the dev stack's volume mount
+      # (./web:/app) doesn't create web/node_modules owned by root, which
+      # would cause EACCES when the runner tries to write to it afterwards.
+      - name: Install web deps
+        working-directory: web
+        run: npm ci
+
       - name: Start dev stack
         run: docker compose -f docker-compose.dev.yml up -d --build
 
@@ -361,7 +368,7 @@ jobs:
 
       - name: Install Playwright + Chromium
         working-directory: web
-        run: npm ci && npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium
 
       - name: Run Playwright @smoke suite
         working-directory: web
