@@ -22,6 +22,11 @@ permissions:
 jobs:
   backend-tests:
     runs-on: ubuntu-latest
+    # Restate the minimum required permissions explicitly on each job so the
+    # scope is visible next to the steps and survives any future change to the
+    # workflow-level default (INFRA2-013).
+    permissions:
+      contents: read
     services:
       postgres:
         image: postgres:16-alpine
@@ -87,6 +92,9 @@ jobs:
 
   web-build:
     runs-on: ubuntu-latest
+    # Restate minimum permissions explicitly (INFRA2-013).
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
@@ -146,6 +154,10 @@ jobs:
     # this job will pause for human approval before each deploy. See
     # docs/deployment.md → "Optional: gate deploys behind a human reviewer".
     environment: production
+    # Restate minimum permissions explicitly (INFRA2-013). The deploy uses
+    # SSH, not git push, so no write scope is needed here either.
+    permissions:
+      contents: read
 
     steps:
       - name: SSH deploy

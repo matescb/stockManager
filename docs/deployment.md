@@ -277,21 +277,54 @@ build to prod. Pin via this rule once and forget. (Recorded as part of
 TEST-014 / issue #116; the `tests/test_ci_workflow.py` regression test
 asserts the workflow shape but cannot configure repo settings.)
 
-### Optional: gate deploys behind a human reviewer
+### Gate deploys behind a human reviewer
 
-The `deploy` job has `environment: production` set. By default this just
-scopes any environment-level secrets we add later. If you want a manual
-"approve this deploy" step before each prod push:
+The `deploy` job has `environment: production` set. This gates every prod
+deploy behind GitHub's environment protection rules. **This protection is
+part of the shipped configuration** — it is not optional.
+
+To configure (one-time setup if the environment was not already created):
 
 1. GitHub UI → Settings → Environments → New environment → name `production`.
-2. Add a "Required reviewers" rule and list the trusted approvers
-   (typically just your own account).
-3. Optional: "Wait timer" if you want a cooling-off period before the
-   approval prompt fires.
+2. Add a **Required reviewers** rule and list the maintainer account
+   (`matescb`). Add further accounts if the project gains contributors.
+3. Optional but recommended: set a **Wait timer** of 5 minutes so a
+   compromised push cannot be self-approved before the maintainer notices.
 
 After this, every push to `main` that passes CI will pause at the deploy
 step and email the listed reviewers. Approving the run resumes the SSH
-deploy. Skip this if you'd rather keep the current friction-free flow.
+deploy. Rejecting it (or letting it time out) leaves the current prod
+containers untouched.
+
+To add a reviewer later: GitHub UI → Settings → Environments →
+`production` → Edit → add the account under "Required reviewers".
+
+### SSH key rotation
+
+The `DEPLOY_SSH_KEY` GitHub Actions secret gives the CI runner SSH access
+to the VPS as the `deploy` user (who is in the `docker` group). Rotate it
+on a schedule (recommended: every 6 months) or immediately after any
+suspected credential compromise or contributor offboarding.
+
+1. On the VPS, generate a new key pair:
+   ```bash
+   ssh-keygen -t ed25519 -f /tmp/deploy_new -N ""
+   ```
+2. Append the new public key to the authorised keys file:
+   ```bash
+   cat /tmp/deploy_new.pub >> /home/deploy/.ssh/authorized_keys
+   ```
+3. Update the GitHub secret:
+   GitHub UI → Settings → Secrets and variables → Actions →
+   `DEPLOY_SSH_KEY` → Update → paste the contents of `/tmp/deploy_new`
+   (the private key).
+4. Trigger a deploy (e.g. push a no-op commit to `main`). Verify it
+   succeeds end-to-end via the health gate.
+5. Remove the **old** public key from `authorized_keys` on the VPS.
+6. Shred the temporary key files:
+   ```bash
+   shred -u /tmp/deploy_new /tmp/deploy_new.pub
+   ```
 
 ## Operations
 
