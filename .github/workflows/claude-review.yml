@@ -52,24 +52,3 @@ jobs:
           else
             echo "number=$PR_NUMBER_ISSUE" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Run claude-review
-        # v1 → resolved to v1.0.111 commit on 2026-05-02.
-        uses: anthropics/claude-code-action@fefa07e9c665b7320f08c3b525980457f22f58aa  # v1
-        with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_args: >-
-            --allowed-tools "Bash(gh *),Bash(git *),Bash(cat *),Bash(rg *),Read,Grep,Glob"
-          prompt: |
-            Read .claude/prompts/pr-watcher.md and execute the per-PR
-            procedure for the PR identified by the env var $PR_NUMBER
-            in this repository (matescb/stockManager).
-
-            Do not iterate over other PRs — this is action-mode and
-            $PR_NUMBER is the only one in scope.
-
-            Use the gh CLI for every GitHub side-effect; GH_TOKEN is
-            already exported.
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ steps.pr.outputs.number }}
