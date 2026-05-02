@@ -86,9 +86,12 @@ def test_bom_commit_matches_by_mpn_and_keeps_unmatched(db):
 
 
 def test_bom_preview_b64_schema_caps_input():
-    """The pydantic schema's max_length=5_000_000 is the first line of
-    defence — a 6 MB base64 string must 422 before hitting the decoder."""
-    too_big_b64 = "A" * 5_000_001
+    """The pydantic schema's max_length=6_000_000 is the first line of
+    defence — a 7 MB base64 string must 422 before hitting the decoder.
+    The 6 MB ceiling is deliberate: it must allow a payload large enough
+    for the runtime 4 MB raw cap to fire (see the next test); a 5 MB
+    Field cap would foreclose the runtime path."""
+    too_big_b64 = "A" * 6_000_001
     with pytest.raises(ValidationError):
         BomImportPreviewIn(text_b64=too_big_b64)
 
