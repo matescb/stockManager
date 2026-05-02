@@ -3,7 +3,7 @@ WHERE status = 'pending' to prevent duplicate pending invitations for
 the same email in the same workspace.
 
 Revision ID: 0023
-Revises: 0021
+Revises: 0022
 Create Date: 2026-05-02
 
 BE2-020 / issue #65. Two concurrent admin POSTs can mint two pending
@@ -17,8 +17,8 @@ The index is partial (WHERE status = 'pending') so that:
   invite for the same email later (e.g. re-inviting after role change).
 - Revoking (status -> 'revoked') similarly frees the slot.
 
-Chain note: migration 0022 is claimed by issue #63 (search unbounded
-query length) which is in-progress; this PR takes 0023.
+Chain note: migration 0022 (SEC2-013 token_hmac column) landed on main
+before this PR; this migration chains off 0022.
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from alembic import op
 
 
 revision = "0023"
-down_revision = "0021"
+down_revision = "0022"
 branch_labels = None
 depends_on = None
 
