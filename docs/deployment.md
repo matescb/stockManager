@@ -247,6 +247,27 @@ Replace the SHA in the `uses:` line; keep the tag in the trailing comment.
 Pin-bumps are normal-stream PRs (no special review gate); only bump on a
 genuine version intent.
 
+### Required status checks
+
+Even though the `backend-tests` and `web-build` jobs run on every PR
+(`pull_request:` trigger), GitHub will still let a contributor merge a
+red PR unless branch protection is configured. To make the gate
+load-bearing:
+
+1. GitHub UI → Settings → Branches → Branch protection rules → Add rule.
+2. Branch name pattern: `main`.
+3. Tick **Require status checks to pass before merging** and pick
+   `backend-tests` plus `web-build` from the list (they only appear
+   after their first successful run).
+4. Optional: tick **Require branches to be up to date before merging**
+   if you want a fresh-rebase requirement on top.
+
+Without this, a PR with a red `backend-tests` check is still mergeable
+via the normal GitHub UI — the auto-deploy then ships a known-broken
+build to prod. Pin via this rule once and forget. (Recorded as part of
+TEST-014 / issue #116; the `tests/test_ci_workflow.py` regression test
+asserts the workflow shape but cannot configure repo settings.)
+
 ### Optional: gate deploys behind a human reviewer
 
 The `deploy` job has `environment: production` set. By default this just
