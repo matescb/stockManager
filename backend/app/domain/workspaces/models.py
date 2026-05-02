@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.infra.db import Base
@@ -57,6 +57,17 @@ class WorkspaceInvitation(Base):
     __tablename__ = "workspace_invitations"
     __table_args__ = (
         UniqueConstraint("token_hash", name="uq_workspace_invitation_token_hash"),
+        # Partial unique index: at most one pending invitation per
+        # (workspace, email) pair. Added by migration 0023 (BE2-020 / #65).
+        # The partial condition (status = 'pending') allows a new invite
+        # after the previous one is accepted or revoked.
+        Index(
+            "uq_workspace_invitation_pending",
+            "workspace_id",
+            "email",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
