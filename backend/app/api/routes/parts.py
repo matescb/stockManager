@@ -51,6 +51,7 @@ from app.domain.stock.schemas import AddStockIn, LotInput
 from app.domain.stock.service import (
     StockError,
     add_stock,
+    bulk_current_quantities,
     reserved_quantity,
     stock_summary_for_part,
     total_for_part,
@@ -219,15 +220,16 @@ def list_parts(
         )
         next_cursor = None
 
-    image_urls = _image_urls_for_parts(db, ws.id, [p.id for p in parts])
+    part_ids = [p.id for p in parts]
+    image_urls = _image_urls_for_parts(db, ws.id, part_ids)
+    on_hand_map = bulk_current_quantities(db, workspace_id=ws.id, part_ids=part_ids, status="on_hand")
+    reserved_map = bulk_current_quantities(db, workspace_id=ws.id, part_ids=part_ids, status="reserved")
     items = []
     for p in parts:
-        on_hand = total_for_part(db, workspace_id=ws.id, part_id=p.id)
-        reserved = reserved_quantity(db, workspace_id=ws.id, part_id=p.id)
         items.append(_serialize(
             p,
-            on_hand=on_hand,
-            reserved=reserved,
+            on_hand=on_hand_map.get(p.id, 0),
+            reserved=reserved_map.get(p.id, 0),
             image_url=image_urls.get(p.id),
         ))
     if use_paged:
