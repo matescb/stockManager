@@ -12,6 +12,7 @@ class ProjectCreateIn(BaseModel):
     name: str = Field(min_length=1, max_length=300)
     description: str | None = None
     notes_markdown: str | None = None
+    associated_subassembly_part_id: UUID | None = None
 
 
 class ProjectPatchIn(BaseModel):
@@ -20,6 +21,7 @@ class ProjectPatchIn(BaseModel):
     name: str | None = None
     description: str | None = None
     notes_markdown: str | None = None
+    associated_subassembly_part_id: UUID | None = None
 
 
 class ProjectOut(BaseModel):
