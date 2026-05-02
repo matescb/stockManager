@@ -89,6 +89,14 @@ jobs:
             exit 1
           fi
 
+      - name: alembic single-head check
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://stockmgr:stockmgr@localhost:5432/stockmgr_test
+        run: |
+          test "$(python -m alembic heads --resolve-dependencies 2>/dev/null | wc -l)" -eq 1 || \
+            { echo "Multiple Alembic heads — two PRs claim the same down_revision. Rebase and renumber."; exit 1; }
+
       - name: pytest
         working-directory: backend
         env:
