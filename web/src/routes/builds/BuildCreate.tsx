@@ -56,7 +56,7 @@ export default function BuildCreate() {
         </div>
         <div>
           <label className="label" htmlFor="build-create-qty">Quantity *</label>
-          <input id="build-create-qty" className="input" type="number" min={1} required value={qty} onChange={e => setQty(Number(e.target.value))} />
+          <input id="build-create-qty" className="input" type="number" min={1} step={1} required value={qty} onChange={e => setQty(Number(e.target.value))} />
         </div>
       </div>
       <div>

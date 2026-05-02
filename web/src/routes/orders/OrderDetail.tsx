@@ -235,7 +235,7 @@ export default function OrderDetail() {
             </div>
             <div>
               <label className="label" htmlFor="order-entry-qty">Qty</label>
-              <input id="order-entry-qty" className="input" type="number" min={1} value={newQty} onChange={e => setNewQty(Number(e.target.value))} />
+              <input id="order-entry-qty" className="input" type="number" min={1} step={1} value={newQty} onChange={e => setNewQty(Number(e.target.value))} />
             </div>
             <div>
               <label className="label" htmlFor="order-entry-price">Unit price</label>
@@ -315,6 +315,7 @@ export default function OrderDetail() {
                         type="number"
                         min={0}
                         max={outstanding}
+                        step={1}
                         value={cur.qty || ""}
                         onChange={ev => setReceiveLines(s => ({ ...s, [e.id]: { ...cur, qty: Number(ev.target.value) } }))}
                       />
