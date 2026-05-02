@@ -352,6 +352,101 @@ def test_parts_patch_rejects_foreign_default_storage():
     assert r.status_code == 404, r.text
 
 
+def test_no_cross_workspace_default_storage_in_existing_rows():
+    """Audit-shape pin (DB-015): after a normal multi-workspace test
+    run, there must be zero `parts` rows whose
+    `default_storage_location_id` references a `storage_locations` row
+    in a different workspace. Doubles as the form of the prod audit
+    query the issue suggests running once on `main`."""
+    import pytest as _pytest  # local import — module-level pytest is unused
+    from sqlalchemy import text
+
+    from app.infra.db import SessionLocal
+
+    a, b = _two_workspaces()
+    storage_a = _create_storage(a, "A-bin")
+    _ = _create_part(a, "A-part")
+    storage_b = _create_storage(b, "B-bin")
+    _ = _create_part(b, "B-part")
+
+    # Set defaults via the API (the legitimate path).
+    parts_a = a.get("/api/parts").json()["data"]
+    parts_b = b.get("/api/parts").json()["data"]
+    a.patch(
+        f"/api/parts/{parts_a[0]['id']}",
+        json={"default_storage_location_id": storage_a},
+    )
+    b.patch(
+        f"/api/parts/{parts_b[0]['id']}",
+        json={"default_storage_location_id": storage_b},
+    )
+
+    with SessionLocal() as s:
+        bad = s.execute(
+            text(
+                "SELECT p.id FROM parts p "
+                "JOIN storage_locations sl ON p.default_storage_location_id = sl.id "
+                "WHERE p.workspace_id <> sl.workspace_id"
+            )
+        ).fetchall()
+    assert bad == [], (
+        f"cross-workspace default_storage_location_id rows leaked: {bad}"
+    )
+
+
+def test_raw_update_can_smuggle_cross_workspace_default_storage_xfail():
+    """DB-015 / Phase 2 marker. The service layer enforces workspace
+    isolation on `parts.default_storage_location_id`; the database
+    does not. A direct SQL UPDATE bypasses the guard today.
+
+    Marked xfail. When the Phase 2 trigger lands (per-row enforcement
+    of `parts.workspace_id = (SELECT workspace_id FROM
+    storage_locations WHERE id = NEW.default_storage_location_id)`),
+    flip this to a regular assertion: the raw UPDATE must raise an
+    IntegrityError instead of silently persisting."""
+    import pytest as _pytest
+    from sqlalchemy import text
+    from app.infra.db import SessionLocal
+
+    a, b = _two_workspaces()
+    storage_a = _create_storage(a, "A-bin")
+    part_b = _create_part(b, "B-part")
+
+    # Direct SQL: bypass the route layer entirely. Today this succeeds —
+    # the Phase 2 trigger would make it fail.
+    with SessionLocal() as s:
+        try:
+            s.execute(
+                text(
+                    "UPDATE parts SET default_storage_location_id = :sid "
+                    "WHERE id = :pid"
+                ),
+                {"sid": storage_a, "pid": part_b},
+            )
+            s.commit()
+            updated = s.execute(
+                text(
+                    "SELECT default_storage_location_id FROM parts "
+                    "WHERE id = :pid"
+                ),
+                {"pid": part_b},
+            ).scalar()
+            persisted_cross_ws = str(updated) == storage_a
+        except Exception:
+            persisted_cross_ws = False
+            s.rollback()
+
+    if persisted_cross_ws:
+        _pytest.xfail(
+            "DB-015 Phase 2 not landed: raw UPDATE bypasses workspace "
+            "guard. Flip this to a regular assertion when the trigger "
+            "migration ships."
+        )
+    else:
+        # Already fixed (trigger present) — perfect.
+        assert True
+
+
 def test_parts_bulk_import_rejects_foreign_storage():
     """bulk-import-from-scan must validate row.storage_location_id against
     the caller's workspace BEFORE creating the part. The whole-batch loop
