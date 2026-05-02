@@ -104,9 +104,16 @@ def engine():
     return eng
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def db(engine, monkeypatch):
     """Per-test transactional session with savepoint rollback (TEST-009).
+
+    Autouse so every test gets the savepoint + dependency-override even
+    when it doesn't declare `db` as a parameter — otherwise tests that
+    skip the fixture run their HTTP signups through the real `get_db`
+    against the real engine, and the rows persist across tests
+    (issue #148: `test_session_hashing` saw 255 leftover UserSession
+    rows). Tests that need the session reference still request `db`.
 
     Canonical SQLAlchemy 2.x "Joining a Session into an External
     Transaction" recipe — uses `join_transaction_mode="create_savepoint"`
