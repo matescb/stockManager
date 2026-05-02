@@ -303,6 +303,19 @@ jobs:
             -v "$PWD/deploy/nginx-web.conf:/etc/nginx/conf.d/default.conf:ro" \
             nginx:alpine nginx -t
 
+      # INFRA-005 (issue #46) smoke tests — verify the built images actually
+      # start and have the expected entrypoint files. Catches missing modules
+      # / wrong WORKDIR / broken bundles that pure `build` doesn't surface.
+      - name: Backend image smoke test (import app.main)
+        run: |
+          IMAGE=$(docker buildx build --load -f backend/Dockerfile -q backend/)
+          docker run --rm "$IMAGE" python -c "import app.main"
+
+      - name: Web image smoke test (SPA bundle present)
+        run: |
+          IMAGE=$(docker buildx build --load -f web/Dockerfile.prod -q .)
+          docker run --rm "$IMAGE" test -f /usr/share/nginx/html/index.html
+
   deploy:
     # Only redeploy on green main pushes. PRs and feature branches just run
     # the three test/validate jobs above.
