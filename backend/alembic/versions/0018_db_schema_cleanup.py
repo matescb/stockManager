@@ -3,8 +3,16 @@ on soft-delete tables, composite (workspace_id, archived_at) indexes,
 pg_trgm GIN indexes for ILIKE search.
 
 Revision ID: 0018
-Revises: 0017
+Revises: 0016
 Create Date: 2026-05-02
+
+NOTE on chain: this migration is numbered 0018 to leave room for
+PR #31 (Batch 1 — auth/CSRF) which reserves 0017 for session-token
+hashing. While both PRs are open in parallel, this file's
+`down_revision` points directly at 0016 so the chain is valid on this
+branch standalone. **Before merging, rebase onto main and update
+`down_revision = "0017"`** if PR #31 has already landed; otherwise
+alembic will fork on 0016.
 
 Closes:
   * DB-001 / BE2-002 / v1 BE CRIT-4 — `stock_entries.order_id`,
@@ -46,7 +54,7 @@ import sqlalchemy as sa
 
 
 revision = "0018"
-down_revision = "0017"
+down_revision = "0016"
 branch_labels = None
 depends_on = None
 
