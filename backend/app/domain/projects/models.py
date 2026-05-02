@@ -10,6 +10,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -22,6 +23,13 @@ class Project(WorkspaceOwned, Base):
     __table_args__ = (
         Index("ix_projects_ws_name", "workspace_id", "name"),
         Index("ix_projects_ws_archived", "workspace_id", "archived_at"),
+        # pg_trgm GIN index for ILIKE %q% search (alembic 0018, BE2-018).
+        Index(
+            "ix_projects_ws_name_trgm",
+            "name",
+            postgresql_using="gin",
+            postgresql_ops={"name": "gin_trgm_ops"},
+        ),
     )
 
     name = Column(String(300), nullable=False)
@@ -44,6 +52,14 @@ class ProjectEntry(WorkspaceOwned, Base):
     __table_args__ = (
         Index("ix_project_entries_proj", "workspace_id", "project_id"),
         Index("ix_project_entries_part", "workspace_id", "part_id"),
+        # (workspace_id, archived_at) partial composite added in
+        # alembic 0018 (DB-004) for the universal active-row filter.
+        Index(
+            "ix_project_entries_ws_archived",
+            "workspace_id",
+            "archived_at",
+            postgresql_where=text("archived_at IS NULL"),
+        ),
     )
 
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
@@ -62,6 +78,16 @@ class ProjectEntry(WorkspaceOwned, Base):
 
 class BomImportPreset(WorkspaceOwned, Base):
     __tablename__ = "bom_import_presets"
+    __table_args__ = (
+        # (workspace_id, archived_at) partial composite added in
+        # alembic 0018 (DB-004) for the universal active-row filter.
+        Index(
+            "ix_bom_import_presets_ws_archived",
+            "workspace_id",
+            "archived_at",
+            postgresql_where=text("archived_at IS NULL"),
+        ),
+    )
 
     name = Column(String(200), nullable=False)
     config_json = Column(Text, nullable=False)

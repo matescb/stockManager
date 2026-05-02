@@ -21,6 +21,13 @@ class Order(WorkspaceOwned, Base):
     __table_args__ = (
         Index("ix_orders_ws_status", "workspace_id", "status"),
         Index("ix_orders_ws_archived", "workspace_id", "archived_at"),
+        # pg_trgm GIN index for ILIKE %q% search (alembic 0018, BE2-018).
+        Index(
+            "ix_orders_ws_name_trgm",
+            "name",
+            postgresql_using="gin",
+            postgresql_ops={"name": "gin_trgm_ops"},
+        ),
     )
 
     name = Column(String(200), nullable=False)

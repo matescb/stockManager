@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Column, Index, String, UniqueConstraint
+from sqlalchemy import Column, Index, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.domain._mixins import WorkspaceOwned
@@ -12,6 +12,14 @@ class CustomField(WorkspaceOwned, Base):
     __table_args__ = (
         UniqueConstraint("workspace_id", "object_type", "object_id", "key", name="uq_cf_unique"),
         Index("ix_cf_object", "workspace_id", "object_type", "object_id"),
+        # (workspace_id, archived_at) partial composite added in
+        # alembic 0018 (DB-004) for the universal active-row filter.
+        Index(
+            "ix_custom_fields_ws_archived",
+            "workspace_id",
+            "archived_at",
+            postgresql_where=text("archived_at IS NULL"),
+        ),
     )
 
     object_type = Column(String(40), nullable=False)
