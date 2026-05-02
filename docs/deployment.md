@@ -12,8 +12,9 @@ document covers:
 - [Operations](#operations) — logs, psql, alembic, env changes, rollback.
 - [Backups](#backups).
 
-The dev compose (`docker-compose.yml`) is unsuitable for production: it ships
-uvicorn `--reload`, the Vite dev server, and a placeholder session secret.
+The dev compose (`docker-compose.dev.yml`) is unsuitable for production: it ships
+uvicorn `--reload`, the Vite dev server, and will refuse to start without a
+`SESSION_SECRET` set in the environment (no insecure default).
 
 ## Day-to-day flow
 
@@ -395,6 +396,11 @@ Note that **alembic migrations don't auto-roll-back**. If the bad commit
 included a destructive migration, restore from a `pg_dump` taken before the
 deploy (see [Backups](#backups)). Treat any irreversible migration as a
 release-management decision: take a dump first, ship in business hours.
+
+Always use `docker compose -f docker-compose.prod.yml` explicitly on the VPS —
+the repo no longer has a bare `docker-compose.yml` default, so muscle-memory
+`docker compose up -d` without a `-f` flag will error rather than silently
+start the dev stack.
 
 ### Apache vhost edits
 
