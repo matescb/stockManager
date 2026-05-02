@@ -146,6 +146,22 @@ describe("DataTable (DOM)", () => {
     expect(onRowClick).not.toHaveBeenCalled();
   });
 
+  it("respects initialSearch prop on first render", () => {
+    render(
+      <DataTable<Row>
+        rows={ROWS}
+        columns={COLUMNS}
+        rowKey={(r) => r.id}
+        initialSearch="ban"
+      />,
+    );
+    const input = screen.getByRole<HTMLInputElement>("textbox");
+    expect(input.value).toBe("ban");
+    expect(screen.getByText("Banana")).toBeDefined();
+    expect(screen.queryByText("Apple")).toBeNull();
+    expect(screen.queryByText("Cherry")).toBeNull();
+  });
+
   it("multi-select preserves selection set across a row refetch (FE2-007)", () => {
     const { rerender } = render(
       <DataTable<Row>
