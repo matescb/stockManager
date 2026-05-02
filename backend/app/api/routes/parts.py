@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import or_, select
 
 from app.api._helpers import assert_in_workspace, require_resource_access
-from app.api.routes._activity import build_activity
+from app.api.routes._activity import _DEFAULT_LIMIT, _MAX_LIMIT, build_activity
 from app.api.routes._parts_shared import (
     get_part as _get_part,
     image_urls_for_parts as _image_urls_for_parts,
@@ -542,19 +542,50 @@ def del_member(meta_id: UUID, member_id: UUID, db: DbSession, ws: CurrentWorkspa
 
 
 @router.get("/{part_id}/activity")
-def part_activity(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
+def part_activity(
+    request: Request,
+    part_id: UUID,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    limit: int = Query(default=_DEFAULT_LIMIT, ge=1, le=_MAX_LIMIT),
+    before_occurred_at: str | None = Query(default=None),
+    before_id: UUID | None = Query(default=None),
+):
     # Read endpoint — let archived parts surface their history too.
     p = _get_part(db, ws.id, part_id, include_archived=True)
-    stock_rows = list(
-        db.execute(
-            select(StockEntry)
-            .where(StockEntry.workspace_id == ws.id)
-            .where(StockEntry.part_id == p.id)
-            .order_by(StockEntry.occurred_at.desc())
-            .limit(200)
-        ).scalars()
+
+    # Parse cursor
+    cursor_at: datetime | None = None
+    if before_occurred_at is not None:
+        try:
+            cursor_at = datetime.fromisoformat(before_occurred_at)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="invalid before_occurred_at")
+
+    stmt = (
+        select(StockEntry)
+        .where(StockEntry.workspace_id == ws.id)
+        .where(StockEntry.part_id == p.id)
     )
-    events = build_activity(
+    if cursor_at is not None and before_id is not None:
+        from sqlalchemy import or_, and_, tuple_
+        stmt = stmt.where(
+            or_(
+                StockEntry.occurred_at < cursor_at,
+                and_(
+                    StockEntry.occurred_at == cursor_at,
+                    StockEntry.id < before_id,
+                ),
+            )
+        )
+    stmt = stmt.order_by(StockEntry.occurred_at.desc(), StockEntry.id.desc()).limit(limit + 1)
+    stock_rows = list(db.execute(stmt).scalars())
+
+    # Per-request user cache stashed on request.state so it's isolated per request.
+    if not hasattr(request.state, "user_cache"):
+        request.state.user_cache = {}
+
+    result = build_activity(
         db,
         stock_rows=stock_rows,
         created_at=p.created_at,
@@ -563,8 +594,11 @@ def part_activity(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
         updated_by=p.updated_by,
         created_kind="part_created",
         updated_kind="part_updated",
+        limit=limit,
+        include_synthetic=(cursor_at is None),
+        user_cache=request.state.user_cache,
     )
-    return ok(events)
+    return ok(result)
 
 
 # Reserved keys that surface elsewhere on PartInfo (Media card). These
