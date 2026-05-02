@@ -3,7 +3,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
-import { wsKey } from "@/lib/queryKeys";
+import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
+import { useAuth } from "@/lib/auth";
 import { useConfirm, usePrompt } from "@/components/ConfirmDialog";
 
 type Preset = {
@@ -78,6 +79,7 @@ export default function ProjectImport() {
   const { projectId } = useParams<{ projectId: string }>();
   const nav = useNavigate();
   const qc = useQueryClient();
+  const { workspaceId } = useAuth();
   const [step, setStep] = useState<"upload" | "mapping" | "done">("upload");
   const [b64, setB64] = useState("");
   const [separator, setSeparator] = useState<string>(",");
@@ -90,7 +92,7 @@ export default function ProjectImport() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ inserted: number; matched: number; unmatched: number } | null>(null);
   const { data: presets, refetch: refetchPresets } = useQuery({
-    queryKey: wsKey("bom-presets"),
+    queryKey: useWsKey("bom-presets"),
     queryFn: () => api.get<Preset[]>("/bom-presets"),
   });
 
@@ -183,7 +185,7 @@ export default function ProjectImport() {
         designator_separator: designatorSep,
       });
       setResult(res);
-      qc.invalidateQueries({ queryKey: wsKey("project", projectId, "entries") });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "project", projectId, "entries") });
       setStep("done");
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Import failed");

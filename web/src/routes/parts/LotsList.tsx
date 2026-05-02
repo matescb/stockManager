@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { Package } from "lucide-react";
 import { api } from "@/lib/api";
-import { wsKey } from "@/lib/queryKeys";
+import { useWsKey } from "@/lib/queryKeys";
 import type { Lot, Part } from "@/types";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
@@ -10,9 +10,9 @@ import PartsTopNav from "@/components/PartsTopNav";
 import QueryStateBoundary from "@/components/QueryStateBoundary";
 
 export default function LotsList() {
-  const query = useQuery({ queryKey: wsKey("lots"), queryFn: () => api.get<Lot[]>("/lots") });
+  const query = useQuery({ queryKey: useWsKey("lots"), queryFn: () => api.get<Lot[]>("/lots") });
   const { data } = query;
-  const { data: parts } = useQuery({ queryKey: wsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
+  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
   const partName = new Map(parts?.map(p => [p.id, p.name]) ?? []);
   const nav = useNavigate();
 

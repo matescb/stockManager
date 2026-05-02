@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { BarChart3, ShoppingCart } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { wsKey, wsKeyOf } from "@/lib/queryKeys";
+import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import type { Order, Project } from "@/types";
@@ -144,15 +144,15 @@ function KpiCard({
 
 function KpiStrip() {
   const { data: lowStock } = useQuery({
-    queryKey: wsKey("report", "low-stock"),
+    queryKey: useWsKey("report", "low-stock"),
     queryFn: () => api.get<LowStockRow[]>("/reports/low-stock"),
   });
   const { data: stockValue } = useQuery({
-    queryKey: wsKey("report", "stock-value"),
+    queryKey: useWsKey("report", "stock-value"),
     queryFn: () => api.get<StockValue>("/reports/stock-value"),
   });
   const { data: expiring } = useQuery({
-    queryKey: wsKey("report", "expiring", 30),
+    queryKey: useWsKey("report", "expiring", 30),
     queryFn: () => api.get<Expiring>("/reports/expiring-lots?days=30"),
   });
 
@@ -202,7 +202,7 @@ export function LowStockReport() {
   const { workspaceId } = useAuth();
   const [busy, setBusy] = useState(false);
   const { data, isLoading } = useQuery({
-    queryKey: wsKey("report", "low-stock"),
+    queryKey: useWsKey("report", "low-stock"),
     queryFn: () => api.get<LowStockRow[]>("/reports/low-stock"),
   });
   if (isLoading) return <div className="text-muted">Loading…</div>;
@@ -270,7 +270,7 @@ export function LowStockReport() {
 
 export function StockValueReport() {
   const { data, isLoading } = useQuery({
-    queryKey: wsKey("report", "stock-value"),
+    queryKey: useWsKey("report", "stock-value"),
     queryFn: () => api.get<StockValue>("/reports/stock-value"),
   });
   if (isLoading) return <div className="text-muted">Loading…</div>;
@@ -318,12 +318,12 @@ export function BomShortageReport() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
-  const { data: projects } = useQuery({ queryKey: wsKey("projects"), queryFn: () => api.get<Project[]>("/projects") });
+  const { data: projects } = useQuery({ queryKey: useWsKey("projects"), queryFn: () => api.get<Project[]>("/projects") });
   const [projectId, setProjectId] = useState("");
   const [qty, setQty] = useState(1);
   const [busy, setBusy] = useState(false);
   const { data } = useQuery({
-    queryKey: wsKey("report", "bom", projectId, qty),
+    queryKey: useWsKey("report", "bom", projectId, qty),
     queryFn: () => api.get<Shortage>(`/reports/bom-shortage?project_id=${projectId}&quantity=${qty}`),
     enabled: !!projectId && qty > 0,
   });
@@ -407,7 +407,7 @@ export function BomShortageReport() {
 export function ExpiringLotsReport() {
   const [days, setDays] = useState(90);
   const { data } = useQuery({
-    queryKey: wsKey("report", "expiring", days),
+    queryKey: useWsKey("report", "expiring", days),
     queryFn: () => api.get<Expiring>(`/reports/expiring-lots?days=${days}`),
   });
   return (

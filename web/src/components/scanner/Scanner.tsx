@@ -1,7 +1,7 @@
 import { lazy, Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { wsKey } from "@/lib/queryKeys";
+import { useWsKey } from "@/lib/queryKeys";
 
 type WsScanner = {
   scanner: "zxing" | "scandit";
@@ -41,7 +41,7 @@ export default function Scanner({ onScan, className, symbologies }: Props) {
   // Same query key as Settings → Workspace, so the cache is shared across
   // scanner mounts and the settings page.
   const { data: ws, isLoading } = useQuery({
-    queryKey: wsKey("ws", "current"),
+    queryKey: useWsKey("ws", "current"),
     queryFn: () => api.get<WsScanner>("/workspaces/current"),
   });
 
@@ -108,7 +108,7 @@ function ScanditScannerWithKey({
   symbologies?: ReadonlyArray<LicensedSymbology>;
 }) {
   const { data, isLoading, error } = useQuery({
-    queryKey: wsKey("ws", "scanner", "license-key"),
+    queryKey: useWsKey("ws", "scanner", "license-key"),
     queryFn: () => api.get<{ license_key: string }>("/workspaces/current/scanner-license-key"),
   });
   if (isLoading) return <div className={className}>Fetching license…</div>;

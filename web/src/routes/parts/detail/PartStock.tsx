@@ -1,7 +1,7 @@
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { wsKey } from "@/lib/queryKeys";
+import { useWsKey } from "@/lib/queryKeys";
 import type { StorageLocation } from "@/types";
 
 type StockResp = {
@@ -12,10 +12,10 @@ type StockResp = {
 export default function PartStock() {
   const { partId } = useParams();
   const { data } = useQuery({
-    queryKey: wsKey("part", partId, "stock"),
+    queryKey: useWsKey("part", partId, "stock"),
     queryFn: () => api.get<StockResp>(`/parts/${partId}/stock`),
   });
-  const { data: storage } = useQuery({ queryKey: wsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
   const storageById = new Map(storage?.map(s => [s.id, s.name]) ?? []);
 
   if (!data) return <div className="text-muted">Loading…</div>;

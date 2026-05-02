@@ -5,7 +5,8 @@ import { toast } from "sonner";
 import { ExternalLink, RefreshCw } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { isCatalogKey } from "@/lib/providerCatalog";
-import { wsKey } from "@/lib/queryKeys";
+import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
+import { useAuth } from "@/lib/auth";
 import type { CustomFieldRow, Part } from "@/types";
 
 const PROVIDER_LABEL: Record<string, string> = {
@@ -31,10 +32,11 @@ const PROVIDER_SEARCH_URL: Record<string, (mpn: string) => string> = {
 export default function PartSourcing() {
   const { part } = useOutletContext<{ part: Part }>();
   const qc = useQueryClient();
+  const { workspaceId } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
 
   const { data, isLoading } = useQuery({
-    queryKey: wsKey("part", part.id, "custom-fields"),
+    queryKey: useWsKey("part", part.id, "custom-fields"),
     queryFn: () =>
       api.get<CustomFieldRow[]>(`/custom-fields/by-object/part/${part.id}`),
   });
@@ -45,8 +47,8 @@ export default function PartSourcing() {
     setRefreshing(true);
     try {
       await api.post(`/parts/${part.id}/refresh-from-provider`);
-      qc.invalidateQueries({ queryKey: wsKey("part", part.id, "custom-fields") });
-      qc.invalidateQueries({ queryKey: wsKey("part", part.id) });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", part.id, "custom-fields") });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", part.id) });
       toast.success("Refreshed from provider.");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Refresh failed");

@@ -2,7 +2,7 @@ import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { FolderKanban } from "lucide-react";
 import { api } from "@/lib/api";
-import { wsKey } from "@/lib/queryKeys";
+import { useWsKey } from "@/lib/queryKeys";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import QueryStateBoundary from "@/components/QueryStateBoundary";
@@ -11,7 +11,7 @@ import type { Project } from "@/types";
 export default function ProjectsList({ archived = false }: { archived?: boolean }) {
   const nav = useNavigate();
   const query = useQuery({
-    queryKey: wsKey("projects", { archived }),
+    queryKey: useWsKey("projects", { archived }),
     queryFn: () => api.get<Project[]>(`/projects${archived ? "?archived=true" : ""}`),
   });
   const { data } = query;

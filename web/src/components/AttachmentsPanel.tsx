@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Trash2, Download, UploadCloud, Paperclip } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
-import { wsKey } from "@/lib/queryKeys";
+import { useWsKey } from "@/lib/queryKeys";
 import { useConfirm } from "@/components/ConfirmDialog";
 
 type Attachment = {
@@ -33,7 +33,7 @@ function humanSize(bytes: number): string {
 export default function AttachmentsPanel({ objectType, objectId, canWrite }: Props) {
   const confirm = useConfirm();
   const qc = useQueryClient();
-  const queryKey = wsKey("attachments", objectType, objectId);
+  const queryKey = useWsKey("attachments", objectType, objectId);
   const { data, isLoading } = useQuery({
     queryKey,
     queryFn: () =>

@@ -2,7 +2,7 @@ import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Hammer } from "lucide-react";
 import { api } from "@/lib/api";
-import { wsKey } from "@/lib/queryKeys";
+import { useWsKey } from "@/lib/queryKeys";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import QueryStateBoundary from "@/components/QueryStateBoundary";
@@ -18,12 +18,12 @@ const STATUS_BADGES: Record<Build["status"], string> = {
 export default function BuildsList({ archived = false }: { archived?: boolean }) {
   const nav = useNavigate();
   const query = useQuery({
-    queryKey: wsKey("builds", { archived }),
+    queryKey: useWsKey("builds", { archived }),
     queryFn: () => api.get<Build[]>(`/builds${archived ? "?archived=true" : ""}`),
   });
   const { data } = query;
   const { data: projects } = useQuery({
-    queryKey: wsKey("projects"),
+    queryKey: useWsKey("projects"),
     queryFn: () => api.get<Project[]>("/projects"),
   });
   const projectsById = new Map(projects?.map(p => [p.id, p]) ?? []);

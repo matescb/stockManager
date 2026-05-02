@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
-import { wsKey } from "@/lib/queryKeys";
+import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
+import { useAuth } from "@/lib/auth";
 import type { StorageLocation } from "@/types";
 
 type StockRow = {
@@ -23,16 +24,17 @@ export default function PartRemoveStock() {
   const { partId } = useParams<{ partId: string }>();
   const nav = useNavigate();
   const qc = useQueryClient();
+  const { workspaceId } = useAuth();
   const { data: storage } = useQuery({
-    queryKey: wsKey("storage"),
+    queryKey: useWsKey("storage"),
     queryFn: () => api.get<StorageLocation[]>("/storage"),
   });
   const { data: stock } = useQuery({
-    queryKey: wsKey("part", partId, "stock"),
+    queryKey: useWsKey("part", partId, "stock"),
     queryFn: () => api.get<StockResp>(`/parts/${partId}/stock`),
   });
   const { data: lots } = useQuery({
-    queryKey: wsKey("part", partId, "lots"),
+    queryKey: useWsKey("part", partId, "lots"),
     queryFn: () => api.get<Lot[]>(`/parts/${partId}/lots`),
   });
 
@@ -92,8 +94,8 @@ export default function PartRemoveStock() {
       if (selected.storage_location_id) payload.storage_location_id = selected.storage_location_id;
       if (selected.lot_id) payload.lot_id = selected.lot_id;
       await api.post("/stock/remove", payload);
-      qc.invalidateQueries({ queryKey: wsKey("part", partId) });
-      qc.invalidateQueries({ queryKey: wsKey("part", partId, "stock") });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId) });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId, "stock") });
       nav(`/parts/${partId}/stock`);
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Failed");

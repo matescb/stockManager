@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
-import { wsKey } from "@/lib/queryKeys";
+import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
+import { useAuth } from "@/lib/auth";
 import type { Part } from "@/types";
 
 type Member = { id: string; member_part_id: string };
@@ -10,11 +11,12 @@ type Member = { id: string; member_part_id: string };
 export default function PartMembers() {
   const { partId } = useParams();
   const qc = useQueryClient();
+  const { workspaceId } = useAuth();
   const { data: members } = useQuery({
-    queryKey: wsKey("part", partId, "members"),
+    queryKey: useWsKey("part", partId, "members"),
     queryFn: () => api.get<Member[]>(`/parts/${partId}/members`),
   });
-  const { data: parts } = useQuery({ queryKey: wsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
+  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
   const partsById = new Map(parts?.map(p => [p.id, p]) ?? []);
 
   const [pick, setPick] = useState("");
@@ -26,14 +28,14 @@ export default function PartMembers() {
     try {
       await api.post(`/parts/${partId}/members`, { member_part_id: pick });
       setPick("");
-      qc.invalidateQueries({ queryKey: wsKey("part", partId, "members") });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId, "members") });
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Failed");
     }
   }
   async function remove(mid: string) {
     await api.delete(`/parts/${partId}/members/${mid}`);
-    qc.invalidateQueries({ queryKey: wsKey("part", partId, "members") });
+    qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId, "members") });
   }
 
   return (

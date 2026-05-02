@@ -3,15 +3,15 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { wsKey, wsScope } from "@/lib/queryKeys";
+import { useWsKey, wsScope } from "@/lib/queryKeys";
 import EntityHeader from "@/components/EntityHeader";
 import SubNav from "@/components/SubNav";
 import type { Lot, Part, StockEntry, StorageLocation } from "@/types";
 
 export function LotLayout() {
   const { lotId } = useParams<{ lotId: string }>();
-  const { data } = useQuery({ queryKey: wsKey("lot", lotId), queryFn: () => api.get<Lot>(`/lots/${lotId}`), enabled: !!lotId });
-  const { data: parts } = useQuery({ queryKey: wsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
+  const { data } = useQuery({ queryKey: useWsKey("lot", lotId), queryFn: () => api.get<Lot>(`/lots/${lotId}`), enabled: !!lotId });
+  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
   if (!data) return <div className="text-muted">Loading…</div>;
   const part = parts?.find(p => p.id === data.part_id);
   const items = [
@@ -35,7 +35,7 @@ export function LotLayout() {
 
 export function LotInfo() {
   const { lotId } = useParams();
-  const { data } = useQuery({ queryKey: wsKey("lot", lotId), queryFn: () => api.get<Lot>(`/lots/${lotId}`), enabled: !!lotId });
+  const { data } = useQuery({ queryKey: useWsKey("lot", lotId), queryFn: () => api.get<Lot>(`/lots/${lotId}`), enabled: !!lotId });
   if (!data) return null;
   return (
     <div className="card p-4 max-w-2xl space-y-2 text-sm">
@@ -55,7 +55,7 @@ export function LotMove() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
-  const { data: storage } = useQuery({ queryKey: wsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
   const [dest, setDest] = useState("");
   const [qty, setQty] = useState<number>(0);
   const [split, setSplit] = useState(false);
@@ -120,7 +120,7 @@ export function LotAdjust() {
 
 export function LotHistory() {
   const { lotId } = useParams();
-  const { data } = useQuery({ queryKey: wsKey("lot", lotId, "history"), queryFn: () => api.get<StockEntry[]>(`/lots/${lotId}/history`) });
+  const { data } = useQuery({ queryKey: useWsKey("lot", lotId, "history"), queryFn: () => api.get<StockEntry[]>(`/lots/${lotId}/history`) });
   return (
     <div className="card overflow-hidden">
       <table className="table">

@@ -12,8 +12,11 @@
  *
  *  1. Every query key is now prefixed with `["ws", <workspaceId>, …]`,
  *     so TanStack treats two different workspaces as distinct caches.
- *     Callers build keys with `wsKey("parts", ...)` instead of
- *     `["parts", ...]`.
+ *     Callers build keys inside render with `useWsKey("parts", ...)`
+ *     instead of `["parts", ...]`. Outside render (event handlers,
+ *     mutation `onSuccess`, etc.) use `wsKeyOf(workspaceId, ...)` —
+ *     `useWsKey` is a hook (it reads `useAuth()`), so calling it from
+ *     a click handler crashes with "Invalid hook call".
  *
  *  2. On workspace switch we still call `qc.clear()` to free the old
  *     cache (no point keeping it around), but the prefix means even
@@ -31,11 +34,14 @@ import { useAuth } from "./auth";
 
 /**
  * Build a query key scoped to the active workspace. Reads `workspaceId`
- * from `useAuth()` so it must be called inside a render. The prefix is
- * `["ws", <id-or-"none">]`; null / undefined collapse to "none" so SSR
- * or pre-bootstrap renders don't collide with real workspace caches.
+ * from `useAuth()` so it MUST be called inside a function component
+ * render body (it's a hook). The prefix is `["ws", <id-or-"none">]`;
+ * null / undefined collapse to "none" so SSR or pre-bootstrap renders
+ * don't collide with real workspace caches. The `use` prefix makes the
+ * hook nature loud — for event handlers and mutation callbacks use
+ * `wsKeyOf(workspaceId, ...)` instead.
  */
-export function wsKey(...rest: unknown[]): unknown[] {
+export function useWsKey(...rest: unknown[]): unknown[] {
   const { workspaceId } = useAuth();
   return ["ws", workspaceId ?? "none", ...rest];
 }

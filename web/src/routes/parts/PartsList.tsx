@@ -5,7 +5,8 @@ import { toast } from "sonner";
 import { Boxes, ImageOff, Trash2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { PartsListSchema } from "@/lib/schemas";
-import { wsKey } from "@/lib/queryKeys";
+import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
+import { useAuth } from "@/lib/auth";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import PartsTopNav from "@/components/PartsTopNav";
@@ -16,7 +17,8 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
   const nav = useNavigate();
   const qc = useQueryClient();
   const confirm = useConfirm();
-  const partsKey = wsKey("parts", { archived });
+  const { workspaceId } = useAuth();
+  const partsKey = useWsKey("parts", { archived });
   const [busy, setBusy] = useState(false);
   const query = useQuery({
     queryKey: partsKey,
@@ -51,7 +53,7 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
         "/parts/bulk-delete",
         { part_ids: ids },
       );
-      qc.invalidateQueries({ queryKey: wsKey("parts") });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
       clear();
       toast.success(
         res.archived_ids.length === ids.length

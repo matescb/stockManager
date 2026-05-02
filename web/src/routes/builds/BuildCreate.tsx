@@ -2,14 +2,14 @@ import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
-import { wsKey } from "@/lib/queryKeys";
+import { useWsKey } from "@/lib/queryKeys";
 import type { Build, Project } from "@/types";
 
 export default function BuildCreate() {
   const nav = useNavigate();
   const [params] = useSearchParams();
   const { data: projects } = useQuery({
-    queryKey: wsKey("projects"),
+    queryKey: useWsKey("projects"),
     queryFn: () => api.get<Project[]>("/projects"),
   });
   const [name, setName] = useState("");
