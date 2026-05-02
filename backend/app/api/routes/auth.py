@@ -19,7 +19,7 @@ from app.core.deps import CurrentUser, DbSession
 from app.core.errors import ErrorCodes, raise_http
 from app.core.logging import get_logger
 from app.core.ratelimit import limiter
-from app.core.responses import ok
+from app.core.responses import Envelope, ok
 from app.domain.users.models import User
 from app.domain.workspaces.models import Workspace, WorkspaceMember
 
@@ -63,7 +63,9 @@ def _set_session_cookie(response: Response, token: str) -> None:
 # spam / reputation signal than a forgotten password.
 @router.post("/signup")
 @limiter.limit("5/hour")
-def signup(request: Request, payload: SignupIn, response: Response, db: DbSession):
+def signup(
+    request: Request, payload: SignupIn, response: Response, db: DbSession
+) -> Envelope[dict]:
     try:
         validate_password_strength(payload.password)
     except WeakPasswordError as exc:
@@ -102,7 +104,9 @@ def signup(request: Request, payload: SignupIn, response: Response, db: DbSessio
 # their password, far short of viable for online password stuffing.
 @router.post("/login")
 @limiter.limit("10/minute")
-def login(request: Request, payload: LoginIn, response: Response, db: DbSession):
+def login(
+    request: Request, payload: LoginIn, response: Response, db: DbSession
+) -> Envelope[dict]:
     user = db.query(User).filter(User.email == payload.email).first()
     if not user or not verify_password(user.password_hash, payload.password):
         # Log failures (without the password). Useful for spotting
@@ -127,7 +131,7 @@ def login(request: Request, payload: LoginIn, response: Response, db: DbSession)
 
 
 @router.post("/logout")
-def logout(request: Request, response: Response, db: DbSession):
+def logout(request: Request, response: Response, db: DbSession) -> Envelope[None]:
     cookie_name = settings().SESSION_COOKIE_NAME
     token = request.cookies.get(cookie_name)
     if token:
@@ -138,7 +142,7 @@ def logout(request: Request, response: Response, db: DbSession):
 
 
 @router.get("/me")
-def me(user: CurrentUser, db: DbSession):
+def me(user: CurrentUser, db: DbSession) -> Envelope[dict]:
     memberships = (
         db.query(WorkspaceMember)
         .filter(WorkspaceMember.user_id == user.id, WorkspaceMember.status == "active")

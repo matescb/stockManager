@@ -158,6 +158,14 @@ The frontend's `lib/api.ts` unwraps `data` automatically and throws
 `add_exception_handler` calls in `main.py` translate FastAPI's
 `HTTPException` and Pydantic `ValidationError` into them.
 
+`responses.ok()` is generic over the payload type — annotate a route's
+return as `Envelope[PartOut]` (or `Envelope[list[PartOut]]`,
+`Envelope[None]`, …) to propagate the inner shape through static type
+checking. The runtime payload is still a plain dict; the `Envelope[T]`
+type alias is a `TypedDict[Generic[T]]` so error paths can spread
+extra keys (e.g. `existing_id` on a 409) onto the top level without
+tripping any schema strictness. CQ-007 (#123).
+
 ## Domain decomposition
 
 | Domain | Tables | Service / endpoints |
