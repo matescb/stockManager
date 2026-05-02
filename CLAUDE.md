@@ -175,6 +175,10 @@ them, that's the bug.
   without the token produce no `.map` files, so the Docker build cache is
   clean. The `find -name '*.map' -delete` in `web/Dockerfile.prod` remains
   as belt-and-braces for edge-case local builds.
+- **"Step 1 of N" PRs must not close the parent issue.** Using `Closes #N`
+  on a partial PR auto-closes the issue the moment the PR merges, leaving the
+  remaining steps with no tracking. Use `Refs #N` instead, or file a follow-up
+  issue and link it. Full rule in `CONTRIBUTING.md` (multi-step issues rule).
 
 ## Frontend conventions worth preserving
 
