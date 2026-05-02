@@ -14,7 +14,14 @@ type Ws = {
   lot_control_enabled: boolean;
   serial_tracking_enabled: boolean;
   catalog_enabled: boolean;
-  catalog_url: string | null;
+  /** True when a catalog token has been generated (hash is stored). */
+  catalog_token_set: boolean;
+  /**
+   * Returned exactly once when a token is freshly minted or regenerated.
+   * The frontend must present a copy-once modal; subsequent GET responses
+   * will NOT include this field (SEC2-008).
+   */
+  catalog_token_plaintext?: string;
   parts_provider: "none" | "mouser" | "digikey";
   has_parts_provider_api_key: boolean;
   has_parts_provider_api_secret: boolean;
@@ -62,6 +69,14 @@ export default function WorkspaceSettings() {
   const [scannerLicense, setScannerLicense] = useState("");
   const [scannerBusy, setScannerBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  /**
+   * SEC2-008 copy-once token: when the backend returns catalog_token_plaintext
+   * (freshly minted or regenerated token) we stash it here and render a
+   * copy-once banner.  The field is cleared once the user copies it or
+   * dismisses the banner.  After that the token is gone — regenerate to get
+   * a new one.
+   */
+  const [pendingToken, setPendingToken] = useState<string | null>(null);
 
   async function createWs() {
     if (!newName.trim()) return;
@@ -78,10 +93,17 @@ export default function WorkspaceSettings() {
     }
   }
 
-  async function patch(body: Partial<Ws> & { regenerate_catalog_token?: boolean }) {
+  async function patch(body: Partial<Omit<Ws, "catalog_token_set" | "catalog_token_plaintext">> & { regenerate_catalog_token?: boolean }) {
     setErr(null);
     try {
-      await api.patch("/workspaces/current", body);
+      const result = await api.patch<Ws>("/workspaces/current", body);
+      // SEC2-008: if the server returned a freshly minted/rotated token,
+      // surface it once in the copy-once UI before invalidating the cache
+      // (the invalidation re-fetches and the new response won't carry the
+      // plaintext).
+      if (result?.catalog_token_plaintext) {
+        setPendingToken(result.catalog_token_plaintext);
+      }
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "ws", "current") });
       toast.success("Workspace settings saved.");
     } catch (e) {
@@ -91,11 +113,10 @@ export default function WorkspaceSettings() {
     }
   }
 
-  async function copyCatalogUrl(url: string) {
-    const full = `${window.location.origin}${url}`;
+  async function copyToClipboard(text: string) {
     try {
-      await navigator.clipboard.writeText(full);
-      toast.success("Catalog URL copied to clipboard.");
+      await navigator.clipboard.writeText(text);
+      toast.success("Copied to clipboard.");
     } catch {
       toast.error("Could not copy — your browser may not support clipboard access.");
     }
@@ -228,27 +249,58 @@ export default function WorkspaceSettings() {
               Enabled
             </label>
           </div>
-          {cur.catalog_enabled && cur.catalog_url ? (
-            <>
-              <div className="text-xs text-muted">
-                Anyone with this link can browse parts you've marked as <em>published</em>.
-                No login required. Regenerating the token immediately invalidates the old URL.
+          {/* Copy-once banner: shown immediately after token generation/rotation */}
+          {pendingToken && (
+            <div className="rounded border border-warning bg-warning/10 p-3 space-y-2">
+              <div className="text-xs font-semibold text-warning-foreground">
+                Your catalog URL — copy it now. It will not be shown again.
               </div>
               <div className="flex gap-2 items-center">
                 <input
                   className="input flex-1 font-mono text-xs"
                   readOnly
-                  value={`${window.location.origin}${cur.catalog_url}`}
+                  value={`${window.location.origin}/catalog/${pendingToken}`}
                 />
                 <button
                   className="btn-primary"
-                  onClick={() => copyCatalogUrl(cur.catalog_url!)}
                   type="button"
+                  onClick={() => {
+                    copyToClipboard(`${window.location.origin}/catalog/${pendingToken}`);
+                    setPendingToken(null);
+                  }}
                 >
-                  Copy
+                  Copy &amp; dismiss
                 </button>
                 <button
-                  className="btn-ghost"
+                  className="btn"
+                  type="button"
+                  onClick={() => setPendingToken(null)}
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
+          {cur.catalog_enabled ? (
+            <>
+              <div className="text-xs text-muted">
+                Anyone with the catalog link can browse parts you've marked as{" "}
+                <em>published</em>. No login required. The token is never shown
+                after generation — regenerate to rotate it. The old URL stops
+                working immediately on rotation.
+              </div>
+              <div className="flex gap-2 items-center">
+                {cur.catalog_token_set ? (
+                  <span className="text-xs text-muted font-mono">
+                    Token set — copy it from the banner above, or regenerate below.
+                  </span>
+                ) : (
+                  <span className="text-xs text-muted">
+                    No token yet — enable the catalog to generate one.
+                  </span>
+                )}
+                <button
+                  className="btn-ghost ml-auto"
                   onClick={async () => {
                     if (!(await confirm({
                       message: "Regenerate the catalog token? The current URL will stop working immediately.",

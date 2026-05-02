@@ -5,12 +5,15 @@ require_member_for_writes — anyone with the URL gets to read.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 from html import escape
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.core.deps import DbSession
 from app.core.ratelimit import limiter
 from app.core.responses import ok
@@ -38,20 +41,51 @@ _CATALOG_HEADERS: dict[str, str] = {
 }
 
 
+def _token_key(request: Request) -> str:
+    """Rate-limit key function: bucket per token prefix (first 16 chars).
+
+    Using a token prefix rather than the full token limits the bucket-key
+    space to a predictable size while still isolating one caller's burst
+    from another's.  Falls back to the IP when no token path param is
+    present (e.g. probes).
+    """
+    token = request.path_params.get("token", "")
+    if token:
+        return f"catalog:{token[:16]}"
+    # Fallback: use IP so unauthenticated probes still have some cap.
+    from slowapi.util import get_remote_address
+    return get_remote_address(request)
+
+
+def _hmac_token(token: str) -> str:
+    """Compute HMAC-SHA256 of *token* keyed by SESSION_SECRET."""
+    secret = settings().SESSION_SECRET
+    return hmac.new(
+        secret.encode(),
+        token.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+
 def _resolve_workspace(db, token: str) -> Workspace:
-    """Match the token to an enabled workspace, or 404."""
+    """Constant-time catalog token lookup: hash first, then compare by hash.
+
+    SEC2-008: the plaintext token never appears in a SQL WHERE clause.
+    Instead we hash the candidate and look up by the stored hash, so the
+    DB index reveals nothing about timing differences between valid and
+    invalid tokens.  catalog_enabled is checked in the same query so
+    a disabled workspace is indistinguishable from a wrong token (no
+    enabled/disabled oracle).
+    """
     if not token:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="catalog not found")
-    ws = (
-        db.execute(
-            select(Workspace).where(
-                Workspace.catalog_token == token,
-                Workspace.catalog_enabled.is_(True),
-            )
+    digest = _hmac_token(token)
+    ws = db.execute(
+        select(Workspace).where(
+            Workspace.catalog_token_hash == digest,
+            Workspace.catalog_enabled.is_(True),
         )
-        .scalars()
-        .first()
-    )
+    ).scalar_one_or_none()
     if not ws:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="catalog not found")
     return ws
@@ -153,7 +187,8 @@ def _render_html(ws: Workspace, parts: list[Part]) -> str:
 
 
 @router.get("/{token}", response_class=HTMLResponse)
-@limiter.limit("60/minute")
+@limiter.limit("60/minute", key_func=_token_key)
+@limiter.limit("120/minute")  # parallel IP cap — defence in depth
 def catalog_html(request: Request, token: str, db: DbSession):
     ws = _resolve_workspace(db, token)
     parts = _published_parts(db, ws.id)
@@ -165,7 +200,8 @@ def catalog_html(request: Request, token: str, db: DbSession):
 
 
 @router.get("/{token}/parts.json")
-@limiter.limit("60/minute")
+@limiter.limit("60/minute", key_func=_token_key)
+@limiter.limit("120/minute")  # parallel IP cap — defence in depth
 def catalog_json(request: Request, token: str, db: DbSession):
     ws = _resolve_workspace(db, token)
     parts = _published_parts(db, ws.id)
