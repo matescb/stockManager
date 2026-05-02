@@ -6,15 +6,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Pin uv so the builder layer is reproducible.
+RUN pip install --no-cache-dir uv==0.11.8
+
 WORKDIR /build
 
-# Resolve deps from pyproject.toml and pre-build wheels.
-# pip-tools is used if available; uv is the fallback — whichever produces
-# /tmp/deps.txt first wins.
-COPY pyproject.toml ./
-RUN pip install --upgrade pip pip-tools \
-    && pip-compile --output-file=/tmp/deps.txt pyproject.toml 2>/dev/null \
-    && pip wheel --no-cache-dir --wheel-dir=/wheels -r /tmp/deps.txt
+# Copy the manifest and lockfile first so dep resolution is cached
+# independently of source-code changes.
+COPY pyproject.toml uv.lock ./
+
+# Create a virtualenv and install production deps from the frozen lockfile.
+# --no-dev: exclude the [dev] optional-dependencies group.
+# --frozen: refuse to proceed if uv.lock is out of sync with pyproject.toml.
+RUN uv sync --frozen --no-dev
 
 
 # ── Stage 2: runtime ────────────────────────────────────────────────────────
@@ -23,7 +27,8 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PATH="/build/.venv/bin:$PATH"
 
 # libpq5 — psycopg C extension ABI dependency.
 # gosu  — compose command: chowns /data as root then drops to appuser.
@@ -35,21 +40,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && mkdir -p /data/uploads \
     && chown -R appuser:appuser /data
 
+# Bring in the pre-populated virtualenv from the builder stage.
+COPY --from=builder /build/.venv /build/.venv
+
 WORKDIR /app
-
-# Bring in pre-built wheels and the resolved dep list from the builder stage.
-COPY --from=builder /wheels /wheels
-COPY --from=builder /tmp/deps.txt /tmp/deps.txt
-
-# Install deps from local wheels only (no network access needed).
-RUN pip install --no-cache-dir --no-index --find-links=/wheels -r /tmp/deps.txt \
-    && rm -rf /wheels
 
 # Copy application source last so source changes don't bust the dep layer.
 COPY . .
-
-# Editable install of the local package (no deps — already installed above).
-RUN pip install --no-cache-dir --no-deps -e .
 
 # /app stays root-owned (read-only at runtime; appuser doesn't need to
 # mutate the source tree). USER is intentionally NOT set here — the
