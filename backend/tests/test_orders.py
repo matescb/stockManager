@@ -1,17 +1,10 @@
 from __future__ import annotations
 
-import uuid
-
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-
-
-def _signup(c: TestClient, email: str | None = None):
-    email = email or f"u-{uuid.uuid4().hex[:8]}@x.com"
-    r = c.post("/api/auth/signup", json={"email": email, "name": "u", "password": "TestPass-2026-Stronk"})
-    assert r.status_code == 200, r.text
+from tests._factories import signup_user as _signup
 
 
 @pytest.fixture

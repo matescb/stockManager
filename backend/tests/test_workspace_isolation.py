@@ -7,10 +7,16 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
-def _signup(c: TestClient, email: str):
-    r = c.post("/api/auth/signup", json={"email": email, "name": "u", "password": "TestPass-2026-Stronk"})
-    assert r.status_code == 200, r.text
-    return r.json()["data"]["workspace_id"]
+from tests._factories import (
+    add_stock as _factory_add_stock,
+    create_part as _create_part,
+    create_storage as _create_storage,
+    signup_user,
+)
+
+
+def _signup(c: TestClient, email: str) -> str:
+    return signup_user(c, email=email).json()["data"]["workspace_id"]
 
 
 def test_workspace_isolation():
@@ -127,18 +133,6 @@ def _two_workspaces():
     return a, b
 
 
-def _create_part(c: TestClient, name: str = "P") -> str:
-    r = c.post("/api/parts", json={"name": name, "part_type": "local"})
-    assert r.status_code in (200, 201), r.text
-    return r.json()["data"]["id"]
-
-
-def _create_storage(c: TestClient, name: str = "Bin") -> str:
-    r = c.post("/api/storage", json={"name": name})
-    assert r.status_code in (200, 201), r.text
-    return r.json()["data"]["id"]
-
-
 def _add_stock(
     c: TestClient,
     *,
@@ -147,12 +141,13 @@ def _add_stock(
     quantity: int = 5,
     lot_name: str = "L",
 ) -> dict:
-    body: dict = {"part_id": part_id, "quantity": quantity, "lot": {"name": lot_name}}
-    if storage_id:
-        body["storage_location_id"] = storage_id
-    r = c.post("/api/stock/add", json=body)
-    assert r.status_code in (200, 201), r.text
-    return r.json()["data"]
+    return _factory_add_stock(
+        c,
+        part_id,
+        quantity,
+        storage_id=storage_id,
+        lot_name=lot_name,
+    ).json()["data"]
 
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import uuid
 from pathlib import Path
 
 import pytest
@@ -111,11 +110,9 @@ def client():
     return TestClient(app)
 
 
-def _signup(client: TestClient, email: str | None = None, name: str = "Tester"):
-    email = email or f"u-{uuid.uuid4().hex[:8]}@example.com"
-    r = client.post("/api/auth/signup", json={"email": email, "name": name, "password": "TestPass-2026-Stronk"})
-    assert r.status_code == 200, r.text
-    return r
+# Re-export the canonical signup factory under the legacy `_signup` name
+# so any test still importing it from `conftest` keeps working.
+from tests._factories import signup_user as _signup  # noqa: E402,F401
 
 
 @pytest.fixture
