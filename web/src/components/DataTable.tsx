@@ -390,10 +390,9 @@ export function DataTable<T>({
               return (
               <tr
                 key={id}
+                tabIndex={onRowClick ? 0 : undefined}
                 onClick={() => onRowClick?.(r)}
                 {...(onRowClick ? {
-                  role: "button",
-                  tabIndex: 0,
                   "aria-label": rowAriaLabel(r, visibleCols),
                   onKeyDown: (e: React.KeyboardEvent<HTMLTableRowElement>) => {
                     if (e.key === "Enter" || e.key === " ") {
