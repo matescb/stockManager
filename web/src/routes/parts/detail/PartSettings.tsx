@@ -67,22 +67,22 @@ export default function PartSettings() {
       <h3 className="text-md font-semibold">Part settings</h3>
       {err && <div className="text-danger text-sm">{err}</div>}
       <div>
-        <label className="label">Low-stock report quantity</label>
-        <input className="input" type="number" value={low} onChange={e => setLow(e.target.value)} />
+        <label className="label" htmlFor="part-settings-low-stock">Low-stock report quantity</label>
+        <input id="part-settings-low-stock" className="input" type="number" value={low} onChange={e => setLow(e.target.value)} />
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label className="label">Attrition %</label>
-          <input className="input" type="number" step="0.1" value={attrPct} onChange={e => setAttrPct(e.target.value)} />
+          <label className="label" htmlFor="part-settings-attrition-pct">Attrition %</label>
+          <input id="part-settings-attrition-pct" className="input" type="number" step="0.1" value={attrPct} onChange={e => setAttrPct(e.target.value)} />
         </div>
         <div>
-          <label className="label">Min attrition qty</label>
-          <input className="input" type="number" value={attrMin} onChange={e => setAttrMin(e.target.value)} />
+          <label className="label" htmlFor="part-settings-attrition-min">Min attrition qty</label>
+          <input id="part-settings-attrition-min" className="input" type="number" value={attrMin} onChange={e => setAttrMin(e.target.value)} />
         </div>
       </div>
       <div>
-        <label className="label">Default storage location</label>
-        <select className="input" value={defStorage} onChange={e => setDefStorage(e.target.value)}>
+        <label className="label" htmlFor="part-settings-default-storage">Default storage location</label>
+        <select id="part-settings-default-storage" className="input" value={defStorage} onChange={e => setDefStorage(e.target.value)}>
           <option value="">— none —</option>
           {storage?.filter(s => !s.archived_at).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>

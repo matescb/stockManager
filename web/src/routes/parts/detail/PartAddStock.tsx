@@ -89,12 +89,12 @@ export default function PartAddStock() {
       {err && <div className="text-danger text-sm">{err}</div>}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label className="label">Quantity *</label>
-          <input className="input" type="number" min={1} required value={qty || ""} onChange={e => setQty(Number(e.target.value))} />
+          <label className="label" htmlFor="add-stock-qty">Quantity *</label>
+          <input id="add-stock-qty" className="input" type="number" min={1} required value={qty || ""} onChange={e => setQty(Number(e.target.value))} />
         </div>
         <div>
-          <label className="label">Storage location</label>
-          <select className="input" value={location} onChange={e => setLocation(e.target.value)}>
+          <label className="label" htmlFor="add-stock-storage">Storage location</label>
+          <select id="add-stock-storage" className="input" value={location} onChange={e => setLocation(e.target.value)}>
             <option value="">— none —</option>
             {storage?.filter(s => !s.archived_at).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
@@ -102,8 +102,8 @@ export default function PartAddStock() {
       </div>
       <div className="grid grid-cols-3 gap-3">
         <div>
-          <label className="label">Price mode</label>
-          <select className="input" value={priceMode} onChange={e => setPriceMode(e.target.value as "none" | "per_component" | "entire_lot")}>
+          <label className="label" htmlFor="add-stock-price-mode">Price mode</label>
+          <select id="add-stock-price-mode" className="input" value={priceMode} onChange={e => setPriceMode(e.target.value as "none" | "per_component" | "entire_lot")}>
             <option value="none">No price</option>
             <option value="per_component">Per component</option>
             <option value="entire_lot">Entire lot</option>
@@ -111,36 +111,36 @@ export default function PartAddStock() {
         </div>
         {priceMode === "per_component" && (
           <div>
-            <label className="label">Unit price</label>
-            <input className="input" type="number" step="0.0001" value={unitPrice} onChange={e => setUnitPrice(e.target.value)} />
+            <label className="label" htmlFor="add-stock-unit-price">Unit price</label>
+            <input id="add-stock-unit-price" className="input" type="number" step="0.0001" value={unitPrice} onChange={e => setUnitPrice(e.target.value)} />
           </div>
         )}
         {priceMode === "entire_lot" && (
           <div>
-            <label className="label">Lot total</label>
-            <input className="input" type="number" step="0.01" value={totalPrice} onChange={e => setTotalPrice(e.target.value)} />
+            <label className="label" htmlFor="add-stock-lot-total">Lot total</label>
+            <input id="add-stock-lot-total" className="input" type="number" step="0.01" value={totalPrice} onChange={e => setTotalPrice(e.target.value)} />
           </div>
         )}
         {priceMode !== "none" && (
           <div>
-            <label className="label">Currency</label>
-            <input className="input" maxLength={3} value={currency} onChange={e => setCurrency(e.target.value.toUpperCase())} />
+            <label className="label" htmlFor="add-stock-currency">Currency</label>
+            <input id="add-stock-currency" className="input" maxLength={3} value={currency} onChange={e => setCurrency(e.target.value.toUpperCase())} />
           </div>
         )}
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label className="label">Lot name (optional)</label>
-          <input className="input" value={lotName} onChange={e => setLotName(e.target.value)} placeholder="LOT-2026-001" />
+          <label className="label" htmlFor="add-stock-lot-name">Lot name (optional)</label>
+          <input id="add-stock-lot-name" className="input" value={lotName} onChange={e => setLotName(e.target.value)} placeholder="LOT-2026-001" />
         </div>
         <div>
-          <label className="label">Serial number (optional)</label>
-          <input className="input" value={serial} onChange={e => setSerial(e.target.value)} placeholder="SN-…" />
+          <label className="label" htmlFor="add-stock-serial">Serial number (optional)</label>
+          <input id="add-stock-serial" className="input" value={serial} onChange={e => setSerial(e.target.value)} placeholder="SN-…" />
         </div>
       </div>
       <div>
-        <label className="label">Comments</label>
-        <textarea className="input" rows={2} value={comments} onChange={e => setComments(e.target.value)} />
+        <label className="label" htmlFor="add-stock-comments">Comments</label>
+        <textarea id="add-stock-comments" className="input" rows={2} value={comments} onChange={e => setComments(e.target.value)} />
       </div>
       <div className="flex gap-2">
         <button className="btn-primary" disabled={busy}>{busy ? "Adding…" : "Add"}</button>

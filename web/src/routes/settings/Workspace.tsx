@@ -188,16 +188,18 @@ export default function WorkspaceSettings() {
         <div className="card p-4 mb-4 space-y-3 text-sm">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="label">Name</label>
+              <label className="label" htmlFor="workspace-name">Name</label>
               <input
+                id="workspace-name"
                 className="input"
                 defaultValue={cur.name}
                 onBlur={e => e.target.value && e.target.value !== cur.name && patch({ name: e.target.value })}
               />
             </div>
             <div>
-              <label className="label">Default currency</label>
+              <label className="label" htmlFor="workspace-currency">Default currency</label>
               <input
+                id="workspace-currency"
                 className="input"
                 maxLength={3}
                 defaultValue={cur.currency_default}
@@ -571,12 +573,12 @@ export default function WorkspaceSettings() {
       <div className="card p-4 mb-4 space-y-3">
         <div className="flex gap-2 items-end">
           <div className="flex-1">
-            <label className="label">Email</label>
-            <input className="input" type="email" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="teammate@example.com" />
+            <label className="label" htmlFor="invite-email">Email</label>
+            <input id="invite-email" className="input" type="email" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="teammate@example.com" />
           </div>
           <div>
-            <label className="label">Role</label>
-            <select className="input" value={inviteRole} onChange={e => setInviteRole(e.target.value as "admin" | "member" | "viewer")}>
+            <label className="label" htmlFor="invite-role">Role</label>
+            <select id="invite-role" className="input" value={inviteRole} onChange={e => setInviteRole(e.target.value as "admin" | "member" | "viewer")}>
               <option value="admin">admin</option>
               <option value="member">member</option>
               <option value="viewer">viewer</option>

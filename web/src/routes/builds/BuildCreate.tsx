@@ -43,25 +43,25 @@ export default function BuildCreate() {
       <h3 className="text-md font-semibold">New build</h3>
       {err && <div className="text-danger text-sm">{err}</div>}
       <div>
-        <label className="label">Name *</label>
-        <input className="input" required value={name} onChange={e => setName(e.target.value)} placeholder="BUILD-2026-001" />
+        <label className="label" htmlFor="build-create-name">Name *</label>
+        <input id="build-create-name" className="input" required value={name} onChange={e => setName(e.target.value)} placeholder="BUILD-2026-001" />
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label className="label">Project *</label>
-          <select className="input" required value={projectId} onChange={e => setProjectId(e.target.value)}>
+          <label className="label" htmlFor="build-create-project">Project *</label>
+          <select id="build-create-project" className="input" required value={projectId} onChange={e => setProjectId(e.target.value)}>
             <option value="">— pick —</option>
             {projects?.filter(p => !p.archived_at).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </div>
         <div>
-          <label className="label">Quantity *</label>
-          <input className="input" type="number" min={1} required value={qty} onChange={e => setQty(Number(e.target.value))} />
+          <label className="label" htmlFor="build-create-qty">Quantity *</label>
+          <input id="build-create-qty" className="input" type="number" min={1} required value={qty} onChange={e => setQty(Number(e.target.value))} />
         </div>
       </div>
       <div>
-        <label className="label">Comments</label>
-        <textarea className="input" rows={2} value={comments} onChange={e => setComments(e.target.value)} />
+        <label className="label" htmlFor="build-create-comments">Comments</label>
+        <textarea id="build-create-comments" className="input" rows={2} value={comments} onChange={e => setComments(e.target.value)} />
       </div>
       <div>
         <button className="btn-primary" disabled={busy}>{busy ? "Creating…" : "Create build"}</button>
