@@ -146,7 +146,7 @@ export default function PartCreate() {
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="label">Type</label>
-          <select className="input" value={form.part_type} onChange={e => set("part_type", e.target.value as any)}>
+          <select className="input" value={form.part_type} onChange={e => set("part_type", e.target.value as "linked" | "local" | "meta" | "sub_assembly")}>
             <option value="linked">Linked (MPN)</option>
             <option value="local">Local</option>
             <option value="meta">Meta-part</option>
