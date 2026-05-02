@@ -222,8 +222,15 @@ The next push to `main` triggers the first end-to-end automated deploy.
 
 ## CI/CD details
 
-`.github/workflows/ci.yml`. Three jobs:
+`.github/workflows/ci.yml`. Five jobs:
 
+- **`lockfile-drift`** (SEC2-016) — installs `uv`, runs `uv lock --check`
+  (fails if `pyproject.toml` diverges from `uv.lock`), and re-exports
+  `requirements.lock` to detect stale hashes. Runs on every push and PR,
+  before the heavier `backend-tests` job.
+- **`pip-audit`** (SEC2-016) — scans `requirements.lock` with
+  `pip-audit --require-hashes` for HIGH/CRITICAL CVEs. Depends on
+  `lockfile-drift` so it always audits the verified-current set.
 - **`backend-tests`** — postgres:16-alpine service container, `pip install -e ".[dev]"`, `pytest -q --tb=short`. Runs on every push and PR.
 - **`web-build`** — `npm ci && npm run build`, followed on `push` to `main` by a Sentry sourcemap upload step (`npx @sentry/cli sourcemaps upload`). The build's `tsc -b` step also catches TypeScript errors. Runs on every push and PR; the sourcemap upload is gated on push to `main` only. `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, and `SENTRY_PROJECT` are GitHub Actions secrets used by the upload step — they must **not** appear in `.env.prod` or `docker-compose.prod.yml` build args (INFRA2-010).
 - **`deploy`** — gated on `github.event_name == 'push' && github.ref == 'refs/heads/main'` and `needs: [backend-tests, web-build]`. Uses `appleboy/ssh-action@v1.0.3` to SSH in and run the pull/up/prune script. Concurrency-grouped on `ci-refs/heads/main` with `cancel-in-progress: false` so consecutive pushes queue rather than abort an in-flight `docker compose up --build`.

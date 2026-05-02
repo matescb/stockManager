@@ -22,20 +22,47 @@ to avoid accidentally starting the dev stack with no `SESSION_SECRET` set.
 The `Makefile` also exposes `prod-up`, `prod-logs`, and `prod-rebuild`
 targets for the prod compose file.
 
-## Backend dependencies (uv)
+## Adding or updating Python dependencies
 
-The backend uses [uv](https://docs.astral.sh/uv/) for dependency
-management. The lockfile `backend/uv.lock` pins every transitive dep so
-builds are reproducible across dev machines, CI, and prod.
+The backend uses [uv](https://docs.astral.sh/uv/) for deterministic
+dependency management.  Two lockfiles live in `backend/`:
 
-**Adding or changing a dependency:**
+| File | Purpose |
+|------|---------|
+| `uv.lock` | Full resolution graph (uv native format). Committed to track the exact package graph and support `uv lock --check` in CI. |
+| `requirements.lock` | Flat hashed requirements file. Used by CI's `pip-audit` job to audit the pinned dependency set for CVEs. |
 
-1. Edit `backend/pyproject.toml` (update the version constraint or add
-   a new entry).
-2. Run `cd backend && uv lock` to regenerate `uv.lock`.
-3. Commit both `pyproject.toml` and `uv.lock` together.
+### To add a new runtime dependency
 
-Never edit `uv.lock` by hand.
+```bash
+cd backend
+uv add <package>               # updates pyproject.toml + uv.lock
+uv export --format requirements-txt --hashes --no-dev --no-emit-project \
+    -o requirements.lock       # regenerate the hashed flat file
+```
+
+Commit all three files (`pyproject.toml`, `uv.lock`, `requirements.lock`)
+together.  The CI `lockfile-drift` job will fail on any PR where
+`pyproject.toml` and `uv.lock` are out of sync, or where
+`requirements.lock` does not match `uv.lock`.
+
+### To add a dev-only dependency
+
+```bash
+cd backend
+uv add --dev <package>
+# requirements.lock is NOT regenerated — dev deps are excluded from it.
+# Only uv.lock and pyproject.toml change.
+```
+
+### To upgrade a dependency
+
+```bash
+cd backend
+uv lock --upgrade-package <package>
+uv export --format requirements-txt --hashes --no-dev --no-emit-project \
+    -o requirements.lock
+```
 
 ## Running tests outside Docker
 
