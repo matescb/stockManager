@@ -28,11 +28,22 @@ limiter = Limiter(
 def workspace_key(request: Request) -> str:
     """Rate-limit key that buckets by workspace rather than IP.
 
-    Preferred over IP-only keying for provider-fanout endpoints because
-    members in the same corporate NAT share one IP but each workspace's
-    paid API quota is independent. Falls back to IP when workspace_id
-    isn't available (unauthenticated paths, startup probes, etc.)."""
+    Preferred over IP-only keying for provider-fanout endpoints and the
+    search endpoint because members in the same corporate NAT share one IP
+    but each workspace's paid API quota is independent.
+
+    Resolution order:
+    1. request.state.workspace_id — set by get_current_workspace in deps.py
+       for authenticated routes that already resolved the workspace.
+    2. X-Workspace-Id header or stockmgr_workspace cookie — fallback for
+       routes (e.g. search) where workspace_id is not stored on state but
+       the client sends the workspace identifier directly.
+    3. Remote address — final fallback for unauthenticated paths, startup
+       probes, etc. Safe because rate limiting is disabled outside prod.
+    """
     ws_id = getattr(request.state, "workspace_id", None)
+    if not ws_id:
+        ws_id = request.headers.get("X-Workspace-Id") or request.cookies.get("stockmgr_workspace")
     if ws_id:
         return f"ws:{ws_id}"
     return get_remote_address(request)
