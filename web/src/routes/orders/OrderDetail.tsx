@@ -95,7 +95,7 @@ export default function OrderDetail() {
       toast.success("Entry deleted.");
     },
     onError: (e) => {
-      toast.error(e instanceof ApiError ? e.message : "Delete failed");
+      toast.error(e instanceof ApiError ? e.userMessage : "Delete failed");
     },
   });
 
@@ -110,7 +110,7 @@ export default function OrderDetail() {
       toast.success(`Received ${totalQty} unit${totalQty === 1 ? "" : "s"}.`);
     },
     onError: (e) => {
-      const msg = e instanceof ApiError ? e.message : "Receive failed";
+      const msg = e instanceof ApiError ? e.userMessage : "Receive failed";
       setErr(msg);
       toast.error(msg);
     },
@@ -144,7 +144,7 @@ export default function OrderDetail() {
       },
       {
         onError: (e) => {
-          setErr(e instanceof ApiError ? e.message : "Failed");
+          setErr(e instanceof ApiError ? e.userMessage : "Failed");
         },
       },
     );

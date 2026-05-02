@@ -95,7 +95,7 @@ export default function BuildDetail() {
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
       toast.success("Build complete — stock decremented.");
     } catch (e) {
-      const m = e instanceof ApiError ? e.message : "Build failed";
+      const m = e instanceof ApiError ? e.userMessage : "Build failed";
       setErr(m);
       toast.error(m);
     } finally {

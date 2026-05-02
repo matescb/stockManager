@@ -127,7 +127,7 @@ def preview(payload: BomImportPreviewIn) -> BomImportPreviewOut:
 
 @dataclass
 class ParsedRow:
-    # DB-005 / migration 0030 — quantity is integer; fractional values are a
+    # DB-005 / migration 0031 — quantity is integer; fractional values are a
     # per-row validation error recorded in row_errors at commit time.
     quantity: int = 1
     quantity_raw: str = ""  # original string value, kept for error reporting
@@ -148,7 +148,7 @@ def _parse_quantity(s: str) -> tuple[int, bool]:
 
     Returns (1, True) for blank/missing, (n, True) for a non-negative integer
     string, and (0, False) for a fractional or otherwise invalid value.
-    DB-005 / migration 0030.
+    DB-005 / migration 0031.
     """
     raw = (s or "").strip().replace(",", ".")
     if not raw:
@@ -286,7 +286,7 @@ def commit(
         .where(ProjectEntry.project_id == project.id)
     ).scalar_one() + 1
 
-    # DB-005 / migration 0030 — pre-scan for fractional quantities so we can
+    # DB-005 / migration 0031 — pre-scan for fractional quantities so we can
     # return a descriptive 422 before touching the DB.
     fractional_rows: list[int] = []
     parsed_rows: list[ParsedRow] = []

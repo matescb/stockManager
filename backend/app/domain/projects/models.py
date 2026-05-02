@@ -60,7 +60,7 @@ class ProjectEntry(WorkspaceOwned, Base):
             "archived_at",
             postgresql_where=text("archived_at IS NULL"),
         ),
-        # DB-005 / migration 0030 — quantities are integer-only (electronics
+        # DB-005 / migration 0031 — quantities are integer-only (electronics
         # domain; no fractional BOM quantities needed).
         CheckConstraint("quantity >= 0", name="ck_project_entries_quantity_nonneg"),
     )

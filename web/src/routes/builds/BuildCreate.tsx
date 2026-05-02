@@ -32,7 +32,7 @@ export default function BuildCreate() {
       });
       nav(`/builds/${b.id}`);
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Failed");
+      setErr(e instanceof ApiError ? e.userMessage : "Failed");
     } finally {
       setBusy(false);
     }

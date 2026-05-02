@@ -92,7 +92,7 @@ export default function PartMoveStock() {
       nav(`/parts/${partId}/stock`);
     },
     onError: (e) => {
-      setErr(e instanceof ApiError ? e.message : "Failed");
+      setErr(e instanceof ApiError ? e.userMessage : "Failed");
     },
   });
 

@@ -106,6 +106,60 @@ line, finding, suggestion}` where severity ∈ `low | medium | high`.
 Compute the highest-severity finding across all checks plus the
 GitHub-side state.
 
+**Trivial fix-and-merge** (NEW): if every blocking finding is in
+the trivial set below, push the fix to the PR's branch yourself,
+wait for CI to go green again on the new SHA, then merge. Don't
+request-changes for these — fixing is faster than round-tripping
+to the author.
+
+Trivial set:
+- Delete a tracked file that shouldn't be there (`web/node_modules`
+  symlinks, `web/vite.config.js`, accidental `*.pyc` etc.).
+- Rename an alembic migration file + bump its `revision` and
+  `down_revision` Python identifiers to repair a duplicate-head /
+  out-of-order chain (the recurring 0019 / 0021 / 0024 / 0026
+  collision pattern). The migration body itself stays unchanged.
+- Add `postgresql_concurrently=True` + `with op.get_context().autocommit_block():`
+  wrapper to a new `op.create_index` on a populated table.
+- Mechanical text replacements: `datetime.now(timezone.utc)` →
+  `utcnow()`, `==` → `hmac.compare_digest`, etc. — only when the
+  semantics are identical.
+- Remove a dead/unused import or `_unused_var` rename.
+- Add a missing field constraint that was already documented
+  elsewhere (e.g. `max_length=200` echoed from CLAUDE.md).
+
+How to push the fix safely (worktree, no race with the manager
+checkout):
+```bash
+WT="/tmp/wt-claude-fix-<num>"
+git -C /mnt/data/WORK/stockManager-Manager fetch origin pull/<num>/head:pr-<num>
+git worktree add "$WT" pr-<num>
+# … make the trivial edit in $WT …
+git -C "$WT" add -A
+git -C "$WT" commit -m "fix: <one-line> (claude-review trivial)"
+git -C "$WT" push origin "HEAD:$(gh pr view <num> --json headRefName -q .headRefName)"
+git worktree remove "$WT" --force
+git -C /mnt/data/WORK/stockManager-Manager branch -D "pr-<num>"
+```
+After pushing, post a single comment on the PR:
+`claude-review: pushed a trivial fix (<one-clause>); will re-evaluate on the next tick.`
+Don't add the `reopened` label — this isn't request-changes, it's
+self-service.
+
+**Non-trivial / VPS-touching / human-judgment** stays as
+request-changes per the table below. Reasons that disqualify a
+fix from "trivial":
+- Logic / behaviour changes (anything that could affect a passing
+  test in a way the test isn't asserting).
+- API contract changes (envelope, response shape, status codes).
+- Anything that requires touching production state outside the
+  repo (VPS files, secret rotation, DB migrations against running
+  prod).
+- Non-obvious choice between two reasonable approaches — defer to
+  the author.
+
+When in doubt, treat as non-trivial and request-changes.
+
 | Condition | Action |
 |---|---|
 | Any check `pending` | Do nothing this run. Comment **only** if no prior `claude-review` comment exists, with `_Waiting on CI._` |
@@ -154,7 +208,9 @@ When posting findings, use this structure (keep it scannable):
 
 ## What never to do
 
-- Don't push commits to the PR branch.
+- Don't push commits to the PR branch **except** for the trivial
+  fix-and-merge cases enumerated in §3 — anything else stays as
+  request-changes.
 - Don't open follow-up PRs from this prompt.
 - Don't edit `main` directly.
 - Don't approve your own previous work blindly — the `headRefOid`

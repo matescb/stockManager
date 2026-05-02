@@ -172,7 +172,7 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
       if (inputRef.current) inputRef.current.value = "";
       qc.invalidateQueries({ queryKey });
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Upload failed");
+      toast.error(e instanceof ApiError ? e.userMessage : "Upload failed");
     } finally {
       setBusy(false);
     }
@@ -185,7 +185,7 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
       toast.success("Attachment deleted.");
       qc.invalidateQueries({ queryKey });
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Delete failed");
+      toast.error(e instanceof ApiError ? e.userMessage : "Delete failed");
     }
   }
 

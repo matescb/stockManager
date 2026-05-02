@@ -4,7 +4,7 @@ from functools import lru_cache
 from typing import TypeVar
 from uuid import UUID
 
-from fastapi import HTTPException, status
+from fastapi import status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -127,9 +127,11 @@ def assert_child_in_parent(
         )
     ).scalar_one_or_none()
     if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"{label} not found",
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            ErrorCodes.RESOURCE_NOT_FOUND,
+            f"{label} not found",
+            resource=label,
         )
     return row
 

@@ -295,3 +295,77 @@ def test_non_substitute_rejected(authed):
     )
     assert r.status_code == 400
     assert "not a substitute" in r.json()["status"]["message"]
+
+
+# BE-007: BOM entry quantity validation tests --------------------------------
+
+
+def test_bom_entry_rejects_zero_quantity(authed):
+    c = authed
+    r = c.post("/api/projects", json={"name": "QV-Zero"})
+    pid = r.json()["data"]["id"]
+    part_id = _create_part(c, "R1k-QV")
+
+    r = c.post(f"/api/projects/{pid}/entries", json={"part_id": part_id, "quantity": 0})
+    assert r.status_code == 422
+    assert r.json()["status"]["category"] == "validation_error"
+
+
+def test_bom_entry_rejects_negative_quantity(authed):
+    c = authed
+    r = c.post("/api/projects", json={"name": "QV-Neg"})
+    pid = r.json()["data"]["id"]
+    part_id = _create_part(c, "R1k-QVN")
+
+    r = c.post(f"/api/projects/{pid}/entries", json={"part_id": part_id, "quantity": -3})
+    assert r.status_code == 422
+    assert r.json()["status"]["category"] == "validation_error"
+
+
+def test_bom_entry_accepts_fractional_quantity(authed):
+    c = authed
+    r = c.post("/api/projects", json={"name": "QV-Frac"})
+    pid = r.json()["data"]["id"]
+    part_id = _create_part(c, "R1k-QVF")
+
+    r = c.post(f"/api/projects/{pid}/entries", json={"part_id": part_id, "quantity": 0.5})
+    assert r.status_code in (200, 201)
+
+
+def test_bom_entry_patch_rejects_zero_quantity(authed):
+    c = authed
+    proj_id = _create_project_with_bom(
+        c, "QV-PatchZero",
+        [{"part_id": _create_part(c, "R1k-PZ"), "quantity": 1}],
+    )
+    entry_id = c.get(f"/api/projects/{proj_id}/entries").json()["data"][0]["id"]
+
+    r = c.patch(f"/api/projects/{proj_id}/entries/{entry_id}", json={"quantity": 0})
+    assert r.status_code == 422
+    assert r.json()["status"]["category"] == "validation_error"
+
+
+def test_bom_entry_patch_rejects_negative_quantity(authed):
+    c = authed
+    proj_id = _create_project_with_bom(
+        c, "QV-PatchNeg",
+        [{"part_id": _create_part(c, "R1k-PN"), "quantity": 1}],
+    )
+    entry_id = c.get(f"/api/projects/{proj_id}/entries").json()["data"][0]["id"]
+
+    r = c.patch(f"/api/projects/{proj_id}/entries/{entry_id}", json={"quantity": -1})
+    assert r.status_code == 422
+    assert r.json()["status"]["category"] == "validation_error"
+
+
+def test_bom_entry_patch_omitting_quantity_still_works(authed):
+    c = authed
+    proj_id = _create_project_with_bom(
+        c, "QV-PatchOmit",
+        [{"part_id": _create_part(c, "R1k-PO"), "quantity": 5}],
+    )
+    entry_id = c.get(f"/api/projects/{proj_id}/entries").json()["data"][0]["id"]
+
+    # Patch only the comments field — quantity omitted → should succeed
+    r = c.patch(f"/api/projects/{proj_id}/entries/{entry_id}", json={"comments": "updated"})
+    assert r.status_code == 200

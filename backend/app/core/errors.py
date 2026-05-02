@@ -154,5 +154,5 @@ class ErrorCodes:
     # BOM importer (domain/projects/bom_import.py).
     BOM_TOO_LARGE = "bom.too_large"
     BOM_TOO_MANY_ROWS = "bom.too_many_rows"
-    # DB-005 / migration 0030 — fractional BOM quantity rejected.
+    # DB-005 / migration 0031 — fractional BOM quantity rejected.
     BOM_FRACTIONAL_QUANTITY = "bom.fractional_quantity"
