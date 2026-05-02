@@ -47,7 +47,8 @@ def test_bulk_delete_archives_listed_parts(authed):
     assert r.status_code == 200, r.text
     body = r.json()["data"]
     assert sorted(body["archived_ids"]) == sorted([a, c])
-    assert body["skipped"] == 0
+    assert body["already_archived_ids"] == []
+    assert body["not_found_ids"] == []
 
     # B is still present in the active list; A and C only show in /archived.
     actives = [p["id"] for p in authed.get("/api/parts").json()["data"]]
@@ -62,14 +63,16 @@ def test_bulk_delete_skips_already_archived(authed):
     authed.post(f"/api/parts/{a}/archive")
     r = authed.post("/api/parts/bulk-delete", json={"part_ids": [a]})
     assert r.status_code == 200
-    # Already-archived rows aren't re-stamped — they appear in archived_ids
-    # only when they were actually flipped.
-    assert r.json()["data"]["archived_ids"] == []
+    body = r.json()["data"]
+    # Already-archived rows aren't re-stamped — they land in already_archived_ids.
+    assert body["archived_ids"] == []
+    assert body["already_archived_ids"] == [a]
+    assert body["not_found_ids"] == []
 
 
 def test_bulk_delete_silently_skips_other_workspace(authed):
     """Cross-workspace ids must not leak — the route returns the same
-    shape as if those ids didn't exist."""
+    shape as if those ids didn't exist (not_found_ids bucket)."""
     other = TestClient(app)
     _signup(other)
     other_id = _create(other, "Theirs")
@@ -79,7 +82,8 @@ def test_bulk_delete_silently_skips_other_workspace(authed):
     assert r.status_code == 200
     body = r.json()["data"]
     assert body["archived_ids"] == [mine]
-    assert body["skipped"] == 1
+    assert body["already_archived_ids"] == []
+    assert body["not_found_ids"] == [other_id]
 
 
 def test_bulk_delete_rejects_empty_list(authed):
