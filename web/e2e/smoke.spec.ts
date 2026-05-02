@@ -16,35 +16,42 @@ import { test, expect } from "@playwright/test";
 const STRONG_PW = "TestPass-2026-Stronk";
 
 test("@smoke signup → create part → add stock → ledger row visible", async ({ page }) => {
-  const email = `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@x.test`;
+  // `.test` is a reserved special-use TLD (RFC 6761) and pydantic's
+  // EmailStr (via email-validator) rejects it with 422; use `.com`.
+  const email = `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@x.com`;
 
   // -------------------- signup --------------------
   await page.goto("/signup");
   await page.getByLabel(/email/i).fill(email);
   await page.getByLabel(/^name$/i).fill("e2e");
   await page.getByLabel(/password/i).fill(STRONG_PW);
-  await page.getByRole("button", { name: /sign up|create account/i }).click();
+  await page.getByRole("button", { name: /create account/i }).click();
 
-  // After signup the app routes into the workspace (parts list or dashboard).
-  await page.waitForURL(/\/(parts|dashboard|$)/, { timeout: 10_000 });
+  // After signup the app routes into the workspace at /parts.
+  await page.waitForURL(/\/parts(\b|$)/, { timeout: 10_000 });
 
   // -------------------- create part --------------------
-  await page.goto("/parts");
-  await page.getByRole("button", { name: /new part|add part|create/i }).first().click();
+  // PartsList renders a `<Link>` (role=link) "+ Part" → /parts/create,
+  // not a button — match by link role.
+  await page.getByRole("link", { name: /\+ part/i }).first().click();
   await page.getByLabel(/^name$/i).fill("E2E Smoke Resistor");
-  await page.getByRole("button", { name: /save|create/i }).click();
+  await page.getByRole("button", { name: /^create$/i }).click();
 
-  // The part page should render the part name.
-  await expect(page.getByText("E2E Smoke Resistor")).toBeVisible({ timeout: 10_000 });
+  // After create the app routes to /parts/{id}/info, which renders the
+  // part name in the EntityHeader.
+  await expect(page.getByText("E2E Smoke Resistor").first()).toBeVisible({
+    timeout: 10_000,
+  });
 
   // -------------------- add stock --------------------
-  // Navigate to the part's stock tab; the exact selector depends on the
-  // app routing. This walks the visible UI rather than poking URLs.
-  await page.getByRole("link", { name: /stock/i }).first().click();
-  await page.getByRole("button", { name: /add stock|receive|add/i }).first().click();
+  // The "Add stock" SubNav tab (role=link) routes to /parts/{id}/add,
+  // which is where the form lives — the "Stock" tab is read-only.
+  await page.getByRole("link", { name: "Add stock", exact: true }).click();
   await page.getByLabel(/quantity/i).fill("42");
-  await page.getByRole("button", { name: /save|add|confirm/i }).click();
+  await page.getByRole("button", { name: /^add$/i }).click();
 
   // -------------------- ledger row visible --------------------
-  await expect(page.getByText(/42/)).toBeVisible({ timeout: 10_000 });
+  // The success path navigates to /parts/{id}/stock; the on-hand stat
+  // and the ledger row both render the new quantity.
+  await expect(page.getByText("42").first()).toBeVisible({ timeout: 10_000 });
 });
