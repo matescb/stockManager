@@ -3,6 +3,8 @@ import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import AppShell from "@/components/layout/AppShell";
 import { ConfirmDialogProvider } from "@/components/ConfirmDialog";
+import { ChunkLoadErrorBoundary } from "@/components/ChunkLoadErrorBoundary";
+import { RouteSkeleton } from "@/components/RouteSkeleton";
 
 // Auth pages — small, eager-loaded so the login form renders without
 // a fallback flash on first paint.
@@ -126,12 +128,13 @@ function Gate() {
   );
 }
 
-const lazyFallback = <div className="p-6 text-muted">Loading…</div>;
+const lazyFallback = <RouteSkeleton variant="table" />;
 
 export default function App() {
   return (
     <AuthProvider>
       <ConfirmDialogProvider>
+        <ChunkLoadErrorBoundary>
         <Suspense fallback={lazyFallback}>
         <Routes>
           <Route path="/login" element={<Login />} />
@@ -192,34 +195,42 @@ export default function App() {
               <Route path="history" element={<LotHistory />} />
             </Route>
 
-            <Route path="/orders" element={<OrdersList />} />
-            <Route path="/orders/archived" element={<OrdersList archived />} />
-            <Route path="/orders/create" element={<OrderCreate />} />
-            <Route path="/orders/:orderId" element={<OrderDetail />} />
+            <Suspense fallback={<RouteSkeleton variant="table" />}>
+              <Route path="/orders" element={<OrdersList />} />
+              <Route path="/orders/archived" element={<OrdersList archived />} />
+              <Route path="/orders/create" element={<OrderCreate />} />
+              <Route path="/orders/:orderId" element={<OrderDetail />} />
+            </Suspense>
 
-            <Route path="/builds" element={<BuildsList />} />
-            <Route path="/builds/archived" element={<BuildsList archived />} />
-            <Route path="/builds/create" element={<BuildCreate />} />
-            <Route path="/builds/:buildId" element={<BuildDetail />} />
+            <Suspense fallback={<RouteSkeleton variant="table" />}>
+              <Route path="/builds" element={<BuildsList />} />
+              <Route path="/builds/archived" element={<BuildsList archived />} />
+              <Route path="/builds/create" element={<BuildCreate />} />
+              <Route path="/builds/:buildId" element={<BuildDetail />} />
+            </Suspense>
 
-            <Route path="/reports" element={<ReportsLayout />}>
-              <Route index element={<LowStockReport />} />
-              <Route path="value" element={<StockValueReport />} />
-              <Route path="bom" element={<BomShortageReport />} />
-              <Route path="expiring" element={<ExpiringLotsReport />} />
-            </Route>
+            <Suspense fallback={<RouteSkeleton variant="table" />}>
+              <Route path="/reports" element={<ReportsLayout />}>
+                <Route index element={<LowStockReport />} />
+                <Route path="value" element={<StockValueReport />} />
+                <Route path="bom" element={<BomShortageReport />} />
+                <Route path="expiring" element={<ExpiringLotsReport />} />
+              </Route>
+            </Suspense>
 
-            <Route path="/projects" element={<ProjectsList />} />
-            <Route path="/projects/archived" element={<ProjectsList archived />} />
-            <Route path="/projects/create" element={<ProjectCreate />} />
-            <Route path="/projects/:projectId" element={<ProjectLayout />}>
-              <Route index element={<Navigate to="data" replace />} />
-              <Route path="data" element={<ProjectData />} />
-              <Route path="bom" element={<ProjectBOM />} />
-              <Route path="import" element={<ProjectImport />} />
-              <Route path="builds" element={<ProjectBuilds />} />
-              <Route path="other" element={<ProjectOther />} />
-            </Route>
+            <Suspense fallback={<RouteSkeleton variant="table" />}>
+              <Route path="/projects" element={<ProjectsList />} />
+              <Route path="/projects/archived" element={<ProjectsList archived />} />
+              <Route path="/projects/create" element={<ProjectCreate />} />
+              <Route path="/projects/:projectId" element={<ProjectLayout />}>
+                <Route index element={<Navigate to="data" replace />} />
+                <Route path="data" element={<ProjectData />} />
+                <Route path="bom" element={<ProjectBOM />} />
+                <Route path="import" element={<ProjectImport />} />
+                <Route path="builds" element={<ProjectBuilds />} />
+                <Route path="other" element={<ProjectOther />} />
+              </Route>
+            </Suspense>
 
             <Route path="/settings/account" element={<Account />} />
             <Route path="/settings/workspace" element={<WorkspaceSettings />} />
@@ -228,6 +239,7 @@ export default function App() {
           </Route>
         </Routes>
         </Suspense>
+        </ChunkLoadErrorBoundary>
       </ConfirmDialogProvider>
     </AuthProvider>
   );
