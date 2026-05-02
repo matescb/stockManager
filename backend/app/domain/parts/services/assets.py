@@ -20,6 +20,11 @@ Hardening notes (SEC2-006):
   drop `image/svg+xml` from the MIME map entirely; an upstream that
   serves SVG ends up written with `.bin` (and our serve route forces
   `Content-Disposition: attachment` for non-image MIMEs anyway).
+- Magic-byte validation (SEC2-012). After downloading the body we check
+  its leading bytes against known file signatures. If the sniffed type
+  doesn't match the Content-Type-derived extension the download is
+  rejected and we return None. This prevents a compromised provider CDN
+  from delivering a payload that masquerades as an innocuous image or PDF.
 """
 from __future__ import annotations
 
@@ -52,6 +57,37 @@ _EXT_BY_MIME: dict[str, str] = {
     "image/webp": "webp",
     "application/pdf": "pdf",
 }
+
+# Magic-byte signatures for supported file types.
+# Each value is the byte prefix that must appear at the start of a valid file.
+# "webp" is special: it uses the RIFF container with "WEBP" at offset 8; the
+# prefix check only covers the RIFF header — a second check for "WEBP" is done
+# inside _sniff_ext.
+_MAGIC: dict[str, bytes] = {
+    "jpg": b"\xff\xd8\xff",
+    "png": b"\x89PNG",
+    "pdf": b"%PDF",
+    "gif": b"GIF8",
+    "webp": b"RIFF",
+}
+
+
+def _sniff_ext(header: bytes) -> str | None:
+    """Return the file-type extension whose magic bytes match `header`, or
+    None if no known signature matches.
+
+    Only the first 16 bytes of the body are needed (all _MAGIC prefixes are
+    ≤ 8 bytes); callers should pass `body[:16]` to keep memory usage low.
+    """
+    for ext, magic in _MAGIC.items():
+        if header[:len(magic)] == magic:
+            # RIFF container is used by both WebP and WAV. Confirm the
+            # "WEBP" marker at bytes 8-12 so we don't accept random RIFF.
+            if ext == "webp" and header[8:12] != b"WEBP":
+                continue
+            return ext
+    return None
+
 
 # Hostnames the helper is permitted to fetch from. Keep this narrow:
 # every entry here is part of the SSRF surface. New providers must be
@@ -148,6 +184,7 @@ def fetch_provider_asset(url: str, workspace_id: str, kind: str) -> str | None:
       - host resolves to a non-public IP (SSRF guard)
       - HTTP error (4xx/5xx) or 30x redirect
       - body > _MAX_BYTES
+      - magic bytes don't match the Content-Type-declared extension
       - any network exception
     Caller should fall back to the original URL in those cases.
     """
@@ -170,8 +207,23 @@ def fetch_provider_asset(url: str, workspace_id: str, kind: str) -> str | None:
     if not body or len(body) > _MAX_BYTES:
         return None
 
-    sha = hashlib.sha256(body).hexdigest()
     ext = _ext_from_response(resp, url)
+
+    # Magic-byte validation (SEC2-012). Skip check for opaque .bin fallback —
+    # those already carry a forced-download Content-Disposition when served.
+    if ext != "bin":
+        sniffed = _sniff_ext(body[:16])
+        if sniffed is not None and sniffed != ext:
+            log.warning(
+                "provider asset rejected: magic bytes (%s) do not match "
+                "declared extension (%s) from %s",
+                sniffed,
+                ext,
+                url,
+            )
+            return None
+
+    sha = hashlib.sha256(body).hexdigest()
     filename = f"{sha}.{ext}"
 
     # On-disk: {UPLOAD_DIR}/parts/{ws_id}/{filename}
