@@ -166,14 +166,16 @@ them, that's the bug.
   `src/index.css` (`btn`, `btn-primary`, `btn-danger`, `card`, `pill`,
   `input`, `label`, `table`). Use those before adding new ones.
 
-## Deploy is automatic
+## Deploy is automatic — but gated by a human reviewer
 
 A merge to `main` runs CI (backend pytest + web vitest + `tsc -b` + `vite
-build`); on green, GitHub Actions SSHes the VPS, `git reset --hard
-origin/main`, and `docker compose up -d --build`. Migrations apply on
-backend container start. There is **no manual deploy step and no staging
-environment.** Treat `main` accordingly: a destructive migration goes
-straight to prod, so take a `pg_dump` first (see
+build`); on green, the `deploy` job **pauses for a required human reviewer**
+(GitHub Settings → Environments → `production` → Required reviewers). After
+approval, GitHub Actions SSHes the VPS, `git reset --hard origin/main`, and
+`docker compose up -d --build`. Migrations apply on backend container start.
+
+There is **no staging environment.** Treat `main` accordingly: a destructive
+migration goes straight to prod, so take a `pg_dump` first (see
 `docs/deployment.md#backups`).
 
 ## Allow-listed external resource
