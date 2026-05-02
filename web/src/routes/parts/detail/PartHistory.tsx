@@ -2,6 +2,7 @@ import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
+import { formatDateTime } from "@/lib/format";
 import type { StockEntry, StorageLocation } from "@/types";
 import { DataTable } from "@/components/DataTable";
 
@@ -25,7 +26,7 @@ export default function PartHistory() {
       empty="No stock history."
       exportFilename="stock-history"
       columns={[
-        { key: "occurred_at", header: "Date", accessor: r => r.occurred_at, render: r => new Date(r.occurred_at).toLocaleString() },
+        { key: "occurred_at", header: "Date", accessor: r => r.occurred_at, render: r => formatDateTime(r.occurred_at) },
         { key: "operation_type", header: "Op", accessor: r => r.operation_type },
         { key: "quantity_delta", header: "Δ", accessor: r => r.quantity_delta, render: r => <span className={r.quantity_delta < 0 ? "text-danger" : "text-accent"}>{r.quantity_delta > 0 ? "+" : ""}{r.quantity_delta}</span> },
         { key: "storage", header: "Storage", accessor: r => r.storage_location_id ? (sName.get(r.storage_location_id) || r.storage_location_id) : "" },

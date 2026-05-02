@@ -15,6 +15,7 @@ import {
 import type { ReactNode } from "react";
 import { api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
+import { formatDate, formatDateTime } from "@/lib/format";
 
 type ActivityKind =
   | "stock"
@@ -68,7 +69,7 @@ function relativeTime(iso: string): string {
   if (hr < 24) return `${hr}h ago`;
   const day = Math.round(hr / 24);
   if (day < 30) return `${day}d ago`;
-  return new Date(iso).toLocaleDateString();
+  return formatDate(iso);
 }
 
 function iconFor(e: ActivityEntry): ReactNode {
@@ -168,7 +169,7 @@ export default function ActivityTimeline({ endpoint }: Props) {
                 </div>
                 <div className="text-xs text-muted whitespace-nowrap shrink-0">
                   {e.user?.name ?? "system"} <span className="px-1">·</span>
-                  <span title={new Date(e.occurred_at).toLocaleString()}>
+                  <span title={formatDateTime(e.occurred_at)}>
                     {relativeTime(e.occurred_at)}
                   </span>
                 </div>

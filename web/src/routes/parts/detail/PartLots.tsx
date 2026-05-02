@@ -2,6 +2,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
+import { formatDateTime } from "@/lib/format";
 import type { Lot } from "@/types";
 import { DataTable } from "@/components/DataTable";
 
@@ -24,7 +25,7 @@ export default function PartLots() {
         { key: "purchase_currency", header: "Currency", accessor: r => r.purchase_currency ?? "" },
         { key: "expiration_date", header: "Expires", accessor: r => r.expiration_date ?? "" },
         { key: "source_type", header: "Source", accessor: r => r.source_type },
-        { key: "created_at", header: "Created", accessor: r => r.created_at, render: r => new Date(r.created_at).toLocaleString() },
+        { key: "created_at", header: "Created", accessor: r => r.created_at, render: r => formatDateTime(r.created_at) },
       ]}
     />
   );

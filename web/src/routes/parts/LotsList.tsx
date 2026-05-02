@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Package } from "lucide-react";
 import { api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
+import { formatDate } from "@/lib/format";
 import type { Lot, Part } from "@/types";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
@@ -39,7 +40,7 @@ export default function LotsList() {
           { key: "quantity", header: "On hand", accessor: r => r.current_quantity ?? 0 },
           { key: "unit_cost", header: "Unit cost", accessor: r => r.purchase_unit_cost ?? "" },
           { key: "currency", header: "Cur", accessor: r => r.purchase_currency ?? "" },
-          { key: "created_at", header: "Created", accessor: r => r.created_at, render: r => new Date(r.created_at).toLocaleDateString() },
+          { key: "created_at", header: "Created", accessor: r => r.created_at, render: r => formatDate(r.created_at) },
         ]}
       />
       </QueryStateBoundary>

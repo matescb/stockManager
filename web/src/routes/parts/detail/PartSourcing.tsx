@@ -7,6 +7,7 @@ import { api, ApiError } from "@/lib/api";
 import { isCatalogKey } from "@/lib/providerCatalog";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
+import { formatDateTime } from "@/lib/format";
 import type { CustomFieldRow, Part } from "@/types";
 
 const PROVIDER_LABEL: Record<string, string> = {
@@ -76,7 +77,7 @@ export default function PartSourcing() {
                 Catalog data from <strong className="text-text">{providerLabel}</strong>
                 {part.last_refresh_at && (
                   <span className="ml-2">
-                    · refreshed {new Date(part.last_refresh_at).toLocaleString()}
+                    · refreshed {formatDateTime(part.last_refresh_at)}
                   </span>
                 )}
               </>

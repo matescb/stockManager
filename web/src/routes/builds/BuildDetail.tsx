@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
+import { formatDateTime } from "@/lib/format";
 import EntityHeader from "@/components/EntityHeader";
 import AttachmentsPanel from "@/components/AttachmentsPanel";
 import ActivityTimeline from "@/components/ActivityTimeline";
@@ -155,7 +156,7 @@ export default function BuildDetail() {
             tone: build.status === "complete" ? "success" : build.status === "cancelled" ? "danger" : "default",
           },
           ...(build.completed_at
-            ? [{ label: "Completed", value: new Date(build.completed_at).toLocaleString() } as const]
+            ? [{ label: "Completed", value: formatDateTime(build.completed_at) } as const]
             : []),
         ]}
         actions={
