@@ -174,7 +174,12 @@ The frontend's `lib/api.ts` unwraps `data` automatically and throws
 
 Each domain folder contains:
 - `models.py` — SQLAlchemy declarative classes
-- `schemas.py` — Pydantic request/response DTOs *(only when used by the routes; small domains skip it)*
+- `schemas.py` — Pydantic request/response DTOs. **Rule (CQ-006 / #122):
+  every domain has its `schemas.py`; routers must not declare inline
+  `class XxxIn(BaseModel)` blocks.** This is the single source of truth
+  so shared shapes can be lifted across routers without an import cycle
+  through `app.api.routes.*`. Small domains may have an empty file; the
+  file itself is the "yes, this is where schemas live" signal.
 - `service.py` — pure DB-touching logic that the route layer wraps in
   HTTPException-mapping try/excepts *(only for non-trivial flows like stock, orders, builds)*
 

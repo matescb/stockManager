@@ -13,69 +13,14 @@ endpoint groups out of `parts.py` and import from this module.
 """
 from __future__ import annotations
 
-from typing import Literal
-from uuid import UUID
-
 from fastapi import HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part
-
-
-class PartIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    part_type: Literal["linked", "local", "meta", "sub_assembly"] = "local"
-    # Optional — defaults to mpn server-side when blank, so the operator can
-    # paste an MPN and skip the name field. At least one of name/mpn must be
-    # set; the create endpoint enforces that explicitly.
-    name: str | None = Field(default=None, max_length=300)
-    manufacturer: str | None = None
-    mpn: str | None = None
-    internal_part_number: str | None = None
-    description: str | None = None
-    notes_markdown: str | None = None
-    footprint: str | None = None
-    low_stock_report_quantity: int | None = None
-    attrition_percentage: float = 0
-    attrition_min_quantity: int = 0
-    default_storage_location_id: UUID | None = None
-    default_storage_mandatory: bool = False
-    serialized: bool = False
-
-
-class PartPatch(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str | None = None
-    manufacturer: str | None = None
-    mpn: str | None = None
-    internal_part_number: str | None = None
-    description: str | None = None
-    notes_markdown: str | None = None
-    footprint: str | None = None
-    low_stock_report_quantity: int | None = None
-    attrition_percentage: float | None = None
-    attrition_min_quantity: int | None = None
-    default_storage_location_id: UUID | None = None
-    default_storage_mandatory: bool | None = None
-    serialized: bool | None = None
-    published: bool | None = None
-    # Command flag: when true, drops the provider link, clears
-    # last_refresh_at, resets description_locally_edited, and converts
-    # every {provider, override} custom_field row on this part to
-    # `manual` (override rows lose their original_value).
-    unlink_provider: bool | None = None
-
-
-class BulkDeleteIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    # 100 is plenty for a single-shot multi-select; if a user wants to wipe
-    # more they can run it twice. Keeps the response payload bounded.
-    part_ids: list[UUID] = Field(min_length=1, max_length=100)
+# Re-export request schemas from the canonical domain location (CQ-006).
+# Kept importable here for back-compat with split files (#118 step 2-4).
+from app.domain.parts.schemas import BulkDeleteIn, PartIn, PartPatch  # noqa: F401
 
 
 def image_urls_for_parts(db, ws_id, part_ids: list) -> dict:
