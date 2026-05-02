@@ -27,7 +27,8 @@ You make a change → push to `main` → it ships. There is no manual deploy.
   GitHub Actions: .github/workflows/ci.yml
         ├─ backend-tests   (pytest, postgres:16 service container)
         ├─ web-build       (npm ci && npm run build)
-        └─ deploy          (only if both ✅, only on push to main)
+        ├─ prod-validate   (compose config -q + buildx builds + nginx -t)
+        └─ deploy          (only if all three ✅, only on push to main)
                   │
                   ▼ ssh deploy@vps
               cd /srv/stockmanager
@@ -45,8 +46,9 @@ You make a change → push to `main` → it ships. There is no manual deploy.
 
 Practical consequences:
 
-- **Pull requests / feature branches** run only the two test jobs. Use them
-  as a pre-merge gate; nothing reaches prod until the branch is merged.
+- **Pull requests / feature branches** run all three non-deploy jobs
+  (`backend-tests`, `web-build`, `prod-validate`). Use them as a pre-merge
+  gate; nothing reaches prod until the branch is merged.
 - **A new alembic migration** under `backend/alembic/versions/` ships
   automatically — no manual step. The backend container's CMD runs
   `alembic upgrade head` before uvicorn boots, so by the time the new
@@ -63,8 +65,8 @@ Practical consequences:
   3. For long migrations use [Drain mode](#drain-mode-for-destructive-migrations)
      to show users a static maintenance page while the schema changes run.
 - **Red CI** keeps prod on the previous version: the deploy job is gated
-  on `needs: [backend-tests, web-build]` and won't start if either failed.
-  GitHub emails on red.
+  on `needs: [backend-tests, web-build, prod-validate]` and won't start if
+  any of them failed. GitHub emails on red.
 - **Secrets / env changes don't go through CI.** `.env.prod` lives only on
   the VPS; rotating `SESSION_SECRET` or changing `CORS_ORIGINS` is an SSH
   task (see [Operations → Changing env vars](#changing-env-vars)).
@@ -222,7 +224,7 @@ The next push to `main` triggers the first end-to-end automated deploy.
 
 ## CI/CD details
 
-`.github/workflows/ci.yml`. Five jobs:
+`.github/workflows/ci.yml`. Six jobs:
 
 - **`lockfile-drift`** (SEC2-016) — installs `uv`, runs `uv lock --check`
   (fails if `pyproject.toml` diverges from `uv.lock`), and re-exports
@@ -233,7 +235,8 @@ The next push to `main` triggers the first end-to-end automated deploy.
   `lockfile-drift` so it always audits the verified-current set.
 - **`backend-tests`** — postgres:16-alpine service container, `pip install -e ".[dev]"`, `pytest -q --tb=short`. Runs on every push and PR.
 - **`web-build`** — `npm ci && npm run build`, followed on `push` to `main` by a Sentry sourcemap upload step (`npx @sentry/cli sourcemaps upload`). The build's `tsc -b` step also catches TypeScript errors. Runs on every push and PR; the sourcemap upload is gated on push to `main` only. `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, and `SENTRY_PROJECT` are GitHub Actions secrets used by the upload step — they must **not** appear in `.env.prod` or `docker-compose.prod.yml` build args (INFRA2-010).
-- **`deploy`** — gated on `github.event_name == 'push' && github.ref == 'refs/heads/main'` and `needs: [backend-tests, web-build]`. Uses `appleboy/ssh-action@v1.0.3` to SSH in and run the pull/up/prune script. Concurrency-grouped on `ci-refs/heads/main` with `cancel-in-progress: false` so consecutive pushes queue rather than abort an in-flight `docker compose up --build`.
+- **`prod-validate`** (INFRA2-012) — validates the prod artefacts that the two test jobs above don't exercise: (1) `docker compose -f docker-compose.prod.yml config -q` catches YAML/schema/variable errors in `docker-compose.prod.yml` (including the single-line JSON-array `command:` form that previously broke in production); (2) `docker buildx build` of `backend/Dockerfile` and `web/Dockerfile.prod` catches Dockerfile regressions; (3) `docker run nginx:alpine nginx -t` lints `deploy/nginx-web.conf`. Uses a throw-away CI env file derived from `deploy/.env.prod.example` — no real secrets are required. Runs on every push and PR.
+- **`deploy`** — gated on `github.event_name == 'push' && github.ref == 'refs/heads/main'` and `needs: [backend-tests, web-build, prod-validate]`. Uses `appleboy/ssh-action@v1.0.3` to SSH in and run the pull/up/prune script. Concurrency-grouped on `ci-refs/heads/main` with `cancel-in-progress: false` so consecutive pushes queue rather than abort an in-flight `docker compose up --build`.
 
 The deploy script body is intentionally tiny:
 
@@ -272,16 +275,16 @@ genuine version intent.
 
 ### Required status checks
 
-Even though the `backend-tests` and `web-build` jobs run on every PR
-(`pull_request:` trigger), GitHub will still let a contributor merge a
-red PR unless branch protection is configured. To make the gate
+Even though the `backend-tests`, `web-build`, and `prod-validate` jobs run
+on every PR (`pull_request:` trigger), GitHub will still let a contributor
+merge a red PR unless branch protection is configured. To make the gate
 load-bearing:
 
 1. GitHub UI → Settings → Branches → Branch protection rules → Add rule.
 2. Branch name pattern: `main`.
 3. Tick **Require status checks to pass before merging** and pick
-   `backend-tests` plus `web-build` from the list (they only appear
-   after their first successful run).
+   `backend-tests`, `web-build`, and `prod-validate` from the list (they
+   only appear after their first successful run).
 4. Optional: tick **Require branches to be up to date before merging**
    if you want a fresh-rebase requirement on top.
 
