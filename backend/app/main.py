@@ -100,6 +100,7 @@ _init_sentry()
 
 from app.api.routes import (
     attachments,
+    audit,
     auth,
     bom_presets,
     builds,
@@ -261,6 +262,10 @@ _CSRF_EXEMPT_PATHS = frozenset({
     "/api/sentry-tunnel",
     "/api/auth/login",
     "/api/auth/signup",
+    # /auth/verify is a pre-auth endpoint: the user follows a link from
+    # their email client, which carries no Origin header (or a mail-client
+    # origin). Exempt so the CSRF middleware doesn't block the verify call.
+    "/api/auth/verify",
 })
 
 
@@ -341,6 +346,7 @@ os.makedirs(settings().UPLOAD_DIR, exist_ok=True)
 
 _member_gate = [Depends(require_member_for_writes)]
 
+app.include_router(audit.router, prefix="/api/audit", tags=["audit"], dependencies=_member_gate)
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(workspaces.router, prefix="/api/workspaces", tags=["workspaces"])
 app.include_router(parts.router, prefix="/api/parts", tags=["parts"], dependencies=_member_gate)

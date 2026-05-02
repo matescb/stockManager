@@ -1,13 +1,17 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import AppShell from "@/components/layout/AppShell";
 import { ConfirmDialogProvider } from "@/components/ConfirmDialog";
+import { ChunkLoadErrorBoundary } from "@/components/ChunkLoadErrorBoundary";
+import { RouteSkeleton } from "@/components/RouteSkeleton";
 
 // Auth pages — small, eager-loaded so the login form renders without
 // a fallback flash on first paint.
 import Login from "@/routes/auth/Login";
 import Signup from "@/routes/auth/Signup";
+// SEC2-014: email-verification landing page.
+import Verify from "@/routes/auth/Verify";
 
 // Parts area — the home of the app. Eagerly loaded because every authed
 // session lands on /parts and the alternative is a Suspense flash on
@@ -126,16 +130,53 @@ function Gate() {
   );
 }
 
-const lazyFallback = <div className="p-6 text-muted">Loading…</div>;
+/**
+ * Bounce already-authenticated users away from /login and /signup (FE2-019).
+ * Renders null while the session check is in flight (avoids a flash of the
+ * login form before the redirect fires). Honours state.from so a deep-link
+ * round-trip still lands on the originally-requested page; falls back to
+ * /parts, and avoids a /login → /login loop.
+ */
+function RedirectIfAuthed({ children }: { children: React.ReactNode }) {
+  const { me, loading } = useAuth();
+  const location = useLocation();
+  if (loading) return null;
+  if (me) {
+    const from = (location.state as { from?: Location } | null)?.from;
+    const target =
+      from && from.pathname !== "/login" && from.pathname !== "/signup"
+        ? from.pathname
+        : "/parts";
+    return <Navigate to={target} replace />;
+  }
+  return <>{children}</>;
+}
+
+const lazyFallback = <RouteSkeleton variant="table" />;
+
+/**
+ * Per-route Suspense boundary. Used as the `element` of a <Route> so the
+ * skeleton shows in-place (instead of unmounting the whole authed shell)
+ * while a lazy chunk is fetched. Cannot wrap <Route> directly inside
+ * <Routes> — react-router-dom v6 requires every direct child of <Routes>
+ * to be a <Route> or <React.Fragment>, so any Suspense boundary needs to
+ * live *inside* a route element.
+ */
+function LazyRoute({ children }: { children: ReactNode }) {
+  return <Suspense fallback={lazyFallback}>{children}</Suspense>;
+}
 
 export default function App() {
   return (
     <AuthProvider>
       <ConfirmDialogProvider>
+        <ChunkLoadErrorBoundary>
         <Suspense fallback={lazyFallback}>
         <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/signup" element={<Signup />} />
+          <Route path="/login" element={<RedirectIfAuthed><Login /></RedirectIfAuthed>} />
+          <Route path="/signup" element={<RedirectIfAuthed><Signup /></RedirectIfAuthed>} />
+          {/* SEC2-014: email verification landing — pre-auth, no Gate wrapper */}
+          <Route path="/verify" element={<Verify />} />
 
           {/* Single layout route — Gate stays mounted across every
               authed navigation, so AppShell + its state survive. */}
@@ -192,42 +233,50 @@ export default function App() {
               <Route path="history" element={<LotHistory />} />
             </Route>
 
-            <Route path="/orders" element={<OrdersList />} />
-            <Route path="/orders/archived" element={<OrdersList archived />} />
-            <Route path="/orders/create" element={<OrderCreate />} />
-            <Route path="/orders/:orderId" element={<OrderDetail />} />
+            {/* Lazy-loaded sections. Each <Route element> is its own
+                Suspense boundary so the fallback shows in-place while
+                only that route's chunk is in flight (and so the
+                fallback is a valid child of <Routes> — wrapping a
+                <Route> in <Suspense> directly inside <Routes> is a
+                react-router-dom v6 invariant violation: every direct
+                child of <Routes> must be a <Route> or <Fragment>). */}
+            <Route path="/orders" element={<LazyRoute><OrdersList /></LazyRoute>} />
+            <Route path="/orders/archived" element={<LazyRoute><OrdersList archived /></LazyRoute>} />
+            <Route path="/orders/create" element={<LazyRoute><OrderCreate /></LazyRoute>} />
+            <Route path="/orders/:orderId" element={<LazyRoute><OrderDetail /></LazyRoute>} />
 
-            <Route path="/builds" element={<BuildsList />} />
-            <Route path="/builds/archived" element={<BuildsList archived />} />
-            <Route path="/builds/create" element={<BuildCreate />} />
-            <Route path="/builds/:buildId" element={<BuildDetail />} />
+            <Route path="/builds" element={<LazyRoute><BuildsList /></LazyRoute>} />
+            <Route path="/builds/archived" element={<LazyRoute><BuildsList archived /></LazyRoute>} />
+            <Route path="/builds/create" element={<LazyRoute><BuildCreate /></LazyRoute>} />
+            <Route path="/builds/:buildId" element={<LazyRoute><BuildDetail /></LazyRoute>} />
 
-            <Route path="/reports" element={<ReportsLayout />}>
-              <Route index element={<LowStockReport />} />
-              <Route path="value" element={<StockValueReport />} />
-              <Route path="bom" element={<BomShortageReport />} />
-              <Route path="expiring" element={<ExpiringLotsReport />} />
+            <Route path="/reports" element={<LazyRoute><ReportsLayout /></LazyRoute>}>
+              <Route index element={<LazyRoute><LowStockReport /></LazyRoute>} />
+              <Route path="value" element={<LazyRoute><StockValueReport /></LazyRoute>} />
+              <Route path="bom" element={<LazyRoute><BomShortageReport /></LazyRoute>} />
+              <Route path="expiring" element={<LazyRoute><ExpiringLotsReport /></LazyRoute>} />
             </Route>
 
-            <Route path="/projects" element={<ProjectsList />} />
-            <Route path="/projects/archived" element={<ProjectsList archived />} />
-            <Route path="/projects/create" element={<ProjectCreate />} />
-            <Route path="/projects/:projectId" element={<ProjectLayout />}>
+            <Route path="/projects" element={<LazyRoute><ProjectsList /></LazyRoute>} />
+            <Route path="/projects/archived" element={<LazyRoute><ProjectsList archived /></LazyRoute>} />
+            <Route path="/projects/create" element={<LazyRoute><ProjectCreate /></LazyRoute>} />
+            <Route path="/projects/:projectId" element={<LazyRoute><ProjectLayout /></LazyRoute>}>
               <Route index element={<Navigate to="data" replace />} />
-              <Route path="data" element={<ProjectData />} />
-              <Route path="bom" element={<ProjectBOM />} />
-              <Route path="import" element={<ProjectImport />} />
-              <Route path="builds" element={<ProjectBuilds />} />
-              <Route path="other" element={<ProjectOther />} />
+              <Route path="data" element={<LazyRoute><ProjectData /></LazyRoute>} />
+              <Route path="bom" element={<LazyRoute><ProjectBOM /></LazyRoute>} />
+              <Route path="import" element={<LazyRoute><ProjectImport /></LazyRoute>} />
+              <Route path="builds" element={<LazyRoute><ProjectBuilds /></LazyRoute>} />
+              <Route path="other" element={<LazyRoute><ProjectOther /></LazyRoute>} />
             </Route>
 
-            <Route path="/settings/account" element={<Account />} />
-            <Route path="/settings/workspace" element={<WorkspaceSettings />} />
+            <Route path="/settings/account" element={<LazyRoute><Account /></LazyRoute>} />
+            <Route path="/settings/workspace" element={<LazyRoute><WorkspaceSettings /></LazyRoute>} />
 
             <Route path="*" element={<NotFound />} />
           </Route>
         </Routes>
         </Suspense>
+        </ChunkLoadErrorBoundary>
       </ConfirmDialogProvider>
     </AuthProvider>
   );

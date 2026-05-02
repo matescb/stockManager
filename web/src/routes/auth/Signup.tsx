@@ -14,6 +14,10 @@ export default function Signup() {
   const [workspaceName, setWorkspaceName] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // SEC2-014: when the server enables email-verification the signup
+  // returns 202 with status="verification_sent" instead of 200 with
+  // a session cookie. We show a "check your inbox" view in that case.
+  const [verificationSent, setVerificationSent] = useState(false);
 
   // Mirror the Login deep-link replay so a user who hit a protected
   // route, signed up instead of in, still lands on the original target.
@@ -25,19 +29,54 @@ export default function Signup() {
     setErr(null);
     setBusy(true);
     try {
-      await api.post("/auth/signup", {
+      const data = await api.post("/auth/signup", {
         name,
         email,
         password,
         workspace_name: workspaceName || undefined,
       });
+      // SEC2-014: email-verification path returns {status: "verification_sent"}.
+      if ((data as { status?: string }).status === "verification_sent") {
+        setVerificationSent(true);
+        return;
+      }
+      // Legacy / dev path: immediate session — refresh and navigate.
       await refresh();
       nav(fromPath || "/parts", { replace: true });
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Signup failed");
+      setErr(e instanceof ApiError ? e.userMessage : "Signup failed");
     } finally {
       setBusy(false);
     }
+  }
+
+  // "Check your inbox" view shown after a 202 verification_sent response.
+  if (verificationSent) {
+    return (
+      <AuthShell title="Check your inbox">
+        <div className="space-y-4">
+          <p className="text-sm">
+            We've sent a verification link to <strong>{email}</strong>.
+            Click the link in the email to complete your account setup.
+          </p>
+          <p className="text-sm text-muted">
+            Didn't receive it? Check your spam folder, or{" "}
+            <button
+              type="button"
+              className="text-accent hover:underline"
+              onClick={() => setVerificationSent(false)}
+            >
+              try again
+            </button>
+            .
+          </p>
+          <p className="text-sm text-muted">
+            Already verified?{" "}
+            <Link to="/login" className="text-accent hover:underline">Sign in</Link>
+          </p>
+        </div>
+      </AuthShell>
+    );
   }
 
   return (
@@ -49,8 +88,9 @@ export default function Signup() {
           </div>
         )}
         <div>
-          <label className="label">Name</label>
+          <label className="label" htmlFor="signup-name">Name</label>
           <input
+            id="signup-name"
             className="input"
             required
             value={name}
@@ -59,8 +99,9 @@ export default function Signup() {
           />
         </div>
         <div>
-          <label className="label">Email</label>
+          <label className="label" htmlFor="signup-email">Email</label>
           <input
+            id="signup-email"
             className="input"
             type="email"
             required
@@ -70,8 +111,9 @@ export default function Signup() {
           />
         </div>
         <div>
-          <label className="label">Password (min 8)</label>
+          <label className="label" htmlFor="signup-password">Password (min 8)</label>
           <input
+            id="signup-password"
             className="input"
             type="password"
             required
@@ -82,8 +124,9 @@ export default function Signup() {
           />
         </div>
         <div>
-          <label className="label">Workspace name (optional)</label>
+          <label className="label" htmlFor="signup-workspace-name">Workspace name (optional)</label>
           <input
+            id="signup-workspace-name"
             className="input"
             value={workspaceName}
             onChange={e => setWorkspaceName(e.target.value)}

@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import or_, select
+from fastapi import APIRouter, HTTPException, Query, Request, status
+from sqlalchemy import and_, or_, select
 
 from app.api._helpers import assert_child_in_parent, require_resource_access
-from app.api.routes._activity import build_activity
+from app.api.routes._activity import _DEFAULT_LIMIT, _MAX_LIMIT, build_activity
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.domain.orders.models import Order, OrderEntry
@@ -260,18 +260,46 @@ def receive_order(order_id: UUID, payload: ReceiveIn, db: DbSession, ws: Current
 
 
 @router.get("/{order_id}/activity")
-def order_activity(order_id: UUID, db: DbSession, ws: CurrentWorkspace):
+def order_activity(
+    request: Request,
+    order_id: UUID,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    limit: int = Query(default=_DEFAULT_LIMIT, ge=1, le=_MAX_LIMIT),
+    before_occurred_at: str | None = Query(default=None),
+    before_id: UUID | None = Query(default=None),
+):
     o = _get_order(db, ws.id, order_id)
-    stock_rows = list(
-        db.execute(
-            select(StockEntry)
-            .where(StockEntry.workspace_id == ws.id)
-            .where(StockEntry.order_id == o.id)
-            .order_by(StockEntry.occurred_at.desc())
-            .limit(200)
-        ).scalars()
+
+    cursor_at: datetime | None = None
+    if before_occurred_at is not None:
+        try:
+            cursor_at = datetime.fromisoformat(before_occurred_at)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="invalid before_occurred_at")
+
+    stmt = (
+        select(StockEntry)
+        .where(StockEntry.workspace_id == ws.id)
+        .where(StockEntry.order_id == o.id)
     )
-    events = build_activity(
+    if cursor_at is not None and before_id is not None:
+        stmt = stmt.where(
+            or_(
+                StockEntry.occurred_at < cursor_at,
+                and_(
+                    StockEntry.occurred_at == cursor_at,
+                    StockEntry.id < before_id,
+                ),
+            )
+        )
+    stmt = stmt.order_by(StockEntry.occurred_at.desc(), StockEntry.id.desc()).limit(limit + 1)
+    stock_rows = list(db.execute(stmt).scalars())
+
+    if not hasattr(request.state, "user_cache"):
+        request.state.user_cache = {}
+
+    result = build_activity(
         db,
         stock_rows=stock_rows,
         created_at=o.created_at,
@@ -280,5 +308,8 @@ def order_activity(order_id: UUID, db: DbSession, ws: CurrentWorkspace):
         updated_by=o.updated_by,
         created_kind="order_created",
         updated_kind="order_updated",
+        limit=limit,
+        include_synthetic=(cursor_at is None),
+        user_cache=request.state.user_cache,
     )
-    return ok(events)
+    return ok(result)

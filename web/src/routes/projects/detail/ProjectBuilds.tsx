@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Hammer } from "lucide-react";
 import { api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
+import { formatDateTime } from "@/lib/format";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import type { Build } from "@/types";
@@ -41,7 +42,7 @@ export default function ProjectBuilds() {
             key: "completed",
             header: "Completed",
             accessor: r => r.completed_at ?? "",
-            render: r => r.completed_at ? new Date(r.completed_at).toLocaleString() : <span className="text-muted">—</span>,
+            render: r => r.completed_at ? formatDateTime(r.completed_at) : <span className="text-muted">—</span>,
           },
         ]}
       />

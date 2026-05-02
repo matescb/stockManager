@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
+import sqlalchemy as sa
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -15,6 +16,16 @@ def _utcnow() -> datetime:
 
 class Workspace(Base):
     __tablename__ = "workspaces"
+    __table_args__ = (
+        # Partial unique index: only non-NULL hashes must be distinct.
+        # Mirrors the index created by migration 0025.
+        Index(
+            "ix_workspaces_catalog_token_hash",
+            "catalog_token_hash",
+            unique=True,
+            postgresql_where=sa.text("catalog_token_hash IS NOT NULL"),
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(200), nullable=False)
@@ -24,6 +35,12 @@ class Workspace(Base):
     lot_control_enabled = Column(Boolean, nullable=False, default=True)
     serial_tracking_enabled = Column(Boolean, nullable=False, default=False)
     catalog_token = Column(String(64), nullable=True)
+    # HMAC-SHA256 of the plaintext catalog_token, keyed by SESSION_SECRET.
+    # The application looks up workspaces by this hash — never by the
+    # plaintext — so the token never appears in a WHERE clause.
+    # Nullable for rows that pre-date migration 0025 and have not yet had
+    # their token rotated.  See SEC2-008 / issue #71.
+    catalog_token_hash = Column(String(64), nullable=True)
     catalog_enabled = Column(Boolean, nullable=False, default=False)
     parts_provider = Column(String(40), nullable=False, default="none")  # none | mouser | digikey
     # Encrypted at rest via app.core.secrets (Sec HIGH-9). Fernet

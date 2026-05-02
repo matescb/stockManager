@@ -6,6 +6,7 @@ import { BarChart3, ShoppingCart } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
+import { formatDate, formatMoney } from "@/lib/format";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import type { Order, Project } from "@/types";
@@ -84,7 +85,7 @@ async function createRestockOrder(
     }
     nav(`/orders/${order.id}`);
   } catch (e) {
-    toast.error(e instanceof ApiError ? e.message : "Failed to create order");
+    toast.error(e instanceof ApiError ? e.userMessage : "Failed to create order");
   }
 }
 
@@ -159,7 +160,7 @@ function KpiStrip() {
   const lowCount = lowStock?.length ?? 0;
   const valueByCurrency = stockValue?.by_currency
     ?.filter(c => c.value > 0)
-    .map(c => `${c.value.toFixed(2)} ${c.currency ?? "?"}`)
+    .map(c => formatMoney(c.value, c.currency))
     .join(" · ") ?? "—";
   const expiringCount = expiring?.length ?? 0;
   const expiredCount = expiring?.filter(l => l.expired).length ?? 0;
@@ -285,7 +286,7 @@ export function StockValueReport() {
             {data.by_currency.map(c => (
               <tr key={c.currency ?? "none"}>
                 <td>{c.currency ?? <span className="text-muted">— (untagged)</span>}</td>
-                <td className="tabular-nums">{c.value.toFixed(2)}</td>
+                <td className="tabular-nums">{formatMoney(c.value, c.currency)}</td>
               </tr>
             ))}
           </tbody>
@@ -306,7 +307,7 @@ export function StockValueReport() {
         columns={[
           { key: "name", header: "Part", accessor: r => r.name, render: r => <Link className="text-accent" to={`/parts/${r.part_id}/info`}>{r.name}</Link> },
           { key: "on_hand", header: "On hand", accessor: r => r.on_hand, width: "80px" },
-          { key: "value", header: "Value", accessor: r => r.value, render: r => <span className="tabular-nums">{r.value.toFixed(2)}</span> },
+          { key: "value", header: "Value", accessor: r => r.value, render: r => <span className="tabular-nums">{formatMoney(r.value, r.currency)}</span> },
           { key: "currency", header: "Currency", accessor: r => r.currency ?? "—", width: "100px" },
         ]}
       />
@@ -352,15 +353,15 @@ export function BomShortageReport() {
     <div className="space-y-3">
       <div className="card p-4 flex gap-3 items-end max-w-2xl">
         <div className="flex-1">
-          <label className="label">Project</label>
-          <select className="input" value={projectId} onChange={e => setProjectId(e.target.value)}>
+          <label className="label" htmlFor="report-bom-project">Project</label>
+          <select id="report-bom-project" className="input" value={projectId} onChange={e => setProjectId(e.target.value)}>
             <option value="">— pick —</option>
             {projects?.filter(p => !p.archived_at).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </div>
         <div>
-          <label className="label">Build quantity</label>
-          <input className="input" type="number" min={1} value={qty} onChange={e => setQty(Number(e.target.value))} />
+          <label className="label" htmlFor="report-bom-qty">Build quantity</label>
+          <input id="report-bom-qty" className="input" type="number" min={1} value={qty} onChange={e => setQty(Number(e.target.value))} />
         </div>
       </div>
       {data && (
@@ -414,8 +415,8 @@ export function ExpiringLotsReport() {
     <div className="space-y-3">
       <div className="card p-4 flex gap-3 items-end max-w-md">
         <div className="flex-1">
-          <label className="label">Window (days)</label>
-          <input className="input" type="number" min={0} max={3650} value={days} onChange={e => setDays(Number(e.target.value))} />
+          <label className="label" htmlFor="report-expiring-days">Window (days)</label>
+          <input id="report-expiring-days" className="input" type="number" min={0} max={3650} value={days} onChange={e => setDays(Number(e.target.value))} />
         </div>
       </div>
       <DataTable
@@ -434,7 +435,7 @@ export function ExpiringLotsReport() {
           { key: "lot", header: "Lot", accessor: r => r.name ?? r.lot_id, render: r => <Link className="text-accent" to={`/lots/${r.lot_id}/info`}>{r.name ?? r.lot_id}</Link> },
           { key: "part", header: "Part", accessor: r => r.part_name ?? r.part_id, render: r => <Link to={`/parts/${r.part_id}/info`}>{r.part_name ?? r.part_id}</Link> },
           { key: "qty", header: "On hand", accessor: r => r.on_hand, width: "80px" },
-          { key: "exp", header: "Expires", accessor: r => r.expiration_date, render: r => new Date(r.expiration_date).toLocaleDateString() },
+          { key: "exp", header: "Expires", accessor: r => r.expiration_date, render: r => formatDate(r.expiration_date) },
           { key: "left", header: "Days", accessor: r => r.days_until_expiry, width: "80px",
             render: r => r.expired ? <span className="text-danger">expired</span> : <span className={r.days_until_expiry < 30 ? "text-warning" : ""}>{r.days_until_expiry}</span> },
         ]}

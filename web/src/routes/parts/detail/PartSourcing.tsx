@@ -7,6 +7,7 @@ import { api, ApiError } from "@/lib/api";
 import { isCatalogKey } from "@/lib/providerCatalog";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
+import { formatDateTime } from "@/lib/format";
 import type { CustomFieldRow, Part } from "@/types";
 
 const PROVIDER_LABEL: Record<string, string> = {
@@ -51,7 +52,7 @@ export default function PartSourcing() {
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", part.id) });
       toast.success("Refreshed from provider.");
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Refresh failed");
+      toast.error(e instanceof ApiError ? e.userMessage : "Refresh failed");
     } finally {
       setRefreshing(false);
     }
@@ -76,7 +77,7 @@ export default function PartSourcing() {
                 Catalog data from <strong className="text-text">{providerLabel}</strong>
                 {part.last_refresh_at && (
                   <span className="ml-2">
-                    · refreshed {new Date(part.last_refresh_at).toLocaleString()}
+                    · refreshed {formatDateTime(part.last_refresh_at)}
                   </span>
                 )}
               </>

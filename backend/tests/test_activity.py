@@ -55,7 +55,8 @@ def test_part_activity_orders_desc_and_includes_creation(authed):
 
     r = authed.get(f"/api/parts/{part_id}/activity")
     assert r.status_code == 200, r.text
-    events = r.json()["data"]
+    page = r.json()["data"]
+    events = page["events"]
 
     kinds = [e["kind"] for e in events]
     ops = [e["operation_type"] for e in events]
@@ -107,7 +108,8 @@ def test_order_activity_shows_create_and_receive(authed):
 
     r = authed.get(f"/api/orders/{order['id']}/activity")
     assert r.status_code == 200
-    events = r.json()["data"]
+    page = r.json()["data"]
+    events = page["events"]
     kinds = [e["kind"] for e in events]
     assert "order_created" in kinds
     stock_events = [e for e in events if e["kind"] == "stock"]
@@ -160,7 +162,8 @@ def test_build_activity_includes_reserve_and_consume(authed):
 
     r = authed.get(f"/api/builds/{bid}/activity")
     assert r.status_code == 200
-    events = r.json()["data"]
+    page = r.json()["data"]
+    events = page["events"]
     kinds = [e["kind"] for e in events]
     ops = [e["operation_type"] for e in events]
     assert "build_created" in kinds

@@ -18,6 +18,9 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    mem_limit: 2g
+    pids_limit: 512
+    oom_kill_disable: false
     logging:
       driver: json-file
       options:
@@ -34,10 +37,32 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "SETUID", "SETGID", "FOWNER", "DAC_OVERRIDE"]
+
+  # One-shot init container: fixes /data ownership as root before backend
+  # starts. This replaces the old gosu trampoline that ran chown inside the
+  # backend container itself (requiring the runtime process to start as root).
+  # restart: no ensures it never loops; backend depends_on with
+  # service_completed_successfully gates startup on a clean exit.
+  backend-init:
+    build: ./backend
+    restart: "no"
+    command: ["sh", "-c", "chown -R 1000:1000 /data"]
+    volumes:
+      - uploads:/data/uploads
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN"]
 
   backend:
     build: ./backend
     restart: unless-stopped
+    mem_limit: 1g
+    cpus: "1.5"
+    pids_limit: 512
+    oom_kill_disable: false
     logging:
       driver: json-file
       options:
@@ -81,6 +106,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      backend-init:
+        condition: service_completed_successfully
     expose:
       - "8000"
     # INFRA2-002 / INFRA-001: a healthy container in compose's eyes means
@@ -111,18 +138,15 @@ services:
     # across argv boundaries (uvicorn was missing --proxy-headers
     # because the YAML kept the newline before it intact).
     #
-    # Boot sequence:
-    #   1. chown the upload volume to appuser. Idempotent — cheap when
-    #      already correct, fixes ownership the first time a fresh named
-    #      volume is mounted (Docker preserves the image's path ownership
-    #      on first creation) or when migrating from a previous root-only
-    #      image. Runs as root because the compose container's USER is
-    #      unset by design (see backend/Dockerfile).
-    #   2. exec gosu appuser <inner shell>. Drops privileges to UID 1000
-    #      for the rest of the process tree. From this point uvicorn and
-    #      alembic both run unprivileged.
-    #   3. alembic upgrade head, then exec uvicorn. Identical to before.
-    command: ["sh", "-c", "chown -R appuser:appuser /data 2>/dev/null || true; exec gosu appuser sh -c 'alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=*'"]
+    # Runs as appuser (UID 1000) — USER is set in the Dockerfile. The
+    # chown of /data is handled by the backend-init service above.
+    # stop_grace_period: give Compose 30s before SIGKILL, matching
+    # --timeout-graceful-shutdown 25 below (5s headroom so SIGKILL
+    # never fires on a clean drain — see CLAUDE.md "Things that have bitten us").
+    stop_grace_period: 30s
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=* --timeout-graceful-shutdown 25"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
 
   web:
     build:
@@ -142,6 +166,10 @@ services:
         VITE_SENTRY_TRACES_SAMPLE_RATE: ${VITE_SENTRY_TRACES_SAMPLE_RATE:-0.0}
         VITE_APP_VERSION: ${SENTRY_RELEASE:-}
     restart: unless-stopped
+    mem_limit: 256m
+    cpus: "0.5"
+    pids_limit: 128
+    oom_kill_disable: false
     logging:
       driver: json-file
       options:
@@ -158,6 +186,9 @@ services:
     # parts.matescb.cz → 127.0.0.1:8091. See deploy/parts.matescb.cz.conf.
     ports:
       - "127.0.0.1:8091:80"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "SETUID", "SETGID", "NET_BIND_SERVICE"]
 
 volumes:
   db_data:

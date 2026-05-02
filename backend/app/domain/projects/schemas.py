@@ -12,6 +12,7 @@ class ProjectCreateIn(BaseModel):
     name: str = Field(min_length=1, max_length=300)
     description: str | None = None
     notes_markdown: str | None = None
+    associated_subassembly_part_id: UUID | None = None
 
 
 class ProjectPatchIn(BaseModel):
@@ -20,6 +21,7 @@ class ProjectPatchIn(BaseModel):
     name: str | None = None
     description: str | None = None
     notes_markdown: str | None = None
+    associated_subassembly_part_id: UUID | None = None
 
 
 class ProjectOut(BaseModel):
@@ -40,7 +42,7 @@ class BomEntryIn(BaseModel):
     part_id: UUID | None = None
     meta_part_id: UUID | None = None
     name: str | None = None
-    quantity: float = 1
+    quantity: float = Field(default=1, gt=0)
     comments: str | None = None
     designators: list[str] = []
     cad_footprint: str | None = None
@@ -55,7 +57,7 @@ class BomEntryPatch(BaseModel):
     part_id: UUID | None = None
     meta_part_id: UUID | None = None
     name: str | None = None
-    quantity: float | None = None
+    quantity: float | None = Field(default=None, gt=0)
     comments: str | None = None
     designators: list[str] | None = None
     cad_footprint: str | None = None

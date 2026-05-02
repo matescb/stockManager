@@ -1,9 +1,10 @@
-import { Outlet, useParams, useNavigate } from "react-router-dom";
+import { Outlet, useParams, useNavigate, useOutletContext } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { useWsKey, wsScope } from "@/lib/queryKeys";
+import { useWsKey, lotMutationKeys } from "@/lib/queryKeys";
+import { formatDateTime } from "@/lib/format";
 import EntityHeader from "@/components/EntityHeader";
 import SubNav from "@/components/SubNav";
 import type { Lot, Part, StockEntry, StorageLocation } from "@/types";
@@ -50,12 +51,27 @@ export function LotInfo() {
   );
 }
 
+type PartStockResp = {
+  total_on_hand: number;
+  rows: { storage_location_id: string | null; lot_id: string | null; quantity: number }[];
+};
+
 export function LotMove() {
   const { lotId } = useParams<{ lotId: string }>();
+  const { lot } = useOutletContext<{ lot: Lot }>();
   const nav = useNavigate();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
   const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
+  // The Lot resource itself doesn't carry a single storage_location_id
+  // (a lot can be split across bins via prior moves), so we read the
+  // part's stock breakdown to discover which bins currently hold this
+  // lot — those are the source bins the move will drain. Without this,
+  // the source bin's StorageInfo / StorageHistory go stale on success.
+  const { data: partStock } = useQuery({
+    queryKey: useWsKey("part", lot.part_id, "stock"),
+    queryFn: () => api.get<PartStockResp>(`/parts/${lot.part_id}/stock`),
+  });
   const [dest, setDest] = useState("");
   const [qty, setQty] = useState<number>(0);
   const [split, setSplit] = useState(false);
@@ -67,21 +83,26 @@ export function LotMove() {
       quantity: qty,
       split_lot: split,
     });
-    qc.invalidateQueries({ queryKey: wsScope(workspaceId) });
+    const sourceIds = (partStock?.rows ?? [])
+      .filter(r => r.lot_id === lot.id && r.storage_location_id)
+      .map(r => r.storage_location_id as string);
+    const storageIds = Array.from(new Set([...sourceIds, dest].filter(Boolean) as string[]));
+    for (const k of lotMutationKeys(workspaceId, lot, storageIds))
+      qc.invalidateQueries({ queryKey: k });
     nav(`/lots/${lotId}/info`);
   }
   return (
     <form onSubmit={submit} className="card p-4 max-w-xl space-y-3">
       <div>
-        <label className="label">Destination *</label>
-        <select className="input" required value={dest} onChange={e => setDest(e.target.value)}>
+        <label className="label" htmlFor="lot-move-dest">Destination *</label>
+        <select id="lot-move-dest" className="input" required value={dest} onChange={e => setDest(e.target.value)}>
           <option value="">— select —</option>
           {storage?.filter(s => !s.archived_at).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
       </div>
       <div>
-        <label className="label">Quantity *</label>
-        <input className="input" type="number" min={1} required value={qty || ""} onChange={e => setQty(Number(e.target.value))} />
+        <label className="label" htmlFor="lot-move-qty">Quantity *</label>
+        <input id="lot-move-qty" className="input" type="number" min={1} required value={qty || ""} onChange={e => setQty(Number(e.target.value))} />
       </div>
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={split} onChange={e => setSplit(e.target.checked)} />
@@ -94,6 +115,7 @@ export function LotMove() {
 
 export function LotAdjust() {
   const { lotId } = useParams();
+  const { lot } = useOutletContext<{ lot: Lot }>();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
   const [actual, setActual] = useState<number>(0);
@@ -101,17 +123,18 @@ export function LotAdjust() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     await api.post(`/lots/${lotId}/adjust-count`, { actual_quantity: actual, comments });
-    qc.invalidateQueries({ queryKey: wsScope(workspaceId) });
+    for (const k of lotMutationKeys(workspaceId, lot))
+      qc.invalidateQueries({ queryKey: k });
   }
   return (
     <form onSubmit={submit} className="card p-4 max-w-xl space-y-3">
       <div>
-        <label className="label">Counted quantity</label>
-        <input className="input" type="number" required value={actual || ""} onChange={e => setActual(Number(e.target.value))} />
+        <label className="label" htmlFor="lot-adjust-qty">Counted quantity</label>
+        <input id="lot-adjust-qty" className="input" type="number" required value={actual || ""} onChange={e => setActual(Number(e.target.value))} />
       </div>
       <div>
-        <label className="label">Comments</label>
-        <textarea className="input" rows={2} value={comments} onChange={e => setComments(e.target.value)} />
+        <label className="label" htmlFor="lot-adjust-comments">Comments</label>
+        <textarea id="lot-adjust-comments" className="input" rows={2} value={comments} onChange={e => setComments(e.target.value)} />
       </div>
       <button className="btn-primary">Adjust</button>
     </form>
@@ -120,7 +143,7 @@ export function LotAdjust() {
 
 export function LotHistory() {
   const { lotId } = useParams();
-  const { data } = useQuery({ queryKey: useWsKey("lot", lotId, "history"), queryFn: () => api.get<StockEntry[]>(`/lots/${lotId}/history`) });
+  const { data } = useQuery({ queryKey: useWsKey("lot", lotId, "history"), queryFn: () => api.get<StockEntry[]>(`/lots/${lotId}/history?limit=200`) });
   return (
     <div className="card overflow-hidden">
       <table className="table">
@@ -128,7 +151,7 @@ export function LotHistory() {
         <tbody>
           {(data ?? []).map(e => (
             <tr key={e.id}>
-              <td>{new Date(e.occurred_at).toLocaleString()}</td>
+              <td>{formatDateTime(e.occurred_at)}</td>
               <td>{e.operation_type}</td>
               <td className={e.quantity_delta < 0 ? "text-danger" : "text-accent"}>{e.quantity_delta > 0 ? "+" : ""}{e.quantity_delta}</td>
               <td className="font-mono text-xs">{e.storage_location_id ?? "—"}</td>

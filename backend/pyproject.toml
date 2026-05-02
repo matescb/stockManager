@@ -34,6 +34,11 @@ dev = [
     # Used by tests/test_ci_workflow.py (TEST-014 / issue #116) to parse
     # .github/workflows/ci.yml. Test-only — runtime app doesn't import yaml.
     "pyyaml>=6.0",
+    # TEST-013 / issue #115. Adds `--cov` to the pytest invocation so CI
+    # publishes a coverage report. We deliberately don't ship --cov-fail-under
+    # yet (the issue says "ratchet later"); the floor is opened as a
+    # follow-up once we have a measured baseline.
+    "pytest-cov>=5.0",
     # Static analysis. Pinned <1.0 to avoid surprise rule churn — see
     # issue #121 / CQ-005. Configured via [tool.ruff] below.
     "ruff>=0.6,<1.0",
@@ -55,8 +60,29 @@ testpaths = ["tests"]
 # TEST-007 / issue #109.
 markers = [
     "slow: long-running test (excluded by default; run with `-m slow`)",
+    "real_db: test needs independent committed DB connections instead of savepoint isolation",
 ]
 addopts = "-m 'not slow'"
+
+# TEST-013 / issue #115. Coverage measurement config — published via CI
+# artifacts (no Codecov yet). The runtime image (backend/Dockerfile)
+# never installs the [dev] extra so this stays CI-only.
+[tool.coverage.run]
+source = ["app"]
+branch = false
+omit = [
+    "*/__init__.py",
+    # Belt-and-braces: alembic versions live under backend/alembic/versions/,
+    # outside `source = ["app"]`, so they're already excluded. Keep the
+    # explicit omit so accidental imports of migration modules don't
+    # skew the report.
+    "alembic/versions/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+precision = 1
+skip_empty = true
 
 # Minimal ruff config — CQ-005 / issue #121. Intentionally narrow:
 #   E  — pycodestyle errors

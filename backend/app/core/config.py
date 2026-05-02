@@ -70,6 +70,23 @@ class Settings(BaseSettings):
     # only — leaving it unset in dev keeps local error stacks clean.
     SENTRY_DSN: str = ""
     SENTRY_TRACES_SAMPLE_RATE: float = 0.0
+    # Email / SMTP for the email-verification flow (SEC2-014).
+    # In dev (APP_ENV != "prod") the mail backend writes to stdout so the
+    # verification link surfaces in container logs without an SMTP server.
+    # In prod all four SMTP_* vars must be set.
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    MAIL_FROM: str = "noreply@stockmanager.local"
+    # Public-facing base URL for generating verification links.
+    # In dev the default mirrors the Vite dev server.
+    APP_BASE_URL: str = "http://localhost:5173"
+    # Enable the two-step email-verification flow on signup (SEC2-014).
+    # Defaults to True in prod, False elsewhere so the test suite can
+    # use the old immediate-signup path without mocking mail.
+    # Set SIGNUP_REQUIRE_EMAIL_VERIFICATION=true in .env.dev to opt in.
+    SIGNUP_REQUIRE_EMAIL_VERIFICATION: bool = False
     # Release identifier — set to the git SHA at deploy time by compose.
     # Sentry groups issues per release and auto-resolves when a fixed
     # release ships.
@@ -110,6 +127,15 @@ class Settings(BaseSettings):
                     f"postgresql+psycopg://{self.POSTGRES_USER}:{encoded_pw}"
                     f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _default_email_verification_in_prod(self) -> "Settings":
+        """Force SIGNUP_REQUIRE_EMAIL_VERIFICATION=True in prod even if the
+        operator forgets to set it, so the security feature is always on
+        in production (SEC2-014)."""
+        if self.APP_ENV == "prod":
+            self.SIGNUP_REQUIRE_EMAIL_VERIFICATION = True
         return self
 
     @model_validator(mode="after")

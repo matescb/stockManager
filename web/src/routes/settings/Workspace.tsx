@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { useWsKey, wsKeyOf, wsScope } from "@/lib/queryKeys";
+import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useConfirm } from "@/components/ConfirmDialog";
 
 type Ws = {
@@ -14,7 +14,14 @@ type Ws = {
   lot_control_enabled: boolean;
   serial_tracking_enabled: boolean;
   catalog_enabled: boolean;
-  catalog_url: string | null;
+  /** True when a catalog token has been generated (hash is stored). */
+  catalog_token_set: boolean;
+  /**
+   * Returned exactly once when a token is freshly minted or regenerated.
+   * The frontend must present a copy-once modal; subsequent GET responses
+   * will NOT include this field (SEC2-008).
+   */
+  catalog_token_plaintext?: string;
   parts_provider: "none" | "mouser" | "digikey";
   has_parts_provider_api_key: boolean;
   has_parts_provider_api_secret: boolean;
@@ -62,6 +69,14 @@ export default function WorkspaceSettings() {
   const [scannerLicense, setScannerLicense] = useState("");
   const [scannerBusy, setScannerBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  /**
+   * SEC2-008 copy-once token: when the backend returns catalog_token_plaintext
+   * (freshly minted or regenerated token) we stash it here and render a
+   * copy-once banner.  The field is cleared once the user copies it or
+   * dismisses the banner.  After that the token is gone — regenerate to get
+   * a new one.
+   */
+  const [pendingToken, setPendingToken] = useState<string | null>(null);
 
   async function createWs() {
     if (!newName.trim()) return;
@@ -74,28 +89,34 @@ export default function WorkspaceSettings() {
     if (created?.id) {
       await switchWorkspace(created.id);
     } else {
-      qc.invalidateQueries({ queryKey: wsScope(workspaceId) });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "ws", "current") });
     }
   }
 
-  async function patch(body: Partial<Ws> & { regenerate_catalog_token?: boolean }) {
+  async function patch(body: Partial<Omit<Ws, "catalog_token_set" | "catalog_token_plaintext">> & { regenerate_catalog_token?: boolean }) {
     setErr(null);
     try {
-      await api.patch("/workspaces/current", body);
+      const result = await api.patch<Ws>("/workspaces/current", body);
+      // SEC2-008: if the server returned a freshly minted/rotated token,
+      // surface it once in the copy-once UI before invalidating the cache
+      // (the invalidation re-fetches and the new response won't carry the
+      // plaintext).
+      if (result?.catalog_token_plaintext) {
+        setPendingToken(result.catalog_token_plaintext);
+      }
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "ws", "current") });
       toast.success("Workspace settings saved.");
     } catch (e) {
-      const m = e instanceof ApiError ? e.message : "Failed";
+      const m = e instanceof ApiError ? e.userMessage : "Failed";
       setErr(m);
       toast.error(m);
     }
   }
 
-  async function copyCatalogUrl(url: string) {
-    const full = `${window.location.origin}${url}`;
+  async function copyToClipboard(text: string) {
     try {
-      await navigator.clipboard.writeText(full);
-      toast.success("Catalog URL copied to clipboard.");
+      await navigator.clipboard.writeText(text);
+      toast.success("Copied to clipboard.");
     } catch {
       toast.error("Could not copy — your browser may not support clipboard access.");
     }
@@ -111,7 +132,7 @@ export default function WorkspaceSettings() {
       refetchInvites();
       toast.success(`Invitation sent to ${sent}.`);
     } catch (e) {
-      const m = e instanceof ApiError ? e.message : "Failed";
+      const m = e instanceof ApiError ? e.userMessage : "Failed";
       setErr(m);
       toast.error(m);
     }
@@ -124,7 +145,7 @@ export default function WorkspaceSettings() {
       refetchMembers();
       toast.success("Member updated.");
     } catch (e) {
-      const m = e instanceof ApiError ? e.message : "Failed";
+      const m = e instanceof ApiError ? e.userMessage : "Failed";
       setErr(m);
       toast.error(m);
     }
@@ -142,7 +163,7 @@ export default function WorkspaceSettings() {
       refetchMembers();
       toast.success("Member removed.");
     } catch (e) {
-      const m = e instanceof ApiError ? e.message : "Failed";
+      const m = e instanceof ApiError ? e.userMessage : "Failed";
       setErr(m);
       toast.error(m);
     }
@@ -165,18 +186,20 @@ export default function WorkspaceSettings() {
       {err && <div className="card p-3 text-danger text-sm mb-3">{err}</div>}
       {cur && (
         <div className="card p-4 mb-4 space-y-3 text-sm">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="label">Name</label>
+              <label className="label" htmlFor="workspace-name">Name</label>
               <input
+                id="workspace-name"
                 className="input"
                 defaultValue={cur.name}
                 onBlur={e => e.target.value && e.target.value !== cur.name && patch({ name: e.target.value })}
               />
             </div>
             <div>
-              <label className="label">Default currency</label>
+              <label className="label" htmlFor="workspace-currency">Default currency</label>
               <input
+                id="workspace-currency"
                 className="input"
                 maxLength={3}
                 defaultValue={cur.currency_default}
@@ -187,7 +210,7 @@ export default function WorkspaceSettings() {
               />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -228,27 +251,58 @@ export default function WorkspaceSettings() {
               Enabled
             </label>
           </div>
-          {cur.catalog_enabled && cur.catalog_url ? (
-            <>
-              <div className="text-xs text-muted">
-                Anyone with this link can browse parts you've marked as <em>published</em>.
-                No login required. Regenerating the token immediately invalidates the old URL.
+          {/* Copy-once banner: shown immediately after token generation/rotation */}
+          {pendingToken && (
+            <div className="rounded border border-warning bg-warning/10 p-3 space-y-2">
+              <div className="text-xs font-semibold text-warning-foreground">
+                Your catalog URL — copy it now. It will not be shown again.
               </div>
               <div className="flex gap-2 items-center">
                 <input
                   className="input flex-1 font-mono text-xs"
                   readOnly
-                  value={`${window.location.origin}${cur.catalog_url}`}
+                  value={`${window.location.origin}/catalog/${pendingToken}`}
                 />
                 <button
                   className="btn-primary"
-                  onClick={() => copyCatalogUrl(cur.catalog_url!)}
                   type="button"
+                  onClick={() => {
+                    copyToClipboard(`${window.location.origin}/catalog/${pendingToken}`);
+                    setPendingToken(null);
+                  }}
                 >
-                  Copy
+                  Copy &amp; dismiss
                 </button>
                 <button
-                  className="btn-ghost"
+                  className="btn"
+                  type="button"
+                  onClick={() => setPendingToken(null)}
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
+          {cur.catalog_enabled ? (
+            <>
+              <div className="text-xs text-muted">
+                Anyone with the catalog link can browse parts you've marked as{" "}
+                <em>published</em>. No login required. The token is never shown
+                after generation — regenerate to rotate it. The old URL stops
+                working immediately on rotation.
+              </div>
+              <div className="flex gap-2 items-center">
+                {cur.catalog_token_set ? (
+                  <span className="text-xs text-muted font-mono">
+                    Token set — copy it from the banner above, or regenerate below.
+                  </span>
+                ) : (
+                  <span className="text-xs text-muted">
+                    No token yet — enable the catalog to generate one.
+                  </span>
+                )}
+                <button
+                  className="btn-ghost ml-auto"
                   onClick={async () => {
                     if (!(await confirm({
                       message: "Regenerate the catalog token? The current URL will stop working immediately.",
@@ -330,7 +384,7 @@ export default function WorkspaceSettings() {
                       setProviderSecret("");
                       toast.success("Credentials saved.");
                     } catch (e) {
-                      toast.error(e instanceof ApiError ? e.message : "Failed");
+                      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
                     } finally {
                       setProviderKeyBusy(false);
                     }
@@ -358,7 +412,7 @@ export default function WorkspaceSettings() {
                         qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "ws", "current") });
                         toast.success("Credentials cleared.");
                       } catch (e) {
-                        toast.error(e instanceof ApiError ? e.message : "Failed");
+                        toast.error(e instanceof ApiError ? e.userMessage : "Failed");
                       } finally {
                         setProviderKeyBusy(false);
                       }
@@ -401,7 +455,7 @@ export default function WorkspaceSettings() {
                       setProviderKey("");
                       toast.success(providerKey ? "API key saved." : "API key cleared.");
                     } catch (e) {
-                      toast.error(e instanceof ApiError ? e.message : "Failed");
+                      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
                     } finally {
                       setProviderKeyBusy(false);
                     }
@@ -464,7 +518,7 @@ export default function WorkspaceSettings() {
                       setScannerLicense("");
                       toast.success(scannerLicense ? "License key saved." : "License key cleared.");
                     } catch (e) {
-                      toast.error(e instanceof ApiError ? e.message : "Failed");
+                      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
                     } finally {
                       setScannerBusy(false);
                     }
@@ -519,12 +573,12 @@ export default function WorkspaceSettings() {
       <div className="card p-4 mb-4 space-y-3">
         <div className="flex gap-2 items-end">
           <div className="flex-1">
-            <label className="label">Email</label>
-            <input className="input" type="email" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="teammate@example.com" />
+            <label className="label" htmlFor="invite-email">Email</label>
+            <input id="invite-email" className="input" type="email" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="teammate@example.com" />
           </div>
           <div>
-            <label className="label">Role</label>
-            <select className="input" value={inviteRole} onChange={e => setInviteRole(e.target.value as "admin" | "member" | "viewer")}>
+            <label className="label" htmlFor="invite-role">Role</label>
+            <select id="invite-role" className="input" value={inviteRole} onChange={e => setInviteRole(e.target.value as "admin" | "member" | "viewer")}>
               <option value="admin">admin</option>
               <option value="member">member</option>
               <option value="viewer">viewer</option>

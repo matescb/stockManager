@@ -22,6 +22,11 @@ permissions:
 jobs:
   backend-tests:
     runs-on: ubuntu-latest
+    # Restate the minimum required permissions explicitly on each job so the
+    # scope is visible next to the steps and survives any future change to the
+    # workflow-level default (INFRA2-013).
+    permissions:
+      contents: read
     services:
       postgres:
         image: postgres:16-alpine
@@ -47,14 +52,19 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install uv
+        run: pip install --no-cache-dir uv==0.11.8
+
+      - name: Check lockfile is up to date
+        working-directory: backend
+        run: uv lock --check
 
       - name: Install backend (with dev extras)
         working-directory: backend
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          uv sync --frozen --extra dev
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       # Static analysis gate — CQ-005 / issue #121. `--exit-zero` so
       # the first land is non-blocking; flip off in a follow-up PR
@@ -79,14 +89,36 @@ jobs:
             exit 1
           fi
 
+      - name: alembic single-head check
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://stockmgr:stockmgr@localhost:5432/stockmgr_test
+        run: |
+          test "$(python -m alembic heads --resolve-dependencies 2>/dev/null | wc -l)" -eq 1 || \
+            { echo "Multiple Alembic heads — two PRs claim the same down_revision. Rebase and renumber."; exit 1; }
+
       - name: pytest
         working-directory: backend
         env:
           TEST_DATABASE_URL: postgresql+psycopg://stockmgr:stockmgr@localhost:5432/stockmgr_test
-        run: pytest -q --tb=short
+        run: pytest -q --tb=short --cov=app --cov-report=term-missing --cov-report=xml --cov-report=html
+
+      - name: Upload backend coverage report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        if: always()
+        with:
+          name: backend-coverage
+          path: |
+            backend/coverage.xml
+            backend/htmlcov/
+          if-no-files-found: warn
+          retention-days: 14
 
   web-build:
     runs-on: ubuntu-latest
+    # Restate minimum permissions explicitly (INFRA2-013).
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
@@ -109,7 +141,17 @@ jobs:
 
       - name: Vitest
         working-directory: web
-        run: npm test
+        # --coverage emits to web/coverage/. No fail-under yet (TEST-013).
+        run: npm test -- --coverage
+
+      - name: Upload web coverage report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        if: always()
+        with:
+          name: web-coverage
+          path: web/coverage/
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Type-check + bundle
         working-directory: web
@@ -146,6 +188,10 @@ jobs:
     # this job will pause for human approval before each deploy. See
     # docs/deployment.md → "Optional: gate deploys behind a human reviewer".
     environment: production
+    # Restate minimum permissions explicitly (INFRA2-013). The deploy uses
+    # SSH, not git push, so no write scope is needed here either.
+    permissions:
+      contents: read
 
     steps:
       - name: SSH deploy

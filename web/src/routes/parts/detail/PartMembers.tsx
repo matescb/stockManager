@@ -30,7 +30,7 @@ export default function PartMembers() {
       setPick("");
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId, "members") });
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Failed");
+      setErr(e instanceof ApiError ? e.userMessage : "Failed");
     }
   }
   async function remove(mid: string) {

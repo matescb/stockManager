@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { FolderKanban } from "lucide-react";
 import { api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
+import { formatDateTime } from "@/lib/format";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import QueryStateBoundary from "@/components/QueryStateBoundary";
@@ -48,7 +49,7 @@ export default function ProjectsList({ archived = false }: { archived?: boolean 
         columns={[
           { key: "name", header: "Name", accessor: r => r.name },
           { key: "description", header: "Description", accessor: r => r.description ?? "" },
-          { key: "updated_at", header: "Last updated", accessor: r => r.updated_at, render: r => new Date(r.updated_at).toLocaleString() },
+          { key: "updated_at", header: "Last updated", accessor: r => r.updated_at, render: r => formatDateTime(r.updated_at) },
         ]}
       />
       </QueryStateBoundary>

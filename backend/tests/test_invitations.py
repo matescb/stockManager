@@ -6,16 +6,22 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests._factories import signup_user
 
 
-def _signup(c, email=None):
+def _signup(c: TestClient, email: str | None = None, name: str = "u") -> tuple[str, str]:
+    """Sign up a fresh user and return (email, workspace_id).
+
+    Delegates to the canonical ``signup_user`` factory which handles the
+    HIBP stub and uses the immediate-create path (dev/test mode).
+    """
     email = email or f"u-{uuid.uuid4().hex[:8]}@x.com"
-    r = c.post(
-        "/api/auth/signup",
-        json={"email": email, "name": "u", "password": "TestPass-2026-Stronk"},
-    )
-    assert r.status_code == 200, r.text
+    r = signup_user(c, email=email, name=name)
     return email, r.json()["data"]["workspace_id"]
+
+
+# Also expose a direct-call alias for tests that need the full Client.
+_do_signup_verify = _signup
 
 
 @pytest.fixture
@@ -40,12 +46,9 @@ def test_admin_creates_invitation_user_accepts(admin):
     token = inv["token"]
     assert token
 
-    # Sign up the invitee in their own client
+    # Sign up + verify the invitee in their own client
     invitee = TestClient(app)
-    invitee.post(
-        "/api/auth/signup",
-        json={"email": invitee_email, "name": "Newbie", "password": "TestPass-2026-Stronk"},
-    )
+    _do_signup_verify(invitee, email=invitee_email, name="Newbie")
 
     # Accept
     r = invitee.post("/api/invitations/accept", json={"token": token})
@@ -72,10 +75,7 @@ def test_non_admin_cannot_invite():
     inv = owner.post("/api/invitations", json={"email": invitee_email, "role": "member"}).json()["data"]
 
     invitee = TestClient(app)
-    invitee.post(
-        "/api/auth/signup",
-        json={"email": invitee_email, "name": "M", "password": "TestPass-2026-Stronk"},
-    )
+    _do_signup_verify(invitee, email=invitee_email, name="M")
     invitee.post("/api/invitations/accept", json={"token": inv["token"]})
     # Switch to the shared workspace
     members_in_admin = owner.get("/api/workspaces/members").json()["data"]
@@ -96,10 +96,7 @@ def test_invitation_email_must_match(admin):
     inv_for = f"forA-{uuid.uuid4().hex[:6]}@x.com"
     inv = admin.post("/api/invitations", json={"email": inv_for, "role": "member"}).json()["data"]
     other = TestClient(app)
-    other.post(
-        "/api/auth/signup",
-        json={"email": f"someone-else-{uuid.uuid4().hex[:6]}@x.com", "name": "Other", "password": "TestPass-2026-Stronk"},
-    )
+    _do_signup_verify(other, email=f"someone-else-{uuid.uuid4().hex[:6]}@x.com", name="Other")
     r = other.post("/api/invitations/accept", json={"token": inv["token"]})
     assert r.status_code == 403
 
@@ -111,10 +108,7 @@ def test_revoke_invitation_blocks_acceptance(admin):
     assert r.status_code == 200
 
     invitee = TestClient(app)
-    invitee.post(
-        "/api/auth/signup",
-        json={"email": invitee_email, "name": "x", "password": "TestPass-2026-Stronk"},
-    )
+    _do_signup_verify(invitee, email=invitee_email, name="x")
     r = invitee.post("/api/invitations/accept", json={"token": inv["token"]})
     assert r.status_code == 400
 
@@ -130,10 +124,7 @@ def test_cannot_already_member(admin):
     invitee_email = f"dup-{uuid.uuid4().hex[:6]}@x.com"
     inv = admin.post("/api/invitations", json={"email": invitee_email, "role": "member"}).json()["data"]
     invitee = TestClient(app)
-    invitee.post(
-        "/api/auth/signup",
-        json={"email": invitee_email, "name": "x", "password": "TestPass-2026-Stronk"},
-    )
+    _do_signup_verify(invitee, email=invitee_email, name="x")
     invitee.post("/api/invitations/accept", json={"token": inv["token"]})
     # Now try to invite the same email again — should 409
     r = admin.post("/api/invitations", json={"email": invitee_email, "role": "member"})
@@ -217,10 +208,7 @@ def test_accept_with_wrong_token_returns_404(admin):
     inv_id = inv_data["id"]
 
     invitee = TestClient(app)
-    invitee.post(
-        "/api/auth/signup",
-        json={"email": invitee_email, "name": "x", "password": "TestPass-2026-Stronk"},
-    )
+    _do_signup_verify(invitee, email=invitee_email, name="x")
 
     # a) Correct id, wrong plaintext — HMAC compare_digest must fail → 404.
     r = invitee.post(

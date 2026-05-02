@@ -54,6 +54,10 @@ export default function PartCreate() {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [specs, setSpecs] = useState<ProviderSpec[]>([]);
   const [hasLookup, setHasLookup] = useState(false);
+  // When refresh-from-provider fails after a successful create, we surface
+  // an inline banner instead of silently swallowing the error. The part
+  // is valid — just missing provider-side fields — so we never DELETE it.
+  const [refreshFailed, setRefreshFailed] = useState<{ partId: string } | null>(null);
   const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
 
   // FE2-006: gate concurrent submits via mutationKey so a double-click
@@ -67,14 +71,15 @@ export default function PartCreate() {
       // If the user successfully ran the MPN lookup and the part is
       // linked-type with an MPN, re-run the lookup against the new
       // part to populate provider data with proper source='provider'
-      // tagging + last_refresh_at + linked_provider. Failures here are
-      // non-fatal — the part already exists and the user can hit
-      // Refresh on PartInfo later.
+      // tagging + last_refresh_at + linked_provider.
       if (hasLookup && form.part_type === "linked" && form.mpn.trim()) {
         try {
           await api.post(`/parts/${res.id}/refresh-from-provider`);
         } catch {
-          /* non-fatal */
+          // The part was created successfully — don't navigate away.
+          // Surface a banner so the user can retry or open the part anyway.
+          setRefreshFailed({ partId: res.id });
+          return;
         }
       }
       nav(`/parts/${res.id}/info`);
@@ -83,10 +88,15 @@ export default function PartCreate() {
       const detail = getConflictDetail(e);
       if (detail) {
         setConflict({ id: detail.existing_id, name: detail.existing_name });
+        // Reset stale lookup preview so the next MPN attempt starts clean.
+        setHasLookup(false);
+        setSpecs([]);
+        setImageUrl(null);
+        setDatasheetUrl(null);
         setErr(null);
         return;
       }
-      setErr(e instanceof ApiError ? e.message : "Failed");
+      setErr(e instanceof ApiError ? e.userMessage : "Failed");
     },
   });
 
@@ -111,6 +121,7 @@ export default function PartCreate() {
     e.preventDefault();
     setErr(null);
     setConflict(null);
+    setRefreshFailed(null);
     const payload: PartCreateRequest = {
       part_type: form.part_type,
       manufacturer: form.manufacturer,
@@ -130,10 +141,34 @@ export default function PartCreate() {
 
   const busy = createMutation.isPending;
 
+  async function retryRefresh() {
+    if (!refreshFailed) return;
+    try {
+      await api.post(`/parts/${refreshFailed.partId}/refresh-from-provider`);
+      setRefreshFailed(null);
+      nav(`/parts/${refreshFailed.partId}/info`);
+    } catch {
+      // Keep the banner visible — user can try again or open anyway.
+    }
+  }
+
   return (
     <form onSubmit={submit} className="max-w-2xl card p-4 space-y-3">
       <h1 className="text-xl font-semibold">Create part</h1>
       {err && <div className="text-danger text-sm">{err}</div>}
+      {refreshFailed && (
+        <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm space-y-2">
+          <p>Provider data couldn&apos;t be fetched. The part was created — retry refresh or open it and try again later.</p>
+          <div className="flex gap-2">
+            <button type="button" className="btn-primary" onClick={retryRefresh}>
+              Retry refresh
+            </button>
+            <button type="button" className="btn" onClick={() => nav(`/parts/${refreshFailed.partId}/info`)}>
+              Open part anyway
+            </button>
+          </div>
+        </div>
+      )}
       {conflict && (
         <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
           MPN <span className="font-mono">{form.mpn}</span> is already used
@@ -143,10 +178,10 @@ export default function PartCreate() {
           </Link>
         </div>
       )}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label className="label">Type</label>
-          <select className="input" value={form.part_type} onChange={e => set("part_type", e.target.value as "linked" | "local" | "meta" | "sub_assembly")}>
+          <label className="label" htmlFor="part-create-type">Type</label>
+          <select id="part-create-type" className="input" value={form.part_type} onChange={e => set("part_type", e.target.value as "linked" | "local" | "meta" | "sub_assembly")}>
             <option value="linked">Linked (MPN)</option>
             <option value="local">Local</option>
             <option value="meta">Meta-part</option>
@@ -154,13 +189,14 @@ export default function PartCreate() {
           </select>
         </div>
         <div>
-          <label className="label">Footprint</label>
-          <input className="input" value={form.footprint} onChange={e => set("footprint", e.target.value)} placeholder="0402, SOIC-8…" />
+          <label className="label" htmlFor="part-create-footprint">Footprint</label>
+          <input id="part-create-footprint" className="input" value={form.footprint} onChange={e => set("footprint", e.target.value)} placeholder="0402, SOIC-8…" />
         </div>
       </div>
       <div>
-        <label className="label">Name</label>
+        <label className="label" htmlFor="part-create-name">Name</label>
         <input
+          id="part-create-name"
           className="input"
           value={form.name}
           onChange={e => set("name", e.target.value)}
@@ -170,15 +206,15 @@ export default function PartCreate() {
           Defaults to the MPN when left blank.
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label className="label">Manufacturer</label>
-          <input className="input" value={form.manufacturer} onChange={e => set("manufacturer", e.target.value)} />
+          <label className="label" htmlFor="part-create-manufacturer">Manufacturer</label>
+          <input id="part-create-manufacturer" className="input" value={form.manufacturer} onChange={e => set("manufacturer", e.target.value)} />
         </div>
         <div>
-          <label className="label">MPN</label>
+          <label className="label" htmlFor="part-create-mpn">MPN</label>
           <div className="flex items-end gap-2">
-            <input className="input flex-1" value={form.mpn} onChange={e => set("mpn", e.target.value)} />
+            <input id="part-create-mpn" className="input flex-1" value={form.mpn} onChange={e => set("mpn", e.target.value)} />
             {form.part_type === "linked" && <MpnLookup mpn={form.mpn} onResult={applyLookup} />}
           </div>
           {datasheetUrl && (
@@ -215,26 +251,26 @@ export default function PartCreate() {
         </div>
       )}
       <div>
-        <label className="label">Internal part number</label>
-        <input className="input" value={form.internal_part_number} onChange={e => set("internal_part_number", e.target.value)} />
+        <label className="label" htmlFor="part-create-ipn">Internal part number</label>
+        <input id="part-create-ipn" className="input" value={form.internal_part_number} onChange={e => set("internal_part_number", e.target.value)} />
       </div>
       <div>
-        <label className="label">Description</label>
-        <textarea className="input" rows={3} value={form.description} onChange={e => set("description", e.target.value)} />
+        <label className="label" htmlFor="part-create-description">Description</label>
+        <textarea id="part-create-description" className="input" rows={3} value={form.description} onChange={e => set("description", e.target.value)} />
       </div>
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={form.serialized} onChange={e => set("serialized", e.target.checked)} />
         Serialized (one unit per lot, requires serial number — only enforced when the workspace has serial tracking on)
       </label>
       <div>
-        <label className="label">Default storage location</label>
-        <select className="input" value={form.default_storage_location_id} onChange={e => set("default_storage_location_id", e.target.value)}>
+        <label className="label" htmlFor="part-create-default-storage">Default storage location</label>
+        <select id="part-create-default-storage" className="input" value={form.default_storage_location_id} onChange={e => set("default_storage_location_id", e.target.value)}>
           <option value="">— none —</option>
           {storage?.filter(s => !s.archived_at).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
       </div>
       <div className="flex gap-2">
-        <button className="btn-primary" disabled={busy}>{busy ? "Creating…" : "Create"}</button>
+        <button className="btn-primary" disabled={busy || !!refreshFailed}>{busy ? "Creating…" : "Create"}</button>
         <button type="button" className="btn" onClick={() => nav("/parts")}>Cancel</button>
       </div>
     </form>

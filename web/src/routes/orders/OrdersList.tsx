@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ShoppingCart } from "lucide-react";
 import { api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
+import { formatDate } from "@/lib/format";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import QueryStateBoundary from "@/components/QueryStateBoundary";
@@ -79,7 +80,7 @@ export default function OrdersList({ archived = false }: { archived?: boolean })
             key: "expected_on",
             header: "Expected",
             accessor: r => r.expected_on ?? "",
-            render: r => r.expected_on ? new Date(r.expected_on).toLocaleDateString() : <span className="text-muted">—</span>,
+            render: r => r.expected_on ? formatDate(r.expected_on) : <span className="text-muted">—</span>,
           },
         ]}
       />

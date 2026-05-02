@@ -52,9 +52,16 @@ Practical consequences:
   `alembic upgrade head` before uvicorn boots, so by the time the new
   workers serve traffic, the schema is at the new revision.
 - **Restart window**: `docker compose up --build` recreates containers in
-  place. There's a ~5–10 s window where Apache returns 502 while uvicorn
-  comes back up. Fine for this app's traffic level; tighten with
-  healthchecks if it ever stops being fine.
+  place. There's a brief window where Apache returns 502 while uvicorn comes
+  back up. Three mitigations reduce the impact (INFRA2-014):
+  1. `stop_grace_period: 30s` + `--timeout-graceful-shutdown 25` on the
+     backend: in-flight requests get up to 25 s to drain before uvicorn
+     exits; Compose's 30 s SIGKILL deadline gives a 5 s safety margin.
+  2. `ProxyPass … retry=2 timeout=30 connectiontimeout=5` on the Apache
+     vhost: Apache retries the backend twice before surfacing the 502, and
+     `Retry-After: 10` tells clients to back off rather than hammering.
+  3. For long migrations use [Drain mode](#drain-mode-for-destructive-migrations)
+     to show users a static maintenance page while the schema changes run.
 - **Red CI** keeps prod on the previous version: the deploy job is gated
   on `needs: [backend-tests, web-build]` and won't start if either failed.
   GitHub emails on red.
@@ -277,23 +284,58 @@ build to prod. Pin via this rule once and forget. (Recorded as part of
 TEST-014 / issue #116; the `tests/test_ci_workflow.py` regression test
 asserts the workflow shape but cannot configure repo settings.)
 
-### Optional: gate deploys behind a human reviewer
+### Gate deploys behind a human reviewer
 
-The `deploy` job has `environment: production` set. By default this just
-scopes any environment-level secrets we add later. If you want a manual
-"approve this deploy" step before each prod push:
+The `deploy` job has `environment: production` set. This gates every prod
+deploy behind GitHub's environment protection rules. **This protection is
+part of the shipped configuration** — it is not optional.
+
+To configure (one-time setup if the environment was not already created):
 
 1. GitHub UI → Settings → Environments → New environment → name `production`.
-2. Add a "Required reviewers" rule and list the trusted approvers
-   (typically just your own account).
-3. Optional: "Wait timer" if you want a cooling-off period before the
-   approval prompt fires.
+2. Add a **Required reviewers** rule and list the maintainer account
+   (`matescb`). Add further accounts if the project gains contributors.
+3. Optional but recommended: set a **Wait timer** of 5 minutes so a
+   compromised push cannot be self-approved before the maintainer notices.
 
 After this, every push to `main` that passes CI will pause at the deploy
 step and email the listed reviewers. Approving the run resumes the SSH
-deploy. Skip this if you'd rather keep the current friction-free flow.
+deploy. Rejecting it (or letting it time out) leaves the current prod
+containers untouched.
+
+To add a reviewer later: GitHub UI → Settings → Environments →
+`production` → Edit → add the account under "Required reviewers".
+
+### SSH key rotation
+
+The `DEPLOY_SSH_KEY` GitHub Actions secret gives the CI runner SSH access
+to the VPS as the `deploy` user (who is in the `docker` group). Rotate it
+on a schedule (recommended: every 6 months) or immediately after any
+suspected credential compromise or contributor offboarding.
+
+1. On the VPS, generate a new key pair:
+   ```bash
+   ssh-keygen -t ed25519 -f /tmp/deploy_new -N ""
+   ```
+2. Append the new public key to the authorised keys file:
+   ```bash
+   cat /tmp/deploy_new.pub >> /home/deploy/.ssh/authorized_keys
+   ```
+3. Update the GitHub secret:
+   GitHub UI → Settings → Secrets and variables → Actions →
+   `DEPLOY_SSH_KEY` → Update → paste the contents of `/tmp/deploy_new`
+   (the private key).
+4. Trigger a deploy (e.g. push a no-op commit to `main`). Verify it
+   succeeds end-to-end via the health gate.
+5. Remove the **old** public key from `authorized_keys` on the VPS.
+6. Shred the temporary key files:
+   ```bash
+   shred -u /tmp/deploy_new /tmp/deploy_new.pub
+   ```
 
 ## Operations
+
+- **Secret rotation** — see [`docs/runbooks/secret-rotation.md`](runbooks/secret-rotation.md) for per-secret playbooks, cadence guidance, and the multi-step `WORKSPACE_SECRETS_KEY` dual-key transition procedure.
 
 All commands below assume you're SSH'd into the VPS. If you don't have a
 shell alias, `ssh root@37.205.15.171` works. Use `sudo -u deploy` on the
@@ -414,8 +456,82 @@ cp /srv/stockmanager/deploy/parts.matescb.cz.conf \
 apache2ctl configtest && systemctl reload apache2
 ```
 
-The `…-le-ssl.conf` companion file is owned by certbot — don't edit it
-unless you mean to.
+The `…-le-ssl.conf` companion file (`deploy/parts.matescb.cz-le-ssl.conf`)
+is canonical in this repo and must also be copied to
+`/etc/apache2/sites-available/` after any edit:
+
+```bash
+cp /srv/stockmanager/deploy/parts.matescb.cz-le-ssl.conf \
+   /etc/apache2/sites-available/parts.matescb.cz-le-ssl.conf
+apache2ctl configtest && systemctl reload apache2
+```
+
+**After a certbot re-issue:** `certbot renew` only rotates the cert files
+(`SSLCertificateFile` / `SSLCertificateKeyFile`) — it does **not** rewrite
+the `ProxyPass` block. However, if you ever run `certbot --apache` again
+from scratch, it regenerates the ssl conf and overwrites any manual edits.
+Re-copy the canonical file from the repo immediately afterwards.
+
+### Drain mode for destructive migrations
+
+Use this procedure when a migration is expected to take more than a few
+seconds (e.g. table rewrites, large backfills) so users see a clean
+"maintenance" page instead of 500/503 errors.
+
+**Enter drain mode**
+
+```bash
+# 1. Copy the maintenance assets onto the host.
+sudo cp /srv/stockmanager/deploy/maintenance.html /var/www/html/maintenance.html
+sudo cp /srv/stockmanager/deploy/parts.matescb.cz.maintenance.conf \
+        /etc/apache2/conf-available/parts-maintenance.conf
+
+# 2. Enable the drop-in (serves 503 + maintenance page for all non-health requests).
+sudo a2enconf parts-maintenance
+sudo apache2ctl configtest && sudo systemctl reload apache2
+
+# 3. Verify: browsing the site shows the maintenance page;
+#    /api/health still returns 200.
+curl -s https://parts.matescb.cz/api/health
+```
+
+**Take a pre-migration snapshot**
+
+```bash
+/srv/stockmanager/deploy/backup.sh
+```
+
+**Run the migration**
+
+```bash
+# In the currently-running backend container (before the new image is built).
+cd /srv/stockmanager
+sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
+    exec backend alembic upgrade head
+```
+
+**Deploy the new image**
+
+```bash
+cd /srv/stockmanager
+sudo -u deploy git fetch --quiet origin main
+sudo -u deploy git reset --hard origin/main
+sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
+    up -d --build
+```
+
+**Exit drain mode**
+
+```bash
+sudo a2disconf parts-maintenance
+sudo apache2ctl configtest && sudo systemctl reload apache2
+```
+
+**Verify**
+
+```bash
+curl -s https://parts.matescb.cz/api/health
+```
 
 ### If you ever move TLS into the docker stack
 
@@ -461,6 +577,29 @@ Each artifact is `age`-encrypted with the recipient public key stored in
 `.env.prod`. …and prunes anything older than 30 days. The script is
 idempotent and fail-loud — non-zero exit → cron emails root if MTA is
 configured.
+
+### Dead-man's-switch alerting (INFRA-006)
+
+Cron mail is unreliable because it requires a working MTA and is often
+silently lost. `backup.sh` now supports explicit ping-on-success /
+ping-on-failure via two optional env vars in `.env.prod`:
+
+| Variable | Purpose |
+|---|---|
+| `BACKUP_HEALTHCHECK_OK_URL` | Pinged at the end of a successful run |
+| `BACKUP_HEALTHCHECK_FAIL_URL` | Pinged immediately via `trap ERR` on any non-zero exit |
+
+Recommended service: [healthchecks.io](https://healthchecks.io) (free tier is
+sufficient). Create one check, copy its ping URL into `BACKUP_HEALTHCHECK_OK_URL`,
+and copy the `/fail` endpoint URL into `BACKUP_HEALTHCHECK_FAIL_URL`. This gives
+two alert modes:
+
+- **Missed-ping alert** — the check goes "Late" if the backup didn't run at all
+  (cron failed, host was down, etc.).
+- **Explicit failure alert** — immediate notification when the script itself errors.
+
+Both vars default to empty; leaving them unset preserves the previous cron-mail-only
+behaviour.
 
 ### Recipient key + private-key escrow
 
@@ -539,6 +678,40 @@ age -d -i /path/to/backup-key.txt \
 For point-in-time recovery, off-site replication, or retention policies look
 at `pgBackRest` or `barman` — proper tools for that job; this guide does not
 prescribe one.
+
+## Monitoring
+
+**Operator action required — this cannot be automated through CI.**
+
+Configure an external uptime check on [UptimeRobot](https://uptimerobot.com)
+(free tier, 5-minute interval):
+
+| Setting         | Value                                                         |
+|-----------------|---------------------------------------------------------------|
+| Monitor type    | HTTPS                                                         |
+| URL             | `https://parts.matescb.cz/api/health`                        |
+| Method          | GET                                                           |
+| Expected status | 200                                                           |
+| Keyword match   | `"status":"ok"` (present in response body)                    |
+| Interval        | 5 minutes                                                     |
+| TLS expiry      | Enable if the plan includes it (catches cert renewal failure) |
+
+**What this catches:** host-down, TLS-broken, Apache-crashed,
+container-crashed (any of these stops the HTTP response returning 200).
+
+**What this does NOT catch:** DB unreachable while the process is alive.
+The `/api/health` endpoint is currently shallow — it only confirms the
+process responds. Deepening it (e.g. a test DB query) is tracked in
+INFRA2-002 (#95).
+
+**Credentials:** store the UptimeRobot login in the same secrets escrow
+as other SaaS credentials (see #95 — secret rotation runbook). Do not put
+them in `.env.prod` or the repo.
+
+**Planned maintenance:** pause the monitor from the UptimeRobot dashboard
+before triggering a deploy that causes a longer-than-usual restart (e.g.
+a heavy migration). Resume it once `curl -fsS https://parts.matescb.cz/api/health`
+returns 200.
 
 ## Header hardening (SEC2-018)
 
