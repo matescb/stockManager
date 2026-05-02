@@ -14,17 +14,28 @@ from app.core.logging import configure_logging
 configure_logging()
 
 
-# Top-level (testable) Sentry event scrubber. Runs as `before_send` so the
-# event is mutated before it leaves the worker. We have to scrub here
-# rather than rely on Sentry's defaults because:
-# - PATCH /api/workspaces/current carries the workspace's plaintext
-#   provider API keys + scanner license key in the body. A 5xx during
-#   that PATCH would otherwise ship those credentials to Sentry.
-# - POST /api/workspaces/{id}/switch carries the target workspace_id —
-#   tenant-identifying, low value to triage.
-# - Cookie / Authorization / X-Workspace-Id headers are tenant- or
-#   session-identifying. Sentry redacts `Cookie` by default, but we
-#   strip explicitly so we don't depend on the SDK's redaction list.
+# Top-level (testable) Sentry event scrubber. Runs as `before_send` so
+# the event is mutated before it leaves the worker.
+#
+# Default-deny `request.data` on any non-GET method. The previous narrow
+# allow-list ("only /api/workspaces") was identified by the 2026-05-01 v2
+# teardown (SEC2-005) as leaking on every other route that handles a
+# secret-bearing body:
+#   - POST /api/auth/signup, /login → plaintext password
+#   - POST /api/invitations/accept → raw invitation token (bearer-equivalent)
+#   - POST /api/parts/lookup-mpn → decrypted provider API keys in scope
+#   - POST /api/parts/bulk-import-from-scan → same
+#   - PATCH /api/workspaces/current → plaintext provider/scanner secrets
+#   - POST /api/attachments → multipart bodies with arbitrary user content
+# A 5xx in any of those handlers would attach the request body. Replacing
+# the URL allow-list with a method default-deny is the only way to keep
+# this safe as new routes are added — there is no read-only POST in the
+# API today, and any future "just status" body still has nothing useful
+# for triage that isn't already in URL + status_code.
+#
+# Cookie / Authorization / X-Workspace-Id headers are tenant- or
+# session-identifying on every method, so the header scrub runs first and
+# applies regardless of method.
 def _scrub_event(event, _hint):
     request = event.get("request")
     if not isinstance(request, dict):
@@ -35,9 +46,8 @@ def _scrub_event(event, _hint):
         for k in list(headers.keys()):
             if k.lower() in drop:
                 headers.pop(k, None)
-    url = (request.get("url") or "").lower()
     method = (request.get("method") or "").upper()
-    if method in ("PATCH", "POST") and "/api/workspaces" in url:
+    if method and method != "GET":
         if request.pop("data", None) is not None:
             request["body_redacted"] = True
     return event
@@ -65,6 +75,13 @@ def _init_sentry() -> None:
         # right balance: triage gets enough context, plaintext credentials
         # never reach Sentry.
         send_default_pii=True,
+        # Drop frame-local variables from event payloads. Default-True
+        # combined with `send_default_pii=True` was shipping locals like
+        # `payload.password`, `decrypt(...)` return values, and Pydantic
+        # model `__init__` kwargs that include API keys (v2 teardown
+        # SEC2-005). Stack traces alone are enough triage signal; locals
+        # are an unbounded leak surface.
+        include_local_variables=False,
         before_send=_scrub_event,
         integrations=[
             StarletteIntegration(transaction_style="endpoint"),

@@ -41,10 +41,17 @@ Sentry.init({
   // Per the wizard. Sends user IP + request headers; cookies are
   // redacted automatically. Flip to false for stricter data minimisation.
   sendDefaultPii: true,
-  // Strip request bodies on workspace settings PATCH/switch (carry
-  // plaintext provider API keys + scanner license key) and a few
-  // tenant-identifying headers. Sentry redacts Cookie by default, but
-  // we don't depend on the default redaction list.
+  // Default-deny request bodies on any non-GET method. Mirrors the
+  // backend `_scrub_event` posture (v2 teardown SEC2-005) — the prior
+  // narrow allow-list ("only /api/workspaces") leaked credential-bearing
+  // bodies on signup/login/invitations/parts-provider/bulk-import.
+  // There is no read-only POST in the API; if one is added later,
+  // attaching the body to a Sentry event still tells triage nothing
+  // that isn't in URL + status_code.
+  //
+  // Headers: Cookie / Authorization / X-Workspace-Id are tenant- or
+  // session-identifying on every method, so the header scrub applies
+  // regardless of body method.
   beforeSend(event) {
     const req = event.request;
     if (req) {
@@ -56,9 +63,8 @@ Sentry.init({
           }
         }
       }
-      const url = (req.url ?? "").toLowerCase();
       const method = (req.method ?? "").toUpperCase();
-      if ((method === "PATCH" || method === "POST") && url.includes("/api/workspaces")) {
+      if (method && method !== "GET") {
         if (req.data !== undefined) {
           delete req.data;
           (req as Record<string, unknown>).body_redacted = true;
