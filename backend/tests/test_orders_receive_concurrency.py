@@ -26,6 +26,9 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
+pytestmark = pytest.mark.real_db
+
+
 def _signup(c: TestClient) -> None:
     r = c.post(
         "/api/auth/signup",
