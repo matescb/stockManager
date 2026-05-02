@@ -42,7 +42,8 @@ class BomEntryIn(BaseModel):
     part_id: UUID | None = None
     meta_part_id: UUID | None = None
     name: str | None = None
-    quantity: float = 1
+    # DB-005 / migration 0030 — integer quantities only (no fractional BOM rows).
+    quantity: int = Field(default=1, ge=0)
     comments: str | None = None
     designators: list[str] = []
     cad_footprint: str | None = None
@@ -57,7 +58,8 @@ class BomEntryPatch(BaseModel):
     part_id: UUID | None = None
     meta_part_id: UUID | None = None
     name: str | None = None
-    quantity: float | None = None
+    # DB-005 / migration 0030 — integer quantities only.
+    quantity: int | None = Field(default=None, ge=0)
     comments: str | None = None
     designators: list[str] | None = None
     cad_footprint: str | None = None

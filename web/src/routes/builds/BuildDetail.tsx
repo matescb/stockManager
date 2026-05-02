@@ -273,6 +273,7 @@ export default function BuildDetail() {
                         className="input"
                         type="number"
                         min={0}
+                        step={1}
                         value={row.quantity || ""}
                         onChange={ev => setRow(e.id, idx, { quantity: Number(ev.target.value) })}
                       />

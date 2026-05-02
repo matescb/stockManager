@@ -3,11 +3,11 @@ from __future__ import annotations
 from sqlalchemy import (
     ARRAY,
     Boolean,
+    CheckConstraint,
     Column,
     ForeignKey,
     Index,
     Integer,
-    Numeric,
     String,
     Text,
     text,
@@ -60,6 +60,9 @@ class ProjectEntry(WorkspaceOwned, Base):
             "archived_at",
             postgresql_where=text("archived_at IS NULL"),
         ),
+        # DB-005 / migration 0030 — quantities are integer-only (electronics
+        # domain; no fractional BOM quantities needed).
+        CheckConstraint("quantity >= 0", name="ck_project_entries_quantity_nonneg"),
     )
 
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
@@ -67,7 +70,7 @@ class ProjectEntry(WorkspaceOwned, Base):
     part_id = Column(UUID(as_uuid=True), ForeignKey("parts.id", ondelete="SET NULL"), nullable=True)
     meta_part_id = Column(UUID(as_uuid=True), ForeignKey("parts.id", ondelete="SET NULL"), nullable=True)
     name = Column(String(300), nullable=True)
-    quantity = Column(Numeric(18, 6), nullable=False, default=1)
+    quantity = Column(Integer, nullable=False, default=1)
     comments = Column(Text, nullable=True)
     designators = Column(ARRAY(String), nullable=False, default=list)
     cad_footprint = Column(String(120), nullable=True)

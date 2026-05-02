@@ -127,7 +127,10 @@ def preview(payload: BomImportPreviewIn) -> BomImportPreviewOut:
 
 @dataclass
 class ParsedRow:
-    quantity: float = 1.0
+    # DB-005 / migration 0030 — quantity is integer; fractional values are a
+    # per-row validation error recorded in row_errors at commit time.
+    quantity: int = 1
+    quantity_raw: str = ""  # original string value, kept for error reporting
     part: str | None = None
     mpn: str | None = None
     manufacturer: str | None = None
@@ -140,14 +143,23 @@ class ParsedRow:
     dnp: bool = False
 
 
-def _parse_quantity(s: str) -> float:
-    s = (s or "").strip().replace(",", ".")
-    if not s:
-        return 1.0
+def _parse_quantity(s: str) -> tuple[int, bool]:
+    """Return (quantity, is_valid).
+
+    Returns (1, True) for blank/missing, (n, True) for a non-negative integer
+    string, and (0, False) for a fractional or otherwise invalid value.
+    DB-005 / migration 0030.
+    """
+    raw = (s or "").strip().replace(",", ".")
+    if not raw:
+        return 1, True
     try:
-        return float(s)
+        f = float(raw)
     except ValueError:
-        return 1.0
+        return 1, True  # unparseable → default 1, no fraction error
+    if f != int(f):
+        return 0, False  # fractional — caller will record a row error
+    return max(0, int(f)), True
 
 
 def _parse_dnp(s: str) -> bool:
@@ -172,7 +184,10 @@ def _apply_mapping(cells: list[str], mapping: list[BomMappingField], designator_
         if t == "ignore":
             continue
         if t == "quantity":
-            out.quantity = _parse_quantity(v)
+            qty, valid = _parse_quantity(v)
+            out.quantity = qty
+            if not valid:
+                out.quantity_raw = v
         elif t == "part":
             out.part = v.strip() or None
         elif t == "mpn":
@@ -271,14 +286,32 @@ def commit(
         .where(ProjectEntry.project_id == project.id)
     ).scalar_one() + 1
 
-    inserted = matched = unmatched = 0
-    for cells in all_rows:
+    # DB-005 / migration 0030 — pre-scan for fractional quantities so we can
+    # return a descriptive 422 before touching the DB.
+    fractional_rows: list[int] = []
+    parsed_rows: list[ParsedRow] = []
+    for row_num, cells in enumerate(all_rows, start=1):
         parsed = _apply_mapping(cells, payload.mapping, payload.designator_separator)
+        if parsed.quantity_raw:
+            fractional_rows.append(row_num)
+        parsed_rows.append(parsed)
+
+    if fractional_rows:
+        raise_http(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            ErrorCodes.BOM_FRACTIONAL_QUANTITY,
+            f"BOM row(s) {fractional_rows} have fractional quantity values; "
+            "only integer quantities are supported.",
+            fractional_rows=fractional_rows,
+        )
+
+    inserted = matched = unmatched = 0
+    for parsed in parsed_rows:
         if parsed.designators is None:
             parsed.designators = []
         # quantity default from designator count if not set
-        if (parsed.quantity == 1.0) and parsed.designators:
-            parsed.quantity = float(len(parsed.designators))
+        if parsed.quantity == 1 and parsed.designators:
+            parsed.quantity = len(parsed.designators)
         candidate = _match_part(db, workspace_id=workspace_id, row=parsed)
         entry_type = "part" if candidate else "unmatched"
         entry = ProjectEntry(
@@ -306,3 +339,4 @@ def commit(
             unmatched += 1
     db.flush()
     return BomImportCommitOut(inserted=inserted, matched=matched, unmatched=unmatched)
+

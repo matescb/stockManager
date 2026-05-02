@@ -106,6 +106,17 @@ Operations are the unit of audit. Reading the full ledger for a part
 gives the entire stock history; aggregating the ledger gives any
 current view.
 
+### Integer-only quantities (DB-005 / migration 0030)
+
+All quantity fields throughout the system are integers — `stock_entries.
+quantity_delta`, `project_entries.quantity`, and `order_entries.
+quantity_ordered` / `quantity_received`. This matches the electronics
+domain (no fractional component counts are needed) and eliminates the
+precision-loss path that existed when `project_entries.quantity` was
+`Numeric(18,6)` while the ledger column was `Integer`. BOM imports that
+contain fractional quantity values are rejected at the API layer with a
+422 before any rows are written.
+
 ### Lot lifecycle
 
 A `Lot` is a *batch* of a part with a particular provenance:
