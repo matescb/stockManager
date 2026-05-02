@@ -6,17 +6,19 @@ import { useAuth } from "@/lib/auth";
 import { useWsKey, wsKeyOf, archiveStorageKeys } from "@/lib/queryKeys";
 import EntityHeader from "@/components/EntityHeader";
 import SubNav from "@/components/SubNav";
+import QueryStateBoundary from "@/components/QueryStateBoundary";
 import type { StorageLocation, Part, StockEntry } from "@/types";
 import { DataTable } from "@/components/DataTable";
 import { formatDateTime } from "@/lib/format";
 
 export function StorageDetailLayout() {
   const { storageId } = useParams<{ storageId: string }>();
-  const { data } = useQuery({
+  const { data, isError, error } = useQuery({
     queryKey: useWsKey("storage", storageId),
     queryFn: () => api.get<StorageLocation>(`/storage/${storageId}`),
     enabled: !!storageId,
   });
+  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load storage location. {(error as Error)?.message}</div>;
   if (!data) return <div className="text-muted">Loading…</div>;
   const items = [
     { to: `/storage/${data.id}/info`, label: "Info" },
@@ -59,10 +61,11 @@ export function StorageDetailLayout() {
 
 export function StorageInfo() {
   const { storageId } = useParams();
-  const { data: rows } = useQuery({
+  const { data: rows, isError, error } = useQuery({
     queryKey: useWsKey("storage", storageId, "parts"),
     queryFn: () => api.get<{ part_id: string; lot_id: string | null; quantity: number }[]>(`/storage/${storageId}/parts`),
   });
+  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load storage contents. {(error as Error)?.message}</div>;
   const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
   const partName = new Map(parts?.map(p => [p.id, p.name]) ?? []);
   return (
@@ -90,13 +93,15 @@ export function StorageInfo() {
 
 export function StorageHistory() {
   const { storageId } = useParams();
-  const { data } = useQuery({
+  const historyQuery = useQuery({
     queryKey: useWsKey("storage", storageId, "history"),
     queryFn: () => api.get<StockEntry[]>(`/storage/${storageId}/history?limit=200`),
   });
+  const { data } = historyQuery;
   const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
   const partName = new Map(parts?.map(p => [p.id, p.name]) ?? []);
   return (
+    <QueryStateBoundary query={historyQuery} resourceLabel="storage history">
     <DataTable
       rows={data ?? []}
       rowKey={r => r.id}
@@ -110,6 +115,7 @@ export function StorageHistory() {
         { key: "comments", header: "Comments", accessor: r => r.comments ?? "" },
       ]}
     />
+    </QueryStateBoundary>
   );
 }
 

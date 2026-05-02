@@ -5,12 +5,15 @@ import { useWsKey } from "@/lib/queryKeys";
 import { formatDateTime } from "@/lib/format";
 import type { Lot } from "@/types";
 import { DataTable } from "@/components/DataTable";
+import QueryStateBoundary from "@/components/QueryStateBoundary";
 
 export default function PartLots() {
   const { partId } = useParams();
   const nav = useNavigate();
-  const { data } = useQuery({ queryKey: useWsKey("part", partId, "lots"), queryFn: () => api.get<Lot[]>(`/parts/${partId}/lots`) });
+  const lotsQuery = useQuery({ queryKey: useWsKey("part", partId, "lots"), queryFn: () => api.get<Lot[]>(`/parts/${partId}/lots`) });
+  const { data } = lotsQuery;
   return (
+    <QueryStateBoundary query={lotsQuery} resourceLabel="lots">
     <DataTable
       rows={data ?? []}
       rowKey={r => r.id}
@@ -28,5 +31,6 @@ export default function PartLots() {
         { key: "created_at", header: "Created", accessor: r => r.created_at, render: r => formatDateTime(r.created_at) },
       ]}
     />
+    </QueryStateBoundary>
   );
 }

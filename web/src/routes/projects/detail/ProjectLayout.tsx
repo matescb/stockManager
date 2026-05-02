@@ -8,7 +8,8 @@ import type { Project } from "@/types";
 
 export default function ProjectLayout() {
   const { projectId } = useParams<{ projectId: string }>();
-  const { data } = useQuery({ queryKey: useWsKey("project", projectId), queryFn: () => api.get<Project>(`/projects/${projectId}`), enabled: !!projectId });
+  const { data, isError, error } = useQuery({ queryKey: useWsKey("project", projectId), queryFn: () => api.get<Project>(`/projects/${projectId}`), enabled: !!projectId });
+  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load project. {(error as Error)?.message}</div>;
   if (!data) return <div className="text-muted">Loading…</div>;
   const items = [
     { to: `/projects/${data.id}/data`, label: "Project info" },

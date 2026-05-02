@@ -5,14 +5,16 @@ import { api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
+import QueryStateBoundary from "@/components/QueryStateBoundary";
 import type { StorageLocation } from "@/types";
 
 export default function StorageList({ archived = false }: { archived?: boolean }) {
   const nav = useNavigate();
-  const { data } = useQuery({
+  const storageQuery = useQuery({
     queryKey: useWsKey("storage", { archived }),
     queryFn: () => api.get<StorageLocation[]>(`/storage${archived ? "?archived=true" : ""}`),
   });
+  const { data } = storageQuery;
   return (
     <div>
       <div className="flex items-center gap-1 mb-3">
@@ -20,6 +22,7 @@ export default function StorageList({ archived = false }: { archived?: boolean }
         <NavLink to="/storage/archived" className={({ isActive }) => "btn " + (isActive ? "border-accent/50 text-accent" : "")}>Archived</NavLink>
         <Link to="/storage/create" className="btn-primary ml-auto">+ Storage</Link>
       </div>
+      <QueryStateBoundary query={storageQuery} resourceLabel="storage locations">
       <DataTable
         rows={data ?? []}
         rowKey={r => r.id}
@@ -49,6 +52,7 @@ export default function StorageList({ archived = false }: { archived?: boolean }
           { key: "is_full", header: "Full", accessor: r => r.is_full ? "yes" : "" },
         ]}
       />
+      </QueryStateBoundary>
     </div>
   );
 }

@@ -36,7 +36,7 @@ export default function PartSourcing() {
   const { workspaceId } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: useWsKey("part", part.id, "custom-fields"),
     queryFn: () =>
       api.get<CustomFieldRow[]>(`/custom-fields/by-object/part/${part.id}`),
@@ -109,7 +109,9 @@ export default function PartSourcing() {
           </button>
         </div>
       </div>
-      {isLoading ? (
+      {isError ? (
+        <div className="text-red-600 text-sm">Failed to load sourcing data. {(error as Error)?.message}</div>
+      ) : isLoading ? (
         <div className="text-muted text-sm">Loading…</div>
       ) : rows.length === 0 ? (
         <div className="text-sm text-muted py-4 text-center">

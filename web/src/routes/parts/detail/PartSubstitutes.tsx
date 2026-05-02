@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
+import QueryStateBoundary from "@/components/QueryStateBoundary";
 import type { Part } from "@/types";
 
 type Sub = { part_id: string; direction: string };
@@ -12,7 +13,8 @@ export default function PartSubstitutes() {
   const { partId } = useParams();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
-  const { data: subs } = useQuery({ queryKey: useWsKey("part", partId, "subs"), queryFn: () => api.get<Sub[]>(`/parts/${partId}/substitutes`) });
+  const subsQuery = useQuery({ queryKey: useWsKey("part", partId, "subs"), queryFn: () => api.get<Sub[]>(`/parts/${partId}/substitutes`) });
+  const { data: subs } = subsQuery;
   const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
   const partsById = new Map(parts?.map(p => [p.id, p]) ?? []);
   const [pick, setPick] = useState("");
@@ -31,6 +33,7 @@ export default function PartSubstitutes() {
   return (
     <div className="card p-4 max-w-2xl">
       <h3 className="text-md font-semibold mb-2">Substitutes</h3>
+      <QueryStateBoundary query={subsQuery} resourceLabel="substitutes">
       <ul className="space-y-1 mb-3">
         {(subs ?? []).map(s => {
           const p = partsById.get(s.part_id);
@@ -50,6 +53,7 @@ export default function PartSubstitutes() {
         </select>
         <button className="btn-primary" onClick={add}>Add</button>
       </div>
+      </QueryStateBoundary>
     </div>
   );
 }

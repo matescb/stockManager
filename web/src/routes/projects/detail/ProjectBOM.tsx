@@ -8,15 +8,17 @@ import type { Part, ProjectEntry } from "@/types";
 import { useState } from "react";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
+import QueryStateBoundary from "@/components/QueryStateBoundary";
 
 export default function ProjectBOM() {
   const { projectId } = useParams();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
-  const { data: entries } = useQuery({
+  const entriesQuery = useQuery({
     queryKey: useWsKey("project", projectId, "entries"),
     queryFn: () => api.get<ProjectEntry[]>(`/projects/${projectId}/entries`),
   });
+  const { data: entries } = entriesQuery;
   const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
   const partsById = new Map(parts?.map(p => [p.id, p]) ?? []);
 
@@ -35,6 +37,7 @@ export default function ProjectBOM() {
 
   return (
     <div>
+      <QueryStateBoundary query={entriesQuery} resourceLabel="BOM entries">
       <DataTable
         rows={entries ?? []}
         rowKey={r => r.id}
@@ -88,6 +91,7 @@ export default function ProjectBOM() {
           },
         ]}
       />
+      </QueryStateBoundary>
     </div>
   );
 }

@@ -46,7 +46,7 @@ export default function PartSpecs() {
   const qc = useQueryClient();
   const queryKey = useWsKey("part", part.id, "custom-fields");
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey,
     queryFn: () =>
       api.get<CustomFieldRow[]>(`/custom-fields/by-object/part/${part.id}`),
@@ -150,7 +150,9 @@ export default function PartSpecs() {
         </div>
       )}
 
-      {isLoading ? (
+      {isError ? (
+        <div className="text-red-600 text-sm">Failed to load specs. {(error as Error)?.message}</div>
+      ) : isLoading ? (
         <div className="text-muted text-sm">Loading…</div>
       ) : rows.length === 0 ? (
         <div className="text-sm text-muted py-4">
