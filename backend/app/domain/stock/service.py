@@ -530,6 +530,8 @@ def move_stock(
             db.flush()
             dest_lot_id = new_lot.id
 
+            # Same circular-FK three-step write as the non-split path
+            # below; FK on `related_entry_id` is enforced at INSERT time.
             out_entry = StockEntry(
                 id=out_id,
                 workspace_id=workspace_id,
@@ -539,11 +541,13 @@ def move_stock(
                 quantity_delta=-payload.quantity,
                 status="on_hand",
                 operation_type="move_out",
-                related_entry_id=in_id,
+                related_entry_id=None,
                 comments=payload.comments,
                 occurred_at=_now(),
                 created_by=user_id,
             )
+            db.add(out_entry)
+            db.flush()
             in_entry = StockEntry(
                 id=in_id,
                 workspace_id=workspace_id,
@@ -558,40 +562,53 @@ def move_stock(
                 occurred_at=_now(),
                 created_by=user_id,
             )
-            db.add_all([out_entry, in_entry])
+            db.add(in_entry)
+            db.flush()
+            out_entry.related_entry_id = in_id
             db.flush()
         return out_entry, in_entry
 
-    out_entry = StockEntry(
-        id=out_id,
-        workspace_id=workspace_id,
-        part_id=part.id,
-        lot_id=payload.source_lot_id,
-        storage_location_id=payload.source_storage_location_id,
-        quantity_delta=-payload.quantity,
-        status="on_hand",
-        operation_type="move_out",
-        related_entry_id=in_id,
-        comments=payload.comments,
-        occurred_at=_now(),
-        created_by=user_id,
-    )
-    in_entry = StockEntry(
-        id=in_id,
-        workspace_id=workspace_id,
-        part_id=part.id,
-        lot_id=dest_lot_id,
-        storage_location_id=dest.id,
-        quantity_delta=payload.quantity,
-        status="on_hand",
-        operation_type="move_in",
-        related_entry_id=out_id,
-        comments=payload.comments,
-        occurred_at=_now(),
-        created_by=user_id,
-    )
-    db.add_all([out_entry, in_entry])
-    db.flush()
+    # Circular FK on `related_entry_id`: each row's FK points at the
+    # other. PG enforces FK on INSERT (constraints aren't DEFERRABLE in
+    # the schema), and SA's topological sort can't break the cycle, so
+    # `add_all([out, in])` always violates one direction. Fix is the
+    # classic three-step write under a savepoint so the back-pointer
+    # update commits atomically with the inserts.
+    with db.begin_nested():
+        out_entry = StockEntry(
+            id=out_id,
+            workspace_id=workspace_id,
+            part_id=part.id,
+            lot_id=payload.source_lot_id,
+            storage_location_id=payload.source_storage_location_id,
+            quantity_delta=-payload.quantity,
+            status="on_hand",
+            operation_type="move_out",
+            related_entry_id=None,  # set after the IN row exists
+            comments=payload.comments,
+            occurred_at=_now(),
+            created_by=user_id,
+        )
+        db.add(out_entry)
+        db.flush()
+        in_entry = StockEntry(
+            id=in_id,
+            workspace_id=workspace_id,
+            part_id=part.id,
+            lot_id=dest_lot_id,
+            storage_location_id=dest.id,
+            quantity_delta=payload.quantity,
+            status="on_hand",
+            operation_type="move_in",
+            related_entry_id=out_id,
+            comments=payload.comments,
+            occurred_at=_now(),
+            created_by=user_id,
+        )
+        db.add(in_entry)
+        db.flush()
+        out_entry.related_entry_id = in_id
+        db.flush()
     return out_entry, in_entry
 
 
