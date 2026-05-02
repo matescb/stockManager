@@ -7,8 +7,10 @@ from sqlalchemy import or_, select
 
 from app.api._helpers import require_resource_access
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
+from app.core.pagination import decode_cursor, paginate
 from app.core.responses import ok
 from app.core.time import utcnow
+from app.domain.stock.models import StockEntry
 from app.domain.storage.models import StorageLocation
 from app.domain.storage.schemas import StorageIn, StoragePatch
 from app.domain.stock.service import (
@@ -148,21 +150,48 @@ def storage_parts(storage_id: UUID, db: DbSession, ws: CurrentWorkspace):
     )
 
 
+def _serialize_storage_entry(e: StockEntry) -> dict:
+    return {
+        "id": str(e.id),
+        "part_id": str(e.part_id),
+        "lot_id": str(e.lot_id) if e.lot_id else None,
+        "quantity_delta": e.quantity_delta,
+        "operation_type": e.operation_type,
+        "comments": e.comments,
+        "occurred_at": e.occurred_at.isoformat(),
+    }
+
+
 @router.get("/{storage_id}/history")
-def storage_history(storage_id: UUID, db: DbSession, ws: CurrentWorkspace, limit: int = Query(default=200, le=1000)):
+def storage_history(
+    storage_id: UUID,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    limit: int = Query(default=200, le=1000),
+    cursor: str | None = Query(default=None),
+    paged: bool = Query(default=False),
+):
     s = _get(db, ws.id, storage_id)
+
+    if cursor is not None or paged:
+        # Cursor-paginated path (opt-in).
+        decoded_cursor = decode_cursor(cursor) if cursor is not None else None
+        stmt = (
+            select(StockEntry)
+            .where(StockEntry.workspace_id == ws.id)
+            .where(StockEntry.storage_location_id == s.id)
+        )
+        rows, next_cursor = paginate(
+            db,
+            stmt,
+            sort_col=StockEntry.occurred_at,
+            id_col=StockEntry.id,
+            cursor=decoded_cursor,
+            limit=limit,
+            asc=False,
+        )
+        return ok({"items": [_serialize_storage_entry(e) for e in rows], "next_cursor": next_cursor})
+
+    # Legacy bare-list path — unchanged (FE uses ?limit=200).
     rows = history_for_storage(db, workspace_id=ws.id, storage_location_id=s.id, limit=limit)
-    return ok(
-        [
-            {
-                "id": str(e.id),
-                "part_id": str(e.part_id),
-                "lot_id": str(e.lot_id) if e.lot_id else None,
-                "quantity_delta": e.quantity_delta,
-                "operation_type": e.operation_type,
-                "comments": e.comments,
-                "occurred_at": e.occurred_at.isoformat(),
-            }
-            for e in rows
-        ]
-    )
+    return ok([_serialize_storage_entry(e) for e in rows])
