@@ -4,11 +4,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Cookie, Depends, HTTPException, Request, status
+from fastapi import Cookie, Depends, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.auth import hash_session_token
 from app.core.config import settings
+from app.core.errors import ErrorCodes, raise_http
 from app.domain.users.models import User, UserSession
 from app.domain.workspaces.models import Workspace, WorkspaceMember
 from app.infra.db import get_db
@@ -28,7 +29,11 @@ def get_current_user(
 ) -> User:
     token = request.cookies.get(settings().SESSION_COOKIE_NAME)
     if not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="not authenticated")
+        raise_http(
+            status.HTTP_401_UNAUTHORIZED,
+            ErrorCodes.AUTH_NOT_AUTHENTICATED,
+            "not authenticated",
+        )
 
     # The DB only ever holds the SHA-256 digest of the token (SEC2-003).
     # Equality on a pre-image-resistant hash is fine; we don't need
@@ -37,21 +42,37 @@ def get_current_user(
     digest = hash_session_token(token)
     sess = db.query(UserSession).filter(UserSession.token_hash == digest).first()
     if not sess:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid session")
+        raise_http(
+            status.HTTP_401_UNAUTHORIZED,
+            ErrorCodes.AUTH_INVALID_SESSION,
+            "invalid session",
+        )
     now = datetime.now(timezone.utc)
     if sess.expires_at and sess.expires_at < now:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="session expired")
+        raise_http(
+            status.HTTP_401_UNAUTHORIZED,
+            ErrorCodes.AUTH_SESSION_EXPIRED,
+            "session expired",
+        )
     if sess.last_used_at and sess.last_used_at < now - _SESSION_IDLE_WINDOW:
         # SEC2-015: idle longer than the sliding window. Drop the row
         # so a re-login mints a fresh credential rather than reviving
         # this one.
         db.delete(sess)
         db.commit()
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="session idle timeout")
+        raise_http(
+            status.HTTP_401_UNAUTHORIZED,
+            ErrorCodes.AUTH_SESSION_IDLE_TIMEOUT,
+            "session idle timeout",
+        )
 
     user = db.get(User, sess.user_id)
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="user missing")
+        raise_http(
+            status.HTTP_401_UNAUTHORIZED,
+            ErrorCodes.AUTH_USER_MISSING,
+            "user missing",
+        )
 
     # Sliding expiry: bump last_used_at on every successful auth. Commit
     # is cheap (single row update by PK); the alternative — relying on
@@ -82,7 +103,11 @@ def get_current_workspace(
         .all()
     )
     if not membership:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="no workspace")
+        raise_http(
+            status.HTTP_403_FORBIDDEN,
+            ErrorCodes.WORKSPACE_NONE,
+            "no workspace",
+        )
 
     chosen: Workspace | None = None
     if raw:
@@ -103,7 +128,16 @@ def get_current_workspace(
     if chosen is None:
         chosen = db.get(Workspace, membership[0].workspace_id)
     if chosen is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="workspace not found")
+        # Reached only when the membership row references a workspace
+        # row that no longer exists (orphaned membership). Distinct
+        # from cross-workspace probing — those return 404 from the
+        # /switch route. Status code preserved at 403 to avoid changing
+        # public behaviour in this PR; see issue #125.
+        raise_http(
+            status.HTTP_403_FORBIDDEN,
+            ErrorCodes.WORKSPACE_NOT_FOUND,
+            "workspace not found",
+        )
     return chosen
 
 
@@ -135,9 +169,11 @@ def require_role(min_role: str):
     def _dep(user: CurrentUser, ws: CurrentWorkspace, db: DbSession) -> None:
         rank = _ROLE_RANK.get(_membership_role(db, user, ws), 0)
         if rank < floor:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"requires role {min_role}+",
+            raise_http(
+                status.HTTP_403_FORBIDDEN,
+                ErrorCodes.RESOURCE_INSUFFICIENT_ROLE,
+                f"requires role {min_role}+",
+                required_role=min_role,
             )
 
     return _dep
@@ -159,7 +195,9 @@ def require_member_for_writes(
         return
     rank = _ROLE_RANK.get(_membership_role(db, user, ws), 0)
     if rank < _ROLE_RANK["member"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="requires role member+ for write operations",
+        raise_http(
+            status.HTTP_403_FORBIDDEN,
+            ErrorCodes.RESOURCE_INSUFFICIENT_ROLE,
+            "requires role member+ for write operations",
+            required_role="member",
         )

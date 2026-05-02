@@ -4,11 +4,12 @@ from functools import lru_cache
 from typing import TypeVar
 from uuid import UUID
 
-from fastapi import HTTPException, status
+from fastapi import status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.deps import _ROLE_RANK, _membership_role
+from app.core.errors import ErrorCodes, raise_http
 from app.domain._mixins import WorkspaceOwned
 
 # Generic type variable bound to WorkspaceOwned. Replaces the previous
@@ -39,7 +40,12 @@ def assert_in_workspace(
     ).scalar_one_or_none()
     if row is None:
         name = label or getattr(Model, "__tablename__", "row")
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"{name} not found")
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            ErrorCodes.RESOURCE_NOT_FOUND,
+            f"{name} not found",
+            resource=name,
+        )
     return row
 
 
@@ -81,9 +87,11 @@ def assert_polymorphic_in_workspace(
     resolvers = _polymorphic_resolvers()
     Model = resolvers.get(object_type)
     if Model is None:
-        raise HTTPException(
+        raise_http(
             status.HTTP_400_BAD_REQUEST,
-            detail=f"unknown object_type: {object_type}",
+            ErrorCodes.RESOURCE_UNKNOWN_OBJECT_TYPE,
+            f"unknown object_type: {object_type}",
+            object_type=object_type,
         )
     return assert_in_workspace(db, Model, object_id, workspace_id, label=object_type)
 
@@ -139,9 +147,11 @@ def require_resource_access(
     # can't distinguish them.
     row = db.get(Model, id_)
     if row is None or getattr(row, "workspace_id", None) != ws.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"{name} not found",
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            ErrorCodes.RESOURCE_NOT_FOUND,
+            f"{name} not found",
+            resource=name,
         )
     # 3) role check on the (now-known-to-be-in-workspace) resource. 403
     # here is correct — it tells the caller "you exist in this
@@ -149,8 +159,10 @@ def require_resource_access(
     # anything about other workspaces.
     rank = _ROLE_RANK.get(_membership_role(db, user, ws), 0)
     if rank < floor:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"requires role {role}+",
+        raise_http(
+            status.HTTP_403_FORBIDDEN,
+            ErrorCodes.RESOURCE_INSUFFICIENT_ROLE,
+            f"requires role {role}+",
+            required_role=role,
         )
     return row
