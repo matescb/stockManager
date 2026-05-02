@@ -38,8 +38,12 @@ def test_workspace_switch_sets_hardened_cookie_attributes():
     lower = set_cookie.lower()
     # httponly: blocks JS read of the cookie. Reverses Sec CRIT-3.
     assert "httponly" in lower, f"missing HttpOnly: {set_cookie}"
-    # samesite=lax: blocks cross-site cookie attachment on non-GET.
-    assert "samesite=lax" in lower, f"missing SameSite=Lax: {set_cookie}"
+    # samesite=strict (v1 Sec CRIT-4): the workspace-switch cookie is
+    # purely server-driven; tightening from Lax to Strict closes the
+    # forced-switch surface where a victim clicking an attacker link
+    # would still send the cookie. Session cookie stays Lax (login
+    # redirects depend on it).
+    assert "samesite=strict" in lower, f"missing SameSite=Strict: {set_cookie}"
     # In test env APP_ENV defaults to "dev" so Secure is correctly absent.
     # The prod path (`Secure` set when APP_ENV == "prod") is exercised by
     # reading the route's logic — covered by code review, not this test.

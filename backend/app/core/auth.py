@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import secrets
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from argon2 import PasswordHasher
@@ -66,26 +68,65 @@ def verify_password(hash_: str, password: str) -> bool:
 
 
 def new_session_token() -> str:
+    """Mint a fresh plaintext session token. Lives only on the client
+    cookie; the server stores `hash_session_token(token)` in
+    `user_sessions.token_hash` (SEC2-003)."""
     return secrets.token_urlsafe(48)
+
+
+def hash_session_token(token: str) -> str:
+    """SHA-256 hex digest of the cookie-side plaintext token. Used as
+    the primary key on `user_sessions`, mirroring the invitation token
+    hashing landed in PR #14."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def session_expires_at() -> datetime:
     return datetime.now(timezone.utc) + timedelta(days=settings().SESSION_LIFETIME_DAYS)
 
 
-def create_session_row(db: Session, user_id):
+@dataclass
+class IssuedSession:
+    """Return type for `create_session_row`: the plaintext token (which
+    must be set on the cookie) plus the persisted row's hash. The model
+    instance no longer carries the plaintext, so the route layer cannot
+    accidentally log it."""
+
+    token: str
+    token_hash: str
+
+
+def create_session_row(db: Session, user_id) -> IssuedSession:
     from app.domain.users.models import UserSession
 
     token = new_session_token()
-    row = UserSession(token=token, user_id=user_id, expires_at=session_expires_at())
+    digest = hash_session_token(token)
+    row = UserSession(token_hash=digest, user_id=user_id, expires_at=session_expires_at())
     db.add(row)
     db.flush()
-    return row
+    return IssuedSession(token=token, token_hash=digest)
 
 
 def revoke_session(db: Session, token: str) -> None:
+    """Delete the session row matching the plaintext cookie token, if
+    any. Hashing is constant-time on input length; we don't need
+    hmac.compare_digest because the lookup is by primary-key equality
+    on a SHA-256 digest (pre-image resistant)."""
     from app.domain.users.models import UserSession
 
-    row = db.query(UserSession).filter(UserSession.token == token).first()
+    digest = hash_session_token(token)
+    row = db.query(UserSession).filter(UserSession.token_hash == digest).first()
     if row:
         db.delete(row)
+
+
+def revoke_all_user_sessions(db: Session, user_id) -> int:
+    """Delete every existing session for a user. Called on login so a
+    fresh credential never coexists with a previously-issued one
+    (SEC2-015 — session rotation on auth)."""
+    from app.domain.users.models import UserSession
+
+    rows = db.query(UserSession).filter(UserSession.user_id == user_id).all()
+    for r in rows:
+        db.delete(r)
+    return len(rows)

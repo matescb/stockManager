@@ -1,16 +1,23 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import Cookie, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
+from app.core.auth import hash_session_token
 from app.core.config import settings
 from app.domain.users.models import User, UserSession
 from app.domain.workspaces.models import Workspace, WorkspaceMember
 from app.infra.db import get_db
+
+# Sliding-expiry idle window (SEC2-015). A session whose `last_used_at`
+# is older than this is rejected even if the absolute `expires_at` is
+# still in the future. Tighter than SESSION_LIFETIME_DAYS so an
+# abandoned tab can't sit logged in for a month.
+_SESSION_IDLE_WINDOW = timedelta(hours=24)
 
 DbSession = Annotated[Session, Depends(get_db)]
 
@@ -23,15 +30,35 @@ def get_current_user(
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="not authenticated")
 
-    sess = db.query(UserSession).filter(UserSession.token == token).first()
+    # The DB only ever holds the SHA-256 digest of the token (SEC2-003).
+    # Equality on a pre-image-resistant hash is fine; we don't need
+    # hmac.compare_digest because the digest is the primary key and the
+    # comparison is delegated to Postgres.
+    digest = hash_session_token(token)
+    sess = db.query(UserSession).filter(UserSession.token_hash == digest).first()
     if not sess:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid session")
-    if sess.expires_at and sess.expires_at < datetime.now(timezone.utc):
+    now = datetime.now(timezone.utc)
+    if sess.expires_at and sess.expires_at < now:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="session expired")
+    if sess.last_used_at and sess.last_used_at < now - _SESSION_IDLE_WINDOW:
+        # SEC2-015: idle longer than the sliding window. Drop the row
+        # so a re-login mints a fresh credential rather than reviving
+        # this one.
+        db.delete(sess)
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="session idle timeout")
 
     user = db.get(User, sess.user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="user missing")
+
+    # Sliding expiry: bump last_used_at on every successful auth. Commit
+    # is cheap (single row update by PK); the alternative — relying on
+    # the route's own commit — leaves dangling sessions on read-only
+    # GETs that never touch the session.
+    sess.last_used_at = now
+    db.commit()
 
     request.state.session_token = token
     return user
@@ -59,6 +86,11 @@ def get_current_workspace(
 
     chosen: Workspace | None = None
     if raw:
+        # The /workspaces/{id}/switch route now parses workspace_id as
+        # UUID upstream (SEC2-004), so the cookie can no longer carry
+        # garbage. The X-Workspace-Id header, however, is untrusted
+        # client input — a malformed value here must produce a clean
+        # 4xx, not a 500. Keep the try/except as defence-in-depth.
         try:
             wsid = UUID(raw)
         except ValueError:

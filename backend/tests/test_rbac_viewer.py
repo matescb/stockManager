@@ -124,3 +124,14 @@ def test_viewer_cannot_patch_project(owner_and_viewer):
     ).json()["data"]["id"]
     r = viewer.patch(f"/api/projects/{proj_id}", json={"name": "renamed"})
     assert r.status_code == 403, r.text
+
+
+def test_viewer_cannot_read_scanner_license_key(owner_and_viewer):
+    """SEC2-012 / BE2-017 — the Scandit license is a paid third-party
+    credential and effectively a write capability for the scanner
+    integration. Viewers can still read /workspaces/current (no
+    license value in the payload) but the dedicated key endpoint must
+    require member+."""
+    _, viewer = owner_and_viewer
+    r = viewer.get("/api/workspaces/current/scanner-license-key")
+    assert r.status_code == 403, r.text

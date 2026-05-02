@@ -29,7 +29,16 @@ class User(Base):
 class UserSession(Base):
     __tablename__ = "user_sessions"
 
-    token = Column(String(120), primary_key=True)
+    # The session row is keyed by the SHA-256 hex digest of the
+    # plaintext cookie token (`token_hash`). The plaintext lives only
+    # on the client cookie and is never persisted, so a DB dump cannot
+    # be replayed as a session credential. Mirrors the invitation token
+    # hashing landed in 0014 (SEC2-003).
+    token_hash = Column(String(64), primary_key=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    # Sliding expiry (SEC2-015): bumped on every successful auth lookup.
+    # A session idle past SESSION_IDLE_HOURS is rejected even if
+    # `expires_at` (the absolute lifetime) is still in the future.
+    last_used_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
     expires_at = Column(DateTime(timezone=True), nullable=False)

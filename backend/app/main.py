@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import os
+from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 
 from app.core.logging import configure_logging
 
@@ -138,6 +141,85 @@ from app.core.ratelimit import limiter  # noqa: E402
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# SEC2-001 — CSRF Origin/Referer guard. Cookie auth is otherwise wide
+# open to a malicious page on another origin issuing a state-changing
+# request that rides the victim's session cookie (the SameSite=Lax
+# attribute does not block top-level POSTs). We don't implement a
+# double-submit token: comparing the request's `Origin` (or `Referer`
+# fallback) against the configured CORS allow-list is sufficient
+# because browsers attach those headers automatically on any
+# cross-origin request and a malicious page cannot forge them.
+_CSRF_PROTECTED_METHODS = frozenset({"POST", "PATCH", "PUT", "DELETE"})
+
+# Routes that are deliberately reachable cross-origin or pre-auth.
+# - /api/sentry-tunnel: Sentry's SDK is unauthenticated by design and
+#   the host allow-list inside the route is the actual gate.
+# - /api/auth/login + /signup: not yet authenticated; the threat
+#   here is brute force, handled by slowapi rate limiting.
+_CSRF_EXEMPT_PATHS = frozenset({
+    "/api/sentry-tunnel",
+    "/api/auth/login",
+    "/api/auth/signup",
+})
+
+
+def _origin_host(value: str | None) -> str | None:
+    """Return scheme://host[:port] for a value that may be an Origin
+    header (already in that form) or a Referer URL (full URL with
+    path). Returns None on parse failure."""
+    if not value:
+        return None
+    try:
+        parsed = urlparse(value)
+    except Exception:
+        return None
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+class CsrfOriginMiddleware(BaseHTTPMiddleware):
+    """Reject state-changing requests whose Origin / Referer doesn't
+    match the configured allow-list. GET / HEAD / OPTIONS pass through
+    untouched."""
+
+    def __init__(self, app, allowed_origins: list[str], exempt_paths: frozenset[str]):
+        super().__init__(app)
+        # Normalise to scheme+host on init so the fast path is a single
+        # set lookup per request.
+        self._allowed = frozenset(
+            o for o in (_origin_host(x) for x in allowed_origins) if o
+        )
+        self._exempt = exempt_paths
+
+    async def dispatch(self, request: Request, call_next):
+        if request.method not in _CSRF_PROTECTED_METHODS:
+            return await call_next(request)
+        if request.url.path in self._exempt:
+            return await call_next(request)
+        origin = _origin_host(request.headers.get("origin")) or _origin_host(
+            request.headers.get("referer")
+        )
+        if origin is None or origin not in self._allowed:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "data": None,
+                    "status": {
+                        "category": "forbidden",
+                        "message": "cross-origin request blocked",
+                    },
+                },
+            )
+        return await call_next(request)
+
+
+app.add_middleware(
+    CsrfOriginMiddleware,
+    allowed_origins=settings().cors_origin_list,
+    exempt_paths=_CSRF_EXEMPT_PATHS,
+)
 
 app.add_middleware(
     CORSMiddleware,
