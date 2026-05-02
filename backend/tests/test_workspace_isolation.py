@@ -34,7 +34,7 @@ def test_workspace_isolation():
     # User B should not see it
     r = b.get("/api/parts")
     assert r.status_code == 200
-    assert all(p["id"] != part_id for p in r.json()["data"]["items"])
+    assert all(p["id"] != part_id for p in r.json()["data"])
 
     # User B trying to GET it directly → 404
     r = b.get(f"/api/parts/{part_id}")
@@ -365,8 +365,8 @@ def test_no_cross_workspace_default_storage_in_existing_rows():
     _ = _create_part(b, "B-part")
 
     # Set defaults via the API (the legitimate path).
-    parts_a = a.get("/api/parts").json()["data"]["items"]
-    parts_b = b.get("/api/parts").json()["data"]["items"]
+    parts_a = a.get("/api/parts").json()["data"]
+    parts_b = b.get("/api/parts").json()["data"]
     a.patch(
         f"/api/parts/{parts_a[0]['id']}",
         json={"default_storage_location_id": storage_a},
@@ -613,7 +613,7 @@ def test_orders_create_rejects_foreign_part_id_via_entries():
     # the real isolation guarantee is `b.get("/api/parts")` MUST NOT
     # include part_a, asserted next.
     assert r.status_code in (200, 201, 404)
-    rows = b.get("/api/parts").json()["data"]["items"]
+    rows = b.get("/api/parts").json()["data"]
     assert all(p["id"] != part_a for p in rows)
 
 

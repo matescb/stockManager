@@ -19,6 +19,7 @@ Design notes:
 """
 from __future__ import annotations
 
+import hmac
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -57,7 +58,10 @@ def encode_cursor(c: Cursor) -> str:
 def decode_cursor(s: str) -> Cursor:
     """Decode and verify a cursor.  Raises HTTP 400 on tamper / malform."""
     try:
-        payload: dict[str, Any] = _signer().loads(s)
+        signer = _signer()
+        payload: dict[str, Any] = signer.loads(s)
+        if not hmac.compare_digest(s, signer.dumps(payload)):
+            raise BadSignature("non-canonical cursor token")
     except BadSignature:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

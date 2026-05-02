@@ -85,7 +85,7 @@ def test_dep_commits_on_clean_exit(client):
     assert r.status_code == 200, r.text
     # The list endpoint runs in a fresh request → fresh session. If the
     # dep didn't commit, this read would not see the write.
-    found = client.get("/api/parts").json()["data"]["items"]
+    found = client.get("/api/parts").json()["data"]
     assert any(p["name"] == name for p in found), f"part {name} not committed"
 
 
@@ -95,7 +95,7 @@ def test_dep_rolls_back_on_raise(client):
     assert r.status_code == 500
     # The row was added + flushed before the raise. The dep must have
     # rolled back — so a fresh-session list does NOT see it.
-    found = client.get("/api/parts").json()["data"]["items"]
+    found = client.get("/api/parts").json()["data"]
     assert not any(p["name"] == name for p in found), (
         f"part {name} leaked through rollback"
     )
