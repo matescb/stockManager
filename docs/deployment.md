@@ -582,6 +582,19 @@ container would serve the expired cert until the next `docker compose up`.
 - **Validate** with
   `certbot renew --dry-run --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/stockmanager-reload.sh`.
 
+**BOM / scan-import timeouts (INFRA2-019).** Both proxy layers must agree:
+the in-container nginx sets `proxy_read_timeout 5m` / `proxy_send_timeout 5m`
+for `POST /api/projects/*/bom/import` and `POST /api/parts/bulk-import-from-scan`
+(see `deploy/nginx-web.conf`), and **both** Apache vhosts (`:80` and `:443`)
+set `timeout=300` on their `ProxyPass` directives (see
+`deploy/parts.matescb.cz.conf` and `deploy/parts.matescb.cz-le-ssl.conf`).
+Production HTTPS traffic terminates on the `:443` vhost, so the SSL file is
+the load-bearing one for live BOM/scan-import calls; the `:80` vhost mainly
+serves the HTTP→HTTPS redirect plus `/.well-known` for cert renewal. If you
+change one, keep the other in sync. **The Apache vhost change is not
+auto-deployed** — after merging, run the `cp` + `systemctl reload apache2`
+commands above on the VPS for **both** files.
+
 ## Backups
 
 Two volumes need covering:
