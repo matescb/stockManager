@@ -1,61 +1,23 @@
 from __future__ import annotations
 
-import uuid
-
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests._factories import (
+    add_stock as _add_stock,
+    create_part as _create_part,
+    create_project_with_bom as _create_project_with_bom,
+    create_storage as _create_storage,
+    signup_user,
+)
 
 
 @pytest.fixture
 def authed():
     c = TestClient(app)
-    r = c.post(
-        "/api/auth/signup",
-        json={"email": f"u-{uuid.uuid4().hex[:8]}@x.com", "name": "u", "password": "TestPass-2026-Stronk"},
-    )
-    assert r.status_code == 200, r.text
+    signup_user(c)
     return c
-
-
-def _create_part(c, name, **extra):
-    r = c.post("/api/parts", json={"name": name, "part_type": "local", **extra})
-    assert r.status_code in (200, 201), r.text
-    return r.json()["data"]["id"]
-
-
-def _create_storage(c, name="Shelf"):
-    r = c.post("/api/storage", json={"name": name})
-    assert r.status_code in (200, 201)
-    return r.json()["data"]["id"]
-
-
-def _add_stock(c, part_id, qty, storage_id=None):
-    body = {"part_id": part_id, "quantity": qty}
-    if storage_id:
-        body["storage_location_id"] = storage_id
-    r = c.post("/api/stock/add", json=body)
-    assert r.status_code == 200, r.text
-
-
-def _create_project_with_bom(c, project_name, bom):
-    """bom is a list of dicts: {part_id, quantity, dnp?}."""
-    r = c.post("/api/projects", json={"name": project_name})
-    assert r.status_code in (200, 201)
-    pid = r.json()["data"]["id"]
-    for row in bom:
-        r = c.post(
-            f"/api/projects/{pid}/entries",
-            json={
-                "part_id": row.get("part_id"),
-                "quantity": row["quantity"],
-                "dnp": row.get("dnp", False),
-                "name": row.get("name"),
-            },
-        )
-        assert r.status_code in (200, 201), r.text
-    return pid
 
 
 def test_shortage_analysis_flags_short(authed):

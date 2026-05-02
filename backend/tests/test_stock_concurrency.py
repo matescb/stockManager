@@ -23,46 +23,25 @@ from sqlalchemy import text
 from app.main import app
 
 
-def _signup(c: TestClient) -> str:
-    r = c.post(
-        "/api/auth/signup",
-        json={"email": f"u-{uuid.uuid4().hex[:8]}@x.com", "name": "u", "password": "TestPass-2026-Stronk"},
-    )
-    assert r.status_code == 200, r.text
-    return r.json()["data"]["workspace_id"]
+from tests._factories import (
+    add_stock as _factory_add_stock,
+    create_part as _create_part,
+    create_storage as _create_storage,
+    signup_user,
+)
 
 
 @pytest.fixture
 def authed():
     c = TestClient(app)
-    _signup(c)
+    signup_user(c)
     return c
 
 
-def _create_storage(c, name="Bin"):
-    r = c.post("/api/storage", json={"name": name})
-    assert r.status_code in (200, 201)
-    return r.json()["data"]["id"]
-
-
-def _create_part(c, name="P"):
-    r = c.post("/api/parts", json={"name": name, "part_type": "local"})
-    assert r.status_code in (200, 201)
-    return r.json()["data"]["id"]
-
-
 def _add_stock(c, part_id, qty, storage_id, lot_name="L"):
-    r = c.post(
-        "/api/stock/add",
-        json={
-            "part_id": part_id,
-            "quantity": qty,
-            "storage_location_id": storage_id,
-            "lot": {"name": lot_name},
-        },
-    )
-    assert r.status_code in (200, 201), r.text
-    return r.json()["data"]
+    return _factory_add_stock(
+        c, part_id, qty, storage_id=storage_id, lot_name=lot_name
+    ).json()["data"]
 
 
 # ---------------------------------------------------------------------------
