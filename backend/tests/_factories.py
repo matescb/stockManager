@@ -13,6 +13,14 @@ functions keep the dependency surface small and the call sites obvious.
 If a test needs richer data (extra fields, non-default flags), pass them
 as ``**extra`` — every factory forwards unknown kwargs to the request
 body so call sites stay one line.
+
+Email-verification (SEC2-014): in dev/test mode
+(SIGNUP_REQUIRE_EMAIL_VERIFICATION=False, which is the default when
+APP_ENV != "prod") the signup endpoint immediately creates the User +
+Workspace and returns 200 — the same behaviour as before this feature
+landed. Tests that specifically exercise the email-verification round-trip
+should set SIGNUP_REQUIRE_EMAIL_VERIFICATION=true (via override in their
+own patching) and call the /auth/signup + /auth/verify endpoints directly.
 """
 from __future__ import annotations
 
@@ -45,7 +53,14 @@ def signup_user(
     password: str = DEFAULT_PASSWORD,
 ) -> Any:
     """Sign up a fresh user. Returns the raw response so call sites can
-    pull whatever they need (``workspace_id``, ``user_id``, etc)."""
+    pull whatever they need (``workspace_id``, ``user_id``, etc).
+
+    In tests (APP_ENV=dev, SIGNUP_REQUIRE_EMAIL_VERIFICATION=False) the
+    endpoint creates the User + Workspace immediately and returns 200 —
+    same shape as before SEC2-014.  The HIBP network call is stubbed via
+    the ``hibp_mock`` autouse fixture in conftest.py so no real network
+    calls occur.
+    """
     email = email or f"u-{uuid.uuid4().hex[:8]}@example.com"
     r = client.post(
         "/api/auth/signup",

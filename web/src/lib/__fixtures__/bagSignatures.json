@@ -38,6 +38,27 @@
       "raws": [
         "[)>\u001e06\u001d1PCAP123\u001dQ100\u001d10D2412\u001d1TAB12\u001e\u0004"
       ]
+    },
+    {
+      "label": "Trailing space-picture — exposes spurious second trim (FE/BE drift)",
+      "expected_signature": "034ff43298f33832c6ca9b4c567a0b52440e58030ed79c4a8c4c3f11f44c95c3",
+      "raws": [
+        "FOO␠"
+      ]
+    },
+    {
+      "label": "Leading space-picture — exposes spurious second trim (FE/BE drift)",
+      "expected_signature": "e44e4a8ea1dd5a970cf6e24f3b66b326540bcd436ae6dcb4baabd047bf93d078",
+      "raws": [
+        "␠FOO"
+      ]
+    },
+    {
+      "label": "Trailing double space-picture — both ends of normalised string become SP",
+      "expected_signature": "651661fb02f9878cb549e6ba39dda190257cb6990fd287ca50fff832cdc84e55",
+      "raws": [
+        "FOO␠␠"
+      ]
     }
   ],
   "distinct_pairs_must_differ": [

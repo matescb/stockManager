@@ -29,6 +29,13 @@ from app.main import app
 
 
 def _signup(c: TestClient, *, email: str | None = None, password: str) -> int:
+    """Call /auth/signup and return the status code.
+
+    HIBP is already patched for the whole suite by the ``_mock_hibp``
+    autouse fixture in conftest.py — no per-call patch needed here.
+    In dev/test mode (SIGNUP_REQUIRE_EMAIL_VERIFICATION=False) a valid
+    signup returns 200 immediately.
+    """
     email = email or f"u-{uuid.uuid4().hex[:8]}@x.com"
     r = c.post(
         "/api/auth/signup",
@@ -70,6 +77,10 @@ WEAK_PASSWORD_CASES = [
     ("too_short", "abc12", (400, 422)),
 ]
 
+# In test mode (SIGNUP_REQUIRE_EMAIL_VERIFICATION=False) signup returns 200.
+# In prod mode (or with the flag explicitly set) it returns 202.
+_SIGNUP_OK_CODES = (200, 202)
+
 
 @pytest.mark.parametrize(
     ("method", "route", "make_payload"),
@@ -82,6 +93,7 @@ WEAK_PASSWORD_CASES = [
     ids=[c[0] for c in WEAK_PASSWORD_CASES],
 )
 def test_weak_password_rejected(method, route, make_payload, case_id, password, ok_codes):
+    """HIBP is stubbed globally by conftest._mock_hibp; no per-test patch needed."""
     c = TestClient(app)
     payload = make_payload(password)
     r = c.request(method, route, json=payload)
@@ -92,9 +104,10 @@ def test_weak_password_rejected(method, route, make_payload, case_id, password, 
 
 
 def test_strong_password_succeeds_on_signup():
+    """A strong password returns 200 (dev mode) or 202 (prod mode, SEC2-014)."""
     c = TestClient(app)
     code = _signup(c, password="VeryStrong-2026-Stockmgr!")
-    assert code == 200, code
+    assert code in _SIGNUP_OK_CODES, code
 
 
 # ---------------------------------------------------------------------------

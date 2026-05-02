@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import uuid
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.config import settings
 from app.main import app
 
 
@@ -28,14 +31,26 @@ def owner_client(engine):
     return c
 
 
+def _hmac_token(token: str) -> str:
+    """Mirror the application's HMAC computation for test assertions."""
+    secret = settings().SESSION_SECRET
+    return hmac.new(secret.encode(), token.encode(), hashlib.sha256).hexdigest()
+
+
 def _enable_catalog(client: TestClient) -> str:
-    """Flip catalog on and return the public URL (path)."""
+    """Flip catalog on and return the public catalog path (/catalog/<token>).
+
+    SEC2-008: the token is now returned once via catalog_token_plaintext;
+    the response no longer carries catalog_url.
+    """
     r = client.patch("/api/workspaces/current", json={"catalog_enabled": True})
     assert r.status_code == 200, r.text
     data = r.json()["data"]
     assert data["catalog_enabled"] is True
-    assert data["catalog_url"], "expected catalog_url to be set when enabled"
-    return data["catalog_url"]
+    assert data["catalog_token_set"] is True, "expected catalog_token_set=True when enabled"
+    token = data.get("catalog_token_plaintext")
+    assert token, "expected catalog_token_plaintext on first enable"
+    return f"/catalog/{token}"
 
 
 def _create_part(client: TestClient, name: str, *, published: bool = False) -> str:
@@ -51,7 +66,10 @@ def _create_part(client: TestClient, name: str, *, published: bool = False) -> s
 def test_workspace_current_includes_catalog_fields(owner_client):
     cur = owner_client.get("/api/workspaces/current").json()["data"]
     assert cur["catalog_enabled"] is False
-    assert cur["catalog_url"] is None
+    # SEC2-008: plaintext token / URL are never exposed; only a bool sentinel.
+    assert cur["catalog_token_set"] is False
+    assert "catalog_url" not in cur
+    assert "catalog_token" not in cur
 
 
 def test_member_cannot_toggle_catalog(engine):
@@ -113,7 +131,10 @@ def test_disabling_catalog_makes_url_404(owner_client):
 
     r = owner_client.patch("/api/workspaces/current", json={"catalog_enabled": False})
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["catalog_url"] is None
+    data = r.json()["data"]
+    assert data["catalog_enabled"] is False
+    # SEC2-008: no catalog_url in response; token_set is still True (hash preserved)
+    assert "catalog_url" not in data
 
     assert owner_client.get(f"{url}/parts.json").status_code == 404
     assert owner_client.get(url).status_code == 404
@@ -129,8 +150,12 @@ def test_regenerate_catalog_token_invalidates_old(owner_client):
         json={"regenerate_catalog_token": True, "catalog_enabled": True},
     )
     assert r.status_code == 200, r.text
-    new_url = r.json()["data"]["catalog_url"]
-    assert new_url and new_url != old_url
+    data = r.json()["data"]
+    # SEC2-008: token is returned once via catalog_token_plaintext
+    new_token = data.get("catalog_token_plaintext")
+    assert new_token, "expected catalog_token_plaintext on regeneration"
+    new_url = f"/catalog/{new_token}"
+    assert new_url != old_url
 
     assert owner_client.get(f"{old_url}/parts.json").status_code == 404
     assert owner_client.get(f"{new_url}/parts.json").status_code == 200
@@ -202,3 +227,91 @@ def test_catalog_json_carries_security_headers(owner_client):
     assert r.status_code == 200, r.text
     assert r.headers.get("x-content-type-options") == "nosniff"
     assert r.headers.get("x-frame-options") == "DENY"
+
+
+# ---------------------------------------------------------------------------
+# SEC2-008 — HMAC token hash + constant-time lookup
+# ---------------------------------------------------------------------------
+
+
+def test_token_plaintext_returned_only_on_first_enable(engine):
+    """catalog_token_plaintext is present on the PATCH response but absent
+    from a subsequent GET /workspaces/current."""
+    c = TestClient(app)
+    _signup(c)
+
+    r = c.patch("/api/workspaces/current", json={"catalog_enabled": True})
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert "catalog_token_plaintext" in data, "plaintext must be in the PATCH response"
+    token = data["catalog_token_plaintext"]
+    assert token  # non-empty
+
+    # Subsequent GET must not echo the plaintext back.
+    cur = c.get("/api/workspaces/current").json()["data"]
+    assert "catalog_token_plaintext" not in cur
+    assert cur["catalog_token_set"] is True
+
+
+def test_hash_lookup_correct_after_token_mint(engine):
+    """The stored hash must match hmac(SESSION_SECRET, plaintext).
+    We verify this end-to-end: mint a token, derive what the hash should
+    be, and confirm the catalog endpoint responds 200 (only possible if
+    the lookup by hash succeeded)."""
+    c = TestClient(app)
+    _signup(c)
+
+    r = c.patch("/api/workspaces/current", json={"catalog_enabled": True})
+    token = r.json()["data"]["catalog_token_plaintext"]
+
+    # The catalog should be accessible via the plaintext token.
+    assert c.get(f"/catalog/{token}").status_code == 200
+    assert c.get(f"/catalog/{token}/parts.json").status_code == 200
+
+
+def test_hash_directly_in_url_returns_404(engine):
+    """Using the raw HMAC hex digest as the URL token must return 404.
+    This confirms the server hashes the *incoming* token, not the stored
+    hash — a hash-of-hash would still miss, but let's be explicit."""
+    c = TestClient(app)
+    _signup(c)
+
+    r = c.patch("/api/workspaces/current", json={"catalog_enabled": True})
+    token = r.json()["data"]["catalog_token_plaintext"]
+    digest = _hmac_token(token)
+
+    # Trying the HMAC hex as the URL token must not succeed.
+    assert c.get(f"/catalog/{digest}").status_code == 404
+    assert c.get(f"/catalog/{digest}/parts.json").status_code == 404
+
+
+def test_wrong_token_and_disabled_indistinguishable(engine):
+    """Wrong token and disabled-catalog must both return 404 with the same
+    body — no oracle for the attacker to distinguish them."""
+    c = TestClient(app)
+    _signup(c)
+    url = _enable_catalog(c)
+
+    wrong_resp = c.get(f"/catalog/definitely-not-a-token/parts.json")
+    assert wrong_resp.status_code == 404
+
+    c.patch("/api/workspaces/current", json={"catalog_enabled": False})
+    disabled_resp = c.get(f"{url}/parts.json")
+    assert disabled_resp.status_code == 404
+
+    # Both must carry the same detail string.
+    assert wrong_resp.json().get("detail") == disabled_resp.json().get("detail")
+
+
+def test_catalog_token_not_leaked_in_serializer(engine):
+    """The serialized workspace must never include catalog_token or catalog_url
+    keys (only catalog_token_set: bool is allowed)."""
+    c = TestClient(app)
+    _signup(c)
+    c.patch("/api/workspaces/current", json={"catalog_enabled": True})
+
+    cur = c.get("/api/workspaces/current").json()["data"]
+    assert "catalog_token" not in cur
+    assert "catalog_url" not in cur
+    assert "catalog_token_plaintext" not in cur
+    assert "catalog_token_set" in cur

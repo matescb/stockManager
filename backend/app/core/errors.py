@@ -100,6 +100,10 @@ class ErrorCodes:
     AUTH_INVALID_CREDENTIALS = "auth.invalid_credentials"
     AUTH_EMAIL_TAKEN = "auth.email_taken"
     AUTH_WEAK_PASSWORD = "auth.weak_password"
+    AUTH_ACCOUNT_LOCKED = "auth.account_locked"
+    AUTH_VERIFICATION_PENDING = "auth.verification_pending"
+    AUTH_VERIFICATION_INVALID = "auth.verification_invalid"
+    AUTH_VERIFICATION_EXPIRED = "auth.verification_expired"
 
     # Workspace / membership
     WORKSPACE_NOT_FOUND = "workspace.not_found"

@@ -260,6 +260,10 @@ _CSRF_EXEMPT_PATHS = frozenset({
     "/api/sentry-tunnel",
     "/api/auth/login",
     "/api/auth/signup",
+    # /auth/verify is a pre-auth endpoint: the user follows a link from
+    # their email client, which carries no Origin header (or a mail-client
+    # origin). Exempt so the CSRF middleware doesn't block the verify call.
+    "/api/auth/verify",
 })
 
 

@@ -77,11 +77,14 @@ def list_projects(
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_project(payload: ProjectCreateIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+    if payload.associated_subassembly_part_id is not None:
+        _assert_part_live(db, payload.associated_subassembly_part_id, ws.id)
     p = Project(
         workspace_id=ws.id,
         name=payload.name,
         description=payload.description,
         notes_markdown=payload.notes_markdown,
+        associated_subassembly_part_id=payload.associated_subassembly_part_id,
         created_by=user.id,
         updated_by=user.id,
     )
@@ -105,7 +108,10 @@ def get_project(project_id: UUID, db: DbSession, ws: CurrentWorkspace):
 @router.patch("/{project_id}")
 def patch_project(project_id: UUID, payload: ProjectPatchIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     p = _get(db, ws.id, project_id)
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    if data.get("associated_subassembly_part_id") is not None:
+        _assert_part_live(db, data["associated_subassembly_part_id"], ws.id)
+    for k, v in data.items():
         setattr(p, k, v)
     p.updated_by = user.id
     return ok(_serialize(p))

@@ -1,7 +1,7 @@
 """Add (workspace_id, object_id) indexes on polymorphic tables for orphan-cleanup queries.
 
 Revision ID: 0031
-Revises: 0023
+Revises: 0029
 Create Date: 2026-05-02
 
 Addresses DB-006: attachments, custom_fields, tag_links have no FK on
@@ -18,7 +18,7 @@ from alembic import op
 
 
 revision = "0031"
-down_revision = "0023"
+down_revision = "0029"
 branch_labels = None
 depends_on = None
 
