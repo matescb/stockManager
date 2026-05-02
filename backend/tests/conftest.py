@@ -137,11 +137,16 @@ def db(engine, monkeypatch):
 
     @event.listens_for(s, "after_transaction_end")
     def _restart_savepoint(session, trans):
-        # When the inner SAVEPOINT (or a nested one) ends and we're
-        # still inside the outer transaction, open a fresh SAVEPOINT so
-        # the next commit/rollback inside the test code has somewhere
-        # to land.
-        if trans.nested and not trans._parent.nested:  # type: ignore[attr-defined]
+        # Canonical SQLAlchemy "Joining a Session into an External
+        # Transaction" pattern: only restart the SAVEPOINT once the
+        # session has popped all the way back out of nested
+        # transactions. Service code uses `with db.begin_nested():`
+        # internally (see `app/domain/stock/service.py:513,577`); when
+        # those inner SAVEPOINTs end we must NOT begin a fresh
+        # SAVEPOINT, or we'd reopen one inside an exiting context
+        # manager and SQLAlchemy raises "Can't operate on closed
+        # transaction inside context manager".
+        if trans.nested and not session.in_nested_transaction():
             session.begin_nested()
 
     # Route any in-test direct `SessionLocal()` use to our connection so
@@ -149,10 +154,13 @@ def db(engine, monkeypatch):
     # the rolled-back transaction.
     monkeypatch.setattr(_infra_db, "SessionLocal", TestSession)
 
-    # Route the FastAPI `get_db` dep to yield our session. Mirrors the
-    # commit-on-clean / rollback-on-exception semantics of the prod dep
-    # but commits land on a SAVEPOINT (restarted by the listener), so
-    # the outer transaction.rollback() still wins.
+    # Route the FastAPI `get_db` dep to yield our session. We mirror
+    # the prod dep's commit/rollback semantics so route code that
+    # relies on the dep boundary (e.g. it doesn't call db.commit()
+    # itself and expects the dep to flush) still works. Each
+    # commit/rollback lands on the active SAVEPOINT and the listener
+    # opens a fresh one, so the outer transaction.rollback() at
+    # teardown still discards every write.
     def _override_get_db():
         try:
             yield s
