@@ -3,22 +3,15 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Query, status
-from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
 from app.api._helpers import assert_in_workspace, assert_polymorphic_in_workspace
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.domain.tags.models import Tag, TagLink
+from app.domain.tags.schemas import TagIn, TagLinkIn
 
 router = APIRouter()
-
-
-class TagIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-    color: str | None = None
 
 
 @router.get("")
@@ -44,14 +37,6 @@ def create(payload: TagIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUse
     db.add(t)
     db.flush()
     return ok({"id": str(t.id), "name": t.name, "color": t.color})
-
-
-class TagLinkIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    tag_id: UUID
-    object_type: str
-    object_id: UUID
 
 
 @router.post("/links", status_code=status.HTTP_201_CREATED)

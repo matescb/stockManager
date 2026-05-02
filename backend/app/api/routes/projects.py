@@ -4,7 +4,6 @@ import logging
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict
 from sqlalchemy import or_, select
 
 from app.api._helpers import assert_child_in_parent, assert_in_workspace, require_resource_access
@@ -19,6 +18,7 @@ from app.domain.projects.schemas import (
     BomEntryPatch,
     BomImportCommitIn,
     BomImportPreviewIn,
+    MatchEntryIn,
     ProjectCreateIn,
     ProjectPatchIn,
 )
@@ -264,12 +264,6 @@ def commit_bom(project_id: UUID, payload: BomImportCommitIn, db: DbSession, ws: 
     # the dep handle it.
     result = bom.commit(db, workspace_id=ws.id, user_id=user.id, project=project, payload=payload)
     return ok(result.model_dump())
-
-
-class MatchEntryIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    part_id: UUID
 
 
 @router.post("/{project_id}/entries/{entry_id}/match")

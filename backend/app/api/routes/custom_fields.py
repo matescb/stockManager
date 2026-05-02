@@ -3,24 +3,15 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from app.api._helpers import assert_in_workspace, assert_polymorphic_in_workspace
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.domain.custom_fields.models import CustomField
+from app.domain.custom_fields.schemas import CustomFieldIn
 
 router = APIRouter()
-
-
-class CustomFieldIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    object_type: str
-    object_id: UUID
-    key: str = Field(min_length=1, max_length=256)
-    value: str | None = Field(default=None, max_length=1024)
 
 
 def _serialize(r: CustomField) -> dict:

@@ -3,22 +3,16 @@ provider + API key and dispatches."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.deps import CurrentWorkspace
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import ok
 from app.core.secrets import decrypt
 from app.domain.parts.providers import make_provider
+from app.domain.parts.schemas import LookupIn
 from app.domain.parts.services.provider_cache import lookup_with_cache
 
 router = APIRouter()
-
-
-class LookupIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    mpn: str = Field(min_length=1, max_length=200)
 
 
 @router.post("/lookup-mpn")

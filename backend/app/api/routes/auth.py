@@ -6,7 +6,6 @@ from datetime import timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response, status
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.core.auth import (
     WeakPasswordError,
@@ -29,6 +28,7 @@ from app.core.ratelimit import limiter
 from app.core.responses import Envelope, ok
 from app.core.time import utcnow
 from app.domain.users.models import PendingUser, User
+from app.domain.users.schemas import LoginIn, SignupIn, VerifyIn
 from app.domain.workspaces.models import Workspace, WorkspaceMember
 
 router = APIRouter()
@@ -63,34 +63,6 @@ def _hmac_token(plaintext: str) -> str:
     """
     key = settings().SESSION_SECRET.encode("utf-8")
     return _hmac.new(key, plaintext.encode("utf-8"), "sha256").hexdigest()
-
-
-# ---------------------------------------------------------------------------
-# Schemas
-# ---------------------------------------------------------------------------
-
-
-class SignupIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    email: EmailStr
-    name: str = Field(min_length=1, max_length=200)
-    password: str = Field(min_length=8, max_length=200)
-    workspace_name: str | None = None
-
-
-class LoginIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    email: EmailStr
-    password: str
-
-
-class VerifyIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
-    token: str
 
 
 # ---------------------------------------------------------------------------
