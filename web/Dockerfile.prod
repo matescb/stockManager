@@ -23,21 +23,16 @@ COPY web/ ./
 # public (Sentry's threat model treats it as an identifier, not a key).
 ARG VITE_SENTRY_DSN=
 ARG VITE_SENTRY_TRACES_SAMPLE_RATE=0.0
-# Release identifier (git SHA) — used as Sentry's `release` tag and as the
-# anchor that source-map upload pins maps to.
+# Release identifier (git SHA) — used as Sentry's `release` tag so Sentry
+# groups issues per release.
 ARG VITE_APP_VERSION=
-# Source-map upload credentials. Only the build-stage uses these; they're
-# never present in the runtime image. Empty → upload is skipped.
-ARG SENTRY_AUTH_TOKEN=
-ARG SENTRY_ORG=
-ARG SENTRY_PROJECT=
 
 ENV VITE_SENTRY_DSN=$VITE_SENTRY_DSN
 ENV VITE_SENTRY_TRACES_SAMPLE_RATE=$VITE_SENTRY_TRACES_SAMPLE_RATE
 ENV VITE_APP_VERSION=$VITE_APP_VERSION
-ENV SENTRY_AUTH_TOKEN=$SENTRY_AUTH_TOKEN
-ENV SENTRY_ORG=$SENTRY_ORG
-ENV SENTRY_PROJECT=$SENTRY_PROJECT
+# SENTRY_AUTH_TOKEN / _ORG / _PROJECT are NOT passed here — source-map
+# upload is handled by the CI web-build job so the token never enters the
+# Docker layer cache (INFRA2-010).
 
 RUN npm run build
 
@@ -49,7 +44,7 @@ FROM nginx:alpine AS runtime
 COPY deploy/nginx-web.conf /etc/nginx/conf.d/default.conf
 
 # Static bundle. Strip sourcemaps from the served image — they're
-# already uploaded to Sentry by sentryVitePlugin during the build, and
+# uploaded to Sentry by the CI web-build job (INFRA2-010), and
 # Vite's `sourcemap: "hidden"` only suppresses the //# sourceMappingURL
 # comment at the bottom of the JS, not the .map files themselves.
 # Leaving them under /assets/*.map exposes the original source to anyone

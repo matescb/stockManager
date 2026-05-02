@@ -116,18 +116,13 @@ services:
       # frontend Sentry DSN is a public token by design (it shows up in the
       # browser DevTools) — it identifies the project, not authorises writes.
       #
-      # SENTRY_AUTH_TOKEN / _ORG / _PROJECT are required ONLY for source-map
-      # upload during the build itself. Empty → sourcemap upload is skipped
-      # and the bundle still ships fine; you just won't get readable stack
-      # traces in Sentry. The auth token is sensitive — keep .env.prod
-      # chmod 600 owned by `deploy`.
+      # Source-map upload (SENTRY_AUTH_TOKEN / _ORG / _PROJECT) is handled
+      # by the CI web-build job so the token never enters the Docker layer
+      # cache (INFRA2-010). Do NOT add those args back here.
       args:
         VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
         VITE_SENTRY_TRACES_SAMPLE_RATE: ${VITE_SENTRY_TRACES_SAMPLE_RATE:-0.0}
         VITE_APP_VERSION: ${SENTRY_RELEASE:-}
-        SENTRY_AUTH_TOKEN: ${SENTRY_AUTH_TOKEN:-}
-        SENTRY_ORG: ${SENTRY_ORG:-}
-        SENTRY_PROJECT: ${SENTRY_PROJECT:-}
     restart: unless-stopped
     # `service_healthy` (rather than the bare `- backend`) makes the web
     # container hold off until the backend's healthcheck reports green.
