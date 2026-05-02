@@ -66,7 +66,7 @@ def create_preset(payload: PresetIn, db: DbSession, ws: CurrentWorkspace, user: 
         updated_by=user.id,
     )
     db.add(p)
-    db.commit()
+    db.flush()
     return ok(_serialize(p))
 
 
@@ -90,7 +90,6 @@ def patch_preset(preset_id: UUID, payload: PresetPatch, db: DbSession, ws: Curre
     if payload.config is not None:
         p.config_json = json.dumps(payload.config)
     p.updated_by = user.id
-    db.commit()
     return ok(_serialize(p))
 
 
@@ -98,5 +97,4 @@ def patch_preset(preset_id: UUID, payload: PresetPatch, db: DbSession, ws: Curre
 def delete_preset(preset_id: UUID, db: DbSession, ws: CurrentWorkspace):
     p = _get(db, ws.id, preset_id)
     db.delete(p)
-    db.commit()
     return ok(None, "deleted")

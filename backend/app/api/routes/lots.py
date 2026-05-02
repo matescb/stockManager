@@ -99,7 +99,6 @@ def patch_lot(lot_id: UUID, payload: LotPatch, db: DbSession, ws: CurrentWorkspa
     for k, v in data.items():
         setattr(l, k, v)
     l.updated_by = user.id
-    db.commit()
     q = current_quantity(db, workspace_id=ws.id, part_id=l.part_id, lot_id=l.id)
     return ok(_serialize(l, quantity=q))
 
@@ -110,9 +109,8 @@ def move_lot(lot_id: UUID, payload: MoveStockIn, db: DbSession, ws: CurrentWorks
     payload = payload.model_copy(update={"part_id": l.part_id, "source_lot_id": l.id})
     try:
         out_e, in_e = move_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
-        db.commit()
     except StockError as exc:
-        db.rollback()
+        # `get_db` rolls back on raise (BE2-010).
         raise HTTPException(status_code=400, detail=str(exc))
     return ok({"out": str(out_e.id), "in": str(in_e.id)})
 
@@ -137,9 +135,7 @@ def adjust_lot(lot_id: UUID, payload: LotAdjustIn, db: DbSession, ws: CurrentWor
     )
     try:
         e = adjust_stock(db, workspace_id=ws.id, user_id=user.id, payload=aip)
-        db.commit()
     except StockError as exc:
-        db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
     return ok({"id": str(e.id) if e else None, "delta": e.quantity_delta if e else 0})
 

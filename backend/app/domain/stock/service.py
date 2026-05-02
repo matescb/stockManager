@@ -1,6 +1,7 @@
 """Stock ledger service. Append-only — current_stock is always SUM(quantity_delta)."""
 from __future__ import annotations
 
+import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Iterable
@@ -140,6 +141,75 @@ def current_quantity(
         if lot_id is not None:
             q = q.where(StockEntry.lot_id == lot_id)
     return int(db.execute(q).scalar_one() or 0)
+
+
+def bulk_current_quantities(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    part_ids: list[UUID],
+    status: str = "on_hand",
+) -> dict[UUID, int]:
+    """Per-part SUM(quantity_delta) for many parts in one query.
+
+    Used by report/listing routes that need current stock for a slice of
+    parts and previously fired one `current_quantity()` call per row.
+    Returns a dict keyed by part_id; parts with no rows in the
+    requested `status` aren't keyed (caller should treat missing as 0).
+
+    Single SQL query — `WHERE part_id = ANY(:part_ids) GROUP BY part_id`.
+    Replacing N round-trips with one is what BE2-005 is asking for: the
+    handful of ad-hoc `SELECT part_id, SUM(...) GROUP BY part_id` blocks
+    in `reports.py` all funnel through here so the invariant ("current
+    quantity is always sum of deltas") has exactly one expression in
+    code.
+    """
+    if not part_ids:
+        return {}
+    rows = db.execute(
+        select(
+            StockEntry.part_id,
+            func.coalesce(func.sum(StockEntry.quantity_delta), 0),
+        )
+        .where(StockEntry.workspace_id == workspace_id)
+        .where(StockEntry.status == status)
+        .where(StockEntry.part_id.in_(part_ids))
+        .group_by(StockEntry.part_id)
+    ).all()
+    return {row[0]: int(row[1]) for row in rows}
+
+
+def bulk_current_quantities_by_lot(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    lot_ids: list[UUID] | None = None,
+    status: str = "on_hand",
+) -> dict[UUID, int]:
+    """Per-lot SUM(quantity_delta), keyed by lot_id.
+
+    `lot_ids=None` aggregates every lot in the workspace (used by reports
+    like stock-value / expiring-lots which scan all lots). Returns a
+    dict; missing lot_ids return 0 by convention. Lots with NULL ids
+    are dropped — the workspace-level "no-lot" pseudo-bucket isn't
+    addressable by lot_id.
+    """
+    q = (
+        select(
+            StockEntry.lot_id,
+            func.coalesce(func.sum(StockEntry.quantity_delta), 0),
+        )
+        .where(StockEntry.workspace_id == workspace_id)
+        .where(StockEntry.status == status)
+        .where(StockEntry.lot_id.is_not(None))
+        .group_by(StockEntry.lot_id)
+    )
+    if lot_ids is not None:
+        if not lot_ids:
+            return {}
+        q = q.where(StockEntry.lot_id.in_(lot_ids))
+    rows = db.execute(q).all()
+    return {row[0]: int(row[1]) for row in rows}
 
 
 def stock_summary_for_part(
@@ -419,32 +489,81 @@ def move_stock(
         if any_other:
             raise StockError("destination is single-part-only and holds another part")
 
+    # Pre-assign UUIDs so both StockEntry rows can carry their cross-
+    # reference (`related_entry_id`) at insert time. The previous shape
+    # flushed the OUT side, then the IN side, then mutated the OUT side
+    # again to fill in its `related_entry_id` — three flushes and a
+    # window where the OUT side existed without a back-pointer
+    # (BE2-007). One `db.add_all([...]); db.flush()` after this
+    # assignment lands both rows atomically with consistent
+    # back-pointers.
+    out_id = uuid.uuid4()
+    in_id = uuid.uuid4()
+
     # lot for the moved-in side
     dest_lot_id = payload.source_lot_id
     if payload.split_lot and payload.source_lot_id is not None:
         src_lot = db.get(Lot, payload.source_lot_id)
         if not _belongs(src_lot, workspace_id):
             raise StockError("source lot not found")
-        new_lot = Lot(
-            workspace_id=workspace_id,
-            part_id=part.id,
-            name=f"{src_lot.name or 'lot'}-split",
-            parent_lot_id=src_lot.id,
-            description=src_lot.description,
-            comments=f"split from {src_lot.id}",
-            expiration_date=src_lot.expiration_date,
-            source_type="split",
-            purchase_quantity=payload.quantity,
-            purchase_unit_cost=src_lot.purchase_unit_cost,
-            purchase_currency=src_lot.purchase_currency,
-            created_by=user_id,
-            updated_by=user_id,
-        )
-        db.add(new_lot)
-        db.flush()
-        dest_lot_id = new_lot.id
+        # Wrap the lot creation + the matched stock writes in a savepoint
+        # so a downstream raise (e.g. the trigger noticing inconsistency
+        # on the IN row) cleans up the dangling lot rather than leaving
+        # an orphan parented at `src_lot.id`.
+        with db.begin_nested():
+            new_lot = Lot(
+                workspace_id=workspace_id,
+                part_id=part.id,
+                name=f"{src_lot.name or 'lot'}-split",
+                parent_lot_id=src_lot.id,
+                description=src_lot.description,
+                comments=f"split from {src_lot.id}",
+                expiration_date=src_lot.expiration_date,
+                source_type="split",
+                purchase_quantity=payload.quantity,
+                purchase_unit_cost=src_lot.purchase_unit_cost,
+                purchase_currency=src_lot.purchase_currency,
+                created_by=user_id,
+                updated_by=user_id,
+            )
+            db.add(new_lot)
+            db.flush()
+            dest_lot_id = new_lot.id
+
+            out_entry = StockEntry(
+                id=out_id,
+                workspace_id=workspace_id,
+                part_id=part.id,
+                lot_id=payload.source_lot_id,
+                storage_location_id=payload.source_storage_location_id,
+                quantity_delta=-payload.quantity,
+                status="on_hand",
+                operation_type="move_out",
+                related_entry_id=in_id,
+                comments=payload.comments,
+                occurred_at=_now(),
+                created_by=user_id,
+            )
+            in_entry = StockEntry(
+                id=in_id,
+                workspace_id=workspace_id,
+                part_id=part.id,
+                lot_id=dest_lot_id,
+                storage_location_id=dest.id,
+                quantity_delta=payload.quantity,
+                status="on_hand",
+                operation_type="move_in",
+                related_entry_id=out_id,
+                comments=payload.comments,
+                occurred_at=_now(),
+                created_by=user_id,
+            )
+            db.add_all([out_entry, in_entry])
+            db.flush()
+        return out_entry, in_entry
 
     out_entry = StockEntry(
+        id=out_id,
         workspace_id=workspace_id,
         part_id=part.id,
         lot_id=payload.source_lot_id,
@@ -452,14 +571,13 @@ def move_stock(
         quantity_delta=-payload.quantity,
         status="on_hand",
         operation_type="move_out",
+        related_entry_id=in_id,
         comments=payload.comments,
         occurred_at=_now(),
         created_by=user_id,
     )
-    db.add(out_entry)
-    db.flush()
-
     in_entry = StockEntry(
+        id=in_id,
         workspace_id=workspace_id,
         part_id=part.id,
         lot_id=dest_lot_id,
@@ -467,15 +585,12 @@ def move_stock(
         quantity_delta=payload.quantity,
         status="on_hand",
         operation_type="move_in",
-        related_entry_id=out_entry.id,
+        related_entry_id=out_id,
         comments=payload.comments,
         occurred_at=_now(),
         created_by=user_id,
     )
-    db.add(in_entry)
-    db.flush()
-
-    out_entry.related_entry_id = in_entry.id
+    db.add_all([out_entry, in_entry])
     db.flush()
     return out_entry, in_entry
 

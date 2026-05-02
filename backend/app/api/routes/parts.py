@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import or_, select
 
-from app.api._helpers import assert_in_workspace
+from app.api._helpers import assert_in_workspace, require_resource_access
 from app.api.routes._activity import build_activity
 from app.core.config import settings
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
@@ -291,20 +291,37 @@ def create_part(payload: PartIn, db: DbSession, ws: CurrentWorkspace, user: Curr
         updated_by=user.id,
     )
     db.add(p)
-    db.commit()
+    # `get_db` commits on clean route exit (BE2-010). No explicit
+    # db.commit() here — a route-local commit would split the
+    # transaction boundary and partial state could outlive a later
+    # raise.
+    db.flush()
     return ok(_serialize(p, on_hand=0, reserved=0))
 
 
-def _get_part(db, ws_id, part_id) -> Part:
+def _get_part(db, ws_id, part_id, *, include_archived: bool = False) -> Part:
+    """Fetch a workspace-owned Part. Default refuses archived rows so
+    write paths (PATCH, substitute add/remove, BOM bind) can't bind
+    against a part the workspace already retired (BE2-016). Read-only
+    surfaces pass `include_archived=True` so the detail page and
+    activity timeline still load for archived parts.
+    """
     p = db.get(Part, part_id)
     if not p or p.workspace_id != ws_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="part not found")
+    if not include_archived and p.archived_at is not None:
+        # 404 (not 400) — the part is "not available" for binds. We
+        # don't distinguish "doesn't exist" from "archived" because the
+        # client treats both as "this id is dead".
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="part not found")
     return p
 
 
 @router.get("/{part_id}")
 def get_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    p = _get_part(db, ws.id, part_id)
+    # Read endpoint — the archived part page still loads (so the user
+    # can read it, restore it, or check past activity).
+    p = _get_part(db, ws.id, part_id, include_archived=True)
     on_hand = total_for_part(db, workspace_id=ws.id, part_id=p.id)
     reserved = reserved_quantity(db, workspace_id=ws.id, part_id=p.id)
     image_url = _image_urls_for_parts(db, ws.id, [p.id]).get(p.id)
@@ -313,6 +330,8 @@ def get_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
 
 @router.patch("/{part_id}")
 def patch_part(part_id: UUID, payload: PartPatch, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+    # Write — refuse archived parts. Editing a retired part would create
+    # a misleading audit trail and is the BE2-016 vector.
     p = _get_part(db, ws.id, part_id)
     data = payload.model_dump(exclude_unset=True)
     unlink = bool(data.pop("unlink_provider", False))
@@ -369,7 +388,6 @@ def patch_part(part_id: UUID, payload: PartPatch, db: DbSession, ws: CurrentWork
             r.original_value = None
             r.updated_by = user.id
 
-    db.commit()
     return ok(
         _serialize(
             p,
@@ -381,19 +399,22 @@ def patch_part(part_id: UUID, payload: PartPatch, db: DbSession, ws: CurrentWork
 
 # Archive/restore are admin+ — they're workspace-management ops, not
 # regular operational tasks. Members get a 403 if they try (Arch HIGH-3).
-@router.post("/{part_id}/archive", dependencies=[Depends(require_role("admin"))])
-def archive_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    p = _get_part(db, ws.id, part_id)
+# `require_resource_access` enforces resource-existence BEFORE the role
+# check, so a non-admin probing a foreign workspace's part_id gets 404
+# (not 403). The previous shape used `Depends(require_role("admin"))`
+# which fired the role check first and turned the response into a
+# membership oracle (BE2-009).
+@router.post("/{part_id}/archive")
+def archive_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+    p = require_resource_access(db, Part, part_id, ws=ws, user=user, role="admin", label="part")
     p.archived_at = datetime.now(timezone.utc)
-    db.commit()
     return ok(None, "archived")
 
 
-@router.post("/{part_id}/restore", dependencies=[Depends(require_role("admin"))])
-def restore_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    p = _get_part(db, ws.id, part_id)
+@router.post("/{part_id}/restore")
+def restore_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+    p = require_resource_access(db, Part, part_id, ws=ws, user=user, role="admin", label="part")
     p.archived_at = None
-    db.commit()
     return ok(None, "restored")
 
 
@@ -423,7 +444,6 @@ def bulk_delete_parts(payload: BulkDeleteIn, db: DbSession, ws: CurrentWorkspace
         if p.archived_at is None:
             p.archived_at = now
             archived_ids.append(str(p.id))
-    db.commit()
     return ok(
         {
             "archived_ids": archived_ids,
@@ -465,7 +485,7 @@ def find_by_bag_signature(signature: str, db: DbSession, ws: CurrentWorkspace):
 
 @router.get("/{part_id}/stock")
 def part_stock(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    p = _get_part(db, ws.id, part_id)
+    p = _get_part(db, ws.id, part_id, include_archived=True)
     rows = stock_summary_for_part(db, workspace_id=ws.id, part_id=p.id)
     return ok(
         {
@@ -485,7 +505,7 @@ def part_stock(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
 @router.get("/{part_id}/lots")
 def part_lots(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
     from app.domain.lots.models import Lot
-    p = _get_part(db, ws.id, part_id)
+    p = _get_part(db, ws.id, part_id, include_archived=True)
     lots = list(
         db.execute(
             select(Lot).where(Lot.workspace_id == ws.id).where(Lot.part_id == p.id).order_by(Lot.created_at.desc())
@@ -520,27 +540,31 @@ class SubstituteIn(BaseModel):
 
 @router.post("/{part_id}/substitutes")
 def add_substitute(part_id: UUID, payload: SubstituteIn, db: DbSession, ws: CurrentWorkspace):
+    # Both sides must be live parts — `_get_part` defaults to refusing
+    # archived rows, which is what BE2-016 wants here. Adding a
+    # substitute against an archived part would create a binding that
+    # can't ever resolve usefully.
     p = _get_part(db, ws.id, part_id)
     sub = _get_part(db, ws.id, payload.substitute_part_id)
     db.add(PartSubstitute(part_id=p.id, substitute_part_id=sub.id, direction=payload.direction))
-    db.commit()
     return ok(None)
 
 
 @router.get("/{part_id}/substitutes")
 def list_substitutes(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    p = _get_part(db, ws.id, part_id)
+    p = _get_part(db, ws.id, part_id, include_archived=True)
     rows = list(db.execute(select(PartSubstitute).where(PartSubstitute.part_id == p.id)).scalars())
     return ok([{"part_id": str(r.substitute_part_id), "direction": r.direction} for r in rows])
 
 
 @router.delete("/{part_id}/substitutes/{substitute_id}")
 def del_substitute(part_id: UUID, substitute_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    p = _get_part(db, ws.id, part_id)
+    # Removal allowed even on archived rows — operators should be able
+    # to clean up dead bindings.
+    p = _get_part(db, ws.id, part_id, include_archived=True)
     db.query(PartSubstitute).filter(
         PartSubstitute.part_id == p.id, PartSubstitute.substitute_part_id == substitute_id
     ).delete()
-    db.commit()
     return ok(None)
 
 
@@ -555,7 +579,7 @@ class MetaMemberIn(BaseModel):
 
 @router.get("/{meta_id}/members")
 def list_members(meta_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    meta = _get_part(db, ws.id, meta_id)
+    meta = _get_part(db, ws.id, meta_id, include_archived=True)
     rows = list(
         db.execute(
             select(PartMetaMember).where(PartMetaMember.meta_part_id == meta.id)
@@ -587,23 +611,24 @@ def add_member(meta_id: UUID, payload: MetaMemberIn, db: DbSession, ws: CurrentW
         return ok({"id": str(existing.id), "member_part_id": str(existing.part_id)})
     row = PartMetaMember(meta_part_id=meta.id, part_id=member.id)
     db.add(row)
-    db.commit()
+    db.flush()
     return ok({"id": str(row.id), "member_part_id": str(row.part_id)})
 
 
 @router.delete("/{meta_id}/members/{member_id}")
 def del_member(meta_id: UUID, member_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    meta = _get_part(db, ws.id, meta_id)
+    # Removal — allowed even on archived meta.
+    meta = _get_part(db, ws.id, meta_id, include_archived=True)
     db.query(PartMetaMember).filter(
         PartMetaMember.meta_part_id == meta.id, PartMetaMember.part_id == member_id
     ).delete()
-    db.commit()
     return ok(None, "deleted")
 
 
 @router.get("/{part_id}/activity")
 def part_activity(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    p = _get_part(db, ws.id, part_id)
+    # Read endpoint — let archived parts surface their history too.
+    p = _get_part(db, ws.id, part_id, include_archived=True)
     stock_rows = list(
         db.execute(
             select(StockEntry)
@@ -758,7 +783,6 @@ def refresh_from_provider(
             db.delete(row)
             removed += 1
 
-    db.commit()
     return ok(
         {
             "found": True,
@@ -986,6 +1010,14 @@ def bulk_import_from_scan(
             "stock_error": stock_error,
         })
 
+    # `bulk_import_from_scan` keeps an explicit terminal commit even
+    # though `get_db` commits on clean exit (BE2-010). The reason is
+    # the per-row savepoints above: each successful row's
+    # `db.begin_nested()` is released into the OUTER transaction, and
+    # we want every accumulated savepoint to be durable BEFORE we
+    # serialise `out_rows` into the response. The dep's commit on
+    # clean exit is then a no-op. If a future refactor moves the
+    # response build inside the loop, this stays load-bearing.
     db.commit()
     summary = {
         "created":        sum(1 for r in out_rows if r["status"] == "created"),
@@ -1173,5 +1205,4 @@ def quick_remove_bag(
         )
     except StockError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    db.commit()
     return ok(None, "removed")

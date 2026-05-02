@@ -3,12 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import or_, select
 
-from app.api._helpers import assert_in_workspace
-from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
+from app.api._helpers import assert_in_workspace, require_resource_access
+from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.domain.parts.models import Part
 from app.domain.projects import bom_import as bom
@@ -84,7 +84,7 @@ def create_project(payload: ProjectCreateIn, db: DbSession, ws: CurrentWorkspace
         updated_by=user.id,
     )
     db.add(p)
-    db.commit()
+    db.flush()
     return ok(_serialize(p))
 
 
@@ -106,23 +106,27 @@ def patch_project(project_id: UUID, payload: ProjectPatchIn, db: DbSession, ws: 
     for k, v in payload.model_dump(exclude_unset=True).items():
         setattr(p, k, v)
     p.updated_by = user.id
-    db.commit()
     return ok(_serialize(p))
 
 
-@router.post("/{project_id}/archive", dependencies=[Depends(require_role("admin"))])
-def archive_project(project_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    p = _get(db, ws.id, project_id)
+# Archive/restore — `require_resource_access` enforces resource-existence
+# BEFORE the role check (BE2-009). A non-admin probing a foreign
+# workspace's project_id gets 404, not 403.
+@router.post("/{project_id}/archive")
+def archive_project(project_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+    p = require_resource_access(
+        db, Project, project_id, ws=ws, user=user, role="admin", label="project"
+    )
     p.archived_at = datetime.now(timezone.utc)
-    db.commit()
     return ok(None, "archived")
 
 
-@router.post("/{project_id}/restore", dependencies=[Depends(require_role("admin"))])
-def restore_project(project_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    p = _get(db, ws.id, project_id)
+@router.post("/{project_id}/restore")
+def restore_project(project_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+    p = require_resource_access(
+        db, Project, project_id, ws=ws, user=user, role="admin", label="project"
+    )
     p.archived_at = None
-    db.commit()
     return ok(None, "restored")
 
 
@@ -138,13 +142,25 @@ def list_entries(project_id: UUID, db: DbSession, ws: CurrentWorkspace):
     return ok([_serialize_entry(e) for e in rows])
 
 
+def _assert_part_live(db, part_id: UUID, workspace_id: UUID) -> None:
+    """Assert a part exists in the workspace AND is not archived. The
+    400/404 oracle distinction matches `_get_part(include_archived=False)`
+    in parts.py: the archived-but-real case 404s rather than leaking
+    "this id exists, just retired" (BE2-016)."""
+    part = assert_in_workspace(db, Part, part_id, workspace_id, label="part")
+    if part.archived_at is not None:
+        raise HTTPException(status_code=404, detail="part not found")
+
+
 @router.post("/{project_id}/entries")
 def add_entry(project_id: UUID, payload: BomEntryIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     p = _get(db, ws.id, project_id)
+    # Refuse archived parts on add — binding a retired part into a BOM
+    # would mislead later builds (BE2-016).
     if payload.part_id is not None:
-        assert_in_workspace(db, Part, payload.part_id, ws.id, label="part")
+        _assert_part_live(db, payload.part_id, ws.id)
     if payload.meta_part_id is not None:
-        assert_in_workspace(db, Part, payload.meta_part_id, ws.id, label="part")
+        _assert_part_live(db, payload.meta_part_id, ws.id)
     next_idx = (
         db.execute(
             select(ProjectEntry.order_index)
@@ -172,7 +188,7 @@ def add_entry(project_id: UUID, payload: BomEntryIn, db: DbSession, ws: CurrentW
         updated_by=user.id,
     )
     db.add(e)
-    db.commit()
+    db.flush()
     return ok(_serialize_entry(e))
 
 
@@ -183,14 +199,15 @@ def patch_entry(project_id: UUID, entry_id: UUID, payload: BomEntryPatch, db: Db
     if not e or e.workspace_id != ws.id or e.project_id != p.id:
         raise HTTPException(status_code=404, detail="entry not found")
     data = payload.model_dump(exclude_unset=True)
+    # Same archived-part guard as add_entry — patch-binds an archived
+    # part into the BOM would be the BE2-016 vector via PATCH.
     if data.get("part_id") is not None:
-        assert_in_workspace(db, Part, data["part_id"], ws.id, label="part")
+        _assert_part_live(db, data["part_id"], ws.id)
     if data.get("meta_part_id") is not None:
-        assert_in_workspace(db, Part, data["meta_part_id"], ws.id, label="part")
+        _assert_part_live(db, data["meta_part_id"], ws.id)
     for k, v in data.items():
         setattr(e, k, v)
     e.updated_by = user.id
-    db.commit()
     return ok(_serialize_entry(e))
 
 
@@ -201,7 +218,6 @@ def del_entry(project_id: UUID, entry_id: UUID, db: DbSession, ws: CurrentWorksp
     if not e or e.workspace_id != ws.id or e.project_id != p.id:
         raise HTTPException(status_code=404, detail="entry not found")
     db.delete(e)
-    db.commit()
     return ok(None)
 
 
@@ -215,12 +231,10 @@ def preview_bom(project_id: UUID, payload: BomImportPreviewIn, db: DbSession, ws
 @router.post("/{project_id}/bom/import")
 def commit_bom(project_id: UUID, payload: BomImportCommitIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     project = _get(db, ws.id, project_id)
-    try:
-        result = bom.commit(db, workspace_id=ws.id, user_id=user.id, project=project, payload=payload)
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
+    # `get_db` rolls back on any raised exception, so the explicit
+    # try/except db.rollback() shape becomes redundant — we just let
+    # the dep handle it.
+    result = bom.commit(db, workspace_id=ws.id, user_id=user.id, project=project, payload=payload)
     return ok(result.model_dump())
 
 
@@ -240,8 +254,11 @@ def match_entry(project_id: UUID, entry_id: UUID, payload: MatchEntryIn, db: DbS
     part = db.get(Part, payload.part_id)
     if not part or part.workspace_id != ws.id:
         raise HTTPException(status_code=404, detail="part not found")
+    if part.archived_at is not None:
+        # Match the new add/patch_entry guard — match-bind an archived
+        # part is the same BE2-016 vector with a different verb.
+        raise HTTPException(status_code=404, detail="part not found")
     e.part_id = part.id
     e.entry_type = "part"
     e.updated_by = user.id
-    db.commit()
     return ok(_serialize_entry(e))

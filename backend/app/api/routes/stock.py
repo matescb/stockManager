@@ -38,13 +38,17 @@ def _serialize_entry(e):
     }
 
 
+# `get_db` commits on clean exit and rolls back on raise (BE2-010), so
+# these handlers don't need explicit db.commit()/db.rollback() — the
+# StockError → 400 conversion just propagates and the dep handles the
+# rollback.
+
+
 @router.post("/add")
 def add(payload: AddStockIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     try:
         e = add_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
-        db.commit()
     except StockError as exc:
-        db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return ok(_serialize_entry(e))
 
@@ -53,9 +57,7 @@ def add(payload: AddStockIn, db: DbSession, ws: CurrentWorkspace, user: CurrentU
 def remove(payload: RemoveStockIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     try:
         e = remove_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
-        db.commit()
     except StockError as exc:
-        db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return ok(_serialize_entry(e))
 
@@ -64,9 +66,7 @@ def remove(payload: RemoveStockIn, db: DbSession, ws: CurrentWorkspace, user: Cu
 def move(payload: MoveStockIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     try:
         out_e, in_e = move_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
-        db.commit()
     except StockError as exc:
-        db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return ok({"out": _serialize_entry(out_e), "in": _serialize_entry(in_e)})
 
@@ -75,9 +75,7 @@ def move(payload: MoveStockIn, db: DbSession, ws: CurrentWorkspace, user: Curren
 def adjust(payload: AdjustStockIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     try:
         e = adjust_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
-        db.commit()
     except StockError as exc:
-        db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return ok(_serialize_entry(e) if e is not None else None, "no change" if e is None else "OK")
 

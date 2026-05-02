@@ -170,7 +170,7 @@ async def upload(
         updated_by=user.id,
     )
     db.add(a)
-    db.commit()
+    db.flush()
     return ok(_serialize(a))
 
 
@@ -223,5 +223,4 @@ def delete(attachment_id: UUID, db: DbSession, ws: CurrentWorkspace):
     except FileNotFoundError:
         pass
     db.delete(a)
-    db.commit()
     return ok(None, "deleted")

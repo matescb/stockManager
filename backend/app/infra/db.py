@@ -17,9 +17,26 @@ SessionLocal = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=Fals
 
 
 def get_db() -> Iterator[Session]:
+    """Per-request session with implicit transaction boundaries.
+
+    The dep yields the session, then commits on clean exit and rolls
+    back on any raised exception. Routes must NOT call `db.commit()`
+    themselves — the dep owns the boundary. A route that committed
+    halfway through and then raised would leave a partial-write state
+    that the dep can no longer roll back (BE2-010).
+
+    The single exception is `bulk_import_from_scan`: it uses per-row
+    `db.begin_nested()` savepoints so a single bad row doesn't take
+    out the rest of the batch. The OUTER commit still flows through
+    this dep.
+    """
     db = SessionLocal()
     try:
         yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
