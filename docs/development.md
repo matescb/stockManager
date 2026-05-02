@@ -172,3 +172,29 @@ Postgres treats `varchar(N) → varchar(M)` asymmetrically:
   Truncating user data is destructive — verify the shrink target is
   larger than every existing value in the workspace before merging.
   DB-011 / issue #102.
+
+### Migrations must be self-contained (DB-010)
+
+A migration is a snapshot of schema-at-revision; its behaviour should
+not depend on whichever app revision happens to be checked out at
+upgrade time. Concretely: **don't `from app.<...>` from inside a
+migration's `upgrade()` / `downgrade()`.** If the imported helper is
+later renamed or refactored, replaying the migration on a fresh DB
+(CI clean checkout, dev reset, disaster recovery) breaks.
+
+If a migration genuinely needs shared logic (e.g. encrypt-at-rest
+backfill), copy the helper into a frozen shim under
+`app/core/_<name>_v<NNNN>.py` and import from there. The
+`_v<NNNN>` suffix encodes which migration the shim is bound to, and
+the file is treated as immutable from the moment it lands.
+
+Conventions:
+
+- Frozen shim names match `_<name>_v<NNNN>` (matches
+  `tests/test_migration_isolation.py`'s allow-list regex).
+- A signature-pinning test (e.g. `tests/test_secrets_signature_pinning.py`)
+  asserts the live module's public API still equals the shim's, so a
+  later rename surfaces as a CI failure.
+- One known exception: migration `0016_encrypt_workspace_secrets.py`
+  pre-dates this convention, is already on prod, and is allow-listed.
+  Its safety net is the signature-pinning test.
