@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -18,6 +19,7 @@ from app.api.routes._parts_shared import (
 )
 from app.core.config import settings
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
+from app.core.pagination import decode_cursor, paginate
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import Envelope, ok
 from app.core.secrets import decrypt
@@ -149,8 +151,31 @@ def list_parts(
     q: str | None = Query(default=None),
     archived: bool = Query(default=False),
     mpn: str | None = Query(default=None),
-    limit: int = Query(default=200, le=1000),
-) -> Envelope[list[dict]]:
+    limit: int = Query(default=50, le=200),
+    cursor: str | None = Query(default=None),
+    paged: bool = Query(default=False),
+) -> Envelope[Any]:
+    """List parts.
+
+    Two response shapes — keyed off the request, NOT the route:
+
+      - Default (no ``cursor``, no ``paged=true``): bare list of parts.
+        Preserves the pre-cursor public API so the many lookup-style
+        consumers (BOM dropdowns, OrderDetail, ScanImport's MPN dup check,
+        …) keep working without per-call migration.
+
+      - Cursor opt-in (``?cursor=…`` OR ``?paged=true``): paged envelope
+        ``{items: [...], next_cursor: str | null}``.
+        Pass ``?cursor=<next_cursor>`` from the previous response to fetch
+        the next page.  ``next_cursor`` is null when no further pages
+        exist. The ``cursor`` is an HMAC-signed blob — tampering returns
+        400.
+
+    Every query is scoped to the current workspace (CLAUDE.md invariant).
+    """
+    use_paged = paged or cursor is not None
+    decoded_cursor = decode_cursor(cursor) if cursor else None
+
     stmt = select(Part).where(Part.workspace_id == ws.id)
     stmt = stmt.where(Part.archived_at.is_(None) if not archived else Part.archived_at.is_not(None))
     if mpn:
@@ -166,20 +191,39 @@ def list_parts(
                 Part.description.ilike(like),
             )
         )
-    stmt = stmt.order_by(Part.name).limit(limit)
-    parts = list(db.execute(stmt).scalars())
+
+    if use_paged:
+        parts, next_cursor = paginate(
+            db,
+            stmt,
+            sort_col=Part.name,
+            id_col=Part.id,
+            cursor=decoded_cursor,
+            limit=limit,
+        )
+    else:
+        # Legacy bare-list shape — keep the same ORDER BY (name, id) the
+        # paged path uses so two consumers viewing the same workspace in
+        # the same instant agree on row order.
+        parts = list(
+            db.execute(stmt.order_by(Part.name.asc(), Part.id.asc())).scalars()
+        )
+        next_cursor = None
+
     image_urls = _image_urls_for_parts(db, ws.id, [p.id for p in parts])
-    out = []
+    items = []
     for p in parts:
         on_hand = total_for_part(db, workspace_id=ws.id, part_id=p.id)
         reserved = reserved_quantity(db, workspace_id=ws.id, part_id=p.id)
-        out.append(_serialize(
+        items.append(_serialize(
             p,
             on_hand=on_hand,
             reserved=reserved,
             image_url=image_urls.get(p.id),
         ))
-    return ok(out)
+    if use_paged:
+        return ok({"items": items, "next_cursor": next_cursor})
+    return ok(items)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
