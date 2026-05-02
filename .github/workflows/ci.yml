@@ -69,6 +69,16 @@ jobs:
         working-directory: backend
         run: python scripts/check_no_traceback_leaks.py
 
+      # SEC2-020: reject any verify=False/trust_env=False/ssl=False in httpx
+      # calls. Annotate with # noqa: tls-verify if the bypass is intentional.
+      - name: TLS verify guard
+        working-directory: backend
+        run: |
+          if grep -RnE "verify=False|trust_env=False|ssl=False" app/ --include="*.py" | grep -v "# noqa: tls-verify"; then
+            echo "ERROR: Found verify=False/trust_env=False/ssl=False in httpx calls. Annotate with # noqa: tls-verify if intentional."
+            exit 1
+          fi
+
       - name: pytest
         working-directory: backend
         env:
@@ -104,6 +114,25 @@ jobs:
       - name: Type-check + bundle
         working-directory: web
         run: npm run build
+
+      # INFRA2-010: upload sourcemaps to Sentry from CI so the auth token
+      # never enters the Docker build context / layer cache. Gated on push
+      # to main so PRs don't upload (they'd pin maps to a SHA that never
+      # ships). Skipped silently if the secret is absent (e.g. forks).
+      - name: Upload sourcemaps to Sentry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          RELEASE="${GIT_SHA:0:12}"
+          npx @sentry/cli sourcemaps upload \
+            --org "$SENTRY_ORG" \
+            --project "$SENTRY_PROJECT" \
+            --release "$RELEASE" \
+            web/dist
 
   deploy:
     # Only redeploy on green main pushes. PRs and feature branches just run

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { readBarcodes, prepareZXingModule } from "zxing-wasm/reader";
+import { readBarcodes, prepareZXingModule, type ReadInputBarcodeFormat } from "zxing-wasm/reader";
 
 /**
  * Open-source ZXing-C++ wasm decoder. Default scanner backend so workspaces
@@ -69,7 +69,7 @@ let _audioCtx: AudioContext | null = null;
 function scanFeedback(): void {
   try {
     const Ctx: typeof AudioContext | undefined =
-      (window as any).AudioContext ?? (window as any).webkitAudioContext;
+      window.AudioContext ?? window.webkitAudioContext;
     if (Ctx) {
       // Reuse a single AudioContext — Chrome caps the count per tab and
       // every new context is left running until GC.
@@ -228,7 +228,7 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
 
         // Decide hardware vs digital zoom for THIS track. Switching cameras
         // can flip the mode (rear may have hw zoom, front may not).
-        const caps = (track && (track as any).getCapabilities?.()) || {};
+        const caps = (track && track.getCapabilities()) || {};
         if (typeof caps.zoom?.min === "number" && typeof caps.zoom?.max === "number") {
           const cap = {
             min: caps.zoom.min,
@@ -237,7 +237,7 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
           };
           setZoomCap(cap);
           setZoomMode("hardware");
-          const settings = ((track as any)?.getSettings?.() || {}) as any;
+          const settings: MediaTrackSettings = track?.getSettings() ?? {};
           setZoom(typeof settings.zoom === "number" ? settings.zoom : cap.min);
         } else {
           setZoomCap(DIGITAL_ZOOM);
@@ -292,7 +292,10 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
           const imageData = ctx.getImageData(0, 0, sw, sh);
           try {
             const results = await readBarcodes(imageData, {
-              formats: enabled as any,
+              // `enabled` is built from ZXING_FORMAT_BY_PUBLIC values which are
+              // all valid ReadInputBarcodeFormat strings (Code128, QRCode, …).
+              // The filter(Boolean) narrows to string[] so a cast is needed.
+              formats: enabled as ReadInputBarcodeFormat[],
               tryHarder: true,
               tryRotate: true,
               tryInvert: true,
@@ -377,7 +380,7 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
     if (zoomMode !== "hardware") return;
     const track = trackRef.current;
     if (!track) return;
-    (track as any)
+    track
       .applyConstraints({ advanced: [{ zoom }] })
       .catch(() => {
         // Some Android Chromes silently reject mid-stream constraint changes

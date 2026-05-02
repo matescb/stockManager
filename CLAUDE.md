@@ -24,18 +24,23 @@ Don't restate things from there in code or new docs — link to it.
 ### Dev loop (Docker)
 
 ```bash
-docker compose up --build       # http://localhost:5173, API at :8000/api
+cp .env.example .env   # first time only — set SESSION_SECRET
+make dev-up            # http://localhost:5173, API at :8000/api
 ```
 
 Backend container runs `alembic upgrade head` before uvicorn — no manual
 migrate step in dev. Web container runs `vite --reload`.
 
+The dev compose file is `docker-compose.dev.yml`; the prod compose file is
+`docker-compose.prod.yml`. The `Makefile` wraps both so neither is the
+implicit default (avoids running the dev stack on prod by muscle memory).
+
 ### Tests
 
 ```bash
-docker compose exec backend pytest               # all backend tests
-docker compose exec backend pytest -k <name>     # single test by name
-cd web && npm test                                # vitest (currently sparse)
+docker compose -f docker-compose.dev.yml exec backend pytest               # all backend tests
+docker compose -f docker-compose.dev.yml exec backend pytest -k <name>     # single test by name
+cd web && npm test                                                           # vitest (currently sparse)
 ```
 
 Outside Docker, the backend test suite needs a real Postgres (no SQLite
@@ -111,6 +116,9 @@ them, that's the bug.
   PartSourcing tabs split on this boundary; the same key list lives
   server-side in `backend/app/domain/parts/services/provider.py`.
   Adding a new catalog field needs both sides.
+- **No `verify=False` on httpx clients.** CI greps for `verify=False`,
+  `trust_env=False`, `ssl=False` under `backend/app/`. Annotate with
+  `# noqa: tls-verify` if intentional (e.g. internal test doubles).
 
 ## Things that have bitten us — don't undo
 
@@ -133,6 +141,12 @@ them, that's the bug.
 - The repo has had transient `review-*` directories and stray venvs
   appear at the root in past sessions. They're gitignored; don't
   unignore them.
+- **Sentry auth token must not enter the Docker build context.** Source-map
+  upload is handled by the CI `web-build` job (`npx @sentry/cli sourcemaps
+  upload`) after `npm run build`, gated on push to `main`. `SENTRY_AUTH_TOKEN`
+  / `SENTRY_ORG` / `SENTRY_PROJECT` are GitHub Actions secrets — do **not**
+  add them back to `web/Dockerfile.prod` ARG/ENV or `docker-compose.prod.yml`
+  build args (INFRA2-010).
 
 ## Frontend conventions worth preserving
 

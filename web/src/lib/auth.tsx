@@ -25,7 +25,7 @@ type Ctx = {
   switchWorkspace: (id: string) => Promise<void>;
 };
 
-const AuthCtx = createContext<Ctx>({} as any);
+const AuthCtx = createContext<Ctx | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
@@ -167,6 +167,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useAuth() {
-  return useContext(AuthCtx);
+export function useAuth(): Ctx {
+  const ctx = useContext(AuthCtx);
+  if (!ctx) throw new Error("useAuth must be used inside <AuthProvider>");
+  return ctx;
 }

@@ -11,6 +11,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 # Set env BEFORE importing app modules so config picks up the test DB.
+# This exercises the explicit-DATABASE_URL-override branch in
+# Settings._assemble_database_url (INFRA2-005): when DATABASE_URL is
+# supplied directly it is used as-is and the POSTGRES_* parts are ignored.
 os.environ.setdefault(
     "DATABASE_URL", os.environ.get("TEST_DATABASE_URL", "postgresql+psycopg://stockmgr:stockmgr@db:5432/stockmgr_test")
 )

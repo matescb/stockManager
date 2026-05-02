@@ -21,6 +21,11 @@ services:
     mem_limit: 2g
     pids_limit: 512
     oom_kill_disable: false
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -40,8 +45,21 @@ services:
     cpus: "1.5"
     pids_limit: 512
     oom_kill_disable: false
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      # INFRA2-005: pass discrete parts instead of the assembled URL so
+      # the password is not interpolated into DATABASE_URL and thus does
+      # not appear verbatim in `docker inspect` output.  Settings assembles
+      # the final URL at runtime (see backend/app/core/config.py).
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
       SESSION_SECRET: ${SESSION_SECRET}
       UPLOAD_DIR: /data/uploads
       APP_ENV: prod
@@ -123,23 +141,23 @@ services:
       # frontend Sentry DSN is a public token by design (it shows up in the
       # browser DevTools) — it identifies the project, not authorises writes.
       #
-      # SENTRY_AUTH_TOKEN / _ORG / _PROJECT are required ONLY for source-map
-      # upload during the build itself. Empty → sourcemap upload is skipped
-      # and the bundle still ships fine; you just won't get readable stack
-      # traces in Sentry. The auth token is sensitive — keep .env.prod
-      # chmod 600 owned by `deploy`.
+      # Source-map upload (SENTRY_AUTH_TOKEN / _ORG / _PROJECT) is handled
+      # by the CI web-build job so the token never enters the Docker layer
+      # cache (INFRA2-010). Do NOT add those args back here.
       args:
         VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
         VITE_SENTRY_TRACES_SAMPLE_RATE: ${VITE_SENTRY_TRACES_SAMPLE_RATE:-0.0}
         VITE_APP_VERSION: ${SENTRY_RELEASE:-}
-        SENTRY_AUTH_TOKEN: ${SENTRY_AUTH_TOKEN:-}
-        SENTRY_ORG: ${SENTRY_ORG:-}
-        SENTRY_PROJECT: ${SENTRY_PROJECT:-}
     restart: unless-stopped
     mem_limit: 256m
     cpus: "0.5"
     pids_limit: 128
     oom_kill_disable: false
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     # `service_healthy` (rather than the bare `- backend`) makes the web
     # container hold off until the backend's healthcheck reports green.
     # Closes the post-deploy 502 window where nginx was already serving

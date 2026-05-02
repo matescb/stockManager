@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import or_, select
 
-from app.api._helpers import assert_in_workspace, require_resource_access
+from app.api._helpers import assert_child_in_parent, assert_in_workspace, require_resource_access
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.domain.parts.models import Part
@@ -195,9 +195,7 @@ def add_entry(project_id: UUID, payload: BomEntryIn, db: DbSession, ws: CurrentW
 @router.patch("/{project_id}/entries/{entry_id}")
 def patch_entry(project_id: UUID, entry_id: UUID, payload: BomEntryPatch, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     p = _get(db, ws.id, project_id)
-    e = db.get(ProjectEntry, entry_id)
-    if not e or e.workspace_id != ws.id or e.project_id != p.id:
-        raise HTTPException(status_code=404, detail="entry not found")
+    e = assert_child_in_parent(db, ProjectEntry, entry_id, p, parent_fk="project_id", label="entry")
     data = payload.model_dump(exclude_unset=True)
     # Same archived-part guard as add_entry — patch-binds an archived
     # part into the BOM would be the BE2-016 vector via PATCH.
@@ -214,9 +212,7 @@ def patch_entry(project_id: UUID, entry_id: UUID, payload: BomEntryPatch, db: Db
 @router.delete("/{project_id}/entries/{entry_id}")
 def del_entry(project_id: UUID, entry_id: UUID, db: DbSession, ws: CurrentWorkspace):
     p = _get(db, ws.id, project_id)
-    e = db.get(ProjectEntry, entry_id)
-    if not e or e.workspace_id != ws.id or e.project_id != p.id:
-        raise HTTPException(status_code=404, detail="entry not found")
+    e = assert_child_in_parent(db, ProjectEntry, entry_id, p, parent_fk="project_id", label="entry")
     db.delete(e)
     return ok(None)
 
@@ -246,14 +242,9 @@ class MatchEntryIn(BaseModel):
 
 @router.post("/{project_id}/entries/{entry_id}/match")
 def match_entry(project_id: UUID, entry_id: UUID, payload: MatchEntryIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
-    from app.domain.parts.models import Part
     p = _get(db, ws.id, project_id)
-    e = db.get(ProjectEntry, entry_id)
-    if not e or e.workspace_id != ws.id or e.project_id != p.id:
-        raise HTTPException(status_code=404, detail="entry not found")
-    part = db.get(Part, payload.part_id)
-    if not part or part.workspace_id != ws.id:
-        raise HTTPException(status_code=404, detail="part not found")
+    e = assert_child_in_parent(db, ProjectEntry, entry_id, p, parent_fk="project_id", label="entry")
+    part = assert_in_workspace(db, Part, payload.part_id, ws.id, label="part")
     if part.archived_at is not None:
         # Match the new add/patch_entry guard — match-bind an archived
         # part is the same BE2-016 vector with a different verb.

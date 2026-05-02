@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.infra.db import Base
@@ -57,17 +57,33 @@ class WorkspaceInvitation(Base):
     __tablename__ = "workspace_invitations"
     __table_args__ = (
         UniqueConstraint("token_hash", name="uq_workspace_invitation_token_hash"),
+        # Partial unique index: at most one pending invitation per
+        # (workspace, email) pair. Added by migration 0023 (BE2-020 / #65).
+        # The partial condition (status = 'pending') allows a new invite
+        # after the previous one is accepted or revoked.
+        Index(
+            "uq_workspace_invitation_pending",
+            "workspace_id",
+            "email",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
     email = Column(String(320), nullable=False, index=True)
     role = Column(String(40), nullable=False, default="member")
-    # SHA-256 hex digest of the plaintext token. The plaintext is
-    # returned to the caller exactly once at creation time and is never
-    # persisted; without this, a DB dump leaks every pending invitation
-    # as a replayable credential.
+    # SHA-256 hex digest of the plaintext token. Kept for backward
+    # compatibility; new rows also set token_hmac. See token_hmac below.
     token_hash = Column(String(64), nullable=False)
+    # HMAC-SHA-256 (keyed on SESSION_SECRET) of the plaintext token.
+    # SEC2-013: the accept flow looks up by id (PK) and then calls
+    # hmac.compare_digest against this column — no timing oracle.
+    # Migration 0021 adds this column; rows created before 0021 have
+    # token_hmac=NULL and cannot be accepted (pending invitations
+    # are invalidated on deploy — see migration docstring).
+    token_hmac = Column(String(64), nullable=True)
     status = Column(String(20), nullable=False, default="pending")  # pending | accepted | revoked
     invited_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)

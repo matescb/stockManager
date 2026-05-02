@@ -36,9 +36,14 @@ def get_current_user(
         )
 
     # The DB only ever holds the SHA-256 digest of the token (SEC2-003).
-    # Equality on a pre-image-resistant hash is fine; we don't need
-    # hmac.compare_digest because the digest is the primary key and the
-    # comparison is delegated to Postgres.
+    # Equality on a pre-image-resistant hash is fine here; we don't need
+    # hmac.compare_digest because `token_hash` IS the primary key —
+    # the lookup is a PK equality check, not a timing-oracle scan.
+    # (SEC2-013 documents why invitation tokens needed a different fix:
+    # they were looked up by a non-PK hash column, so the SQL comparison
+    # itself was the timing oracle.  Session tokens don't have that
+    # problem — the hash is the PK, so Postgres uses a hash-index equality
+    # check that reveals nothing about prefix matches.)
     digest = hash_session_token(token)
     sess = db.query(UserSession).filter(UserSession.token_hash == digest).first()
     if not sess:
@@ -138,6 +143,10 @@ def get_current_workspace(
             ErrorCodes.WORKSPACE_NOT_FOUND,
             "workspace not found",
         )
+    # SEC2-017: expose workspace_id on request state so rate-limit key
+    # functions can bucket by workspace rather than IP alone. This is
+    # safe to set here because we've already verified membership above.
+    request.state.workspace_id = str(chosen.id)
     return chosen
 
 
