@@ -77,7 +77,7 @@ class UserLoginFailure(Base):
     # so we can count failures for unknown-email attempts without storing
     # PII and without revealing whether the address exists in the DB.
     email_hash = Column(String(64), nullable=False, index=True)
-    occurred_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow, index=True)
+    occurred_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
     client_ip = Column(String(45), nullable=True)  # IPv4 or IPv6
 
 
@@ -102,7 +102,7 @@ class PendingUser(Base):
     name = Column(String(200), nullable=False)
     password_hash = Column(String(500), nullable=False)
     workspace_name = Column(String(200), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     # HMAC-SHA-256 (keyed on SESSION_SECRET) of the plaintext verification
     # token.  The plaintext is sent to the user's email and never stored.
     # Verification compares hmac.compare_digest(hmac_of_supplied, this col)
