@@ -140,7 +140,7 @@ class WorkspaceCatalogToken(Base):
     # HMAC-SHA256 of plaintext keyed by SESSION_SECRET. String(64) = hex digest.
     token_hmac = Column(String(64), nullable=False)
     label = Column(String(120), nullable=False)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     created_by_user_id = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
