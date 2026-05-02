@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Query, status
 from sqlalchemy import or_, select
 
 from app.api._helpers import require_resource_access
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
+from app.core.errors import ErrorCodes, raise_http
 from app.core.pagination import decode_cursor, paginate
 from app.core.responses import ok
 from app.core.time import utcnow
@@ -72,7 +73,7 @@ def create_storage(payload: StorageIn, db: DbSession, ws: CurrentWorkspace, user
 def _get(db, ws_id, sid) -> StorageLocation:
     s = db.get(StorageLocation, sid)
     if not s or s.workspace_id != ws_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="storage not found")
+        raise_http(status.HTTP_404_NOT_FOUND, code=ErrorCodes.STORAGE_NOT_FOUND, message="storage not found")
     return s
 
 
@@ -114,12 +115,11 @@ def archive_storage(storage_id: UUID, db: DbSession, ws: CurrentWorkspace, user:
         if int(r["quantity"]) > 0
     ]
     if blocking:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "message": "storage still holds on-hand stock; move or remove it first",
-                "blocking": blocking,
-            },
+        raise_http(
+            status.HTTP_409_CONFLICT,
+            code=ErrorCodes.STORAGE_HAS_STOCK,
+            message="storage still holds on-hand stock; move or remove it first",
+            blocking=blocking,
         )
     s.archived_at = utcnow()
     return ok(None, "archived")

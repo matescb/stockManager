@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Query, status
 from sqlalchemy import select
 
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
+from app.core.errors import ErrorCodes, raise_http
 from app.core.pagination import decode_cursor, paginate
 from app.core.responses import ok
 from app.domain.lots.models import Lot
@@ -67,7 +68,7 @@ def list_lots(
 def _get(db, ws_id, lot_id) -> Lot:
     l = db.get(Lot, lot_id)
     if not l or l.workspace_id != ws_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="lot not found")
+        raise_http(status.HTTP_404_NOT_FOUND, code=ErrorCodes.LOT_NOT_FOUND, message="lot not found")
     return l
 
 
@@ -86,8 +87,8 @@ def patch_lot(lot_id: UUID, payload: LotPatch, db: DbSession, ws: CurrentWorkspa
         from datetime import date
         try:
             data["expiration_date"] = date.fromisoformat(data["expiration_date"])
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail="invalid expiration_date") from e
+        except ValueError:
+            raise_http(400, code=ErrorCodes.LOT_INVALID_EXPIRATION_DATE, message="invalid expiration_date")
     for k, v in data.items():
         setattr(l, k, v)
     l.updated_by = user.id
@@ -103,7 +104,7 @@ def move_lot(lot_id: UUID, payload: MoveStockIn, db: DbSession, ws: CurrentWorks
         out_e, in_e = move_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
     except StockError as exc:
         # `get_db` rolls back on raise (BE2-010).
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise_http(400, code=ErrorCodes.LOT_MOVE_STOCK_ERROR, message=str(exc))
     return ok({"out": str(out_e.id), "in": str(in_e.id)})
 
 
@@ -120,7 +121,7 @@ def adjust_lot(lot_id: UUID, payload: LotAdjustIn, db: DbSession, ws: CurrentWor
     try:
         e = adjust_stock(db, workspace_id=ws.id, user_id=user.id, payload=aip)
     except StockError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise_http(400, code=ErrorCodes.LOT_ADJUST_STOCK_ERROR, message=str(exc))
     return ok({"id": str(e.id) if e else None, "delta": e.quantity_delta if e else 0})
 
 

@@ -7,7 +7,7 @@ from uuid import UUID
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 
@@ -20,6 +20,7 @@ from app.core.deps import (
     get_current_user,
     get_current_workspace,
 )
+from app.core.errors import ErrorCodes, raise_http
 from app.core.responses import ok
 from app.domain.attachments.models import Attachment
 from app.infra.db import get_db
@@ -122,12 +123,13 @@ async def upload(
     max_bytes = settings().MAX_UPLOAD_BYTES
     contents = await file.read(max_bytes + 1)
     if len(contents) > max_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail=f"upload exceeds {max_bytes} bytes",
+        raise_http(
+            413,
+            code=ErrorCodes.ATTACHMENT_TOO_LARGE,
+            message=f"upload exceeds {max_bytes} bytes",
         )
     if not contents:
-        raise HTTPException(status_code=400, detail="empty upload")
+        raise_http(400, code=ErrorCodes.ATTACHMENT_EMPTY, message="empty upload")
 
     # Validate the bytes against the allow-list and confirm the declared
     # Content-Type matches reality. The declared MIME is never trusted on
@@ -135,14 +137,16 @@ async def upload(
     # allow-list check but fail the magic-byte check.
     actual_mime = _detect_mime(contents[:16])
     if actual_mime is None:
-        raise HTTPException(
-            status_code=415,
-            detail="unsupported file type — allowed: PNG, JPEG, WebP, PDF",
+        raise_http(
+            415,
+            code=ErrorCodes.ATTACHMENT_UNSUPPORTED_TYPE,
+            message="unsupported file type — allowed: PNG, JPEG, WebP, PDF",
         )
     if file.content_type and file.content_type != actual_mime:
-        raise HTTPException(
-            status_code=415,
-            detail=(
+        raise_http(
+            415,
+            code=ErrorCodes.ATTACHMENT_CONTENT_TYPE_MISMATCH,
+            message=(
                 f"declared content-type ({file.content_type}) does not match "
                 f"actual content ({actual_mime})"
             ),

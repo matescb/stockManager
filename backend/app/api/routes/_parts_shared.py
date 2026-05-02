@@ -13,9 +13,10 @@ endpoint groups out of `parts.py` and import from this module.
 """
 from __future__ import annotations
 
-from fastapi import HTTPException, status
+from fastapi import status
 from sqlalchemy import select
 
+from app.core.errors import ErrorCodes, raise_http
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part
 # Re-export request schemas from the canonical domain location (CQ-006).
@@ -92,10 +93,10 @@ def get_part(db, ws_id, part_id, *, include_archived: bool = False) -> Part:
     """
     p = db.get(Part, part_id)
     if not p or p.workspace_id != ws_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="part not found")
+        raise_http(status.HTTP_404_NOT_FOUND, code=ErrorCodes.PART_NOT_FOUND, message="part not found")
     if not include_archived and p.archived_at is not None:
         # 404 (not 400) — the part is "not available" for binds. We
         # don't distinguish "doesn't exist" from "archived" because the
         # client treats both as "this id is dead".
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="part not found")
+        raise_http(status.HTTP_404_NOT_FOUND, code=ErrorCodes.PART_NOT_FOUND, message="part not found")
     return p
