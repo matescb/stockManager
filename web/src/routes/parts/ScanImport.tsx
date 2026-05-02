@@ -185,7 +185,7 @@ export default function ScanImport() {
         setState({ kind: "error", message: lookup.message || "no match" });
       }
     } catch (e) {
-      setState({ kind: "error", message: e instanceof ApiError ? e.message : "Lookup failed" });
+      setState({ kind: "error", message: e instanceof ApiError ? e.userMessage : "Lookup failed" });
     }
   }, []);
 
@@ -211,7 +211,7 @@ export default function ScanImport() {
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", st.part_id, "stock") });
       toast.success(`Removed ${quantity} from this bag.`);
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Quick-remove failed");
+      toast.error(e instanceof ApiError ? e.userMessage : "Quick-remove failed");
     }
   }
 
@@ -267,7 +267,7 @@ export default function ScanImport() {
         `Imported ${out.summary.created} part${out.summary.created === 1 ? "" : "s"}.`
       );
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Import failed");
+      toast.error(e instanceof ApiError ? e.userMessage : "Import failed");
     } finally {
       setSubmitting(false);
     }

@@ -153,7 +153,7 @@ export default function ProjectImport() {
       refetchPresets();
       toast.success(`Preset "${name}" saved.`);
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Failed to save preset");
+      toast.error(e instanceof ApiError ? e.userMessage : "Failed to save preset");
     }
   }
 
@@ -200,7 +200,7 @@ export default function ProjectImport() {
       setStep("mapping");
     } catch (e) {
       setUploadProgress(null);
-      setErr(e instanceof ApiError ? e.message : "Failed to parse");
+      setErr(e instanceof ApiError ? e.userMessage : "Failed to parse");
     } finally {
       setBusy(false);
     }
@@ -237,7 +237,7 @@ export default function ProjectImport() {
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "project", projectId, "entries") });
       setStep("done");
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Import failed");
+      setErr(e instanceof ApiError ? e.userMessage : "Import failed");
     } finally {
       setBusy(false);
     }

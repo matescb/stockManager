@@ -52,7 +52,7 @@ export default function PartSourcing() {
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", part.id) });
       toast.success("Refreshed from provider.");
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Refresh failed");
+      toast.error(e instanceof ApiError ? e.userMessage : "Refresh failed");
     } finally {
       setRefreshing(false);
     }

@@ -39,7 +39,7 @@ export default function Login() {
           setRetryAfter(body.retry_after_seconds);
           setErr("Too many failed login attempts. Please try again later.");
         } else {
-          setErr(e.message);
+          setErr(e.userMessage);
         }
       } else {
         setErr("Login failed");
