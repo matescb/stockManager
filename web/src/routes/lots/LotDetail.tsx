@@ -29,7 +29,7 @@ export function LotLayout() {
         idCode={data.id}
       />
       <SubNav items={items} />
-      <Outlet context={{ lot: data }} />
+      <Outlet key={data.id} context={{ lot: data }} />
     </div>
   );
 }
