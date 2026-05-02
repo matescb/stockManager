@@ -5,6 +5,8 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
+from app.core.time import utcnow
+
 from fastapi import APIRouter, Request, Response, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -317,7 +319,7 @@ def verify(
     )
 
     sess = create_session_row(db, user.id)
-    user.last_login_at = datetime.now(timezone.utc)
+    user.last_login_at = utcnow()
 
     _set_session_cookie(response, sess.token)
     log.info(
@@ -387,7 +389,7 @@ def login(
     # SEC2-015 — session rotation on login.
     revoke_all_user_sessions(db, user.id)
     sess = create_session_row(db, user.id)
-    user.last_login_at = datetime.now(timezone.utc)
+    user.last_login_at = utcnow()
     _set_session_cookie(response, sess.token)
     log.info("login", extra={"user_id": str(user.id)})
     return ok({"user": {"id": str(user.id), "email": user.email, "name": user.name}})

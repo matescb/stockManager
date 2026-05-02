@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from app.core.time import utcnow
+
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -143,7 +144,7 @@ def archive_build(build_id: UUID, db: DbSession, ws: CurrentWorkspace, user: Cur
         db, Build, build_id, ws=ws, user=user, role="admin", label="build"
     )
     release_reservations(db, workspace_id=ws.id, user_id=user.id, build=b)
-    b.archived_at = datetime.now(timezone.utc)
+    b.archived_at = utcnow()
     return ok(None, "archived")
 
 

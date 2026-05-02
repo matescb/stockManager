@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from app.core.time import utcnow
+
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -139,7 +140,7 @@ def archive_storage(storage_id: UUID, db: DbSession, ws: CurrentWorkspace, user:
                 "blocking": blocking,
             },
         )
-    s.archived_at = datetime.now(timezone.utc)
+    s.archived_at = utcnow()
     return ok(None, "archived")
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from app.core.time import utcnow
+
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -123,7 +124,7 @@ def archive_project(project_id: UUID, db: DbSession, ws: CurrentWorkspace, user:
     p = require_resource_access(
         db, Project, project_id, ws=ws, user=user, role="admin", label="project"
     )
-    p.archived_at = datetime.now(timezone.utc)
+    p.archived_at = utcnow()
     return ok(None, "archived")
 
 

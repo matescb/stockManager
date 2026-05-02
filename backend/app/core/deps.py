@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import Annotated
 from uuid import UUID
 
@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.auth import hash_session_token
 from app.core.config import settings
 from app.core.errors import ErrorCodes, raise_http
+from app.core.time import utcnow
 from app.domain.users.models import User, UserSession
 from app.domain.workspaces.models import Workspace, WorkspaceMember
 from app.infra.db import get_db
@@ -52,7 +53,7 @@ def get_current_user(
             ErrorCodes.AUTH_INVALID_SESSION,
             "invalid session",
         )
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     if sess.expires_at and sess.expires_at < now:
         raise_http(
             status.HTTP_401_UNAUTHORIZED,

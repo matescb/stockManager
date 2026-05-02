@@ -3,12 +3,12 @@ the order_id/order_entry_id, and creates a Lot per receipt with
 source_type='purchase' + source_order_id."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
+from app.core.time import utcnow
 from app.domain.lots.models import Lot
 from app.domain.orders.models import Order, OrderEntry
 
@@ -23,10 +23,6 @@ from app.domain.workspaces.models import Workspace
 
 class OrderError(Exception):
     pass
-
-
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def _order_status(entries: list[OrderEntry]) -> str:
@@ -72,7 +68,7 @@ def receive(
         part_ids=[e.part_id for e in entries_by_id.values() if e.part_id is not None],
     )
 
-    received_at = _now()
+    received_at = utcnow()
     created_lots: list[Lot] = []
     created_entries: list[StockEntry] = []
 

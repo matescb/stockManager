@@ -4,7 +4,7 @@ import hashlib
 import logging
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import httpx
 from argon2 import PasswordHasher
@@ -12,6 +12,7 @@ from argon2.exceptions import VerifyMismatchError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.time import utcnow
 
 _log = logging.getLogger(__name__)
 
@@ -143,7 +144,7 @@ def hash_session_token(token: str) -> str:
 
 
 def session_expires_at() -> datetime:
-    return datetime.now(timezone.utc) + timedelta(days=settings().SESSION_LIFETIME_DAYS)
+    return utcnow() + timedelta(days=settings().SESSION_LIFETIME_DAYS)
 
 
 @dataclass

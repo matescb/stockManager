@@ -6,7 +6,6 @@ an associated sub-assembly part, a 'build_produce' row + a Lot tagged
 source_type='build', source_build_id=build.id."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from decimal import Decimal
 from math import ceil
 from uuid import UUID
@@ -15,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
+from app.core.time import utcnow
 from app.domain.builds.models import Build
 from app.domain.builds.schemas import ConsumeIn
 
@@ -29,10 +29,6 @@ from app.domain.storage.models import StorageLocation
 
 class BuildError(Exception):
     pass
-
-
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def _required(entry: ProjectEntry, part: Part | None, build_qty: int) -> int:
@@ -173,7 +169,7 @@ def apply_reservations(
         workspace_id=workspace_id,
         part_ids=[e.part_id for e in consumable if e.part_id is not None],
     )
-    now = _now()
+    now = utcnow()
     written = 0
     for e in consumable:
         part = db.get(Part, e.part_id)
@@ -240,7 +236,7 @@ def release_reservations(
             .where(StockEntry.related_entry_id.is_not(None))
         ).scalars()
     )
-    now = _now()
+    now = utcnow()
     written = 0
     for r in reserve_rows:
         if r.id in released_ids:
@@ -343,7 +339,7 @@ def consume(
     # Sum requested quantity per (entry, part) so we can validate against required
     requested_by_entry: dict[UUID, int] = {}
     consumed_entries: list[StockEntry] = []
-    now = _now()
+    now = utcnow()
 
     for line in payload.lines:
         e = entries_by_id.get(line.project_entry_id)
