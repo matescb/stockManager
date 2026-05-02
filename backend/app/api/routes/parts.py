@@ -217,12 +217,12 @@ def get_provider_asset(
         return FileResponse(abs_path, media_type=served_mime, headers=headers)
     # Non-image, no caller-supplied filename — still force attachment so
     # an `evil.bin` lands as a download rather than a rendered page.
-    return FileResponse(
-        abs_path,
-        media_type=served_mime,
-        headers=headers,
-        content_disposition_type="attachment",
-    )
+    # Set the header explicitly rather than relying on Starlette's
+    # `content_disposition_type` kwarg — that param was added in
+    # 0.36+ and silently no-ops on older versions, leaving the response
+    # without a Content-Disposition at all.
+    headers["Content-Disposition"] = "attachment"
+    return FileResponse(abs_path, media_type=served_mime, headers=headers)
 
 
 @router.get("")
