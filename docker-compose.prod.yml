@@ -18,6 +18,9 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    mem_limit: 2g
+    pids_limit: 512
+    oom_kill_disable: false
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -33,6 +36,10 @@ services:
   backend:
     build: ./backend
     restart: unless-stopped
+    mem_limit: 1g
+    cpus: "1.5"
+    pids_limit: 512
+    oom_kill_disable: false
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       SESSION_SECRET: ${SESSION_SECRET}
@@ -129,6 +136,10 @@ services:
         SENTRY_ORG: ${SENTRY_ORG:-}
         SENTRY_PROJECT: ${SENTRY_PROJECT:-}
     restart: unless-stopped
+    mem_limit: 256m
+    cpus: "0.5"
+    pids_limit: 128
+    oom_kill_disable: false
     # `service_healthy` (rather than the bare `- backend`) makes the web
     # container hold off until the backend's healthcheck reports green.
     # Closes the post-deploy 502 window where nginx was already serving
