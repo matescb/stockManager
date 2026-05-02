@@ -7,6 +7,15 @@ import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import { useConfirm, usePrompt } from "@/components/ConfirmDialog";
 
+const BOM_RAW_MAX_BYTES = 4 * 1024 * 1024; // 4 MB client-side cap
+
+const ACCEPTED_MIME_TYPES = new Set([
+  "text/csv",
+  "text/tab-separated-values",
+  "text/plain",
+  "",
+]);
+
 type Preset = {
   id: string;
   name: string;
@@ -65,12 +74,25 @@ function autoMap(header: string): Mapping["target"] {
   return "ignore";
 }
 
-async function fileToBase64(file: File): Promise<string> {
-  const buf = await file.arrayBuffer();
-  let bin = "";
-  const bytes = new Uint8Array(buf);
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin);
+function fileToBase64(
+  file: File,
+  onProgress?: (pct: number) => void,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onprogress = (ev) => {
+      if (ev.lengthComputable && onProgress) {
+        onProgress(Math.round((ev.loaded / ev.total) * 100));
+      }
+    };
+    reader.onload = () => {
+      const result = reader.result as string;
+      // result is "data:<mime>;base64,<payload>" — strip the prefix
+      resolve(result.slice(result.indexOf(",") + 1));
+    };
+    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.readAsDataURL(file);
+  });
 }
 
 export default function ProjectImport() {
@@ -90,6 +112,7 @@ export default function ProjectImport() {
   const [designatorSep, setDesignatorSep] = useState(",");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [result, setResult] = useState<{ inserted: number; matched: number; unmatched: number } | null>(null);
   const { data: presets, refetch: refetchPresets } = useQuery({
     queryKey: useWsKey("bom-presets"),
@@ -136,11 +159,31 @@ export default function ProjectImport() {
     toast.success("Preset deleted.");
   }
 
-  async function onFile(f: File) {
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    // Reset the input value so re-picking the same file re-fires onChange
+    e.target.value = "";
+    if (!f) return;
+
+    // Pre-flight: size check
+    if (f.size > BOM_RAW_MAX_BYTES) {
+      const sizeMB = (f.size / (1024 * 1024)).toFixed(2);
+      toast.error(`BOM file too large — max 4 MB. Selected: ${sizeMB} MB.`);
+      return;
+    }
+
+    // MIME type check — warn but don't block
+    const mime = f.type ?? "";
+    if (!ACCEPTED_MIME_TYPES.has(mime)) {
+      toast.warning(`Unexpected file type "${mime || "(none)"}". Expected CSV, TSV, or plain text. Trying anyway…`);
+    }
+
     setBusy(true);
     setErr(null);
+    setUploadProgress(0);
     try {
-      const text_b64 = await fileToBase64(f);
+      const text_b64 = await fileToBase64(f, (pct) => setUploadProgress(pct));
+      setUploadProgress(null);
       setB64(text_b64);
       const out = await api.post<PreviewOut>(`/projects/${projectId}/bom/preview`, { text_b64 });
       setPreview(out);
@@ -151,6 +194,7 @@ export default function ProjectImport() {
       setMapping(headers.map((h, i) => ({ column_index: i, target: autoMap(h ?? "") })));
       setStep("mapping");
     } catch (e) {
+      setUploadProgress(null);
       setErr(e instanceof ApiError ? e.message : "Failed to parse");
     } finally {
       setBusy(false);
@@ -222,11 +266,24 @@ export default function ProjectImport() {
           <input
             type="file"
             accept=".csv,.tsv,.txt"
-            onChange={(e) => e.target.files && onFile(e.target.files[0])}
+            onChange={onFile}
             disabled={busy}
             className="text-sm"
           />
-          {busy && <div className="text-muted text-sm">Parsing…</div>}
+          {busy && uploadProgress !== null && (
+            <div className="space-y-1">
+              <div className="text-muted text-sm">Reading file… {uploadProgress}%</div>
+              <div className="h-1.5 w-full rounded bg-border overflow-hidden">
+                <div
+                  className="h-full bg-accent transition-all"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+            </div>
+          )}
+          {busy && uploadProgress === null && (
+            <div className="text-muted text-sm">Parsing…</div>
+          )}
         </div>
       )}
 
