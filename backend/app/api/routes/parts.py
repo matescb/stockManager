@@ -387,7 +387,13 @@ def patch_part(part_id: UUID, payload: PartPatch, db: DbSession, ws: CurrentWork
 # which fired the role check first and turned the response into a
 # membership oracle (BE2-009).
 @router.post("/{part_id}/archive")
-def archive_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+def archive_part(
+    request: Request,
+    part_id: UUID,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     p = require_resource_access(db, Part, part_id, ws=ws, user=user, role="admin", label="part")
     p.archived_at = datetime.now(timezone.utc)
     _audit_log(
@@ -397,13 +403,19 @@ def archive_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace, user: Curre
         action="part.archived",
         target_type="part",
         target_ids=[p.id],
-        request_id=getattr(getattr(None, "state", None), "request_id", None),
+        request_id=getattr(request.state, "request_id", None),
     )
     return ok(None, "archived")
 
 
 @router.post("/{part_id}/restore")
-def restore_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+def restore_part(
+    request: Request,
+    part_id: UUID,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     p = require_resource_access(db, Part, part_id, ws=ws, user=user, role="admin", label="part")
     p.archived_at = None
     _audit_log(
@@ -413,7 +425,7 @@ def restore_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace, user: Curre
         action="part.restored",
         target_type="part",
         target_ids=[p.id],
-        request_id=getattr(getattr(None, "state", None), "request_id", None),
+        request_id=getattr(request.state, "request_id", None),
     )
     return ok(None, "restored")
 

@@ -1,16 +1,15 @@
 """Add audit_log table for per-action trail (BE2-024).
 
-Revision ID: 0026
-Revises: 0023
+Revision ID: 0030
+Revises: 0029
 Create Date: 2026-05-02
 
 Tracks state-changing operations (bulk_delete, archive/restore,
 credential rotation, invitation lifecycle, member role/status changes)
 with workspace_id + user_id context and a UUID[] of affected objects.
 
-Chain note: Renumbered from 0024 to 0026; down_revision updated from
-"0021" to "0023" to chain off main's current head after migrations 0022
-(invitation_token_hmac) and 0023 (invitation_pending_unique) landed.
+Chain note: chains off 0029 (pending_users), the current
+main head after rebase; renumbered from 0024 to 0030.
 """
 from __future__ import annotations
 
@@ -18,8 +17,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = "0026"
-down_revision = "0023"
+revision = "0030"
+down_revision = "0029"
 branch_labels = None
 depends_on = None
 
