@@ -70,7 +70,7 @@ export default function PartSettings() {
         <label className="label">Low-stock report quantity</label>
         <input className="input" type="number" value={low} onChange={e => setLow(e.target.value)} />
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="label">Attrition %</label>
           <input className="input" type="number" step="0.1" value={attrPct} onChange={e => setAttrPct(e.target.value)} />

@@ -43,7 +43,7 @@ export default function OrderCreate() {
         <label className="label">Name *</label>
         <input className="input" required value={name} onChange={e => setName(e.target.value)} placeholder="PO-2026-001" />
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="label">Supplier</label>
           <input className="input" value={supplier} onChange={e => setSupplier(e.target.value)} />

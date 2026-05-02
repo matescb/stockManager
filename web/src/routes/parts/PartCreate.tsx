@@ -178,7 +178,7 @@ export default function PartCreate() {
           </Link>
         </div>
       )}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="label">Type</label>
           <select className="input" value={form.part_type} onChange={e => set("part_type", e.target.value as "linked" | "local" | "meta" | "sub_assembly")}>
@@ -205,7 +205,7 @@ export default function PartCreate() {
           Defaults to the MPN when left blank.
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="label">Manufacturer</label>
           <input className="input" value={form.manufacturer} onChange={e => set("manufacturer", e.target.value)} />
