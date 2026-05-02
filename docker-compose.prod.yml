@@ -122,7 +122,11 @@ services:
     #      for the rest of the process tree. From this point uvicorn and
     #      alembic both run unprivileged.
     #   3. alembic upgrade head, then exec uvicorn. Identical to before.
-    command: ["sh", "-c", "chown -R appuser:appuser /data 2>/dev/null || true; exec gosu appuser sh -c 'alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=*'"]
+    # stop_grace_period: give Compose 30s before SIGKILL, matching
+    # --timeout-graceful-shutdown 25 below (5s headroom so SIGKILL
+    # never fires on a clean drain — see CLAUDE.md "Things that have bitten us").
+    stop_grace_period: 30s
+    command: ["sh", "-c", "chown -R appuser:appuser /data 2>/dev/null || true; exec gosu appuser sh -c 'alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=* --timeout-graceful-shutdown 25'"]
 
   web:
     build:
