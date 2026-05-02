@@ -367,7 +367,7 @@ def test_bulk_import_row_failure_does_not_roll_back_other_rows(authed, monkeypat
     # to raise on its second invocation — easier than crafting a
     # legitimate IntegrityError mid-flight, and exercises the same
     # savepoint-rollback path.
-    import app.api.routes.parts as parts_mod
+    import app.api.routes.parts_scan as parts_mod
 
     real_helper = parts_mod._import_one_scan_row
     call_count = {"n": 0}

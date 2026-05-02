@@ -53,7 +53,7 @@ def test_per_row_timeout_marks_row_lookup_failed_neighbours_still_run(monkeypatc
     """A provider call that hangs longer than _BULK_IMPORT_ROW_TIMEOUT_S
     must surface as `lookup_failed` (with a timeout mention) while rows
     before and after it continue to process."""
-    import app.api.routes.parts as parts_mod
+    import app.api.routes.parts_scan as parts_mod
     import app.domain.parts.providers.mouser as mouser_mod
 
     # Make row 2 hang past the per-row timeout by patching the provider-cache
@@ -108,7 +108,7 @@ def test_per_row_timeout_marks_row_lookup_failed_neighbours_still_run(monkeypatc
 def test_request_deadline_marks_unprocessed_rows_as_deadline_exceeded(monkeypatch):
     """When the wall-clock deadline expires mid-batch, rows not yet reached
     must be returned with status='deadline_exceeded'."""
-    import app.api.routes.parts as parts_mod
+    import app.api.routes.parts_scan as parts_mod
     import app.domain.parts.providers.mouser as mouser_mod
 
     monkeypatch.setattr(

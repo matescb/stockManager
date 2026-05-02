@@ -166,7 +166,7 @@ def test_idempotency_cache_write_is_upsert_not_plain_insert():
 
         # Compute the deterministic content-hash key the route will use
         # when no explicit idempotency_key is supplied.
-        from app.api.routes.parts import _bulk_import_content_key
+        from app.api.routes.parts_scan import _bulk_import_content_key
         from app.domain.parts.schemas import ScanImportRow
 
         rows = [ScanImportRow(mpn="RC0402JR-070R")]
