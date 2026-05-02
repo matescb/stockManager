@@ -34,22 +34,17 @@ def workspace_key(request: Request) -> str:
 
     Resolution order:
     1. request.state.workspace_id — set by get_current_workspace in deps.py
-       for authenticated routes that already resolved the workspace.
-    2. X-Workspace-Id header or stockmgr_workspace cookie — fallback for
-       routes (e.g. search) where workspace_id is not stored on state but
-       the client sends the workspace identifier directly.
-    3. Remote address — final fallback for unauthenticated paths, startup
-       probes, etc. Safe because rate limiting is disabled outside prod.
+       for authenticated routes that already resolved the workspace. Any
+       endpoint using this key_func MUST depend on get_current_workspace
+       (or otherwise populate request.state.workspace_id from a verified
+       token) — never trust raw client-supplied headers/cookies for the
+       bucket id, since a client could rotate that value to fragment the
+       bucket and bypass the limit.
+    2. Remote address — fallback for unauthenticated paths, startup probes,
+       etc. Safe because rate limiting is disabled outside prod.
     """
     ws_id = getattr(request.state, "workspace_id", None)
     if ws_id:
         return f"ws:{ws_id}"
-
-    for candidate in (
-        request.headers.get("X-Workspace-Id"),
-        request.cookies.get("stockmgr_workspace"),
-    ):
-        if isinstance(candidate, str) and candidate:
-            return f"ws:{candidate}"
 
     return get_remote_address(request)

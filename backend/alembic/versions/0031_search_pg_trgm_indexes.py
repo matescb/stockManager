@@ -1,7 +1,7 @@
 """Enable pg_trgm and add GIN trigram indexes on search columns.
 
-Revision ID: 0024
-Revises: 0029
+Revision ID: 0031
+Revises: 0030
 Create Date: 2026-05-02
 
 BE2-018 / issue #63.
@@ -31,8 +31,8 @@ from __future__ import annotations
 from alembic import op
 
 
-revision = "0024"
-down_revision = "0029"
+revision = "0031"
+down_revision = "0030"
 branch_labels = None
 depends_on = None
 
