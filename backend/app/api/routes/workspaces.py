@@ -4,11 +4,9 @@ import hashlib
 import hmac
 import secrets
 from datetime import datetime, timezone
-from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response, status
-from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from app.core.config import settings
@@ -20,6 +18,7 @@ from app.core.secrets import decrypt, encrypt
 from app.domain.audit.service import log as _audit_log
 from app.domain.users.models import User
 from app.domain.workspaces.models import Workspace, WorkspaceCatalogToken, WorkspaceMember
+from app.domain.workspaces.schemas import CatalogTokenIn, MemberPatch, WorkspaceCreateIn, WorkspacePatch
 
 router = APIRouter()
 
@@ -28,13 +27,6 @@ router = APIRouter()
 # signup is `kind="personal"` and excluded so a user always has at
 # least one tenant. Everything beyond it (extra organisations) counts.
 _OWNED_ORG_WORKSPACE_CAP = 5
-
-
-class WorkspaceCreateIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(min_length=1, max_length=200)
-    currency_default: str = "USD"
 
 
 @router.get("")
@@ -160,29 +152,6 @@ def current_scanner_license_key(ws: CurrentWorkspace):
     return ok({"license_key": decrypt(ws.scanner_license_key) or ""})
 
 
-class WorkspacePatch(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str | None = Field(default=None, min_length=1, max_length=200)
-    currency_default: str | None = Field(default=None, min_length=3, max_length=3)
-    lot_control_enabled: bool | None = None
-    serial_tracking_enabled: bool | None = None
-    catalog_enabled: bool | None = None
-    # Write-only command flag: when true (and the catalog stays enabled), the
-    # route mints a fresh secrets.token_urlsafe(32) and stores it.
-    regenerate_catalog_token: bool | None = None
-    parts_provider: Literal["none", "mouser", "digikey"] | None = None
-    # Empty string clears the stored key; any other non-None value replaces it.
-    # None (omitted) leaves whatever's already stored alone.
-    parts_provider_api_key: str | None = None
-    # Same semantics as parts_provider_api_key. Used as DigiKey's
-    # client_secret; Mouser doesn't need it.
-    parts_provider_api_secret: str | None = None
-    scanner: Literal["zxing", "scandit"] | None = None
-    # Same '' clears / non-empty replaces / None leaves alone semantics.
-    scanner_license_key: str | None = None
-
-
 @router.patch("/current", dependencies=[Depends(require_role("admin"))])
 def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     data = payload.model_dump(exclude_unset=True)
@@ -275,12 +244,6 @@ def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace, 
 # ---------------------------------------------------------------------------
 # Catalog token CRUD (SEC2-019 / issue #77)
 # ---------------------------------------------------------------------------
-
-
-class CatalogTokenIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    label: str = Field(min_length=1, max_length=120)
 
 
 def _serialize_catalog_token(t: WorkspaceCatalogToken, plaintext: str | None = None) -> dict:
@@ -398,13 +361,6 @@ def list_members(db: DbSession, ws: CurrentWorkspace):
             for m, u in rows
         ]
     )
-
-
-class MemberPatch(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    role: Literal["owner", "admin", "member", "viewer"] | None = None
-    status: Literal["active", "disabled"] | None = None
 
 
 def _active_owner_count(db, ws_id):

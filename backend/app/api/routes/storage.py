@@ -3,7 +3,6 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import or_, select
 
 from app.api._helpers import require_resource_access
@@ -11,32 +10,13 @@ from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.core.time import utcnow
 from app.domain.storage.models import StorageLocation
+from app.domain.storage.schemas import StorageIn, StoragePatch
 from app.domain.stock.service import (
     history_for_storage,
     stock_for_storage,
 )
 
 router = APIRouter()
-
-
-class StorageIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(min_length=1, max_length=200)
-    description: str | None = None
-    single_part_only: bool = False
-    existing_parts_only: bool = False
-    is_full: bool = False
-
-
-class StoragePatch(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str | None = None
-    description: str | None = None
-    single_part_only: bool | None = None
-    existing_parts_only: bool | None = None
-    is_full: bool | None = None
 
 
 def _serialize(s: StorageLocation) -> dict:

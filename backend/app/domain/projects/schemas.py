@@ -132,3 +132,27 @@ class BomImportCommitOut(BaseModel):
     inserted: int
     matched: int
     unmatched: int
+
+
+# BOM presets (#252 — lifted from app/api/routes/bom_presets.py)
+
+class PresetIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    config: dict
+
+
+class PresetPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    config: dict | None = None
+
+
+# Project entry match (#252 — lifted from app/api/routes/projects.py)
+
+class MatchEntryIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    part_id: UUID

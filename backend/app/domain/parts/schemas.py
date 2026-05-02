@@ -31,6 +31,7 @@ __all__ = [
     "ScanImportRow",
     "ScanImportIn",
     "QuickRemoveBagIn",
+    "LookupIn",
 ]
 
 
@@ -154,3 +155,11 @@ class QuickRemoveBagIn(BaseModel):
     lot_id: UUID | None = None
     storage_location_id: UUID | None = None
     comments: str | None = Field(default=None, max_length=1000)
+
+
+# Provider lookup (#252 — lifted from app/api/routes/parts_provider.py)
+
+class LookupIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mpn: str = Field(min_length=1, max_length=200)

@@ -4,12 +4,12 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.domain.lots.models import Lot
+from app.domain.lots.schemas import LotAdjustIn, LotPatch
 from app.domain.stock.schemas import AdjustStockIn, MoveStockIn
 from app.domain.stock.service import (
     StockError,
@@ -76,16 +76,6 @@ def get_lot(lot_id: UUID, db: DbSession, ws: CurrentWorkspace):
     return ok(_serialize(l, quantity=q))
 
 
-class LotPatch(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str | None = None
-    description: str | None = None
-    comments: str | None = None
-    expiration_date: str | None = None
-    serial_number: str | None = None
-
-
 @router.patch("/{lot_id}")
 def patch_lot(lot_id: UUID, payload: LotPatch, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     l = _get(db, ws.id, lot_id)
@@ -113,14 +103,6 @@ def move_lot(lot_id: UUID, payload: MoveStockIn, db: DbSession, ws: CurrentWorks
         # `get_db` rolls back on raise (BE2-010).
         raise HTTPException(status_code=400, detail=str(exc))
     return ok({"out": str(out_e.id), "in": str(in_e.id)})
-
-
-class LotAdjustIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    actual_quantity: int
-    storage_location_id: UUID | None = None
-    comments: str | None = None
 
 
 @router.post("/{lot_id}/adjust-count")

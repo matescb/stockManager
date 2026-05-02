@@ -4,28 +4,14 @@ import json
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.domain.projects.models import BomImportPreset
+from app.domain.projects.schemas import PresetIn, PresetPatch
 
 router = APIRouter()
-
-
-class PresetIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(min_length=1, max_length=200)
-    config: dict
-
-
-class PresetPatch(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str | None = None
-    config: dict | None = None
 
 
 def _serialize(p: BomImportPreset) -> dict:

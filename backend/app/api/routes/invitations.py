@@ -3,11 +3,9 @@ from __future__ import annotations
 import hashlib
 import hmac as _hmac
 import secrets
-from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, status
-from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
@@ -25,6 +23,7 @@ from app.core.time import utcnow
 from app.domain.audit.service import log as _audit_log
 from app.domain.users.models import User
 from app.domain.workspaces.models import Workspace, WorkspaceInvitation, WorkspaceMember
+from app.domain.workspaces.schemas import AcceptIn, InviteIn
 
 router = APIRouter()
 
@@ -50,13 +49,6 @@ def _hmac_token(plaintext: str) -> str:
     """
     key = settings().SESSION_SECRET.encode("utf-8")
     return _hmac.new(key, plaintext.encode("utf-8"), "sha256").hexdigest()
-
-
-class InviteIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    email: EmailStr
-    role: Literal["admin", "member", "viewer"] = "member"
 
 
 def _serialize(inv: WorkspaceInvitation, *, plaintext_token: str | None = None) -> dict:
@@ -264,18 +256,6 @@ def revoke_invitation(invitation_id: UUID, db: DbSession, ws: CurrentWorkspace, 
 
 
 # ---- Public accept endpoint (does NOT require workspace membership) ------
-
-
-class AcceptIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    # SEC2-013: the token field now carries a composite value of the form
-    # "{invitation_id}:{plaintext_token}", produced by _serialize().  The
-    # accept handler splits on the first ":" to obtain the PK (for the
-    # DB lookup) and the plaintext (for HMAC comparison).  This keeps the
-    # frontend interface to a single opaque string while allowing a
-    # constant-time comparison path.
-    token: str
 
 
 # Token is 256-bit so brute-force is infeasible, but the endpoint is
