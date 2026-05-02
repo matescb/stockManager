@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -10,6 +9,7 @@ from sqlalchemy import or_, select
 from app.api._helpers import assert_child_in_parent, assert_in_workspace, require_resource_access
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
+from app.core.time import utcnow
 from app.domain.parts.models import Part
 from app.domain.projects import bom_import as bom
 from app.domain.projects.models import Project, ProjectEntry
@@ -123,7 +123,7 @@ def archive_project(project_id: UUID, db: DbSession, ws: CurrentWorkspace, user:
     p = require_resource_access(
         db, Project, project_id, ws=ws, user=user, role="admin", label="project"
     )
-    p.archived_at = datetime.now(timezone.utc)
+    p.archived_at = utcnow()
     return ok(None, "archived")
 
 

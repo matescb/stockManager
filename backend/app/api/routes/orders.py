@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -10,6 +9,7 @@ from app.api._helpers import assert_child_in_parent, require_resource_access
 from app.api.routes._activity import _DEFAULT_LIMIT, _MAX_LIMIT, build_activity
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
+from app.core.time import utcnow
 from app.domain.orders.models import Order, OrderEntry
 from app.domain.stock.models import StockEntry
 from app.domain.orders.schemas import (
@@ -174,7 +174,7 @@ def archive_order(order_id: UUID, db: DbSession, ws: CurrentWorkspace, user: Cur
     o = require_resource_access(
         db, Order, order_id, ws=ws, user=user, role="admin", label="order"
     )
-    o.archived_at = datetime.now(timezone.utc)
+    o.archived_at = utcnow()
     return ok(None, "archived")
 
 

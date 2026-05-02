@@ -8,11 +8,14 @@
 # hold (matches the green-only rule baked into pr-watcher.md):
 #
 #   1. not draft, not from a fork
-#   2. mergeable == "MERGEABLE" (UNKNOWN / CONFLICTING are out)
-#   3. every status check except the legacy `review` / `claude-review`
+#   2. author is `matescb` (the human author the watcher is for —
+#      dependabot / renovate / other bots are out of scope; bump the
+#      author allow-list here if you onboard another human reviewer)
+#   3. mergeable == "MERGEABLE" (UNKNOWN / CONFLICTING are out)
+#   4. every status check except the legacy `review` / `claude-review`
 #      one resolves to SUCCESS / SKIPPED / NEUTRAL — anything else
 #      (PENDING / IN_PROGRESS / FAILURE / CANCELLED / etc.) disqualifies
-#   4. no existing PR comment carries the sticky marker
+#   5. no existing PR comment carries the sticky marker
 #      `<!-- claude-review:<headRefOid> -->` (i.e. not already reviewed
 #      at this exact SHA)
 #
@@ -49,11 +52,12 @@ sleep 4
 # (sub-100 open PRs). If it ever becomes slow, drop --json comments
 # here and re-check the marker per-candidate at the end.
 gh pr list --state open --limit 100 \
-  --json number,headRefOid,title,isDraft,isCrossRepository,mergeable,statusCheckRollup,comments \
+  --json number,headRefOid,title,isDraft,isCrossRepository,mergeable,statusCheckRollup,comments,author \
   --jq '
     .[]
     | select(.isDraft == false)
     | select(.isCrossRepository == false)
+    | select(.author.login == "matescb")
     | select(.mergeable == "MERGEABLE")
     | . as $pr
     | (

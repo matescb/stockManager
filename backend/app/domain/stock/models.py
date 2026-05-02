@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 
 from sqlalchemy import (
     Column,
@@ -16,11 +15,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID
 
+from app.core.time import utcnow
 from app.infra.db import Base
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 class StockEntry(Base):
@@ -86,6 +82,6 @@ class StockEntry(Base):
     # set by the scan-import flow. Used to recognise re-scans so the
     # operator can consume from this bag's lot instead of double-importing.
     bag_signature = Column(String(64), nullable=True)
-    occurred_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    occurred_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)

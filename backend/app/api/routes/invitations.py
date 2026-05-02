@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import hmac as _hmac
 import secrets
-from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
@@ -22,6 +21,7 @@ from app.core.deps import (
 from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter
 from app.core.responses import ok
+from app.core.time import utcnow
 from app.domain.audit.service import log as _audit_log
 from app.domain.users.models import User
 from app.domain.workspaces.models import Workspace, WorkspaceInvitation, WorkspaceMember
@@ -367,7 +367,7 @@ def accept_invitation(request: Request, payload: AcceptIn, db: DbSession, user: 
         )
         db.add(new_member)
     inv.status = "accepted"
-    inv.accepted_at = datetime.now(timezone.utc)
+    inv.accepted_at = utcnow()
     inv.accepted_by = user_id
 
     # Wrap the membership insert in a savepoint so that two concurrent
@@ -404,7 +404,7 @@ def accept_invitation(request: Request, payload: AcceptIn, db: DbSession, user: 
         fresh_inv = db.get(WorkspaceInvitation, inv_id)
         if fresh_inv and fresh_inv.status != "accepted":
             fresh_inv.status = "accepted"
-            fresh_inv.accepted_at = datetime.now(timezone.utc)
+            fresh_inv.accepted_at = utcnow()
             fresh_inv.accepted_by = user_id
 
     workspace = db.get(Workspace, inv_workspace_id)

@@ -106,9 +106,9 @@ describe("DataTable (DOM)", () => {
         onRowClick={onRowClick}
       />,
     );
-    // When onRowClick is set, data <tr> elements get role="button".
-    const rowBtns = screen.getAllByRole("button", { name: /^Open /i });
-    fireEvent.keyDown(rowBtns[0], { key: "Enter" });
+    // When onRowClick is set, data <tr> elements get tabIndex=0 and an aria-label.
+    const dataRows = screen.getAllByRole("row").slice(1);
+    fireEvent.keyDown(dataRows[0], { key: "Enter" });
     expect(onRowClick).toHaveBeenCalledWith(ROWS[0]);
   });
 
@@ -122,8 +122,8 @@ describe("DataTable (DOM)", () => {
         onRowClick={onRowClick}
       />,
     );
-    const rowBtns = screen.getAllByRole("button", { name: /^Open /i });
-    fireEvent.keyDown(rowBtns[0], { key: " " });
+    const dataRows = screen.getAllByRole("row").slice(1);
+    fireEvent.keyDown(dataRows[0], { key: " " });
     expect(onRowClick).toHaveBeenCalledWith(ROWS[0]);
   });
 
@@ -140,10 +140,26 @@ describe("DataTable (DOM)", () => {
     );
     // The checkbox <td> stops keydown propagation for Enter/Space, so
     // firing Space on the td (not the row itself) should NOT reach the row handler.
-    const rowBtns = screen.getAllByRole("button", { name: /^Open /i });
-    const checkboxTd = rowBtns[0].querySelector("td");
+    const dataRows = screen.getAllByRole("row").slice(1);
+    const checkboxTd = dataRows[0].querySelector("td");
     fireEvent.keyDown(checkboxTd!, { key: " " });
     expect(onRowClick).not.toHaveBeenCalled();
+  });
+
+  it("respects initialSearch prop on first render", () => {
+    render(
+      <DataTable<Row>
+        rows={ROWS}
+        columns={COLUMNS}
+        rowKey={(r) => r.id}
+        initialSearch="ban"
+      />,
+    );
+    const input = screen.getByRole<HTMLInputElement>("textbox");
+    expect(input.value).toBe("ban");
+    expect(screen.getByText("Banana")).toBeDefined();
+    expect(screen.queryByText("Apple")).toBeNull();
+    expect(screen.queryByText("Cherry")).toBeNull();
   });
 
   it("multi-select preserves selection set across a row refetch (FE2-007)", () => {

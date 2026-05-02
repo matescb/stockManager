@@ -162,6 +162,17 @@ them, that's the bug.
   / `SENTRY_ORG` / `SENTRY_PROJECT` are GitHub Actions secrets — do **not**
   add them back to `web/Dockerfile.prod` ARG/ENV or `docker-compose.prod.yml`
   build args (INFRA2-010).
+- **Base images are digest-pinned (INFRA2-015).** `backend/Dockerfile` and
+  `web/Dockerfile.prod` use `FROM image@sha256:<digest>` — do **not** loosen
+  to a bare tag. Digests are rotated by Dependabot weekly (`.github/dependabot.yml`).
+  To bump manually: `curl -s https://registry.hub.docker.com/v2/repositories/library/<image>/tags/<tag>
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['digest'])"`,
+  then update the `@sha256:` line and the `# Digest pinned on` comment.
+- **Sourcemaps are only emitted in CI.** `web/vite.config.ts` gates
+  `build.sourcemap` on `SENTRY_AUTH_TOKEN` presence (INFRA2-015). VPS builds
+  without the token produce no `.map` files, so the Docker build cache is
+  clean. The `find -name '*.map' -delete` in `web/Dockerfile.prod` remains
+  as belt-and-braces for edge-case local builds.
 
 ## Frontend conventions worth preserving
 

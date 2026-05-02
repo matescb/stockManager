@@ -122,6 +122,7 @@ from app.api.routes import (
 )
 from app.core.config import settings
 from app.core.deps import require_member_for_writes
+from app.core.request_id import RequestIdMiddleware
 from app.core.responses import http_exception_handler, validation_exception_handler
 
 _is_prod = settings().APP_ENV == "prod"
@@ -306,19 +307,34 @@ class CsrfOriginMiddleware(BaseHTTPMiddleware):
             request.headers.get("referer")
         )
         if origin is None or origin not in self._allowed:
+            # RequestIdMiddleware runs outside us (added last → outermost),
+            # so request.state.request_id is set by the time we get here.
+            # Surface it in the body and as a response header so the rejected
+            # call is still correlatable in logs/Sentry.
+            rid = getattr(request.state, "request_id", None)
+            content: dict[str, object] = {
+                "data": None,
+                "status": {
+                    "category": "forbidden",
+                    "message": "cross-origin request blocked",
+                },
+            }
+            headers: dict[str, str] = {}
+            if rid:
+                content["request_id"] = rid
+                headers["X-Request-Id"] = rid
             return JSONResponse(
                 status_code=403,
-                content={
-                    "data": None,
-                    "status": {
-                        "category": "forbidden",
-                        "message": "cross-origin request blocked",
-                    },
-                },
+                content=content,
+                headers=headers or None,
             )
         return await call_next(request)
 
 
+# Starlette stacks middleware LIFO: the LAST add_middleware() call becomes
+# the OUTERMOST wrapper. RequestIdMiddleware must wrap CORS / CSRF so that
+# request.state.request_id is set even when those middlewares short-circuit
+# the request (CSRF 403, CORS preflight). BE2-012 / issue #61.
 app.add_middleware(
     CsrfOriginMiddleware,
     allowed_origins=settings().cors_origin_list,
@@ -332,6 +348,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Added last → outermost. Sees every request before CORS/CSRF run.
+app.add_middleware(RequestIdMiddleware)
 
 app.add_exception_handler(HTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
