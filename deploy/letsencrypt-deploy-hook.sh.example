@@ -1,0 +1,28 @@
+#!/bin/sh
+# letsencrypt-deploy-hook.sh.example
+#
+# PURPOSE
+#   Tell the in-container web server to reload its TLS certificate after
+#   certbot renews it successfully.
+#
+# STATUS: NO-OP TODAY
+#   TLS currently terminates at the host Apache 2.4 vhost.  Certbot's
+#   Debian package already reloads Apache automatically via
+#   /etc/letsencrypt/renewal-hooks/deploy/apache.  This script is only
+#   needed if TLS ever moves into the Docker stack (i.e. nginx inside
+#   the "web" container holds the cert).
+#
+# HOW TO INSTALL (only when TLS lives in the Docker stack)
+#   sudo cp /srv/stockmanager/deploy/letsencrypt-deploy-hook.sh.example \
+#           /etc/letsencrypt/renewal-hooks/deploy/stockmanager-reload.sh
+#   sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/stockmanager-reload.sh
+#   sudo chown root:root /etc/letsencrypt/renewal-hooks/deploy/stockmanager-reload.sh
+#
+# VALIDATE
+#   sudo certbot renew --dry-run \
+#     --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/stockmanager-reload.sh
+
+set -e
+
+docker compose -f /srv/stockmanager/docker-compose.prod.yml \
+    exec web nginx -s reload
