@@ -3,11 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import or_, select
 
+from app.api._helpers import require_resource_access
 from app.api.routes._activity import build_activity
-from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
+from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.domain.orders.models import Order, OrderEntry
 from app.domain.stock.models import StockEntry
@@ -140,7 +141,7 @@ def create_order(payload: OrderCreateIn, db: DbSession, ws: CurrentWorkspace, us
                 updated_by=user.id,
             )
         )
-    db.commit()
+    db.flush()
     entries = _entries_for(db, ws.id, o.id)
     return ok(_serialize(o, totals=_totals(entries)))
 
@@ -161,24 +162,28 @@ def patch_order(order_id: UUID, payload: OrderPatchIn, db: DbSession, ws: Curren
     for k, v in payload.model_dump(exclude_unset=True).items():
         setattr(o, k, v)
     o.updated_by = user.id
-    db.commit()
     entries = _entries_for(db, ws.id, o.id)
     return ok(_serialize(o, totals=_totals(entries)))
 
 
-@router.post("/{order_id}/archive", dependencies=[Depends(require_role("admin"))])
-def archive_order(order_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    o = _get_order(db, ws.id, order_id)
+# Archive/restore — `require_resource_access` enforces resource-existence
+# BEFORE the role check (BE2-009). A non-admin probing a foreign
+# workspace's order_id gets 404, not 403.
+@router.post("/{order_id}/archive")
+def archive_order(order_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+    o = require_resource_access(
+        db, Order, order_id, ws=ws, user=user, role="admin", label="order"
+    )
     o.archived_at = datetime.now(timezone.utc)
-    db.commit()
     return ok(None, "archived")
 
 
-@router.post("/{order_id}/restore", dependencies=[Depends(require_role("admin"))])
-def restore_order(order_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    o = _get_order(db, ws.id, order_id)
+@router.post("/{order_id}/restore")
+def restore_order(order_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+    o = require_resource_access(
+        db, Order, order_id, ws=ws, user=user, role="admin", label="order"
+    )
     o.archived_at = None
-    db.commit()
     return ok(None, "restored")
 
 
@@ -210,7 +215,7 @@ def add_entry(order_id: UUID, payload: OrderEntryIn, db: DbSession, ws: CurrentW
     db.add(e)
     if o.status == "draft":
         o.status = "open"
-    db.commit()
+    db.flush()
     return ok(_serialize_entry(e))
 
 
@@ -230,7 +235,6 @@ def patch_entry(order_id: UUID, entry_id: UUID, payload: OrderEntryPatch, db: Db
     for k, v in data.items():
         setattr(e, k, v)
     e.updated_by = user.id
-    db.commit()
     return ok(_serialize_entry(e))
 
 
@@ -243,7 +247,6 @@ def del_entry(order_id: UUID, entry_id: UUID, db: DbSession, ws: CurrentWorkspac
     if e.quantity_received > 0:
         raise HTTPException(status_code=400, detail="cannot delete entry with received stock")
     db.delete(e)
-    db.commit()
     return ok(None, "deleted")
 
 
@@ -252,9 +255,10 @@ def receive_order(order_id: UUID, payload: ReceiveIn, db: DbSession, ws: Current
     o = _get_order(db, ws.id, order_id)
     try:
         result = receive(db, workspace_id=ws.id, user_id=user.id, order=o, payload=payload)
-        db.commit()
     except OrderError as exc:
-        db.rollback()
+        # Re-raise as a 4xx — `get_db` rolls back automatically when
+        # the route raises (BE2-010), so we don't need an explicit
+        # db.rollback() here.
         raise HTTPException(status_code=400, detail=str(exc))
     return ok(result)
 

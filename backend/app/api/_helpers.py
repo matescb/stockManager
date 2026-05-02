@@ -7,6 +7,8 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy import select
 
+from app.core.deps import _ROLE_RANK, _membership_role
+
 
 def assert_in_workspace(
     db,
@@ -76,3 +78,71 @@ def assert_polymorphic_in_workspace(
             detail=f"unknown object_type: {object_type}",
         )
     return assert_in_workspace(db, Model, object_id, workspace_id, label=object_type)
+
+
+def require_resource_access(
+    db: Any,
+    Model: Any,
+    id_: UUID,
+    *,
+    user: Any,
+    ws: Any,
+    role: str = "member",
+    label: str | None = None,
+) -> Any:
+    """Resolve a workspace-owned resource by id and gate on the caller's
+    role — in the right order so the response status leaks no info.
+
+    The order is the whole point (BE2-009):
+
+      1. existence in the DB
+      2. membership in the caller's current workspace
+      3. role check for that workspace
+
+    Failing (1) or (2) → 404. The caller is told nothing about whether
+    the row exists; the response is identical for "no such id" and "id
+    in another workspace". Failing (3) → 403: the row exists *in this
+    workspace*, the caller just lacks the named role for it.
+
+    The previous shape used `dependencies=[Depends(require_role("admin"))]`,
+    which runs the role check BEFORE the per-resource lookup. A member
+    probing an archive endpoint with a foreign workspace's UUID got 403
+    — an oracle telling the prober "this UUID exists somewhere; you
+    just lack the role". Resource-first + role-second closes that.
+
+    Usage::
+
+        @router.post("/{part_id}/archive")
+        def archive(part_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+            p = require_resource_access(db, Part, part_id, ws=ws, user=user, role="admin")
+            ...
+
+    Generic over `Model` — works for Part / Project / Order / Build /
+    StorageLocation. The 404 message uses `label` (or the model's
+    tablename) so the client gets a recognisable string.
+    """
+    floor = _ROLE_RANK[role]
+    name = label or getattr(Model, "__tablename__", "row")
+
+    # 1) existence + 2) workspace match — both fold into a single 404.
+    # We call `db.get` (unscoped) and follow with the workspace equality
+    # check; the 404 branch covers both "no such row" and "row in
+    # another workspace" with the same response so a foreign-id probe
+    # can't distinguish them.
+    row = db.get(Model, id_)
+    if row is None or getattr(row, "workspace_id", None) != ws.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{name} not found",
+        )
+    # 3) role check on the (now-known-to-be-in-workspace) resource. 403
+    # here is correct — it tells the caller "you exist in this
+    # workspace, the row exists, but you lack `role`" without leaking
+    # anything about other workspaces.
+    rank = _ROLE_RANK.get(_membership_role(db, user, ws), 0)
+    if rank < floor:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"requires role {role}+",
+        )
+    return row

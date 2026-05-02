@@ -3,11 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import or_, select
 
-from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
+from app.api._helpers import require_resource_access
+from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.domain.storage.models import StorageLocation
 from app.domain.stock.service import (
@@ -82,7 +83,7 @@ def create_storage(payload: StorageIn, db: DbSession, ws: CurrentWorkspace, user
         updated_by=user.id,
     )
     db.add(s)
-    db.commit()
+    db.flush()
     return ok(_serialize(s))
 
 
@@ -104,23 +105,27 @@ def patch_storage(storage_id: UUID, payload: StoragePatch, db: DbSession, ws: Cu
     for k, v in payload.model_dump(exclude_unset=True).items():
         setattr(s, k, v)
     s.updated_by = user.id
-    db.commit()
     return ok(_serialize(s))
 
 
-@router.post("/{storage_id}/archive", dependencies=[Depends(require_role("admin"))])
-def archive_storage(storage_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    s = _get(db, ws.id, storage_id)
+# Archive/restore — `require_resource_access` enforces resource-existence
+# BEFORE the role check (BE2-009). A non-admin probing a foreign
+# workspace's storage_id gets 404, not 403.
+@router.post("/{storage_id}/archive")
+def archive_storage(storage_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+    s = require_resource_access(
+        db, StorageLocation, storage_id, ws=ws, user=user, role="admin", label="storage",
+    )
     s.archived_at = datetime.now(timezone.utc)
-    db.commit()
     return ok(None, "archived")
 
 
-@router.post("/{storage_id}/restore", dependencies=[Depends(require_role("admin"))])
-def restore_storage(storage_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    s = _get(db, ws.id, storage_id)
+@router.post("/{storage_id}/restore")
+def restore_storage(storage_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+    s = require_resource_access(
+        db, StorageLocation, storage_id, ws=ws, user=user, role="admin", label="storage",
+    )
     s.archived_at = None
-    db.commit()
     return ok(None, "restored")
 
 

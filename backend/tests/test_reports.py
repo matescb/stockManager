@@ -115,3 +115,58 @@ def test_expiring_lots(authed):
     names = [row["name"] for row in r]
     assert "soon" in names
     assert "later" not in names
+
+
+# ---------------------------------------------------------------------------
+# BE2-005 cross-check — `bulk_current_quantities` is the only stock
+# aggregation path. Reports built on it must agree with the per-part
+# read endpoints. If the bulk helper drifts from the SUM(delta) shape
+# this is what catches it.
+# ---------------------------------------------------------------------------
+
+
+def test_low_stock_on_hand_matches_part_detail(authed):
+    """The low-stock report's `on_hand` column must match
+    /api/parts/{id}.on_hand for the same part. They share a common
+    aggregation now (bulk_current_quantities) — divergence here means
+    the bulk helper drifted from current_quantity()."""
+    c = authed
+    p = c.post(
+        "/api/parts",
+        json={"name": "p-cross", "part_type": "local", "low_stock_report_quantity": 100},
+    ).json()["data"]["id"]
+    s = c.post("/api/storage", json={"name": "Shelf"}).json()["data"]["id"]
+    c.post("/api/stock/add", json={"part_id": p, "quantity": 25, "storage_location_id": s})
+
+    rep_row = next(
+        r for r in c.get("/api/reports/low-stock").json()["data"]
+        if r["part_id"] == p
+    )
+    detail = c.get(f"/api/parts/{p}").json()["data"]
+    assert rep_row["on_hand"] == detail["on_hand"], (rep_row, detail)
+
+
+def test_stock_value_per_lot_matches_lot_detail(authed):
+    """The stock-value report aggregates per-lot via
+    bulk_current_quantities_by_lot. The lot detail endpoint reads
+    current_quantity directly. They must agree per lot."""
+    c = authed
+    p = c.post("/api/parts", json={"name": "v-cross", "part_type": "local"}).json()["data"]["id"]
+    s = c.post("/api/storage", json={"name": "Shelf"}).json()["data"]["id"]
+    add = c.post(
+        "/api/stock/add",
+        json={
+            "part_id": p, "quantity": 7, "storage_location_id": s,
+            "price": {"mode": "per_component", "unit_price": "1.00", "currency": "USD"},
+            "lot": {"name": "v-lot"},
+        },
+    ).json()["data"]
+    lot_id = add["lot_id"]
+
+    val = c.get("/api/reports/stock-value").json()["data"]
+    by_part = {b["part_id"]: b for b in val["by_part"]}
+    assert p in by_part, val
+    assert by_part[p]["on_hand"] == 7
+
+    detail = c.get(f"/api/lots/{lot_id}").json()["data"]
+    assert detail["current_quantity"] == 7

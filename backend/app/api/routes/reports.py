@@ -6,7 +6,7 @@ from datetime import date, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.core.deps import CurrentWorkspace, DbSession
 from app.core.responses import ok
@@ -14,7 +14,10 @@ from app.domain.builds.service import shortage_analysis
 from app.domain.lots.models import Lot
 from app.domain.parts.models import Part
 from app.domain.projects.models import Project
-from app.domain.stock.models import StockEntry
+from app.domain.stock.service import (
+    bulk_current_quantities,
+    bulk_current_quantities_by_lot,
+)
 
 router = APIRouter()
 
@@ -31,20 +34,15 @@ def low_stock(db: DbSession, ws: CurrentWorkspace):
             .where(Part.low_stock_report_quantity.is_not(None))
         ).scalars()
     )
-    on_hand_rows = db.execute(
-        select(StockEntry.part_id, func.coalesce(func.sum(StockEntry.quantity_delta), 0))
-        .where(StockEntry.workspace_id == ws.id)
-        .where(StockEntry.status == "on_hand")
-        .group_by(StockEntry.part_id)
-    ).all()
-    on_hand = {row[0]: int(row[1]) for row in on_hand_rows}
-    reserved_rows = db.execute(
-        select(StockEntry.part_id, func.coalesce(func.sum(StockEntry.quantity_delta), 0))
-        .where(StockEntry.workspace_id == ws.id)
-        .where(StockEntry.status == "reserved")
-        .group_by(StockEntry.part_id)
-    ).all()
-    reserved = {row[0]: int(row[1]) for row in reserved_rows}
+    # Funnel both per-part aggregations through bulk_current_quantities so
+    # the "current = SUM(delta)" invariant lives in one place (BE2-005).
+    part_ids = [p.id for p in parts]
+    on_hand = bulk_current_quantities(
+        db, workspace_id=ws.id, part_ids=part_ids, status="on_hand"
+    )
+    reserved = bulk_current_quantities(
+        db, workspace_id=ws.id, part_ids=part_ids, status="reserved"
+    )
 
     out = []
     for p in parts:
@@ -92,20 +90,15 @@ def stock_value(db: DbSession, ws: CurrentWorkspace):
     """Sum of (lot.purchase_unit_cost × current_qty_in_lot) across all
     on-hand stock, broken down by currency. Untaged lots (no purchase
     cost) are listed under value 0."""
-    # Per-lot current qty
-    lot_rows = db.execute(
-        select(StockEntry.lot_id, func.coalesce(func.sum(StockEntry.quantity_delta), 0))
-        .where(StockEntry.workspace_id == ws.id)
-        .where(StockEntry.status == "on_hand")
-        .where(StockEntry.lot_id.is_not(None))
-        .group_by(StockEntry.lot_id)
-    ).all()
+    # Per-lot current qty — single SQL via bulk_current_quantities_by_lot
+    # so the SUM-of-delta invariant lives in one place (BE2-005).
+    lot_qty = bulk_current_quantities_by_lot(db, workspace_id=ws.id)
     lots = {l.id: l for l in db.query(Lot).filter(Lot.workspace_id == ws.id).all()}
     parts = {p.id: p for p in db.query(Part).filter(Part.workspace_id == ws.id).all()}
 
     by_currency: dict[str | None, float] = defaultdict(float)
     by_part: dict[UUID, dict] = {}
-    for lot_id, qty in lot_rows:
+    for lot_id, qty in lot_qty.items():
         qty = int(qty)
         if qty <= 0:
             continue
@@ -151,16 +144,7 @@ def expiring_lots(
     """Lots expiring within the next `days` days (or already expired) that
     still have on-hand stock."""
     cutoff = date.today() + timedelta(days=days)
-    lot_qty = {
-        row[0]: int(row[1])
-        for row in db.execute(
-            select(StockEntry.lot_id, func.coalesce(func.sum(StockEntry.quantity_delta), 0))
-            .where(StockEntry.workspace_id == ws.id)
-            .where(StockEntry.status == "on_hand")
-            .where(StockEntry.lot_id.is_not(None))
-            .group_by(StockEntry.lot_id)
-        ).all()
-    }
+    lot_qty = bulk_current_quantities_by_lot(db, workspace_id=ws.id)
     rows = list(
         db.execute(
             select(Lot)

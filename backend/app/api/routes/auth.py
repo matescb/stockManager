@@ -82,7 +82,6 @@ def signup(request: Request, payload: SignupIn, response: Response, db: DbSessio
 
     sess = create_session_row(db, user.id)
     user.last_login_at = datetime.now(timezone.utc)
-    db.commit()
 
     _set_session_cookie(response, sess.token)
     log.info("signup", extra={"user_id": str(user.id), "workspace_id": str(ws.id)})
@@ -102,7 +101,6 @@ def login(request: Request, payload: LoginIn, response: Response, db: DbSession)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid credentials")
     sess = create_session_row(db, user.id)
     user.last_login_at = datetime.now(timezone.utc)
-    db.commit()
     _set_session_cookie(response, sess.token)
     log.info("login", extra={"user_id": str(user.id)})
     return ok({"user": {"id": str(user.id), "email": user.email, "name": user.name}})
@@ -114,7 +112,6 @@ def logout(request: Request, response: Response, db: DbSession):
     token = request.cookies.get(cookie_name)
     if token:
         revoke_session(db, token)
-        db.commit()
     response.delete_cookie(cookie_name, path="/")
     log.info("logout")
     return ok(None, "logged out")

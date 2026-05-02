@@ -42,7 +42,7 @@ def list_tags(
 def create(payload: TagIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     t = Tag(workspace_id=ws.id, name=payload.name, color=payload.color, created_by=user.id, updated_by=user.id)
     db.add(t)
-    db.commit()
+    db.flush()
     return ok({"id": str(t.id), "name": t.name, "color": t.color})
 
 
@@ -83,7 +83,7 @@ def link(payload: TagLinkIn, db: DbSession, ws: CurrentWorkspace, user: CurrentU
         updated_by=user.id,
     )
     db.add(tl)
-    db.commit()
+    db.flush()
     return ok({"id": str(tl.id)})
 
 
@@ -96,7 +96,6 @@ def unlink(link_id: UUID, db: DbSession, ws: CurrentWorkspace):
     ).scalar_one_or_none()
     if row is not None:
         db.delete(row)
-        db.commit()
     return ok(None, "deleted")
 
 

@@ -102,7 +102,6 @@ def create_or_update(payload: CustomFieldIn, db: DbSession, ws: CurrentWorkspace
             # manual or provider-write-with-same-value
             existing.value = new_value
         existing.updated_by = user.id
-        db.commit()
         return ok(_serialize(existing))
 
     cf = CustomField(
@@ -116,7 +115,7 @@ def create_or_update(payload: CustomFieldIn, db: DbSession, ws: CurrentWorkspace
         updated_by=user.id,
     )
     db.add(cf)
-    db.commit()
+    db.flush()
     return ok(_serialize(cf))
 
 
@@ -129,7 +128,6 @@ def delete(cf_id: UUID, db: DbSession, ws: CurrentWorkspace):
     ).scalar_one_or_none()
     if row is not None:
         db.delete(row)
-        db.commit()
     return ok(None, "deleted")
 
 
@@ -147,5 +145,4 @@ def restore_override(cf_id: UUID, db: DbSession, ws: CurrentWorkspace, user: Cur
     row.original_value = None
     row.source = "provider"
     row.updated_by = user.id
-    db.commit()
     return ok(_serialize(row))

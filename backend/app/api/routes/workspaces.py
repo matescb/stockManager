@@ -46,7 +46,6 @@ def create_workspace(payload: WorkspaceCreateIn, user: CurrentUser, db: DbSessio
     db.add(ws)
     db.flush()
     db.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="owner", status="active"))
-    db.commit()
     return ok({"id": str(ws.id), "name": ws.name})
 
 
@@ -142,7 +141,6 @@ def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace):
     # caller explicitly asks for a fresh one while it's enabled.
     if ws.catalog_enabled and (regenerate or not ws.catalog_token or not was_enabled):
         ws.catalog_token = secrets.token_urlsafe(32)
-    db.commit()
     return ok(_serialize_workspace(ws))
 
 
@@ -210,7 +208,6 @@ def patch_member(member_id: UUID, payload: MemberPatch, db: DbSession, ws: Curre
             raise HTTPException(status_code=400, detail="cannot demote the last owner")
     for k, v in payload.model_dump(exclude_unset=True).items():
         setattr(m, k, v)
-    db.commit()
     return ok({"id": str(m.id), "role": m.role, "status": m.status})
 
 
@@ -224,7 +221,6 @@ def remove_member(member_id: UUID, db: DbSession, ws: CurrentWorkspace, user: Cu
     if m.role == "owner" and _active_owner_count(db, ws.id) <= 1:
         raise HTTPException(status_code=400, detail="cannot remove the last owner")
     db.delete(m)
-    db.commit()
     return ok(None, "removed")
 
 

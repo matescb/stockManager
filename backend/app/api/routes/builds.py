@@ -3,11 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
+from app.api._helpers import require_resource_access
 from app.api.routes._activity import build_activity
-from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
+from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.domain.builds.models import Build
 from app.domain.builds.schemas import BuildCreateIn, BuildPatchIn, ConsumeIn
@@ -85,14 +86,11 @@ def create_build(payload: BuildCreateIn, db: DbSession, ws: CurrentWorkspace, us
     )
     db.add(b)
     db.flush()
-    try:
-        apply_reservations(
-            db, workspace_id=ws.id, user_id=user.id, build=b, project=project
-        )
-    except Exception:
-        db.rollback()
-        raise
-    db.commit()
+    # `get_db` rolls back on any raised exception (BE2-010), so the
+    # explicit try/except db.rollback() shape becomes redundant here.
+    apply_reservations(
+        db, workspace_id=ws.id, user_id=user.id, build=b, project=project
+    )
     return ok(_serialize(b))
 
 
@@ -133,24 +131,28 @@ def patch_build(build_id: UUID, payload: BuildPatchIn, db: DbSession, ws: Curren
             db, workspace_id=ws.id, user_id=user.id, build=b, project=project
         )
 
-    db.commit()
     return ok(_serialize(b))
 
 
-@router.post("/{build_id}/archive", dependencies=[Depends(require_role("admin"))])
+# Archive/restore — `require_resource_access` enforces resource-existence
+# BEFORE the role check (BE2-009). A non-admin probing a foreign
+# workspace's build_id gets 404, not 403.
+@router.post("/{build_id}/archive")
 def archive_build(build_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
-    b = _get_build(db, ws.id, build_id)
+    b = require_resource_access(
+        db, Build, build_id, ws=ws, user=user, role="admin", label="build"
+    )
     release_reservations(db, workspace_id=ws.id, user_id=user.id, build=b)
     b.archived_at = datetime.now(timezone.utc)
-    db.commit()
     return ok(None, "archived")
 
 
-@router.post("/{build_id}/restore", dependencies=[Depends(require_role("admin"))])
-def restore_build(build_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    b = _get_build(db, ws.id, build_id)
+@router.post("/{build_id}/restore")
+def restore_build(build_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+    b = require_resource_access(
+        db, Build, build_id, ws=ws, user=user, role="admin", label="build"
+    )
     b.archived_at = None
-    db.commit()
     return ok(None, "restored")
 
 
@@ -164,9 +166,9 @@ def consume_build(
         result = consume(
             db, workspace_id=ws.id, user_id=user.id, build=b, project=project, payload=payload
         )
-        db.commit()
     except BuildError as exc:
-        db.rollback()
+        # `get_db` rolls back on raise (BE2-010), so dropping the
+        # explicit db.rollback() here is safe.
         raise HTTPException(status_code=400, detail=str(exc))
     return ok(result)
 

@@ -115,7 +115,9 @@ def create_invitation(
         invited_by=user.id,
     )
     db.add(inv)
-    db.commit()
+    # Flush so the Python-side `created_at = default=_utcnow` populates
+    # before _serialize reads it. The dep commits on clean exit.
+    db.flush()
     return ok(_serialize(inv, plaintext_token=plaintext))
 
 
@@ -144,7 +146,6 @@ def revoke_invitation(invitation_id: UUID, db: DbSession, ws: CurrentWorkspace):
     if inv.status != "pending":
         raise HTTPException(status_code=400, detail=f"cannot revoke a {inv.status} invitation")
     inv.status = "revoked"
-    db.commit()
     return ok(None, "revoked")
 
 
@@ -207,6 +208,5 @@ def accept_invitation(request: Request, payload: AcceptIn, db: DbSession, user: 
     inv.status = "accepted"
     inv.accepted_at = datetime.now(timezone.utc)
     inv.accepted_by = user.id
-    db.commit()
     ws = db.get(Workspace, inv.workspace_id)
     return ok({"workspace_id": str(inv.workspace_id), "workspace_name": ws.name if ws else None, "role": inv.role})
