@@ -187,6 +187,7 @@ def patch_order(order_id: UUID, payload: OrderPatchIn, db: DbSession, ws: Curren
 @router.post("/{order_id}/archive")
 def archive_order(order_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     from sqlalchemy import func, select as sa_select
+
     from app.domain.attachments.models import Attachment
     from app.domain.custom_fields.models import CustomField as CF
     from app.domain.tags.models import TagLink

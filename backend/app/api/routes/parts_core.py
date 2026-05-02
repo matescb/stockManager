@@ -299,6 +299,7 @@ def archive_part(
     user: CurrentUser,
 ):
     from sqlalchemy import func, select as sa_select
+
     from app.domain.attachments.models import Attachment
     from app.domain.custom_fields.models import CustomField as CF
     from app.domain.tags.models import TagLink
@@ -630,7 +631,7 @@ def part_activity(
         .where(StockEntry.part_id == p.id)
     )
     if cursor_at is not None and before_id is not None:
-        from sqlalchemy import or_, and_
+        from sqlalchemy import and_, or_
         stmt = stmt.where(
             or_(
                 StockEntry.occurred_at < cursor_at,

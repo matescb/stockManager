@@ -124,6 +124,7 @@ def patch_project(project_id: UUID, payload: ProjectPatchIn, db: DbSession, ws: 
 @router.post("/{project_id}/archive")
 def archive_project(project_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     from sqlalchemy import func, select as sa_select
+
     from app.domain.attachments.models import Attachment
     from app.domain.custom_fields.models import CustomField as CF
     from app.domain.tags.models import TagLink
