@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Generic, TypedDict, TypeVar, cast
 
 from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse
@@ -10,12 +10,70 @@ from app.core.logging import get_logger
 _log = get_logger(__name__)
 
 
-def ok(data: Any = None, message: str = "OK") -> dict[str, Any]:
-    return {"data": data, "status": {"category": "ok", "message": message}}
+# ---------------------------------------------------------------------------
+# Typed envelope (CQ-007 / issue #123).
+#
+# The `{data, status}` API envelope is a hard invariant — see CLAUDE.md
+# and `docs/ARCHITECTURE.md` § API conventions. Before this change the
+# helpers returned `dict[str, Any]`, which meant route signatures lost
+# all information about *what* `data` actually was. The new generic
+# `Envelope[T]` annotation is purely a typing aid: at runtime the
+# helpers still return a plain ``dict`` so error paths can spread
+# unknown keys (e.g. ``existing_id`` on 409) onto the top level without
+# tripping a strict schema.
+#
+# This is intentionally a `TypedDict` rather than a Pydantic
+# `BaseModel`:
+#  * runtime cost stays at the dict level — no validation, no
+#    serialization round-trip,
+#  * OpenAPI doesn't render an opaque `Envelope` schema across every
+#    untyped route (we'd lose the existing per-endpoint shape info),
+#  * the ``message`` extension on `Status` lets us extend the error
+#    payload with arbitrary keys (the http exception handler already
+#    spreads them).
+# ---------------------------------------------------------------------------
 
 
-def err(category: str, message: str, errors: list[dict] | None = None) -> dict[str, Any]:
-    body: dict[str, Any] = {"data": None, "status": {"category": category, "message": message}}
+T = TypeVar("T")
+
+
+class Status(TypedDict):
+    category: str
+    message: str
+
+
+class Envelope(TypedDict, Generic[T]):
+    data: T | None
+    status: Status
+
+
+# Concrete error-side envelope. Routes that surface structured 4xx
+# extras (e.g. ``existing_id`` on a 409 conflict) keep doing so via
+# ``raise HTTPException(detail={...})``; the http exception handler
+# spreads them onto the top level so we don't need to enumerate them
+# here. Annotated as ``dict[str, Any]`` to make that explicit.
+ErrorEnvelope = dict[str, Any]
+
+
+def ok(data: T | None = None, message: str = "OK") -> Envelope[T]:
+    """Wrap a payload in the standard `{data, status}` envelope.
+
+    Returns a plain dict at runtime; the `Envelope[T]` annotation is
+    purely for static analysis. Route handlers that already declare a
+    Pydantic ``*Out`` schema can annotate their return type as
+    ``Envelope[PartOut]`` (or similar) to propagate that shape.
+    """
+    return cast(
+        Envelope[T],
+        {"data": data, "status": {"category": "ok", "message": message}},
+    )
+
+
+def err(category: str, message: str, errors: list[dict] | None = None) -> ErrorEnvelope:
+    """Build an error envelope. Mirrors :func:`ok` but allows arbitrary
+    extra keys (the FastAPI exception handler spreads structured
+    ``detail`` dicts onto the top level)."""
+    body: ErrorEnvelope = {"data": None, "status": {"category": category, "message": message}}
     if errors is not None:
         body["errors"] = errors
     return body

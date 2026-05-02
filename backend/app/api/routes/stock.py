@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
-from app.core.responses import ok
+from app.core.responses import Envelope, ok
 from app.domain.stock.schemas import (
     AddStockIn,
     AdjustStockIn,
@@ -45,7 +45,9 @@ def _serialize_entry(e):
 
 
 @router.post("/add")
-def add(payload: AddStockIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+def add(
+    payload: AddStockIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser
+) -> Envelope[dict]:
     try:
         e = add_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
     except StockError as exc:
@@ -54,7 +56,9 @@ def add(payload: AddStockIn, db: DbSession, ws: CurrentWorkspace, user: CurrentU
 
 
 @router.post("/remove")
-def remove(payload: RemoveStockIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+def remove(
+    payload: RemoveStockIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser
+) -> Envelope[dict]:
     try:
         e = remove_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
     except StockError as exc:

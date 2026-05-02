@@ -23,7 +23,7 @@ from app.api.routes._parts_shared import (
 )
 from app.core.config import settings
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
-from app.core.responses import ok
+from app.core.responses import Envelope, ok
 from app.core.secrets import decrypt
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part, PartMetaMember, PartSubstitute
@@ -141,7 +141,7 @@ def list_parts(
     archived: bool = Query(default=False),
     mpn: str | None = Query(default=None),
     limit: int = Query(default=200, le=1000),
-):
+) -> Envelope[list[dict]]:
     stmt = select(Part).where(Part.workspace_id == ws.id)
     stmt = stmt.where(Part.archived_at.is_(None) if not archived else Part.archived_at.is_not(None))
     if mpn:
@@ -174,7 +174,9 @@ def list_parts(
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-def create_part(payload: PartIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+def create_part(
+    payload: PartIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser
+) -> Envelope[dict]:
     # Name defaults to MPN when blank — paste-an-MPN-and-go workflow.
     # At least one of the two has to be set; the partial unique index on
     # (workspace_id, mpn) enforces no-duplicate-MPN at the DB level, but
