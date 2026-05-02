@@ -320,6 +320,37 @@ sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
     exec backend alembic history
 ```
 
+### Debugging compose env safely
+
+To inspect what environment variables a running container actually received
+without printing the raw `.env.prod` file (which contains secrets):
+
+```bash
+# Show all env vars in the backend container — safe to read on screen
+sudo -u deploy docker inspect stockmanager-backend-1 \
+    | jq '.[0].Config.Env'
+```
+
+Since INFRA2-005 the backend container receives discrete `POSTGRES_*`
+variables and assembles `DATABASE_URL` at runtime.  The password therefore
+appears only in `POSTGRES_PASSWORD`, not inside a `DATABASE_URL=…` string.
+
+To preview what compose *would* interpolate into a compose file without
+actually starting containers, use `--no-interpolate`:
+
+```bash
+# Print the final compose YAML with all variable substitutions applied
+sudo -u deploy docker compose -f docker-compose.prod.yml \
+    --env-file .env.prod config
+
+# Print the *un-interpolated* compose YAML (shows ${VAR} placeholders)
+sudo -u deploy docker compose -f docker-compose.prod.yml config \
+    --no-interpolate
+```
+
+`--no-interpolate` is useful when you want to audit which variables are
+wired without accidentally leaking their values into terminal scroll-back.
+
 ### Changing env vars
 
 `.env.prod` is **not** in git and **not** in CI — it lives only at

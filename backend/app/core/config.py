@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import urllib.parse
 from functools import lru_cache
-from pydantic import Field, model_validator
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,7 +10,22 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     APP_ENV: str = "dev"
-    DATABASE_URL: str = "postgresql+psycopg://stockmgr:stockmgr@db:5432/stockmgr"
+    # DATABASE_URL may be supplied directly (dev / CI / test) or assembled
+    # at runtime from the discrete POSTGRES_* parts below (prod compose).
+    # The model_validator handles the assembly; if DATABASE_URL is given
+    # explicitly it wins unchanged — backward-compat with every existing
+    # TEST_DATABASE_URL caller and with docker-compose.yml (dev).
+    DATABASE_URL: str = ""
+
+    # Discrete Postgres connection parts.  Used by docker-compose.prod.yml
+    # instead of interpolating the password directly into DATABASE_URL,
+    # which would cause the password to appear verbatim in
+    # `docker inspect` output (INFRA2-005).
+    POSTGRES_USER: str = ""
+    POSTGRES_PASSWORD: str = ""
+    POSTGRES_DB: str = ""
+    POSTGRES_HOST: str = "db"
+    POSTGRES_PORT: str = "5432"
     SESSION_SECRET: str = "dev-secret-change-me"
     SESSION_COOKIE_NAME: str = "stockmgr_session"
     SESSION_LIFETIME_DAYS: int = 30
@@ -67,6 +83,34 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @model_validator(mode="after")
+    def _assemble_database_url(self) -> "Settings":
+        """Assemble DATABASE_URL from POSTGRES_* parts when not supplied.
+
+        This lets docker-compose.prod.yml pass discrete credentials instead
+        of interpolating the password into a single URL variable — which
+        would expose it verbatim in `docker inspect` output (INFRA2-005).
+
+        If DATABASE_URL is provided explicitly (dev .env, CI TEST_DATABASE_URL,
+        docker-compose.yml) it wins unchanged.  The assembled form uses
+        urllib.parse.quote to percent-encode special characters in the
+        password (e.g. @, :, /).
+        """
+        if not self.DATABASE_URL:
+            if not all([self.POSTGRES_USER, self.POSTGRES_PASSWORD, self.POSTGRES_DB]):
+                # Fall back to the dev default so unit tests that don't set
+                # any DB env at all still get a usable URL.
+                self.DATABASE_URL = (
+                    "postgresql+psycopg://stockmgr:stockmgr@db:5432/stockmgr"
+                )
+            else:
+                encoded_pw = urllib.parse.quote(self.POSTGRES_PASSWORD, safe="")
+                self.DATABASE_URL = (
+                    f"postgresql+psycopg://{self.POSTGRES_USER}:{encoded_pw}"
+                    f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+                )
+        return self
 
     @model_validator(mode="after")
     def _require_workspace_secrets_key_in_prod(self) -> "Settings":

@@ -44,7 +44,15 @@ services:
         max-size: "10m"
         max-file: "5"
     environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      # INFRA2-005: pass discrete parts instead of the assembled URL so
+      # the password is not interpolated into DATABASE_URL and thus does
+      # not appear verbatim in `docker inspect` output.  Settings assembles
+      # the final URL at runtime (see backend/app/core/config.py).
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
       SESSION_SECRET: ${SESSION_SECRET}
       UPLOAD_DIR: /data/uploads
       APP_ENV: prod
