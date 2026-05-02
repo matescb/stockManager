@@ -123,3 +123,17 @@ def authed_client():
     c = TestClient(app)
     _signup(c)
     return c
+
+
+@pytest.fixture(autouse=True)
+def _mock_hibp(monkeypatch):
+    """Stub the HIBP k-anonymity check for all tests so no outbound HTTP
+    calls are made during the test suite run (SEC2-014).
+
+    Tests that specifically exercise the HIBP path (test_hibp.py) override
+    this fixture locally using their own httpx_mock / monkeypatch.
+    """
+    import unittest.mock as _mock
+
+    with _mock.patch("app.core.auth._hibp_check"):
+        yield
