@@ -18,6 +18,9 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    mem_limit: 2g
+    pids_limit: 512
+    oom_kill_disable: false
     logging:
       driver: json-file
       options:
@@ -38,6 +41,10 @@ services:
   backend:
     build: ./backend
     restart: unless-stopped
+    mem_limit: 1g
+    cpus: "1.5"
+    pids_limit: 512
+    oom_kill_disable: false
     logging:
       driver: json-file
       options:
@@ -146,6 +153,10 @@ services:
         VITE_SENTRY_TRACES_SAMPLE_RATE: ${VITE_SENTRY_TRACES_SAMPLE_RATE:-0.0}
         VITE_APP_VERSION: ${SENTRY_RELEASE:-}
     restart: unless-stopped
+    mem_limit: 256m
+    cpus: "0.5"
+    pids_limit: 128
+    oom_kill_disable: false
     logging:
       driver: json-file
       options:
