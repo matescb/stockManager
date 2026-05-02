@@ -73,7 +73,7 @@ def _alembic_upgrade_head(database_url: str) -> None:
     cfg = AlembicConfig(str(_BACKEND_ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(_BACKEND_ROOT / "alembic"))
     cfg.set_main_option("sqlalchemy.url", database_url)
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "heads")
 
 
 @pytest.fixture(scope="session", autouse=True)

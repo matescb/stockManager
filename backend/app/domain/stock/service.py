@@ -27,6 +27,20 @@ class StockError(Exception):
     pass
 
 
+class StockConflictError(StockError):
+    """Raised when a storage-location constraint blocks a stock mutation.
+
+    Attributes:
+        constraint: "single_part_only" | "existing_parts_only"
+        storage_location_id: the UUID of the conflicting location
+    """
+
+    def __init__(self, message: str, *, constraint: str, storage_location_id: UUID) -> None:
+        super().__init__(message)
+        self.constraint = constraint
+        self.storage_location_id = storage_location_id
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -280,6 +294,52 @@ def stock_for_storage(
     ]
 
 
+def _enforce_storage_constraints(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    storage: StorageLocation,
+    part_id: UUID,
+) -> None:
+    """Enforce single_part_only and existing_parts_only constraints using
+    current stock (positive on-hand balances), not historical row counts.
+
+    Must be called inside the advisory lock for (workspace_id, part_id) so
+    the read-check-write sequence is serialised.
+
+    Raises StockConflictError on violation.
+    """
+    if storage.single_part_only:
+        # Any part other than the one being added/moved-in currently has
+        # positive on-hand stock at this location?
+        current = stock_for_storage(db, workspace_id=workspace_id, storage_location_id=storage.id)
+        other_parts = {row["part_id"] for row in current if row["part_id"] != part_id}
+        if other_parts:
+            raise StockConflictError(
+                "destination is single-part-only and already holds a different part",
+                constraint="single_part_only",
+                storage_location_id=storage.id,
+            )
+
+    if storage.existing_parts_only:
+        # The part must have at least one prior positive stock-entry at this
+        # location (i.e. it was previously stocked here).
+        prior = db.execute(
+            select(func.count())
+            .select_from(StockEntry)
+            .where(StockEntry.workspace_id == workspace_id)
+            .where(StockEntry.storage_location_id == storage.id)
+            .where(StockEntry.part_id == part_id)
+            .where(StockEntry.quantity_delta > 0)
+        ).scalar_one()
+        if not prior:
+            raise StockConflictError(
+                "destination only accepts previously-stocked parts and this part has no prior stock here",
+                constraint="existing_parts_only",
+                storage_location_id=storage.id,
+            )
+
+
 def add_stock(
     db: Session,
     *,
@@ -305,6 +365,7 @@ def add_stock(
             raise StockError("storage location is archived")
         if storage.is_full:
             raise StockError("storage location is marked full")
+        _enforce_storage_constraints(db, workspace_id=workspace_id, storage=storage, part_id=payload.part_id)
 
     # Mandatory default-storage check (spec §19.2). Previously the chain
     # short-circuited when `storage` was None — any row that simply omitted
@@ -477,17 +538,7 @@ def move_stock(
     if payload.quantity > available:
         raise StockError(f"insufficient stock at source (have {available}, want {payload.quantity})")
 
-    if dest.single_part_only:
-        # any other part already in this location?
-        any_other = db.execute(
-            select(func.count())
-            .select_from(StockEntry)
-            .where(StockEntry.workspace_id == workspace_id)
-            .where(StockEntry.storage_location_id == dest.id)
-            .where(StockEntry.part_id != part.id)
-        ).scalar_one()
-        if any_other:
-            raise StockError("destination is single-part-only and holds another part")
+    _enforce_storage_constraints(db, workspace_id=workspace_id, storage=dest, part_id=part.id)
 
     # Pre-assign UUIDs so the two StockEntry rows can reference each
     # other via `related_entry_id`. The actual write strategy is a

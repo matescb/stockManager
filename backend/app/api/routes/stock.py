@@ -11,6 +11,7 @@ from app.domain.stock.schemas import (
     RemoveStockIn,
 )
 from app.domain.stock.service import (
+    StockConflictError,
     StockError,
     add_stock,
     adjust_stock,
@@ -50,6 +51,15 @@ def add(
 ) -> Envelope[dict]:
     try:
         e = add_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
+    except StockConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": str(exc),
+                "constraint": exc.constraint,
+                "storage_location_id": str(exc.storage_location_id),
+            },
+        )
     except StockError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return ok(_serialize_entry(e))
@@ -70,6 +80,15 @@ def remove(
 def move(payload: MoveStockIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     try:
         out_e, in_e = move_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
+    except StockConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": str(exc),
+                "constraint": exc.constraint,
+                "storage_location_id": str(exc.storage_location_id),
+            },
+        )
     except StockError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return ok({"out": _serialize_entry(out_e), "in": _serialize_entry(in_e)})
