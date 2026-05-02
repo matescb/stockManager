@@ -1,10 +1,12 @@
-"""Regression tests for SEC2-006 / SEC2-011 (provider-asset hardening).
+"""Regression tests for SEC2-006 / SEC2-011 / SEC2-012 (provider-asset hardening).
 
 Covers:
 - Host allow-list — only Mouser / DigiKey hosts pass.
 - DNS resolution to a non-public IP is rejected (SSRF guard).
 - Upstream SVG content-type is rejected (lands as `.bin`).
 - 30x upstream is treated as a refusal — no auto-redirect.
+- Magic-byte validation: body whose leading bytes don't match the
+  Content-Type-declared extension is rejected (SEC2-012).
 - The serve route forces `X-Content-Type-Options: nosniff` on every
   response and forces `Content-Disposition: attachment` for non-image
   MIMEs (PDF datasheets, opaque binaries).
@@ -138,6 +140,118 @@ def test_svg_url_suffix_lands_as_bin(monkeypatch, tmp_path):
     )
     assert out is not None
     assert out.endswith(".bin")
+
+
+# ---------------------------------------------------------------------------
+# Magic-byte validation (SEC2-012)
+# ---------------------------------------------------------------------------
+
+
+def test_magic_bytes_mismatch_png_declared_pdf_rejected(monkeypatch, tmp_path):
+    """Body starts with PDF magic but Content-Type says image/png → rejected."""
+    monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
+    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "93.184.216.34")
+    monkeypatch.setattr(
+        assets, "_http_get",
+        lambda _u: _resp(body=b"%PDF-1.4 this is not a PNG", content_type="image/png"),
+    )
+    out = assets.fetch_provider_asset(
+        "https://media.digikey.com/fake.png", str(uuid.uuid4()), "image"
+    )
+    assert out is None, "PDF magic masquerading as PNG must be rejected"
+
+
+def test_magic_bytes_mismatch_jpg_declared_pdf_rejected(monkeypatch, tmp_path):
+    """Body starts with JPEG magic but Content-Type says application/pdf → rejected."""
+    monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
+    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "93.184.216.34")
+    jpeg_magic = b"\xff\xd8\xff\xe0" + b"\x00" * 12
+    monkeypatch.setattr(
+        assets, "_http_get",
+        lambda _u: _resp(body=jpeg_magic, content_type="application/pdf"),
+    )
+    out = assets.fetch_provider_asset(
+        "https://media.digikey.com/fake.pdf", str(uuid.uuid4()), "datasheet"
+    )
+    assert out is None, "JPEG magic masquerading as PDF must be rejected"
+
+
+def test_magic_bytes_match_png_accepted(monkeypatch, tmp_path):
+    """Body starts with PNG magic and Content-Type says image/png → accepted."""
+    monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
+    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "93.184.216.34")
+    png_body = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+    monkeypatch.setattr(
+        assets, "_http_get",
+        lambda _u: _resp(body=png_body, content_type="image/png"),
+    )
+    out = assets.fetch_provider_asset(
+        "https://media.digikey.com/real.png", str(uuid.uuid4()), "image"
+    )
+    assert out is not None
+    assert out.endswith(".png")
+
+
+def test_magic_bytes_match_pdf_accepted(monkeypatch, tmp_path):
+    """Body starts with PDF magic and Content-Type says application/pdf → accepted."""
+    monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
+    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "93.184.216.34")
+    pdf_body = b"%PDF-1.4 fake content"
+    monkeypatch.setattr(
+        assets, "_http_get",
+        lambda _u: _resp(body=pdf_body, content_type="application/pdf"),
+    )
+    out = assets.fetch_provider_asset(
+        "https://media.digikey.com/real.pdf", str(uuid.uuid4()), "datasheet"
+    )
+    assert out is not None
+    assert out.endswith(".pdf")
+
+
+def test_magic_bytes_unknown_body_with_known_ext_accepted(monkeypatch, tmp_path):
+    """If _sniff_ext returns None (unknown magic bytes), we don't block —
+    the file type just can't be sniffed so we trust the Content-Type."""
+    monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
+    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "93.184.216.34")
+    # Body with no recognisable magic prefix.
+    monkeypatch.setattr(
+        assets, "_http_get",
+        lambda _u: _resp(body=b"\x00\x00\x00\x00unknown format bytes", content_type="image/png"),
+    )
+    out = assets.fetch_provider_asset(
+        "https://media.digikey.com/opaque.png", str(uuid.uuid4()), "image"
+    )
+    # sniff is None → no rejection, falls through.
+    assert out is not None
+    assert out.endswith(".png")
+
+
+def test_magic_bytes_gif_mismatch_rejected(monkeypatch, tmp_path):
+    """PNG body disguised as GIF (Content-Type image/gif) is rejected."""
+    monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
+    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "93.184.216.34")
+    png_body = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+    monkeypatch.setattr(
+        assets, "_http_get",
+        lambda _u: _resp(body=png_body, content_type="image/gif"),
+    )
+    out = assets.fetch_provider_asset(
+        "https://media.digikey.com/fake.gif", str(uuid.uuid4()), "image"
+    )
+    assert out is None, "PNG magic masquerading as GIF must be rejected"
+
+
+def test_sniff_ext_returns_correct_types():
+    """Unit test for the _sniff_ext helper in isolation."""
+    assert assets._sniff_ext(b"\xff\xd8\xff\xe0" + b"\x00" * 12) == "jpg"
+    assert assets._sniff_ext(b"\x89PNG\r\n\x1a\n" + b"\x00" * 8) == "png"
+    assert assets._sniff_ext(b"%PDF-1.4 content") == "pdf"
+    assert assets._sniff_ext(b"GIF89a content") == "gif"
+    assert assets._sniff_ext(b"RIFF\x00\x00\x00\x00WEBP") == "webp"
+    # Unknown magic → None
+    assert assets._sniff_ext(b"\x00\x00\x00\x00junk") is None
+    # RIFF without WEBP marker → None (not a WebP)
+    assert assets._sniff_ext(b"RIFF\x00\x00\x00\x00WAVEfmt ") is None
 
 
 # ---------------------------------------------------------------------------
