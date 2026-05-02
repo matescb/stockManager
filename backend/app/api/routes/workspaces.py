@@ -4,18 +4,25 @@ import secrets
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
+from app.core.ratelimit import limiter
 from app.core.responses import ok
 from app.core.secrets import decrypt, encrypt
 from app.domain.users.models import User
 from app.domain.workspaces.models import Workspace, WorkspaceMember
 
 router = APIRouter()
+
+# Per-user owned-workspaces cap (BE2-004). Counts active rows where
+# the user is the `owner_user_id`; the personal workspace minted at
+# signup is `kind="personal"` and excluded so a user always has at
+# least one tenant. Everything beyond it (extra organisations) counts.
+_OWNED_ORG_WORKSPACE_CAP = 5
 
 
 class WorkspaceCreateIn(BaseModel):
@@ -41,7 +48,37 @@ def list_workspaces(user: CurrentUser, db: DbSession):
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-def create_workspace(payload: WorkspaceCreateIn, user: CurrentUser, db: DbSession):
+@limiter.limit("10/hour")
+def create_workspace(
+    request: Request,
+    payload: WorkspaceCreateIn,
+    user: CurrentUser,
+    db: DbSession,
+):
+    # BE2-004 — cap per-user owned organisation workspaces. Without
+    # this, an authenticated user can mint unbounded workspaces and
+    # exhaust catalog tokens / report rows / storage. The personal
+    # workspace from signup (`kind="personal"`) is excluded so the
+    # cap is on extra orgs, not on the baseline tenant.
+    existing_count = (
+        db.query(WorkspaceMember)
+        .join(Workspace, Workspace.id == WorkspaceMember.workspace_id)
+        .filter(
+            Workspace.owner_user_id == user.id,
+            Workspace.kind == "organization",
+            WorkspaceMember.user_id == user.id,
+        )
+        .count()
+    )
+    if existing_count >= _OWNED_ORG_WORKSPACE_CAP:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "owned-workspace cap reached",
+                "existing_count": existing_count,
+                "cap": _OWNED_ORG_WORKSPACE_CAP,
+            },
+        )
     ws = Workspace(name=payload.name, kind="organization", owner_user_id=user.id, currency_default=payload.currency_default)
     db.add(ws)
     db.flush()
@@ -81,13 +118,19 @@ def current(ws: CurrentWorkspace):
     return ok(_serialize_workspace(ws))
 
 
-@router.get("/current/scanner-license-key")
+@router.get(
+    "/current/scanner-license-key",
+    dependencies=[Depends(require_role("member"))],
+)
 def current_scanner_license_key(ws: CurrentWorkspace):
     """Raw Scandit license key for the scanner mount. Kept on a dedicated
     route so it never leaks into normal /current payloads — the regular
-    serializer only emits has_scanner_license_key. Any authenticated
-    workspace member already has access; this just keeps the value out of
-    response bodies that are fetched on every page."""
+    serializer only emits has_scanner_license_key.
+
+    Gated at member+ (SEC2-012 / BE2-017). Viewers can still read
+    workspace settings via /current; they just can't pull the SDK key,
+    which is a paid third-party credential and effectively a write
+    capability for the scanner integration."""
     # Decrypt at the boundary (Sec HIGH-9). Column stores Fernet
     # ciphertext post-0016; SDK gets plaintext.
     return ok({"license_key": decrypt(ws.scanner_license_key) or ""})
@@ -229,22 +272,58 @@ def remove_member(member_id: UUID, db: DbSession, ws: CurrentWorkspace, user: Cu
 
 
 @router.post("/{workspace_id}/switch")
-def switch_workspace(workspace_id: str, response: Response):
-    # Hardened cookie attributes (Sec CRIT-3 in 2026-04-30 review):
-    # - httponly: the SPA reads the active workspace from localStorage, never
-    #   from this cookie, so JS access is unnecessary and an XSS vector.
-    # - secure in prod: cookie may not be sent over plain HTTP. Dev runs
-    #   over HTTP so we keep it permissive there.
-    # - samesite=lax: blocks cross-site sub-request cookie attachment, so a
-    #   victim cannot be silently switched to another workspace from a
-    #   different origin.
+def switch_workspace(
+    workspace_id: UUID,
+    response: Response,
+    user: CurrentUser,
+    db: DbSession,
+):
+    """SEC2-004 — switch the active workspace cookie.
+
+    Pre-fix this route accepted any string as `workspace_id`, didn't
+    look up membership, and didn't even require the caller to be
+    authenticated. An attacker could craft a POST that would land any
+    arbitrary string in the victim's cookie, breaking subsequent
+    requests or tricking them into a workspace they don't belong to.
+
+    Now: typed UUID, requires `CurrentUser`, and 404s unless the user
+    has an active membership in the target workspace.
+    """
+    membership = (
+        db.query(WorkspaceMember)
+        .filter(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.user_id == user.id,
+            WorkspaceMember.status == "active",
+        )
+        .first()
+    )
+    if not membership:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="workspace not found",
+        )
+
+    # Hardened cookie attributes:
+    # - httponly: the SPA reads the active workspace from localStorage,
+    #   never from this cookie, so JS access is unnecessary and an XSS
+    #   vector.
+    # - secure in prod: cookie may not be sent over plain HTTP. Dev
+    #   runs over HTTP so we keep it permissive there.
+    # - samesite=strict (v1 Sec CRIT-4): the cookie is purely
+    #   server-driven, never depended on by a cross-site flow. Lax
+    #   would still be sent on top-level navigations, leaving a
+    #   theoretical surface for a forced-switch via a victim clicking
+    #   an attacker link. Strict closes that gap; the session cookie
+    #   stays Lax because login-like top-level redirects do depend
+    #   on it.
     response.set_cookie(
         key="stockmgr_workspace",
-        value=workspace_id,
+        value=str(workspace_id),
         httponly=True,
         secure=settings().APP_ENV == "prod",
-        samesite="lax",
+        samesite="strict",
         max_age=365 * 24 * 3600,
         path="/",
     )
-    return ok({"workspace_id": workspace_id})
+    return ok({"workspace_id": str(workspace_id)})

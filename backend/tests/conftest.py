@@ -17,6 +17,35 @@ os.environ.setdefault(
 )
 os.environ.setdefault("SESSION_SECRET", "test-secret")
 os.environ.setdefault("UPLOAD_DIR", "/tmp/stockmgr-test-uploads")
+# CORS allow-list must include the TestClient host (`testserver`) so the
+# CSRF Origin middleware (SEC2-001) doesn't block every state-changing
+# request the suite makes. We force-merge `http://testserver` in even
+# if the operator has CORS_ORIGINS pre-set to the dev/prod value, so
+# tests never depend on host environment.
+_existing_cors = os.environ.get("CORS_ORIGINS", "")
+_cors_parts = [p.strip() for p in _existing_cors.split(",") if p.strip()]
+if "http://testserver" not in _cors_parts:
+    _cors_parts.append("http://testserver")
+os.environ["CORS_ORIGINS"] = ",".join(_cors_parts)
+
+# Patch the FastAPI TestClient so it sends `Origin: http://testserver`
+# on every request — Starlette's TestClient otherwise sends no Origin
+# at all, which the CSRF middleware would (correctly) reject for any
+# POST/PATCH/PUT/DELETE. We do this by subclassing rather than passing
+# headers per call so existing test files don't need to be touched.
+import fastapi.testclient as _tc_mod  # noqa: E402
+
+_orig_test_client_init = _tc_mod.TestClient.__init__
+
+
+def _patched_init(self, *args, **kwargs):
+    headers = dict(kwargs.pop("headers", {}) or {})
+    headers.setdefault("Origin", "http://testserver")
+    kwargs["headers"] = headers
+    _orig_test_client_init(self, *args, **kwargs)
+
+
+_tc_mod.TestClient.__init__ = _patched_init  # type: ignore[method-assign]
 
 from app.core.config import settings  # noqa: E402
 import app.domain.all_models  # noqa: F401,E402

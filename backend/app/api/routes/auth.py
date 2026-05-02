@@ -9,6 +9,7 @@ from app.core.auth import (
     WeakPasswordError,
     create_session_row,
     hash_password,
+    revoke_all_user_sessions,
     revoke_session,
     validate_password_strength,
     verify_password,
@@ -100,6 +101,12 @@ def login(request: Request, payload: LoginIn, response: Response, db: DbSession)
         # brute-force patterns alongside the slowapi rate-limit.
         log.warning("login failed", extra={"email": payload.email})
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid credentials")
+    # SEC2-015 — session rotation on login. Drop every previously-issued
+    # session for this user before minting the new one so a stolen
+    # cookie cannot survive a password change / re-login on a fresh
+    # device. Cheap (single DELETE by user_id index) and stops session
+    # fixation cleanly.
+    revoke_all_user_sessions(db, user.id)
     sess = create_session_row(db, user.id)
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
