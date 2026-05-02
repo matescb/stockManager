@@ -222,10 +222,40 @@ def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace, 
     new_token: str | None = None
     if ws.catalog_enabled and (regenerate or not ws.catalog_token_hash or not was_enabled):
         new_token = secrets.token_urlsafe(32)
-        # Keep catalog_token for backward-compat / rollback; primary lookup
-        # uses catalog_token_hash exclusively.
+        new_digest = _hmac_token(new_token)
+        # Keep catalog_token / catalog_token_hash on Workspace for rollback
+        # safety; the catalog router DOES NOT consult them at lookup time
+        # (see app.api.routes.catalog._resolve_workspace) so they cannot
+        # bypass the WorkspaceCatalogToken.revoked_at predicate.
         ws.catalog_token = new_token
-        ws.catalog_token_hash = _hmac_token(new_token)
+        ws.catalog_token_hash = new_digest
+
+        # Mirror the new token into workspace_catalog_tokens — the sole
+        # auth source post-SEC2-019. Revoke any prior active "default"
+        # rows (from a previous PATCH-mint or migration backfill) so a
+        # mint never leaves two PATCH-minted tokens valid simultaneously.
+        # User-labelled tokens minted via the /catalog/tokens endpoint
+        # are NOT touched here.
+        existing = db.execute(
+            select(WorkspaceCatalogToken).where(
+                WorkspaceCatalogToken.workspace_id == ws.id,
+                WorkspaceCatalogToken.revoked_at.is_(None),
+                WorkspaceCatalogToken.label.in_(
+                    ("default", "default (legacy)")
+                ),
+            )
+        ).scalars().all()
+        now = datetime.now(timezone.utc)
+        for row in existing:
+            row.revoked_at = now
+        db.add(
+            WorkspaceCatalogToken(
+                workspace_id=ws.id,
+                token_hmac=new_digest,
+                label="default",
+                created_by_user_id=user.id,
+            )
+        )
 
     if _credential_fields_changed:
         # Audit credential rotation — ONLY field names, never values.

@@ -79,16 +79,23 @@ def _resolve_workspace(db, token: str, request: Request | None = None) -> Worksp
     a disabled workspace is indistinguishable from a wrong token (no
     enabled/disabled oracle).
 
-    SEC2-019: check the workspace_catalog_tokens child table first
-    (per-recipient tokens with individual revocation). Falls back to the
-    legacy Workspace.catalog_token_hash column so existing single tokens
-    continue to work after the 0032 migration.
+    SEC2-019: lookup is performed exclusively against the
+    workspace_catalog_tokens child table, which carries the
+    `revoked_at IS NULL` predicate (per-recipient tokens with individual
+    revocation). Migration 0032 backfills one row per workspace that had
+    a legacy `Workspace.catalog_token_hash`, so existing tokens keep
+    working through this single code path.
+
+    The legacy `Workspace.catalog_token_hash` column is intentionally NOT
+    consulted here: it has no `revoked_at` column, so a fallback to it
+    would let rotated/revoked tokens authenticate. The column is retained
+    only for rollback safety; it must never be a live auth source.
     """
     if not token:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="catalog not found")
     digest = _hmac_token(token)
 
-    # --- Child table lookup (SEC2-019) ---
+    # --- Child table lookup (SEC2-019) — sole source of truth ---
     child = db.execute(
         select(WorkspaceCatalogToken).where(
             WorkspaceCatalogToken.token_hmac == digest,
@@ -111,16 +118,7 @@ def _resolve_workspace(db, token: str, request: Request | None = None) -> Worksp
                 pass
             return ws
 
-    # --- Legacy fallback: Workspace.catalog_token_hash ---
-    ws = db.execute(
-        select(Workspace).where(
-            Workspace.catalog_token_hash == digest,
-            Workspace.catalog_enabled.is_(True),
-        )
-    ).scalar_one_or_none()
-    if not ws:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="catalog not found")
-    return ws
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="catalog not found")
 
 
 def _published_parts(db, workspace_id) -> list[Part]:

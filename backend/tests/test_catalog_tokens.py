@@ -271,3 +271,75 @@ def test_revoke_already_revoked_token_is_404():
     _revoke_token(c, token_data["id"])
     status_code = _revoke_token(c, token_data["id"])
     assert status_code == 404, "double-revoke must return 404"
+
+
+# ---------------------------------------------------------------------------
+# Regression: legacy Workspace.catalog_token_hash must NOT bypass revocation
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_catalog_token_hash_does_not_bypass_revocation():
+    """SEC2-019 regression / sweep #51 finding.
+
+    Before the fix, _resolve_workspace fell back to the legacy
+    Workspace.catalog_token_hash column when the WorkspaceCatalogToken
+    child-table lookup missed. That fallback did NOT enforce the
+    `revoked_at IS NULL` predicate (the legacy column has no such field),
+    so any token whose HMAC was mirrored into the legacy column kept
+    authenticating even after the new-table row was revoked.
+
+    This test reconstructs that bypass scenario: it creates a token via
+    the new-table API, copies its HMAC into the legacy column to emulate
+    a pre-migration workspace, revokes the new-table row, and asserts
+    the catalog endpoint returns 404 — i.e. the legacy fallback is
+    closed.
+    """
+    import uuid as _uuid
+
+    from app.domain.workspaces.models import Workspace
+    from app.infra.db import SessionLocal
+
+    c = _make_client()
+    ws_id = _signup_admin(c)
+    _enable_catalog(c)
+
+    token_data = _create_token(c, label="leaked-rotation")
+    plaintext = token_data["token"]
+    token_id = token_data["id"]
+
+    # Sanity: the token works through the new-table path before revocation.
+    r = c.get(f"/catalog/{plaintext}")
+    assert r.status_code == 200, "token must work before revocation"
+
+    # Mirror the new-table HMAC into the legacy Workspace.catalog_token_hash
+    # column to emulate a workspace whose token predates migration 0032.
+    # We re-derive the digest using the same _hmac_token the catalog router
+    # uses, then write it directly via SessionLocal.
+    from app.api.routes.catalog import _hmac_token
+
+    digest = _hmac_token(plaintext)
+    with SessionLocal() as s:
+        ws = s.get(Workspace, _uuid.UUID(ws_id))
+        assert ws is not None
+        ws.catalog_token_hash = digest
+        s.commit()
+
+    # Revoke via the new-table endpoint — the new-table row's revoked_at
+    # is now set, but the legacy column on Workspace still carries the
+    # matching HMAC.
+    assert _revoke_token(c, token_id) == 200
+
+    # The bypass guard: the catalog endpoint MUST refuse this plaintext
+    # token even though it would still match the legacy column. If the
+    # legacy fallback is ever re-introduced without a revocation predicate,
+    # this assertion fails.
+    r = c.get(f"/catalog/{plaintext}")
+    assert r.status_code == 404, (
+        "revoked token must be rejected; legacy catalog_token_hash "
+        "fallback would have authenticated it"
+    )
+
+    r = c.get(f"/catalog/{plaintext}/parts.json")
+    assert r.status_code == 404, (
+        "revoked token must be rejected on JSON endpoint too"
+    )
