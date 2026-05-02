@@ -102,3 +102,50 @@ class WorkspaceInvitation(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     accepted_at = Column(DateTime(timezone=True), nullable=True)
     accepted_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
+class WorkspaceCatalogToken(Base):
+    """Per-recipient catalog access token (SEC2-019 / issue #77).
+
+    Replaces the single-token-per-workspace model with a child table
+    so individual tokens can be labelled (per recipient) and revoked
+    without affecting other consumers.
+
+    token_hmac is HMAC-SHA256(plaintext, SESSION_SECRET) — never the
+    plaintext itself.  The plaintext is returned exactly once at creation
+    time in the API response and is never stored.
+    """
+    __tablename__ = "workspace_catalog_tokens"
+    __table_args__ = (
+        # Partial unique: same HMAC can only appear once per workspace
+        # among un-revoked tokens (two workspaces can coincidentally share
+        # an HMAC; revoked tokens are excluded so a re-issued token for the
+        # same underlying string doesn't collide with its revoked predecessor).
+        Index(
+            "uq_catalog_tokens_ws_hmac_active",
+            "workspace_id",
+            "token_hmac",
+            unique=True,
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # HMAC-SHA256 of plaintext keyed by SESSION_SECRET. String(64) = hex digest.
+    token_hmac = Column(String(64), nullable=False)
+    label = Column(String(120), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    created_by_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+    last_used_ip = Column(String(45), nullable=True)

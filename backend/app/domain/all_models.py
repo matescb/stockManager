@@ -46,6 +46,7 @@ from app.domain.tags.models import Tag, TagLink  # noqa: F401
 from app.domain.users.models import PendingUser, User, UserLoginFailure, UserSession  # noqa: F401
 from app.domain.workspaces.models import (  # noqa: F401
     Workspace,
+    WorkspaceCatalogToken,
     WorkspaceInvitation,
     WorkspaceMember,
 )

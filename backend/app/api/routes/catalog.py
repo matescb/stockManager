@@ -13,12 +13,14 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import select
 
+import datetime
+
 from app.core.config import settings
 from app.core.deps import DbSession
 from app.core.ratelimit import limiter
 from app.core.responses import ok
 from app.domain.parts.models import Part
-from app.domain.workspaces.models import Workspace
+from app.domain.workspaces.models import Workspace, WorkspaceCatalogToken
 
 router = APIRouter()
 
@@ -67,7 +69,7 @@ def _hmac_token(token: str) -> str:
     ).hexdigest()
 
 
-def _resolve_workspace(db, token: str) -> Workspace:
+def _resolve_workspace(db, token: str, request: Request | None = None) -> Workspace:
     """Constant-time catalog token lookup: hash first, then compare by hash.
 
     SEC2-008: the plaintext token never appears in a SQL WHERE clause.
@@ -76,19 +78,47 @@ def _resolve_workspace(db, token: str) -> Workspace:
     invalid tokens.  catalog_enabled is checked in the same query so
     a disabled workspace is indistinguishable from a wrong token (no
     enabled/disabled oracle).
+
+    SEC2-019: lookup is performed exclusively against the
+    workspace_catalog_tokens child table, which carries the
+    `revoked_at IS NULL` predicate (per-recipient tokens with individual
+    revocation). Migration 0032 backfills one row per workspace that had
+    a legacy `Workspace.catalog_token_hash`, so existing tokens keep
+    working through this single code path.
+
+    The legacy `Workspace.catalog_token_hash` column is intentionally NOT
+    consulted here: it has no `revoked_at` column, so a fallback to it
+    would let rotated/revoked tokens authenticate. The column is retained
+    only for rollback safety; it must never be a live auth source.
     """
     if not token:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="catalog not found")
     digest = _hmac_token(token)
-    ws = db.execute(
-        select(Workspace).where(
-            Workspace.catalog_token_hash == digest,
-            Workspace.catalog_enabled.is_(True),
+
+    # --- Child table lookup (SEC2-019) — sole source of truth ---
+    child = db.execute(
+        select(WorkspaceCatalogToken).where(
+            WorkspaceCatalogToken.token_hmac == digest,
+            WorkspaceCatalogToken.revoked_at.is_(None),
         )
     ).scalar_one_or_none()
-    if not ws:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="catalog not found")
-    return ws
+
+    if child is not None:
+        ws = db.get(Workspace, child.workspace_id)
+        if ws and ws.catalog_enabled:
+            # Update last_used telemetry (best-effort, non-transactional).
+            now = datetime.datetime.now(datetime.timezone.utc)
+            child.last_used_at = now
+            if request is not None:
+                from slowapi.util import get_remote_address
+                child.last_used_ip = get_remote_address(request)
+            try:
+                db.flush()
+            except Exception:
+                pass
+            return ws
+
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="catalog not found")
 
 
 def _published_parts(db, workspace_id) -> list[Part]:
@@ -190,7 +220,7 @@ def _render_html(ws: Workspace, parts: list[Part]) -> str:
 @limiter.limit("60/minute", key_func=_token_key)
 @limiter.limit("120/minute")  # parallel IP cap — defence in depth
 def catalog_html(request: Request, token: str, db: DbSession):
-    ws = _resolve_workspace(db, token)
+    ws = _resolve_workspace(db, token, request=request)
     parts = _published_parts(db, ws.id)
     return HTMLResponse(
         content=_render_html(ws, parts),
@@ -203,7 +233,7 @@ def catalog_html(request: Request, token: str, db: DbSession):
 @limiter.limit("60/minute", key_func=_token_key)
 @limiter.limit("120/minute")  # parallel IP cap — defence in depth
 def catalog_json(request: Request, token: str, db: DbSession):
-    ws = _resolve_workspace(db, token)
+    ws = _resolve_workspace(db, token, request=request)
     parts = _published_parts(db, ws.id)
     body = ok(
         {

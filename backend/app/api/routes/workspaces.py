@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
+from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
@@ -18,7 +19,7 @@ from app.core.responses import ok
 from app.core.secrets import decrypt, encrypt
 from app.domain.audit.service import log as _audit_log
 from app.domain.users.models import User
-from app.domain.workspaces.models import Workspace, WorkspaceMember
+from app.domain.workspaces.models import Workspace, WorkspaceCatalogToken, WorkspaceMember
 
 router = APIRouter()
 
@@ -221,10 +222,40 @@ def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace, 
     new_token: str | None = None
     if ws.catalog_enabled and (regenerate or not ws.catalog_token_hash or not was_enabled):
         new_token = secrets.token_urlsafe(32)
-        # Keep catalog_token for backward-compat / rollback; primary lookup
-        # uses catalog_token_hash exclusively.
+        new_digest = _hmac_token(new_token)
+        # Keep catalog_token / catalog_token_hash on Workspace for rollback
+        # safety; the catalog router DOES NOT consult them at lookup time
+        # (see app.api.routes.catalog._resolve_workspace) so they cannot
+        # bypass the WorkspaceCatalogToken.revoked_at predicate.
         ws.catalog_token = new_token
-        ws.catalog_token_hash = _hmac_token(new_token)
+        ws.catalog_token_hash = new_digest
+
+        # Mirror the new token into workspace_catalog_tokens — the sole
+        # auth source post-SEC2-019. Revoke any prior active "default"
+        # rows (from a previous PATCH-mint or migration backfill) so a
+        # mint never leaves two PATCH-minted tokens valid simultaneously.
+        # User-labelled tokens minted via the /catalog/tokens endpoint
+        # are NOT touched here.
+        existing = db.execute(
+            select(WorkspaceCatalogToken).where(
+                WorkspaceCatalogToken.workspace_id == ws.id,
+                WorkspaceCatalogToken.revoked_at.is_(None),
+                WorkspaceCatalogToken.label.in_(
+                    ("default", "default (legacy)")
+                ),
+            )
+        ).scalars().all()
+        now = datetime.now(timezone.utc)
+        for row in existing:
+            row.revoked_at = now
+        db.add(
+            WorkspaceCatalogToken(
+                workspace_id=ws.id,
+                token_hmac=new_digest,
+                label="default",
+                created_by_user_id=user.id,
+            )
+        )
 
     if _credential_fields_changed:
         # Audit credential rotation — ONLY field names, never values.
@@ -239,6 +270,109 @@ def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace, 
         )
 
     return ok(_serialize_workspace(ws, new_token=new_token))
+
+
+# ---------------------------------------------------------------------------
+# Catalog token CRUD (SEC2-019 / issue #77)
+# ---------------------------------------------------------------------------
+
+
+class CatalogTokenIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1, max_length=120)
+
+
+def _serialize_catalog_token(t: WorkspaceCatalogToken, plaintext: str | None = None) -> dict:
+    """Serialize a WorkspaceCatalogToken for API responses.
+
+    NEVER includes token_hmac.  If plaintext is provided (only at creation
+    time) it is included as `token` — visible once, then gone.
+    """
+    out: dict = {
+        "id": str(t.id),
+        "label": t.label,
+        "created_at": t.created_at.isoformat() if t.created_at else None,
+        "last_used_at": t.last_used_at.isoformat() if t.last_used_at else None,
+        "revoked_at": t.revoked_at.isoformat() if t.revoked_at else None,
+    }
+    if plaintext is not None:
+        out["token"] = plaintext
+    return out
+
+
+@router.get(
+    "/current/catalog/tokens",
+    dependencies=[Depends(require_role("admin"))],
+)
+def list_catalog_tokens(db: DbSession, ws: CurrentWorkspace):
+    """List all catalog tokens for the current workspace (admin+).
+
+    Returns CatalogTokenOut list — never token_hmac or plaintext.
+    """
+    tokens = list(
+        db.execute(
+            select(WorkspaceCatalogToken)
+            .where(WorkspaceCatalogToken.workspace_id == ws.id)
+            .order_by(WorkspaceCatalogToken.created_at)
+        ).scalars()
+    )
+    return ok([_serialize_catalog_token(t) for t in tokens])
+
+
+@router.post(
+    "/current/catalog/tokens",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role("admin"))],
+)
+def create_catalog_token(
+    payload: CatalogTokenIn,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
+    """Mint a new catalog token (admin+).
+
+    Returns CatalogTokenCreatedOut — includes `token` plaintext ONCE.
+    The plaintext is never stored; only the HMAC is persisted.
+    """
+    plaintext = secrets.token_urlsafe(32)
+    digest = _hmac_token(plaintext)
+    t = WorkspaceCatalogToken(
+        workspace_id=ws.id,
+        token_hmac=digest,
+        label=payload.label,
+        created_by_user_id=user.id,
+    )
+    db.add(t)
+    db.flush()
+    return ok(_serialize_catalog_token(t, plaintext=plaintext))
+
+
+@router.delete(
+    "/current/catalog/tokens/{token_id}",
+    dependencies=[Depends(require_role("admin"))],
+)
+def revoke_catalog_token(token_id: UUID, db: DbSession, ws: CurrentWorkspace):
+    """Revoke a catalog token (admin+).
+
+    Sets revoked_at = now(). Cross-workspace access → 404 (never 403).
+    """
+    t = db.get(WorkspaceCatalogToken, token_id)
+    if not t or t.workspace_id != ws.id:
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            ErrorCodes.RESOURCE_NOT_FOUND,
+            "catalog token not found",
+        )
+    if t.revoked_at is not None:
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            ErrorCodes.RESOURCE_NOT_FOUND,
+            "catalog token not found",
+        )
+    t.revoked_at = datetime.now(timezone.utc)
+    return ok(_serialize_catalog_token(t))
 
 
 @router.get("/members")

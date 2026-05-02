@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -27,6 +27,16 @@ type Ws = {
   has_parts_provider_api_secret: boolean;
   scanner: "zxing" | "scandit";
   has_scanner_license_key: boolean;
+};
+
+type CatalogToken = {
+  id: string;
+  label: string;
+  created_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  /** Present only at creation time — never returned by list. */
+  token?: string;
 };
 
 type Member = {
@@ -60,6 +70,37 @@ export default function WorkspaceSettings() {
     queryKey: useWsKey("ws", "invitations"),
     queryFn: () => api.get<Invitation[]>("/invitations"),
   });
+  const { data: catalogTokens, refetch: refetchCatalogTokens } = useQuery({
+    queryKey: useWsKey("ws", "catalog-tokens"),
+    queryFn: () => api.get<CatalogToken[]>("/workspaces/current/catalog/tokens"),
+  });
+  const [newTokenLabel, setNewTokenLabel] = useState("");
+  const [newlyCreatedToken, setNewlyCreatedToken] = useState<string | null>(null);
+
+  const createCatalogToken = useMutation({
+    mutationFn: (label: string) =>
+      api.post<CatalogToken>("/workspaces/current/catalog/tokens", { label }),
+    onSuccess: (data) => {
+      if (data?.token) {
+        setNewlyCreatedToken(data.token);
+      }
+      setNewTokenLabel("");
+      refetchCatalogTokens();
+      toast.success("Catalog token created.");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Failed"),
+  });
+
+  const revokeCatalogToken = useMutation({
+    mutationFn: (id: string) =>
+      api.delete(`/workspaces/current/catalog/tokens/${id}`),
+    onSuccess: () => {
+      refetchCatalogTokens();
+      toast.success("Token revoked.");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Failed"),
+  });
+
   const [newName, setNewName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"admin" | "member" | "viewer">("member");
@@ -322,6 +363,133 @@ export default function WorkspaceSettings() {
           )}
         </div>
       )}
+
+      {/* Catalog tokens section (SEC2-019) */}
+      <div className="card p-4 mb-4 space-y-3 text-sm">
+        <h2 className="text-md font-semibold">Catalog tokens</h2>
+        <div className="text-xs text-muted">
+          Create per-recipient tokens so individual recipients can be
+          revoked without rotating all consumers. Each token provides
+          access to this workspace's public catalog (when enabled above).
+          The plaintext is shown <strong>once</strong> at creation — copy
+          it immediately.
+        </div>
+
+        {/* Copy-once banner for newly created token */}
+        {newlyCreatedToken && (
+          <div className="rounded border border-warning bg-warning/10 p-3 space-y-2">
+            <div className="text-xs font-semibold text-warning-foreground">
+              New catalog token — copy it now. It will not be shown again.
+            </div>
+            <div className="flex gap-2 items-center">
+              <input
+                className="input flex-1 font-mono text-xs"
+                readOnly
+                value={`${window.location.origin}/catalog/${newlyCreatedToken}`}
+              />
+              <button
+                className="btn-primary"
+                type="button"
+                onClick={() => {
+                  copyToClipboard(`${window.location.origin}/catalog/${newlyCreatedToken}`);
+                  setNewlyCreatedToken(null);
+                }}
+              >
+                Copy &amp; dismiss
+              </button>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => setNewlyCreatedToken(null)}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Token list */}
+        {catalogTokens && catalogTokens.length > 0 && (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Label</th>
+                <th>Created</th>
+                <th>Last used</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {catalogTokens.map((t) => (
+                <tr key={t.id} className={t.revoked_at ? "opacity-50" : ""}>
+                  <td>{t.label}</td>
+                  <td className="text-xs text-muted">
+                    {t.created_at ? new Date(t.created_at).toLocaleString() : "—"}
+                  </td>
+                  <td className="text-xs text-muted">
+                    {t.last_used_at ? new Date(t.last_used_at).toLocaleString() : "Never"}
+                  </td>
+                  <td>
+                    {t.revoked_at ? (
+                      <span className="pill text-xs">Revoked</span>
+                    ) : (
+                      <span className="pill text-xs bg-success/10 text-success">Active</span>
+                    )}
+                  </td>
+                  <td>
+                    {!t.revoked_at && (
+                      <button
+                        className="btn-danger text-xs"
+                        type="button"
+                        disabled={revokeCatalogToken.isPending}
+                        onClick={async () => {
+                          if (!(await confirm({
+                            message: `Revoke the token "${t.label}"? Any consumer using it will immediately lose access.`,
+                            severity: "danger",
+                            confirmLabel: "Revoke",
+                          }))) return;
+                          revokeCatalogToken.mutate(t.id);
+                        }}
+                      >
+                        Revoke
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {/* Create token form */}
+        <div className="flex gap-2 items-end">
+          <div className="flex-1">
+            <label className="label">Label (recipient name)</label>
+            <input
+              className="input"
+              placeholder="e.g. partner-api, internal-docs"
+              value={newTokenLabel}
+              onChange={(e) => setNewTokenLabel(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newTokenLabel.trim()) {
+                  createCatalogToken.mutate(newTokenLabel.trim());
+                }
+              }}
+            />
+          </div>
+          <button
+            className="btn-primary"
+            type="button"
+            disabled={createCatalogToken.isPending || !newTokenLabel.trim()}
+            onClick={() => {
+              if (newTokenLabel.trim()) createCatalogToken.mutate(newTokenLabel.trim());
+            }}
+          >
+            Create token
+          </button>
+        </div>
+      </div>
 
       {cur && (
         <div className="card p-4 mb-4 space-y-3 text-sm">
