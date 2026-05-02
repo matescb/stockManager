@@ -255,10 +255,32 @@ jobs:
 
       # Validate compose YAML / schema / variable substitution. Fails on
       # malformed YAML, unknown keys, or missing required variables.
-      # The single-line JSON-array `command:` form (see CLAUDE.md "Things
-      # that have bitten us") is exactly what this catches.
       - name: Validate docker-compose.prod.yml
         run: docker compose -f docker-compose.prod.yml --env-file .env.prod.ci config -q
+
+      # Assert backend `command:` in the *raw* compose YAML is a list,
+      # not a YAML folded scalar (string). See CLAUDE.md "Things that
+      # have bitten us": a YAML folded scalar (`>`) silently turns
+      # indented continuation lines into separate shell commands, which
+      # once made slowapi bucket every client by the docker bridge IP.
+      # The plain `config -q` step above accepts both forms (both are
+      # valid compose schema), so we need this explicit shape check on
+      # the source file.
+      - name: Assert backend command is a list (regression guard)
+        run: |
+          python3 -c "
+          import sys, yaml
+          cfg = yaml.safe_load(open('docker-compose.prod.yml'))
+          cmd = cfg['services']['backend'].get('command')
+          if not isinstance(cmd, list):
+              sys.exit(
+                  f'backend.command must be a YAML list (JSON-array form), '
+                  f'got {type(cmd).__name__}: {cmd!r}. See CLAUDE.md -> '
+                  f'Things that have bitten us (folded-scalar regression).'
+              )
+          if not any('uvicorn' in str(p) for p in cmd):
+              sys.exit(f'backend.command does not invoke uvicorn: {cmd!r}')
+          "
 
       # Build the backend prod image. Catches broken COPY paths, missing
       # apt packages, pip install failures.
