@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useLocation, useNavigate, type Location } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useApiMutation } from "@/lib/mutations";
 import AuthShell from "./AuthShell";
 
 export default function Signup() {
@@ -13,7 +14,6 @@ export default function Signup() {
   const [password, setPassword] = useState("");
   const [workspaceName, setWorkspaceName] = useState("");
   const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   // SEC2-014: when the server enables email-verification the signup
   // returns 202 with status="verification_sent" instead of 200 with
   // a session cookie. We show a "check your inbox" view in that case.
@@ -24,17 +24,10 @@ export default function Signup() {
   const fromLoc = (location.state as { from?: Location } | null)?.from;
   const fromPath = fromLoc ? `${fromLoc.pathname}${fromLoc.search}${fromLoc.hash}` : null;
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setErr(null);
-    setBusy(true);
-    try {
-      const data = await api.post("/auth/signup", {
-        name,
-        email,
-        password,
-        workspace_name: workspaceName || undefined,
-      });
+  const signupMutation = useApiMutation<unknown, { name: string; email: string; password: string; workspace_name?: string }>({
+    mutationKey: ["auth", "signup"],
+    mutationFn: (payload) => api.post("/auth/signup", payload),
+    onSuccess: async (data) => {
       // SEC2-014: email-verification path returns {status: "verification_sent"}.
       if ((data as { status?: string }).status === "verification_sent") {
         setVerificationSent(true);
@@ -43,11 +36,23 @@ export default function Signup() {
       // Legacy / dev path: immediate session — refresh and navigate.
       await refresh();
       nav(fromPath || "/parts", { replace: true });
-    } catch (e) {
+    },
+    onError: (e) => {
       setErr(e instanceof ApiError ? e.userMessage : "Signup failed");
-    } finally {
-      setBusy(false);
-    }
+    },
+  });
+
+  const busy = signupMutation.isPending;
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setErr(null);
+    signupMutation.mutate({
+      name,
+      email,
+      password,
+      workspace_name: workspaceName || undefined,
+    });
   }
 
   // "Check your inbox" view shown after a 202 verification_sent response.

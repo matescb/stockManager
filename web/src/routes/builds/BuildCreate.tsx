@@ -2,8 +2,16 @@ import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
+import { useApiMutation } from "@/lib/mutations";
 import { useWsKey } from "@/lib/queryKeys";
 import type { Build, Project } from "@/types";
+
+type BuildCreatePayload = {
+  name: string;
+  project_id: string;
+  quantity: number;
+  comments?: string;
+};
 
 export default function BuildCreate() {
   const nav = useNavigate();
@@ -16,26 +24,30 @@ export default function BuildCreate() {
   const [projectId, setProjectId] = useState(params.get("project_id") ?? "");
   const [qty, setQty] = useState(1);
   const [comments, setComments] = useState("");
-  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setErr(null);
-    try {
-      const b = await api.post<Build>("/builds", {
-        name,
-        project_id: projectId,
-        quantity: qty,
-        comments: comments || undefined,
-      });
+  const createMutation = useApiMutation<Build, BuildCreatePayload>({
+    mutationKey: ["build", "create"],
+    mutationFn: (payload) => api.post<Build>("/builds", payload),
+    onSuccess: (b) => {
       nav(`/builds/${b.id}`);
-    } catch (e) {
+    },
+    onError: (e) => {
       setErr(e instanceof ApiError ? e.userMessage : "Failed");
-    } finally {
-      setBusy(false);
-    }
+    },
+  });
+
+  const busy = createMutation.isPending;
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setErr(null);
+    createMutation.mutate({
+      name,
+      project_id: projectId,
+      quantity: qty,
+      comments: comments || undefined,
+    });
   }
 
   return (

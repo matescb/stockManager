@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
+import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
@@ -42,10 +43,34 @@ export default function BuildDetail() {
 
   // consumption plan: project_entry_id → list of consume rows
   const [plan, setPlan] = useState<Record<string, ConsumeRow[]>>({});
-  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const partsById = useMemo(() => new Map(parts?.map(p => [p.id, p]) ?? []), [parts]);
+
+  type ConsumePayload = {
+    lines: {
+      project_entry_id: string;
+      part_id: string;
+      quantity: number;
+      storage_location_id?: string;
+    }[];
+  };
+
+  const consumeMutation = useApiMutation<unknown, ConsumePayload>({
+    mutationKey: ["build", buildId, "consume"],
+    mutationFn: (payload) => api.post(`/builds/${buildId}/consume`, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "build", buildId) });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
+      toast.success("Build complete — stock decremented.");
+    },
+    onError: (e) => {
+      const m = e instanceof ApiError ? e.userMessage : "Build failed";
+      setErr(m);
+      toast.error(m);
+    },
+  });
+
 
   if (isError) return <div className="text-red-600 text-sm p-4">Failed to load build. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (!data) return <div className="text-muted">Loading…</div>;
@@ -57,6 +82,8 @@ export default function BuildDetail() {
     ? shortage.reduce((sum, s) => sum + s.required, 0)
     : 0;
   const reservedLines = reservationsActive ? shortage.length : 0;
+
+  const busy = consumeMutation.isPending;
 
   function suggestedFill(s: BuildShortageRow): ConsumeRow[] {
     if (s.required <= s.available) {
@@ -75,33 +102,21 @@ export default function BuildDetail() {
     setPlan(next);
   }
 
-  async function doConsume() {
+  function doConsume() {
     setErr(null);
-    setBusy(true);
-    try {
-      const lines = Object.entries(plan).flatMap(([entryId, rows]) =>
-        rows.filter(r => r.quantity > 0).map(r => ({
-          project_entry_id: entryId,
-          part_id: r.part_id,
-          quantity: r.quantity,
-          storage_location_id: r.storage_location_id || undefined,
-        })),
-      );
-      if (lines.length === 0) {
-        setErr("No lines.");
-        return;
-      }
-      await api.post(`/builds/${buildId}/consume`, { lines });
-      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "build", buildId) });
-      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
-      toast.success("Build complete — stock decremented.");
-    } catch (e) {
-      const m = e instanceof ApiError ? e.userMessage : "Build failed";
-      setErr(m);
-      toast.error(m);
-    } finally {
-      setBusy(false);
+    const lines = Object.entries(plan).flatMap(([entryId, rows]) =>
+      rows.filter(r => r.quantity > 0).map(r => ({
+        project_entry_id: entryId,
+        part_id: r.part_id,
+        quantity: r.quantity,
+        storage_location_id: r.storage_location_id || undefined,
+      })),
+    );
+    if (lines.length === 0) {
+      setErr("No lines.");
+      return;
     }
+    consumeMutation.mutate({ lines });
   }
 
   async function doArchive() {

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useConfirm } from "@/components/ConfirmDialog";
 
@@ -106,10 +107,40 @@ export default function WorkspaceSettings() {
   const [inviteRole, setInviteRole] = useState<"admin" | "member" | "viewer">("member");
   const [providerKey, setProviderKey] = useState("");
   const [providerSecret, setProviderSecret] = useState("");
-  const [providerKeyBusy, setProviderKeyBusy] = useState(false);
   const [scannerLicense, setScannerLicense] = useState("");
-  const [scannerBusy, setScannerBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const providerKeyMutation = useApiMutation<unknown, Record<string, string>>({
+    mutationKey: ["workspace", "provider-key"],
+    mutationFn: (body) => api.patch("/workspaces/current", body),
+    onSuccess: (_, body) => {
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "ws", "current") });
+      setProviderKey("");
+      setProviderSecret("");
+      const cleared = Object.values(body).every(v => v === "");
+      toast.success(cleared ? "Credentials cleared." : "Credentials saved.");
+    },
+    onError: (e) => {
+      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
+    },
+  });
+
+  const scannerKeyMutation = useApiMutation<unknown, { scanner_license_key: string }>({
+    mutationKey: ["workspace", "scanner-key"],
+    mutationFn: (body) => api.patch("/workspaces/current", body),
+    onSuccess: (_, body) => {
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "ws", "current") });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "ws", "scanner", "license-key") });
+      setScannerLicense("");
+      toast.success(body.scanner_license_key ? "License key saved." : "License key cleared.");
+    },
+    onError: (e) => {
+      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
+    },
+  });
+
+  const providerKeyBusy = providerKeyMutation.isPending;
+  const scannerBusy = scannerKeyMutation.isPending;
   /**
    * SEC2-008 copy-once token: when the backend returns catalog_token_plaintext
    * (freshly minted or regenerated token) we stash it here and render a
@@ -538,24 +569,13 @@ export default function WorkspaceSettings() {
                   type="button"
                   className="btn-primary"
                   disabled={providerKeyBusy || (!providerKey && !providerSecret)}
-                  onClick={async () => {
-                    setProviderKeyBusy(true);
-                    try {
-                      const body: Record<string, string> = {};
-                      // Only send fields the user actually changed (the
-                      // backend leaves omitted fields alone).
-                      if (providerKey) body.parts_provider_api_key = providerKey;
-                      if (providerSecret) body.parts_provider_api_secret = providerSecret;
-                      await api.patch("/workspaces/current", body);
-                      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "ws", "current") });
-                      setProviderKey("");
-                      setProviderSecret("");
-                      toast.success("Credentials saved.");
-                    } catch (e) {
-                      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
-                    } finally {
-                      setProviderKeyBusy(false);
-                    }
+                  onClick={() => {
+                    const body: Record<string, string> = {};
+                    // Only send fields the user actually changed (the
+                    // backend leaves omitted fields alone).
+                    if (providerKey) body.parts_provider_api_key = providerKey;
+                    if (providerSecret) body.parts_provider_api_secret = providerSecret;
+                    providerKeyMutation.mutate(body);
                   }}
                 >
                   Save
@@ -571,19 +591,10 @@ export default function WorkspaceSettings() {
                         severity: "danger",
                         confirmLabel: "Clear",
                       }))) return;
-                      setProviderKeyBusy(true);
-                      try {
-                        await api.patch("/workspaces/current", {
-                          parts_provider_api_key: "",
-                          parts_provider_api_secret: "",
-                        });
-                        qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "ws", "current") });
-                        toast.success("Credentials cleared.");
-                      } catch (e) {
-                        toast.error(e instanceof ApiError ? e.userMessage : "Failed");
-                      } finally {
-                        setProviderKeyBusy(false);
-                      }
+                      providerKeyMutation.mutate({
+                        parts_provider_api_key: "",
+                        parts_provider_api_secret: "",
+                      });
                     }}
                   >
                     Clear
@@ -613,20 +624,8 @@ export default function WorkspaceSettings() {
                   type="button"
                   className="btn-primary"
                   disabled={providerKeyBusy}
-                  onClick={async () => {
-                    setProviderKeyBusy(true);
-                    try {
-                      await api.patch("/workspaces/current", {
-                        parts_provider_api_key: providerKey,
-                      });
-                      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "ws", "current") });
-                      setProviderKey("");
-                      toast.success(providerKey ? "API key saved." : "API key cleared.");
-                    } catch (e) {
-                      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
-                    } finally {
-                      setProviderKeyBusy(false);
-                    }
+                  onClick={() => {
+                    providerKeyMutation.mutate({ parts_provider_api_key: providerKey });
                   }}
                 >
                   {providerKey ? "Save" : (cur.has_parts_provider_api_key ? "Clear" : "Save")}
@@ -675,21 +674,8 @@ export default function WorkspaceSettings() {
                   type="button"
                   className="btn-primary"
                   disabled={scannerBusy}
-                  onClick={async () => {
-                    setScannerBusy(true);
-                    try {
-                      await api.patch("/workspaces/current", {
-                        scanner_license_key: scannerLicense,
-                      });
-                      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "ws", "current") });
-                      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "ws", "scanner", "license-key") });
-                      setScannerLicense("");
-                      toast.success(scannerLicense ? "License key saved." : "License key cleared.");
-                    } catch (e) {
-                      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
-                    } finally {
-                      setScannerBusy(false);
-                    }
+                  onClick={() => {
+                    scannerKeyMutation.mutate({ scanner_license_key: scannerLicense });
                   }}
                 >
                   {scannerLicense ? "Save" : (cur.has_scanner_license_key ? "Clear" : "Save")}

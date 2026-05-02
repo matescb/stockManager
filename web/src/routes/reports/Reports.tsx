@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { BarChart3, ShoppingCart } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { formatDate, formatMoney } from "@/lib/format";
 import { DataTable } from "@/components/DataTable";
@@ -201,29 +202,30 @@ export function LowStockReport() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
-  const [busy, setBusy] = useState(false);
   const { data, isLoading, isError, error } = useQuery({
     queryKey: useWsKey("report", "low-stock"),
     queryFn: () => api.get<LowStockRow[]>("/reports/low-stock"),
   });
+
+  const restockMutation = useApiMutation<void, { name: string; lines: { part_id: string; quantity: number }[] }>({
+    mutationKey: ["report", "low-stock", "restock"],
+    mutationFn: async ({ name, lines }) => {
+      await createRestockOrder(name, lines, nav, qc, workspaceId);
+    },
+  });
+
+
   if (isError) return <div className="text-red-600 text-sm p-4">Failed to load low-stock report. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (isLoading) return <div className="text-muted">Loading…</div>;
   const rows = data ?? [];
+  const busy = restockMutation.isPending;
 
-  async function orderShortages() {
+  function orderShortages() {
     if (busy || rows.length === 0) return;
-    setBusy(true);
-    try {
-      await createRestockOrder(
-        `Restock ${todayISO()}`,
-        rows.map(r => ({ part_id: r.part_id, quantity: Math.max(1, r.short_by) })),
-        nav,
-        qc,
-        workspaceId,
-      );
-    } finally {
-      setBusy(false);
-    }
+    restockMutation.mutate({
+      name: `Restock ${todayISO()}`,
+      lines: rows.map(r => ({ part_id: r.part_id, quantity: Math.max(1, r.short_by) })),
+    });
   }
 
   return (
@@ -324,7 +326,6 @@ export function BomShortageReport() {
   const { data: projects } = useQuery({ queryKey: useWsKey("projects"), queryFn: () => api.get<Project[]>("/projects") });
   const [projectId, setProjectId] = useState("");
   const [qty, setQty] = useState(1);
-  const [busy, setBusy] = useState(false);
   const { data } = useQuery({
     queryKey: useWsKey("report", "bom", projectId, qty),
     queryFn: () => api.get<Shortage>(`/reports/bom-shortage?project_id=${projectId}&quantity=${qty}`),
@@ -334,21 +335,22 @@ export function BomShortageReport() {
   const shortages = data?.rows.filter(r => r.short_by > 0) ?? [];
   const projectName = projects?.find(p => p.id === projectId)?.name;
 
-  async function orderShortages() {
+  const restockMutation = useApiMutation<void, { name: string; lines: { part_id: string; quantity: number }[] }>({
+    mutationKey: ["report", "bom", "restock"],
+    mutationFn: async ({ name, lines }) => {
+      await createRestockOrder(name, lines, nav, qc, workspaceId);
+    },
+  });
+
+  const busy = restockMutation.isPending;
+
+  function orderShortages() {
     if (busy || shortages.length === 0) return;
-    setBusy(true);
-    try {
-      const subject = projectName ? `${projectName} × ${qty}` : `build × ${qty}`;
-      await createRestockOrder(
-        `BOM restock — ${subject} (${todayISO()})`,
-        shortages.map(r => ({ part_id: r.part_id, quantity: r.short_by })),
-        nav,
-        qc,
-        workspaceId,
-      );
-    } finally {
-      setBusy(false);
-    }
+    const subject = projectName ? `${projectName} × ${qty}` : `build × ${qty}`;
+    restockMutation.mutate({
+      name: `BOM restock — ${subject} (${todayISO()})`,
+      lines: shortages.map(r => ({ part_id: r.part_id, quantity: r.short_by })),
+    });
   }
 
   return (

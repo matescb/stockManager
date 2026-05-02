@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
+import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import { useConfirm, usePrompt } from "@/components/ConfirmDialog";
@@ -119,6 +120,29 @@ export default function ProjectImport() {
   const [busy, setBusy] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [result, setResult] = useState<{ inserted: number; matched: number; unmatched: number } | null>(null);
+
+  type CommitPayload = {
+    text_b64: string;
+    separator: string;
+    encoding: string;
+    has_header: boolean;
+    mapping: Mapping[];
+    designator_separator: string;
+  };
+
+  const commitMutation = useApiMutation<{ inserted: number; matched: number; unmatched: number }, CommitPayload>({
+    mutationKey: ["project", projectId, "bom-import"],
+    mutationFn: (payload) =>
+      api.post<{ inserted: number; matched: number; unmatched: number }>(`/projects/${projectId}/bom/import`, payload),
+    onSuccess: (res) => {
+      setResult(res);
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "project", projectId, "entries") });
+      setStep("done");
+    },
+    onError: (e) => {
+      setErr(e instanceof ApiError ? e.userMessage : "Import failed");
+    },
+  });
   const { data: presets, refetch: refetchPresets } = useQuery({
     queryKey: useWsKey("bom-presets"),
     queryFn: () => api.get<Preset[]>("/bom-presets"),
@@ -221,26 +245,16 @@ export default function ProjectImport() {
     }
   }
 
-  async function commit() {
-    setBusy(true);
+  function commit() {
     setErr(null);
-    try {
-      const res = await api.post<{ inserted: number; matched: number; unmatched: number }>(`/projects/${projectId}/bom/import`, {
-        text_b64: b64,
-        separator,
-        encoding,
-        has_header: hasHeader,
-        mapping,
-        designator_separator: designatorSep,
-      });
-      setResult(res);
-      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "project", projectId, "entries") });
-      setStep("done");
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.userMessage : "Import failed");
-    } finally {
-      setBusy(false);
-    }
+    commitMutation.mutate({
+      text_b64: b64,
+      separator,
+      encoding,
+      has_header: hasHeader,
+      mapping,
+      designator_separator: designatorSep,
+    });
   }
 
   if (step === "done") {
@@ -382,7 +396,7 @@ export default function ProjectImport() {
           </div>
 
           <div className="flex gap-2">
-            <button className="btn-primary" onClick={commit} disabled={busy}>{busy ? "Importing…" : "Import BOM"}</button>
+            <button className="btn-primary" onClick={commit} disabled={commitMutation.isPending}>{commitMutation.isPending ? "Importing…" : "Import BOM"}</button>
             <button className="btn" onClick={() => setStep("upload")}>Back</button>
           </div>
         </div>

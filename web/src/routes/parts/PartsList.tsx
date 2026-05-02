@@ -4,6 +4,7 @@ import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Boxes, ImageOff, Loader2, Trash2 } from "lucide-react";
 import { api, ApiError, getPaged } from "@/lib/api";
+import { useApiMutation } from "@/lib/mutations";
 import { PagedPartsSchema } from "@/lib/schemas";
 import type { Part } from "@/lib/schemas";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
@@ -23,7 +24,26 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
   const { workspaceId } = useAuth();
   // Use a distinct key so archived/active lists don't share cache entries.
   const partsKey = useWsKey("parts", "paged", { archived });
-  const [busy, setBusy] = useState(false);
+
+  const bulkDeleteMutation = useApiMutation<{ archived_ids: string[]; skipped: number }, { part_ids: string[] }>({
+    mutationKey: ["parts", "bulk-delete"],
+    mutationFn: (payload) =>
+      api.post<{ archived_ids: string[]; skipped: number }>("/parts/bulk-delete", payload),
+    onSuccess: (res, payload) => {
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
+      const ids = payload.part_ids;
+      toast.success(
+        res.archived_ids.length === ids.length
+          ? `Archived ${res.archived_ids.length} part${res.archived_ids.length === 1 ? "" : "s"}.`
+          : `Archived ${res.archived_ids.length} of ${ids.length}; ${res.skipped} skipped.`,
+      );
+    },
+    onError: (e) => {
+      toast.error(e instanceof ApiError ? e.userMessage : "Bulk delete failed");
+    },
+  });
+
+  const busy = bulkDeleteMutation.isPending;
 
   // `paged=true` opts into the cursor-paged response shape
   // (`{items, next_cursor}`). Without it, GET /parts returns a bare list
@@ -96,24 +116,8 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
       confirmLabel: "Archive",
     });
     if (!ok) return;
-    setBusy(true);
-    try {
-      const res = await api.post<{ archived_ids: string[]; skipped: number }>(
-        "/parts/bulk-delete",
-        { part_ids: ids },
-      );
-      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
-      clear();
-      toast.success(
-        res.archived_ids.length === ids.length
-          ? `Archived ${res.archived_ids.length} part${res.archived_ids.length === 1 ? "" : "s"}.`
-          : `Archived ${res.archived_ids.length} of ${ids.length}; ${res.skipped} skipped.`,
-      );
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : "Bulk delete failed");
-    } finally {
-      setBusy(false);
-    }
+    clear();
+    bulkDeleteMutation.mutate({ part_ids: ids });
   }
 
   return (

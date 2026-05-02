@@ -1,24 +1,19 @@
 import { useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useApiMutation } from "@/lib/mutations";
 
 export default function Account() {
   const { me, refresh, switchWorkspace } = useAuth();
   const [token, setToken] = useState("");
-  const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  async function accept() {
-    if (!token.trim()) return;
-    setBusy(true);
-    setErr(null);
-    setMsg(null);
-    try {
-      const out = await api.post<{ workspace_id: string; workspace_name: string; role: string }>(
-        "/invitations/accept",
-        { token: token.trim() },
-      );
+  const acceptMutation = useApiMutation<{ workspace_id: string; workspace_name: string; role: string }, { token: string }>({
+    mutationKey: ["account", "update"],
+    mutationFn: (payload) =>
+      api.post<{ workspace_id: string; workspace_name: string; role: string }>("/invitations/accept", payload),
+    onSuccess: async (out) => {
       setMsg(`Joined "${out.workspace_name}" as ${out.role}.`);
       setToken("");
       // Refresh /auth/me so the new workspace appears in the picker,
@@ -26,11 +21,19 @@ export default function Account() {
       // cache and navigates without a full page reload (FE2-003).
       await refresh();
       await switchWorkspace(out.workspace_id);
-    } catch (e) {
+    },
+    onError: (e) => {
       setErr(e instanceof ApiError ? e.userMessage : "Failed");
-    } finally {
-      setBusy(false);
-    }
+    },
+  });
+
+  const busy = acceptMutation.isPending;
+
+  function accept() {
+    if (!token.trim()) return;
+    setErr(null);
+    setMsg(null);
+    acceptMutation.mutate({ token: token.trim() });
   }
 
   if (!me) return null;

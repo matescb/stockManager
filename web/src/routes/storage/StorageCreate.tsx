@@ -1,10 +1,19 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
+import { useApiMutation } from "@/lib/mutations";
+
+type StorageCreatePayload = {
+  name: string;
+  description: string;
+  single_part_only: boolean;
+  existing_parts_only: boolean;
+  is_full: boolean;
+};
 
 export default function StorageCreate() {
   const nav = useNavigate();
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<StorageCreatePayload>({
     name: "",
     description: "",
     single_part_only: false,
@@ -12,24 +21,28 @@ export default function StorageCreate() {
     is_full: false,
   });
   const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
   function set<K extends keyof typeof form>(k: K, v: (typeof form)[K]) {
     setForm(f => ({ ...f, [k]: v }));
   }
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setErr(null);
-    try {
-      const res = await api.post<{ id: string }>("/storage", form);
+  const createMutation = useApiMutation<{ id: string }, StorageCreatePayload>({
+    mutationKey: ["storage", "create"],
+    mutationFn: (payload) => api.post<{ id: string }>("/storage", payload),
+    onSuccess: (res) => {
       nav(`/storage/${res.id}/info`);
-    } catch (e) {
+    },
+    onError: (e) => {
       setErr(e instanceof ApiError ? e.userMessage : "Failed");
-    } finally {
-      setBusy(false);
-    }
+    },
+  });
+
+  const busy = createMutation.isPending;
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setErr(null);
+    createMutation.mutate(form);
   }
 
   return (

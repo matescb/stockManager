@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useLocation, useNavigate, type Location } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useApiMutation } from "@/lib/mutations";
 import AuthShell from "./AuthShell";
 
 export default function Login() {
@@ -14,7 +15,6 @@ export default function Login() {
   // SEC2-014: the server returns retry_after_seconds on a 429 lockout
   // response. Show a countdown so the user knows how long to wait.
   const [retryAfter, setRetryAfter] = useState<number | null>(null);
-  const [busy, setBusy] = useState(false);
 
   // `from` is set by `<Gate>` (and by the 401 handler in auth.tsx) when
   // an authed page bounced the user here. Replay the original target on
@@ -22,16 +22,14 @@ export default function Login() {
   const fromLoc = (location.state as { from?: Location } | null)?.from;
   const fromPath = fromLoc ? `${fromLoc.pathname}${fromLoc.search}${fromLoc.hash}` : null;
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setErr(null);
-    setRetryAfter(null);
-    setBusy(true);
-    try {
-      await api.post("/auth/login", { email, password });
+  const loginMutation = useApiMutation<unknown, { email: string; password: string }>({
+    mutationKey: ["auth", "login"],
+    mutationFn: ({ email, password }) => api.post("/auth/login", { email, password }),
+    onSuccess: async () => {
       await refresh();
       nav(fromPath || "/parts", { replace: true });
-    } catch (e) {
+    },
+    onError: (e) => {
       if (e instanceof ApiError) {
         // SEC2-014: per-account lockout returns 429 with retry_after_seconds.
         const body = e.body as Record<string, unknown> | null;
@@ -44,9 +42,16 @@ export default function Login() {
       } else {
         setErr("Login failed");
       }
-    } finally {
-      setBusy(false);
-    }
+    },
+  });
+
+  const busy = loginMutation.isPending;
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setErr(null);
+    setRetryAfter(null);
+    loginMutation.mutate({ email, password });
   }
 
   return (

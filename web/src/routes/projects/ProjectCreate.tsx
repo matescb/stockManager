@@ -1,25 +1,31 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
+import { useApiMutation } from "@/lib/mutations";
 
 export default function ProjectCreate() {
   const nav = useNavigate();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setErr(null);
-    try {
-      const res = await api.post<{ id: string }>("/projects", { name, description: description || null });
+
+  const createMutation = useApiMutation<{ id: string }, { name: string; description: string | null }>({
+    mutationKey: ["project", "create"],
+    mutationFn: (payload) => api.post<{ id: string }>("/projects", payload),
+    onSuccess: (res) => {
       nav(`/projects/${res.id}/data`);
-    } catch (e) {
+    },
+    onError: (e) => {
       setErr(e instanceof ApiError ? e.userMessage : "Failed");
-    } finally {
-      setBusy(false);
-    }
+    },
+  });
+
+  const busy = createMutation.isPending;
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setErr(null);
+    createMutation.mutate({ name, description: description || null });
   }
   return (
     <form onSubmit={submit} className="card p-4 max-w-xl space-y-3">
