@@ -13,8 +13,10 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.domain._mixins import WorkspaceOwned
@@ -117,3 +119,35 @@ class PartSubstitute(Base):
     part_id = Column(UUID(as_uuid=True), ForeignKey("parts.id", ondelete="CASCADE"), nullable=False, index=True)
     substitute_part_id = Column(UUID(as_uuid=True), ForeignKey("parts.id", ondelete="CASCADE"), nullable=False, index=True)
     direction = Column(String(20), nullable=False, default="bidirectional")
+
+
+class BulkImportIdempotency(Base):
+    """Idempotency cache for bulk-import-from-scan (BE2-003).
+
+    Keyed on (workspace_id, key) — a composite PK that enforces workspace
+    isolation at the DB level even though application code already filters
+    by workspace_id. `result_json` holds the full API envelope so a cache
+    hit can be returned verbatim without re-running any logic.
+
+    TTL: rows older than 24 h are swept best-effort at the start of each
+    request. This keeps the table bounded without a background cron job.
+    """
+    __tablename__ = "bulk_import_idempotency"
+    __table_args__ = (
+        Index("ix_bulk_import_idempotency_ws_created", "workspace_id", "created_at"),
+    )
+
+    workspace_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    # SHA-256 hex of (workspace_id + sorted row contents), or client-supplied UUID4.
+    key = Column(String(64), primary_key=True, nullable=False)
+    result_json = Column(JSONB, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )

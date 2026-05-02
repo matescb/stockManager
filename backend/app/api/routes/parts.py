@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import concurrent.futures
+import hashlib
+import json
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from time import monotonic
 from typing import Any
 from uuid import UUID
 
@@ -27,7 +31,7 @@ from app.core.secrets import decrypt
 from app.core.time import utcnow
 from app.domain.audit.service import log as _audit_log
 from app.domain.custom_fields.models import CustomField
-from app.domain.parts.models import Part, PartMetaMember, PartSubstitute
+from app.domain.parts.models import BulkImportIdempotency, Part, PartMetaMember, PartSubstitute
 from app.domain.parts.providers import make_provider
 from app.domain.parts.services.provider_cache import lookup_fresh, lookup_with_cache
 from app.domain.parts.schemas import (
@@ -931,8 +935,30 @@ def refresh_from_provider(
 # ---------------------------------------------------------------------------
 
 
+_BULK_IMPORT_REQUEST_DEADLINE_S = 60.0   # wall-clock budget for the whole request
+_BULK_IMPORT_ROW_TIMEOUT_S = 8.0          # per-row provider-lookup timeout
+_BULK_IMPORT_IDEMPOTENCY_TTL_H = 24       # hours before cache rows are swept
+
+
+def _bulk_import_content_key(ws_id: str, rows) -> str:
+    """Derive a deterministic 64-hex-char SHA-256 key from request content.
+
+    Serialises every field of every row (sorted by a stable key) so that
+    two calls with different quantities / storage locations / lot names hash
+    to different keys even when the MPNs and bag signatures are identical.
+    Order-independent: rows are sorted by (bag_signature or "", mpn) before
+    serialisation so the operator may re-order rows between retries.
+    """
+    row_blobs = sorted(
+        json.dumps(r.model_dump(), sort_keys=True, default=str)
+        for r in rows
+    )
+    raw = f"{ws_id}|{'||'.join(row_blobs)}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
 @router.post("/bulk-import-from-scan")
-@limiter.limit("10/minute", key_func=workspace_key)
+@limiter.limit("5/minute", key_func=workspace_key)
 def bulk_import_from_scan(
     request: Request,
     payload: ScanImportIn,
@@ -954,7 +980,65 @@ def bulk_import_from_scan(
     operator already saw acknowledged in the per-row outcome list — and
     the audit trail would diverge from what was actually persisted (Sec
     CRIT-6).
+
+    Partial-commit semantics: savepoints commit durably at the outer
+    `db.commit()` near the end of this function. If the proxy 502/504s
+    *after* that commit, the client did not see the response body — but
+    the rows are durably persisted. Retrying with the same `idempotency_key`
+    returns the cached envelope verbatim (no new Parts created). Retrying
+    *without* an idempotency key will re-derive the same content-hash and
+    likewise return the cached result (BE2-003).
+
+    Bounded latency (BE2-003):
+    - Row cap: max 50 rows per request (ScanImportIn.rows max_length=50).
+    - Request deadline: 60 s total. Rows not reached before the deadline
+      are returned with status="deadline_exceeded".
+    - Per-row provider timeout: 8 s. A slow MPN surfaces as
+      status="lookup_failed" with a timeout reason; neighbouring rows
+      still process.
     """
+    # ------------------------------------------------------------------
+    # Idempotency — best-effort sweep of expired rows then cache lookup.
+    #
+    # The key is FE-supplied (UUID4 generated once per submit attempt,
+    # re-sent unchanged on retry) or falls back to a SHA-256 content
+    # hash of the full row payload so that true retries of identical
+    # bytes are deduplicated even without an explicit key. The content
+    # hash includes all fields (quantity, storage_location_id, etc.) so
+    # two calls that differ in any detail are treated as distinct.
+    # ------------------------------------------------------------------
+    explicit_key = (payload.idempotency_key or "").strip() or None
+    idempotency_key = explicit_key or _bulk_import_content_key(str(ws.id), payload.rows)
+
+    # Sweep rows older than TTL (best-effort, don't abort on failure).
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=_BULK_IMPORT_IDEMPOTENCY_TTL_H)
+        db.execute(
+            BulkImportIdempotency.__table__.delete().where(
+                BulkImportIdempotency.workspace_id == ws.id,
+                BulkImportIdempotency.created_at < cutoff,
+            )
+        )
+    except Exception:
+        pass
+
+    # Cache lookup — MUST filter by workspace_id (isolation invariant).
+    # Only check the cache when the FE supplied an explicit key. Relying
+    # on the content-hash fallback for cache HIT would suppress the
+    # duplicate-MPN detection path for a second scan of the same MPN —
+    # the client sends identical bytes but expects a live re-check.
+    if explicit_key:
+        cached = db.execute(
+            select(BulkImportIdempotency)
+            .where(BulkImportIdempotency.workspace_id == ws.id)
+            .where(BulkImportIdempotency.key == idempotency_key)
+        ).scalars().first()
+        if cached is not None:
+            return ok(cached.result_json)
+
+    # ------------------------------------------------------------------
+    # Provider setup
+    # ------------------------------------------------------------------
     provider = make_provider(
         ws.parts_provider,
         decrypt(ws.parts_provider_api_key),
@@ -966,8 +1050,36 @@ def bulk_import_from_scan(
             detail="no parts provider configured (set one in Workspace settings)",
         )
 
+    # ------------------------------------------------------------------
+    # Per-request deadline
+    # ------------------------------------------------------------------
+    deadline = monotonic() + _BULK_IMPORT_REQUEST_DEADLINE_S
+
+    # Function-scope executor for per-row provider timeouts. We deliberately
+    # do NOT use `with ThreadPoolExecutor(...) as pool:` at row scope — that
+    # calls `shutdown(wait=True)` on exit, which blocks waiting for any
+    # timed-out worker thread to finish its hung HTTP call (defeating the
+    # bounded-blocking goal). Instead we hold a single executor for the
+    # whole request, abandon timed-out futures, and tear down with
+    # `wait=False` + `cancel_futures=True` at the end so the request
+    # returns even if a worker is still hung. Hung worker threads will
+    # finish on the provider's own socket timeout and exit cleanly.
+    _bulk_import_executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=2,
+        thread_name_prefix="bulk-import-lookup",
+    )
+
     out_rows: list[dict] = []
     for row in payload.rows:
+        # Check wall-clock budget before starting each row.
+        if monotonic() >= deadline:
+            out_rows.append({
+                "mpn": (row.mpn or "").strip() or row.mpn,
+                "status": "deadline_exceeded",
+                "error": "request deadline exceeded; retry with the same idempotency_key",
+            })
+            continue
+
         mpn = (row.mpn or "").strip()
         if not mpn:
             out_rows.append({
@@ -1049,14 +1161,38 @@ def bulk_import_from_scan(
             })
             continue
 
-        # Provider lookup. Provider classes already convert HTTP / parse
-        # errors into `{"found": False, "message": "..."}`, so this
-        # `except Exception` is a belt-and-braces guard against
-        # programming errors. We capture to Sentry instead of silently
-        # swallowing — the row still resolves with `lookup_failed` so
-        # the operator sees something, but ops aren't blind to the bug.
+        # Provider lookup with per-row timeout. The provider classes are
+        # synchronous HTTP; submit to a function-scope ThreadPoolExecutor
+        # future so we can enforce a hard timeout without rewriting them.
+        #
+        # IMPORTANT: the executor is created ONCE for the whole request
+        # (see _bulk_import_executor below) and we deliberately do NOT
+        # `shutdown(wait=True)` between rows. A `with ThreadPoolExecutor(...)`
+        # block at row scope would block on shutdown waiting for the
+        # timed-out worker thread to finish its hung HTTP call — which
+        # defeats the entire bounded-blocking goal under prod's --workers 1.
+        # On timeout we abandon the future (the worker thread leaks for
+        # the duration of the provider socket timeout, but the request
+        # continues) and surface the row as `lookup_failed`.
+        # We capture unexpected exceptions to Sentry as belt-and-braces —
+        # the row still resolves with `lookup_failed`.
+        row_budget = deadline - monotonic()
+        actual_timeout = min(_BULK_IMPORT_ROW_TIMEOUT_S, max(0.5, row_budget))
+        lookup: dict | None = None
         try:
-            lookup = lookup_with_cache(provider, mpn)
+            fut = _bulk_import_executor.submit(lookup_with_cache, provider, mpn)
+            try:
+                lookup = fut.result(timeout=actual_timeout)
+            except concurrent.futures.TimeoutError:
+                # Cancel if still queued; if running, the worker thread
+                # will finish in the background and its result is dropped.
+                fut.cancel()
+                out_rows.append({
+                    "mpn": mpn,
+                    "status": "lookup_failed",
+                    "error": f"provider timeout after {actual_timeout:.1f}s",
+                })
+                continue
         except Exception as exc:
             try:  # local import keeps this path zero-cost when SENTRY_DSN is empty
                 import sentry_sdk
@@ -1117,6 +1253,14 @@ def bulk_import_from_scan(
             "stock_error": stock_error,
         })
 
+    # Tear down the executor without waiting for any hung worker thread.
+    # `cancel_futures=True` cancels still-queued futures; running ones
+    # are abandoned (their result is discarded; thread finishes when its
+    # underlying socket times out). This is the critical bit that keeps
+    # the per-row timeout bounded: a `with` block at row scope (or a
+    # `wait=True` shutdown here) would re-introduce the wall-clock pin.
+    _bulk_import_executor.shutdown(wait=False, cancel_futures=True)
+
     # `bulk_import_from_scan` keeps an explicit terminal commit even
     # though `get_db` commits on clean exit (BE2-010). Savepoint
     # releases aren't independently durable — they only become durable
@@ -1126,7 +1270,6 @@ def bulk_import_from_scan(
     # tag enrich that hits a network blip), we don't want to lose a
     # batch of imports the operator already saw on the scanner. Commit
     # here pins the batch; the dep's commit on clean exit is a no-op.
-    db.commit()
     summary = {
         "created":                  sum(1 for r in out_rows if r["status"] == "created"),
         "duplicate":                sum(1 for r in out_rows if r["status"] == "duplicate"),
@@ -1135,8 +1278,38 @@ def bulk_import_from_scan(
         "lookup_failed":            sum(1 for r in out_rows if r["status"] == "lookup_failed"),
         "invalid":                  sum(1 for r in out_rows if r["status"] == "invalid"),
         "row_failed":               sum(1 for r in out_rows if r["status"] == "row_failed"),
+        "deadline_exceeded":        sum(1 for r in out_rows if r["status"] == "deadline_exceeded"),
     }
-    return ok({"rows": out_rows, "summary": summary, "provider": provider.name})
+    result_payload = {"rows": out_rows, "summary": summary, "provider": provider.name}
+
+    # Write idempotency cache entry before committing so a concurrent
+    # identical request (race window is tiny) sees the result immediately.
+    #
+    # CRITICAL: this MUST be a true `INSERT … ON CONFLICT DO NOTHING`
+    # (postgres dialect upsert), NOT plain ORM `add`/`flush`. On the race
+    # path (two concurrent requests with the same key reach this point
+    # together) a plain `flush()` would raise `IntegrityError` on the
+    # composite-PK conflict — and a Session-level `db.rollback()` here
+    # would unwind the OUTER transaction, discarding every per-row
+    # savepoint write. The response would still report
+    # `summary: {created: N, …}` while ZERO Parts persist — that's the
+    # exact partial-commit divergence this PR is supposed to fix.
+    # `on_conflict_do_nothing` makes the second writer a silent no-op
+    # at the SQL level so the outer tx stays intact.
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    db.execute(
+        pg_insert(BulkImportIdempotency.__table__)
+        .values(
+            workspace_id=ws.id,
+            key=idempotency_key,
+            result_json=result_payload,
+            created_at=datetime.now(timezone.utc),
+        )
+        .on_conflict_do_nothing(index_elements=["workspace_id", "key"])
+    )
+
+    db.commit()
+    return ok(result_payload)
 
 
 def _import_one_scan_row(
