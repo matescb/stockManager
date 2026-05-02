@@ -12,8 +12,6 @@ from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.core.time import utcnow
 from app.domain.orders.models import Order, OrderEntry
-from app.domain.parts.models import Part
-from app.domain.stock.models import StockEntry
 from app.domain.orders.schemas import (
     OrderCreateIn,
     OrderEntryIn,
@@ -22,6 +20,8 @@ from app.domain.orders.schemas import (
     ReceiveIn,
 )
 from app.domain.orders.service import OrderError, receive
+from app.domain.parts.models import Part
+from app.domain.stock.models import StockEntry
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -186,7 +186,9 @@ def patch_order(order_id: UUID, payload: OrderPatchIn, db: DbSession, ws: Curren
 # workspace's order_id gets 404, not 403.
 @router.post("/{order_id}/archive")
 def archive_order(order_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
-    from sqlalchemy import func, select as sa_select
+    from sqlalchemy import func
+    from sqlalchemy import select as sa_select
+
     from app.domain.attachments.models import Attachment
     from app.domain.custom_fields.models import CustomField as CF
     from app.domain.tags.models import TagLink

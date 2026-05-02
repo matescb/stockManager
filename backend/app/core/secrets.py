@@ -40,7 +40,6 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from app.core.logging import get_logger
 
-
 log = get_logger(__name__)
 
 

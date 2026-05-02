@@ -25,7 +25,6 @@ from app.domain.projects.schemas import (
     BomPreviewRow,
 )
 
-
 # SEC2-007 / BE2-006 — second line of defence. The schema caps the
 # base64 input at 5 MB; this caps the decoded body at 4 MB and the row
 # count at 10 000 so a malicious payload that squeaks past the schema

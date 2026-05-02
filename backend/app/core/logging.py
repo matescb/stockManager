@@ -27,7 +27,6 @@ import logging
 import sys
 from typing import Any
 
-
 _CONFIGURED = False
 
 

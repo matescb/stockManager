@@ -21,7 +21,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.stock.schemas import BagSignatureStr
 
-
 __all__ = [
     "PartIn",
     "PartPatch",

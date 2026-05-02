@@ -19,6 +19,7 @@ from sqlalchemy import select
 from app.core.errors import ErrorCodes, raise_http
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part
+
 # Re-export request schemas from the canonical domain location (CQ-006).
 # Kept importable here for back-compat with split files (#118 step 2-4).
 from app.domain.parts.schemas import BulkDeleteIn, PartIn, PartPatch  # noqa: F401

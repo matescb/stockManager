@@ -56,9 +56,12 @@ TEST_DATABASE_URL=postgresql+psycopg://stockmgr:stockmgr@127.0.0.1:5432/stockmgr
 
 ### Build / lint
 
-There is **no Python linter and no JS linter configured**. CI's only
-static check is `tsc -b` (run as part of `npm run build`) and `pytest`.
-Don't add tooling without asking.
+CI runs both `ruff` (Python) and `eslint` (JS/TS) as **baseline-blocking**
+gates — they fail only on violations that are NEW relative to the
+checked-in baselines (`.ruff-baseline.txt` and `.eslint-baseline.txt`).
+`tsc -b` (via `npm run build`) and `pytest` are the other static checks.
+To update the baselines after intentional cleanup, see
+`docs/development.md` — "Updating lint baselines".
 
 ### Migrations
 

@@ -61,12 +61,14 @@ export function StorageDetailLayout() {
 
 export function StorageInfo() {
   const { storageId } = useParams();
+  const storagePartsKey = useWsKey("storage", storageId, "parts");
+  const partsKey = useWsKey("parts");
   const { data: rows, isError, error } = useQuery({
-    queryKey: useWsKey("storage", storageId, "parts"),
+    queryKey: storagePartsKey,
     queryFn: () => api.get<{ part_id: string; lot_id: string | null; quantity: number }[]>(`/storage/${storageId}/parts`),
   });
+  const { data: parts } = useQuery({ queryKey: partsKey, queryFn: () => api.get<Part[]>("/parts") });
   if (isError) return <div className="text-red-600 text-sm p-4">Failed to load storage contents. {error instanceof ApiError ? error.userMessage : ""}</div>;
-  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
   const partName = new Map(parts?.map(p => [p.id, p.name]) ?? []);
   return (
     <div className="card overflow-hidden">

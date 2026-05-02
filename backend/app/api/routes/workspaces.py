@@ -18,7 +18,12 @@ from app.core.secrets import decrypt, encrypt
 from app.domain.audit.service import log as _audit_log
 from app.domain.users.models import User
 from app.domain.workspaces.models import Workspace, WorkspaceCatalogToken, WorkspaceMember
-from app.domain.workspaces.schemas import CatalogTokenIn, MemberPatch, WorkspaceCreateIn, WorkspacePatch
+from app.domain.workspaces.schemas import (
+    CatalogTokenIn,
+    MemberPatch,
+    WorkspaceCreateIn,
+    WorkspacePatch,
+)
 
 router = APIRouter()
 

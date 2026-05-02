@@ -40,7 +40,6 @@ from sqlalchemy.orm import Session
 from app.domain.stock.models import StockEntry
 from app.domain.users.models import User
 
-
 _DEFAULT_LIMIT = 50
 _MAX_LIMIT = 200
 

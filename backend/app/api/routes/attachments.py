@@ -3,9 +3,8 @@ from __future__ import annotations
 import os
 import re
 import uuid as uuidlib
-from uuid import UUID
-
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from fastapi.responses import FileResponse

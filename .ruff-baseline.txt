@@ -1,0 +1,159 @@
+app/api/routes/attachments.py:16:5: F401 [*] `app.core.deps.CurrentUser` imported but unused
+app/api/routes/attachments.py:6:20: F401 [*] `typing.Annotated` imported but unused
+app/api/routes/auth.py:137:101: E501 Line too long (111 > 100)
+app/api/routes/auth.py:301:101: E501 Line too long (107 > 100)
+app/api/routes/bom_presets.py:63:101: E501 Line too long (111 > 100)
+app/api/routes/bom_presets.py:73:101: E501 Line too long (112 > 100)
+app/api/routes/builds.py:112:101: E501 Line too long (111 > 100)
+app/api/routes/builds.py:188:16: F821 Undefined name `datetime`
+app/api/routes/builds.py:191:25: F821 Undefined name `datetime`
+app/api/routes/builds.py:68:101: E501 Line too long (102 > 100)
+app/api/routes/catalog.py:121:101: E501 Line too long (105 > 100)
+app/api/routes/catalog.py:168:101: E501 Line too long (132 > 100)
+app/api/routes/catalog.py:172:101: E501 Line too long (108 > 100)
+app/api/routes/catalog.py:173:101: E501 Line too long (149 > 100)
+app/api/routes/catalog.py:211:101: E501 Line too long (101 > 100)
+app/api/routes/catalog.py:214:101: E501 Line too long (108 > 100)
+app/api/routes/catalog.py:95:101: E501 Line too long (109 > 100)
+app/api/routes/custom_fields.py:43:101: E501 Line too long (101 > 100)
+app/api/routes/invitations.py:401:101: E501 Line too long (129 > 100)
+app/api/routes/lots.py:100:101: E501 Line too long (105 > 100)
+app/api/routes/lots.py:101:5: E741 Ambiguous variable name: `l`
+app/api/routes/lots.py:112:101: E501 Line too long (107 > 100)
+app/api/routes/lots.py:113:5: E741 Ambiguous variable name: `l`
+app/api/routes/lots.py:148:5: E741 Ambiguous variable name: `l`
+app/api/routes/lots.py:28:16: E741 Ambiguous variable name: `l`
+app/api/routes/lots.py:3:22: F401 [*] `datetime.datetime` imported but unused
+app/api/routes/lots.py:3:32: F401 [*] `datetime.timezone` imported but unused
+app/api/routes/lots.py:40:101: E501 Line too long (104 > 100)
+app/api/routes/lots.py:62:9: E741 Ambiguous variable name: `l`
+app/api/routes/lots.py:69:5: E741 Ambiguous variable name: `l`
+app/api/routes/lots.py:71:101: E501 Line too long (101 > 100)
+app/api/routes/lots.py:77:5: E741 Ambiguous variable name: `l`
+app/api/routes/lots.py:83:101: E501 Line too long (103 > 100)
+app/api/routes/lots.py:84:5: E741 Ambiguous variable name: `l`
+app/api/routes/lots.py:91:101: E501 Line too long (107 > 100)
+app/api/routes/orders.py:111:101: E501 Line too long (102 > 100)
+app/api/routes/orders.py:114:101: E501 Line too long (110 > 100)
+app/api/routes/orders.py:175:101: E501 Line too long (111 > 100)
+app/api/routes/orders.py:232:101: E501 Line too long (109 > 100)
+app/api/routes/orders.py:265:101: E501 Line too long (130 > 100)
+app/api/routes/orders.py:294:101: E501 Line too long (110 > 100)
+app/api/routes/orders.py:318:16: F821 Undefined name `datetime`
+app/api/routes/orders.py:321:25: F821 Undefined name `datetime`
+app/api/routes/parts_core.py:123:101: E501 Line too long (102 > 100)
+app/api/routes/parts_core.py:124:101: E501 Line too long (104 > 100)
+app/api/routes/parts_core.py:222:101: E501 Line too long (106 > 100)
+app/api/routes/parts_core.py:236:101: E501 Line too long (114 > 100)
+app/api/routes/parts_core.py:492:101: E501 Line too long (111 > 100)
+app/api/routes/parts_core.py:508:101: E501 Line too long (115 > 100)
+app/api/routes/parts_core.py:518:101: E501 Line too long (112 > 100)
+app/api/routes/parts_core.py:526:17: E741 Ambiguous variable name: `l`
+app/api/routes/parts_scan.py:396:101: E501 Line too long (104 > 100)
+app/api/routes/_parts_shared.py:102:101: E501 Line too long (103 > 100)
+app/api/routes/_parts_shared.py:69:101: E501 Line too long (117 > 100)
+app/api/routes/_parts_shared.py:97:101: E501 Line too long (103 > 100)
+app/api/routes/projects.py:100:101: E501 Line too long (109 > 100)
+app/api/routes/projects.py:110:101: E501 Line too long (117 > 100)
+app/api/routes/projects.py:174:101: E501 Line too long (148 > 100)
+app/api/routes/projects.py:191:101: E501 Line too long (109 > 100)
+app/api/routes/projects.py:231:101: E501 Line too long (130 > 100)
+app/api/routes/projects.py:263:101: E501 Line too long (117 > 100)
+app/api/routes/projects.py:273:101: E501 Line too long (129 > 100)
+app/api/routes/projects.py:37:101: E501 Line too long (126 > 100)
+app/api/routes/projects.py:71:101: E501 Line too long (106 > 100)
+app/api/routes/projects.py:80:101: E501 Line too long (101 > 100)
+app/api/routes/reports.py:132:101: E501 Line too long (127 > 100)
+app/api/routes/reports.py:161:9: E741 Ambiguous variable name: `l`
+app/api/routes/reports.py:86:101: E501 Line too long (110 > 100)
+app/api/routes/reports.py:97:25: E741 Ambiguous variable name: `l`
+app/api/routes/search.py:112:101: E501 Line too long (118 > 100)
+app/api/routes/search.py:115:87: E741 Ambiguous variable name: `l`
+app/api/routes/search.py:76:101: E501 Line too long (102 > 100)
+app/api/routes/search.py:85:101: E501 Line too long (103 > 100)
+app/api/routes/stock.py:62:101: E501 Line too long (101 > 100)
+app/api/routes/storage.py:193:101: E501 Line too long (101 > 100)
+app/api/routes/storage.py:47:101: E501 Line too long (107 > 100)
+app/api/routes/storage.py:51:101: E501 Line too long (105 > 100)
+app/api/routes/storage.py:76:101: E501 Line too long (109 > 100)
+app/api/routes/storage.py:86:101: E501 Line too long (115 > 100)
+app/api/routes/tags.py:36:101: E501 Line too long (111 > 100)
+app/api/routes/tags.py:98:101: E501 Line too long (113 > 100)
+app/api/routes/workspaces.py:384:101: E501 Line too long (112 > 100)
+app/api/routes/workspaces.py:48:101: E501 Line too long (117 > 100)
+app/api/routes/workspaces.py:83:101: E501 Line too long (124 > 100)
+app/core/config.py:154:101: E501 Line too long (107 > 100)
+app/core/responses.py:149:101: E501 Line too long (109 > 100)
+app/core/secrets.py:59:101: E501 Line too long (105 > 100)
+app/core/_secrets_v0016.py:53:101: E501 Line too long (105 > 100)
+app/domain/builds/models.py:27:101: E501 Line too long (106 > 100)
+app/domain/builds/models.py:29:101: E501 Line too long (108 > 100)
+app/domain/builds/models.py:32:101: E501 Line too long (105 > 100)
+app/domain/builds/service.py:22:1: E402 Module level import not at top of file
+app/domain/builds/service.py:23:1: E402 Module level import not at top of file
+app/domain/builds/service.py:24:1: E402 Module level import not at top of file
+app/domain/builds/service.py:25:1: E402 Module level import not at top of file
+app/domain/builds/service.py:26:1: E402 Module level import not at top of file
+app/domain/builds/service.py:27:1: E402 Module level import not at top of file
+app/domain/builds/service.py:9:21: F401 [*] `decimal.Decimal` imported but unused
+app/domain/lots/models.py:24:101: E501 Line too long (112 > 100)
+app/domain/lots/models.py:27:101: E501 Line too long (105 > 100)
+app/domain/_mixins.py:15:101: E501 Line too long (122 > 100)
+app/domain/_mixins.py:18:101: E501 Line too long (103 > 100)
+app/domain/_mixins.py:19:101: E501 Line too long (103 > 100)
+app/domain/orders/models.py:37:101: E501 Line too long (105 > 100)
+app/domain/orders/models.py:55:101: E501 Line too long (102 > 100)
+app/domain/orders/service.py:16:1: E402 Module level import not at top of file
+app/domain/orders/service.py:17:1: E402 Module level import not at top of file
+app/domain/orders/service.py:18:1: E402 Module level import not at top of file
+app/domain/orders/service.py:190:32: E741 Ambiguous variable name: `l`
+app/domain/orders/service.py:19:1: E402 Module level import not at top of file
+app/domain/orders/service.py:20:1: E402 Module level import not at top of file
+app/domain/orders/service.py:21:1: E402 Module level import not at top of file
+app/domain/orders/service.py:99:101: E501 Line too long (101 > 100)
+app/domain/parts/models.py:107:101: E501 Line too long (117 > 100)
+app/domain/parts/models.py:108:101: E501 Line too long (112 > 100)
+app/domain/parts/models.py:118:101: E501 Line too long (112 > 100)
+app/domain/parts/models.py:119:101: E501 Line too long (123 > 100)
+app/domain/parts/models.py:59:101: E501 Line too long (101 > 100)
+app/domain/parts/models.py:68:101: E501 Line too long (106 > 100)
+app/domain/parts/models.py:95:101: E501 Line too long (112 > 100)
+app/domain/projects/bom_import.py:115:101: E501 Line too long (106 > 100)
+app/domain/projects/bom_import.py:13:24: F401 [*] `sqlalchemy.and_` imported but unused
+app/domain/projects/bom_import.py:175:101: E501 Line too long (103 > 100)
+app/domain/projects/bom_import.py:257:101: E501 Line too long (103 > 100)
+app/domain/projects/bom_import.py:8:20: F401 [*] `typing.Iterable` imported but unused
+app/domain/projects/models.py:68:101: E501 Line too long (106 > 100)
+app/domain/projects/models.py:69:101: E501 Line too long (104 > 100)
+app/domain/projects/models.py:71:101: E501 Line too long (105 > 100)
+app/domain/stock/models.py:49:101: E501 Line too long (110 > 100)
+app/domain/stock/models.py:60:101: E501 Line too long (117 > 100)
+app/domain/stock/models.py:74:101: E501 Line too long (106 > 100)
+app/domain/stock/models.py:86:101: E501 Line too long (103 > 100)
+app/domain/stock/service.py:10:24: F401 [*] `sqlalchemy.and_` imported but unused
+app/domain/stock/service.py:10:36: F401 [*] `sqlalchemy.or_` imported but unused
+app/domain/stock/service.py:284:101: E501 Line too long (102 > 100)
+app/domain/stock/service.py:385:101: E501 Line too long (106 > 100)
+app/domain/stock/service.py:416:101: E501 Line too long (109 > 100)
+app/domain/stock/service.py:587:101: E501 Line too long (101 > 100)
+app/domain/users/models.py:34:101: E501 Line too long (112 > 100)
+app/domain/workspaces/models.py:101:101: E501 Line too long (103 > 100)
+app/domain/workspaces/models.py:104:101: E501 Line too long (104 > 100)
+app/domain/workspaces/models.py:29:101: E501 Line too long (107 > 100)
+app/domain/workspaces/models.py:62:101: E501 Line too long (122 > 100)
+app/domain/workspaces/models.py:63:101: E501 Line too long (112 > 100)
+app/domain/workspaces/models.py:87:101: E501 Line too long (122 > 100)
+app/main.py:101:1: E402 Module level import not at top of file
+app/main.py:125:1: E402 Module level import not at top of file
+app/main.py:126:1: E402 Module level import not at top of file
+app/main.py:127:1: E402 Module level import not at top of file
+app/main.py:128:1: E402 Module level import not at top of file
+app/main.py:367:101: E501 Line too long (101 > 100)
+app/main.py:368:101: E501 Line too long (103 > 100)
+app/main.py:369:101: E501 Line too long (101 > 100)
+app/main.py:370:101: E501 Line too long (102 > 100)
+app/main.py:373:101: E501 Line too long (105 > 100)
+app/main.py:376:101: E501 Line too long (102 > 100)
+app/main.py:377:101: E501 Line too long (114 > 100)
+app/main.py:383:101: E501 Line too long (114 > 100)
+app/main.py:384:101: E501 Line too long (120 > 100)

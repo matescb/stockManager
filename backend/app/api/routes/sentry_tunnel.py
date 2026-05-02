@@ -33,7 +33,6 @@ from app.core.config import settings
 from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter
 
-
 router = APIRouter()
 
 

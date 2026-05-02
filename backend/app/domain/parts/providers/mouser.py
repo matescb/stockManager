@@ -8,7 +8,6 @@ import httpx
 
 from app.domain.parts.providers.base import MpnLookupResult
 
-
 _ENDPOINT = "https://api.mouser.com/api/v1/search/partnumber"
 _TIMEOUT_SEC = 8.0  # Cap upstream wall-clock to prevent worker stall (BE2-011).
 
