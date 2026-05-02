@@ -1,0 +1,27 @@
+version: 2
+
+updates:
+  # ── GitHub Actions ───────────────────────────────────────────────────────
+  # SHA-pinned actions in ci.yml; Dependabot opens PRs to bump them.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+
+  # ── Docker base images ───────────────────────────────────────────────────
+  # All three base images are digest-pinned (INFRA2-015). Dependabot opens
+  # weekly PRs to rotate digests so we stay on patched base layers.
+  # CI's backend-tests + web-build jobs exercise the images so regressions
+  # surface before merge.
+  - package-ecosystem: "docker"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+
+  - package-ecosystem: "docker"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
