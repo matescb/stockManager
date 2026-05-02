@@ -124,6 +124,16 @@ export default function ScanImport() {
   const restoredCount = useRef<number>(rows.length);
   // Whether the "restored N drafts" banner has been shown this session.
   const restoredBannerShown = useRef(false);
+  // Capture the workspaceId at mount so the persist effect (and the
+  // restored-banner Discard action) cannot write/clear under a *different*
+  // workspace's storage key if a workspace switch fires before this route
+  // unmounts (workspace switcher is global; switchWorkspace flips
+  // workspaceId before the nav("/parts") tears the route down — see
+  // web/src/lib/auth.tsx). Without this guard we'd briefly leak the
+  // previous workspace's rows into workspace B's draft. Cross-workspace
+  // isolation is enforced in code, not the DB (see CLAUDE.md), so this
+  // needs an explicit guard rather than relying on render-ordering.
+  const mountWsId = useRef<string | undefined>(workspaceId);
 
   // Pre-select the storage when arriving via /storage/<id> "Scan into here"
   // — the destination is whichever bin the user opened.
@@ -152,7 +162,11 @@ export default function ScanImport() {
               setRows([]);
               seenSigs.current.clear();
               seenMpns.current.clear();
-              if (workspaceId) clearDraft(workspaceId);
+              // Use the wsId captured at mount, not the live `workspaceId`
+              // closure, so a workspace switch between mount and click
+              // can't cause us to clearDraft() against the wrong key.
+              const wsId = mountWsId.current;
+              if (wsId) clearDraft(wsId);
               setShowRestoredBanner(false);
             },
           },
@@ -164,9 +178,15 @@ export default function ScanImport() {
   }, []);
 
   // Persist rows to sessionStorage whenever they change.
+  // Bail if the live workspaceId no longer matches the one captured at
+  // mount — a workspace switch flips workspaceId before the route
+  // unmounts, and we mustn't write workspace A's rows under workspace
+  // B's storage key.
   useEffect(() => {
-    if (!workspaceId) return;
-    saveDraft(workspaceId, rows);
+    const wsId = mountWsId.current;
+    if (!wsId) return;
+    if (workspaceId !== wsId) return;
+    saveDraft(wsId, rows);
   }, [rows, workspaceId]);
 
   // Warn before unload when there are unsaved importable rows.
@@ -337,9 +357,12 @@ export default function ScanImport() {
       setRows(prev => {
         const remaining = prev.filter(r => !importedMpns.has(r.bag.mpn));
         // If every row was imported, clear the draft completely; otherwise
-        // the updated (smaller) rows list will be persisted by the rows effect.
-        if (remaining.length === 0 && workspaceId) {
-          clearDraft(workspaceId);
+        // the updated (smaller) rows list will be persisted by the rows
+        // effect. Use the wsId captured at mount so a mid-flight workspace
+        // switch can't redirect this clear to a different key.
+        const wsId = mountWsId.current;
+        if (remaining.length === 0 && wsId) {
+          clearDraft(wsId);
         }
         return remaining;
       });
