@@ -13,6 +13,14 @@ from sqlalchemy import or_, select
 
 from app.api._helpers import assert_in_workspace, require_resource_access
 from app.api.routes._activity import build_activity
+from app.api.routes._parts_shared import (
+    BulkDeleteIn,
+    PartIn,
+    PartPatch,
+    get_part as _get_part,
+    image_urls_for_parts as _image_urls_for_parts,
+    serialize_part as _serialize,
+)
 from app.core.config import settings
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
 from app.core.responses import ok
@@ -36,110 +44,10 @@ from app.domain.workspaces.models import Workspace
 router = APIRouter()
 
 
-class PartIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    part_type: Literal["linked", "local", "meta", "sub_assembly"] = "local"
-    # Optional — defaults to mpn server-side when blank, so the operator can
-    # paste an MPN and skip the name field. At least one of name/mpn must be
-    # set; the create endpoint enforces that explicitly.
-    name: str | None = Field(default=None, max_length=300)
-    manufacturer: str | None = None
-    mpn: str | None = None
-    internal_part_number: str | None = None
-    description: str | None = None
-    notes_markdown: str | None = None
-    footprint: str | None = None
-    low_stock_report_quantity: int | None = None
-    attrition_percentage: float = 0
-    attrition_min_quantity: int = 0
-    default_storage_location_id: UUID | None = None
-    default_storage_mandatory: bool = False
-    serialized: bool = False
-
-
-class PartPatch(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str | None = None
-    manufacturer: str | None = None
-    mpn: str | None = None
-    internal_part_number: str | None = None
-    description: str | None = None
-    notes_markdown: str | None = None
-    footprint: str | None = None
-    low_stock_report_quantity: int | None = None
-    attrition_percentage: float | None = None
-    attrition_min_quantity: int | None = None
-    default_storage_location_id: UUID | None = None
-    default_storage_mandatory: bool | None = None
-    serialized: bool | None = None
-    published: bool | None = None
-    # Command flag: when true, drops the provider link, clears
-    # last_refresh_at, resets description_locally_edited, and converts
-    # every {provider, override} custom_field row on this part to
-    # `manual` (override rows lose their original_value).
-    unlink_provider: bool | None = None
-
-
-def _image_urls_for_parts(db, ws_id, part_ids: list) -> dict:
-    """Single-shot SELECT for the per-part image_url custom_field row,
-    keyed by part_id. The /parts list endpoint uses this so we don't
-    fire one query per row."""
-    if not part_ids:
-        return {}
-    rows = db.execute(
-        select(CustomField.object_id, CustomField.value)
-        .where(CustomField.workspace_id == ws_id)
-        .where(CustomField.object_type == "part")
-        .where(CustomField.object_id.in_(part_ids))
-        .where(CustomField.key == "image_url")
-    ).all()
-    return {pid: val for pid, val in rows}
-
-
-def _serialize(
-    p: Part,
-    *,
-    on_hand: int | None = None,
-    reserved: int | None = None,
-    available: int | None = None,
-    image_url: str | None = None,
-) -> dict:
-    if reserved is None:
-        reserved = 0
-    if available is None and on_hand is not None:
-        available = on_hand - reserved
-    return {
-        "id": str(p.id),
-        "part_type": p.part_type,
-        "name": p.name,
-        "manufacturer": p.manufacturer,
-        "mpn": p.mpn,
-        "internal_part_number": p.internal_part_number,
-        "description": p.description,
-        "footprint": p.footprint,
-        "notes_markdown": p.notes_markdown,
-        "low_stock_report_quantity": p.low_stock_report_quantity,
-        "attrition_percentage": float(p.attrition_percentage or 0),
-        "attrition_min_quantity": p.attrition_min_quantity or 0,
-        "default_storage_location_id": str(p.default_storage_location_id) if p.default_storage_location_id else None,
-        "default_storage_mandatory": p.default_storage_mandatory,
-        "serialized": p.serialized,
-        "published": bool(p.published),
-        "linked_provider": p.linked_provider,
-        "linked_external_id": p.linked_external_id,
-        "last_refresh_at": p.last_refresh_at.isoformat() if p.last_refresh_at else None,
-        "description_locally_edited": bool(p.description_locally_edited),
-        "archived_at": p.archived_at.isoformat() if p.archived_at else None,
-        "on_hand": on_hand,
-        "reserved": reserved,
-        "available": available if available is not None else 0,
-        # Sourced from the part's `image_url` custom_field — the post-
-        # download local path or a fallback to the upstream URL when the
-        # download failed. None when no image was ever attached.
-        "image_url": image_url,
-    }
+# PartIn, PartPatch, BulkDeleteIn, _image_urls_for_parts, _serialize,
+# and _get_part are imported from `_parts_shared` so subsequent split
+# files (parts_assets, parts_provider, parts_bulk per #118) can share
+# them without duplicating. See `app/api/routes/_parts_shared.py`.
 
 
 # ---------------------------------------------------------------------------
@@ -335,24 +243,6 @@ def create_part(payload: PartIn, db: DbSession, ws: CurrentWorkspace, user: Curr
     return ok(_serialize(p, on_hand=0, reserved=0))
 
 
-def _get_part(db, ws_id, part_id, *, include_archived: bool = False) -> Part:
-    """Fetch a workspace-owned Part. Default refuses archived rows so
-    write paths (PATCH, substitute add/remove, BOM bind) can't bind
-    against a part the workspace already retired (BE2-016). Read-only
-    surfaces pass `include_archived=True` so the detail page and
-    activity timeline still load for archived parts.
-    """
-    p = db.get(Part, part_id)
-    if not p or p.workspace_id != ws_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="part not found")
-    if not include_archived and p.archived_at is not None:
-        # 404 (not 400) — the part is "not available" for binds. We
-        # don't distinguish "doesn't exist" from "archived" because the
-        # client treats both as "this id is dead".
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="part not found")
-    return p
-
-
 @router.get("/{part_id}")
 def get_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
     # Read endpoint — the archived part page still loads (so the user
@@ -452,14 +342,6 @@ def restore_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace, user: Curre
     p = require_resource_access(db, Part, part_id, ws=ws, user=user, role="admin", label="part")
     p.archived_at = None
     return ok(None, "restored")
-
-
-class BulkDeleteIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    # 100 is plenty for a single-shot multi-select; if a user wants to wipe
-    # more they can run it twice. Keeps the response payload bounded.
-    part_ids: list[UUID] = Field(min_length=1, max_length=100)
 
 
 @router.post("/bulk-delete", dependencies=[Depends(require_role("admin"))])
