@@ -173,6 +173,8 @@ def db(request, engine, monkeypatch):
     # raw-SQL backdoors (test_attachments, test_invitations, etc.) share
     # the rolled-back transaction.
     monkeypatch.setattr(_infra_db, "SessionLocal", TestSession)
+    if getattr(request.module, "SessionLocal", None) is not None:
+        monkeypatch.setattr(request.module, "SessionLocal", TestSession)
 
     # Route the FastAPI `get_db` dep to yield the SAME session as the
     # test fixture (not a fresh `TestSession()` per request) so HTTP
