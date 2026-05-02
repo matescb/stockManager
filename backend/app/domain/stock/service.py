@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date
 from decimal import Decimal
 from typing import Iterable
 from uuid import UUID
@@ -10,6 +10,7 @@ from uuid import UUID
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.orm import Session
 
+from app.core.time import utcnow
 from app.domain.lots.models import Lot
 from app.domain.parts.models import Part
 from app.domain.stock.models import StockEntry
@@ -27,8 +28,19 @@ class StockError(Exception):
     pass
 
 
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
+class StockConflictError(StockError):
+    """Raised when a storage-location constraint blocks a stock mutation.
+
+    Attributes:
+        constraint: "single_part_only" | "existing_parts_only"
+        storage_location_id: the UUID of the conflicting location
+    """
+
+    def __init__(self, message: str, *, constraint: str, storage_location_id: UUID) -> None:
+        super().__init__(message)
+        self.constraint = constraint
+        self.storage_location_id = storage_location_id
+
 
 
 def _belongs(obj, workspace_id: UUID) -> bool:
@@ -88,6 +100,41 @@ def lock_parts_for_stock_write(
     sorted list."""
     for pid in sorted(set(part_ids), key=str):
         _lock_for_stock_write(db, workspace_id=workspace_id, part_id=pid)
+
+
+def _lock_for_storage_constraint(
+    db: Session, *, workspace_id: UUID, storage_location_id: UUID
+) -> None:
+    """Per-(workspace, storage) advisory lock for storage-constraint reads.
+
+    The per-(workspace, part) lock from ``_lock_for_stock_write`` only
+    serialises writers that touch the *same* part. ``single_part_only``
+    and ``existing_parts_only`` are cross-part invariants on the
+    *destination location*: two concurrent ``add_stock`` / ``move_stock``
+    calls for **different parts** targeting the same single_part_only
+    bin each hold a different per-part lock, both read
+    ``stock_for_storage(loc) == []``, both pass the check, and both
+    insert their StockEntry — leaving the bin holding two parts.
+
+    This second lock closes the cross-part race by serialising every
+    write whose destination is the same location. There is no DB-level
+    CHECK or trigger backing single_part_only / existing_parts_only
+    (the 0013 trigger only enforces non-negative balances), so the
+    application-level lock is the only line of defence.
+
+    **Lock ordering**: callers always acquire the per-part lock first
+    (``_lock_for_stock_write``) and the per-storage lock second. Two
+    concurrent writers targeting the same destination thus contend on
+    the storage lock without circular waits — there is no path that
+    holds the storage lock while waiting for a per-part lock. (The
+    multi-part helpers — ``builds.consume``, ``orders.receive`` — do
+    not pass a destination through ``_enforce_storage_constraints``,
+    so they don't take a storage lock.)
+    """
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+        {"k": f"{workspace_id}:storage:{storage_location_id}"},
+    )
 
 
 def current_quantity(
@@ -280,6 +327,67 @@ def stock_for_storage(
     ]
 
 
+def _enforce_storage_constraints(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    storage: StorageLocation,
+    part_id: UUID,
+) -> None:
+    """Enforce single_part_only and existing_parts_only constraints using
+    current stock (positive on-hand balances), not historical row counts.
+
+    Must be called inside the advisory lock for (workspace_id, part_id) —
+    every caller acquires that via ``_lock_for_stock_write`` first. We
+    additionally acquire the per-(workspace, storage) lock here so that
+    two concurrent writers targeting the *same destination* with
+    *different parts* can't both pass the single_part_only /
+    existing_parts_only check on a stale read and then both insert
+    (cross-part race). The per-part lock alone only serialises same-part
+    writers; the storage lock closes the cross-part hole. Lock ordering
+    is fixed (part, then storage) to avoid AB/BA deadlocks with
+    ``_lock_for_stock_write``.
+
+    Scope: ``add_stock`` and ``move_stock`` (the storage-constrained
+    paths). ``adjust_stock`` / ``remove_stock`` don't enter constrained
+    locations from outside, and the multi-part helpers don't pass a
+    destination through this function.
+
+    Raises StockConflictError on violation.
+    """
+    _lock_for_storage_constraint(db, workspace_id=workspace_id, storage_location_id=storage.id)
+
+    if storage.single_part_only:
+        # Any part other than the one being added/moved-in currently has
+        # positive on-hand stock at this location?
+        current = stock_for_storage(db, workspace_id=workspace_id, storage_location_id=storage.id)
+        other_parts = {row["part_id"] for row in current if row["part_id"] != part_id}
+        if other_parts:
+            raise StockConflictError(
+                "destination is single-part-only and already holds a different part",
+                constraint="single_part_only",
+                storage_location_id=storage.id,
+            )
+
+    if storage.existing_parts_only:
+        # The part must have at least one prior positive stock-entry at this
+        # location (i.e. it was previously stocked here).
+        prior = db.execute(
+            select(func.count())
+            .select_from(StockEntry)
+            .where(StockEntry.workspace_id == workspace_id)
+            .where(StockEntry.storage_location_id == storage.id)
+            .where(StockEntry.part_id == part_id)
+            .where(StockEntry.quantity_delta > 0)
+        ).scalar_one()
+        if not prior:
+            raise StockConflictError(
+                "destination only accepts previously-stocked parts and this part has no prior stock here",
+                constraint="existing_parts_only",
+                storage_location_id=storage.id,
+            )
+
+
 def add_stock(
     db: Session,
     *,
@@ -305,6 +413,7 @@ def add_stock(
             raise StockError("storage location is archived")
         if storage.is_full:
             raise StockError("storage location is marked full")
+        _enforce_storage_constraints(db, workspace_id=workspace_id, storage=storage, part_id=payload.part_id)
 
     # Mandatory default-storage check (spec §19.2). Previously the chain
     # short-circuited when `storage` was None — any row that simply omitted
@@ -372,7 +481,7 @@ def add_stock(
         operation_type="add",
         comments=payload.comments,
         bag_signature=payload.bag_signature,
-        occurred_at=_now(),
+        occurred_at=utcnow(),
         created_by=user_id,
     )
     db.add(entry)
@@ -423,7 +532,7 @@ def remove_stock(
         status="on_hand",
         operation_type="remove",
         comments=payload.comments,
-        occurred_at=_now(),
+        occurred_at=utcnow(),
         created_by=user_id,
     )
     db.add(entry)
@@ -477,17 +586,7 @@ def move_stock(
     if payload.quantity > available:
         raise StockError(f"insufficient stock at source (have {available}, want {payload.quantity})")
 
-    if dest.single_part_only:
-        # any other part already in this location?
-        any_other = db.execute(
-            select(func.count())
-            .select_from(StockEntry)
-            .where(StockEntry.workspace_id == workspace_id)
-            .where(StockEntry.storage_location_id == dest.id)
-            .where(StockEntry.part_id != part.id)
-        ).scalar_one()
-        if any_other:
-            raise StockError("destination is single-part-only and holds another part")
+    _enforce_storage_constraints(db, workspace_id=workspace_id, storage=dest, part_id=part.id)
 
     # Pre-assign UUIDs so the two StockEntry rows can reference each
     # other via `related_entry_id`. The actual write strategy is a
@@ -543,7 +642,7 @@ def move_stock(
                 operation_type="move_out",
                 related_entry_id=None,
                 comments=payload.comments,
-                occurred_at=_now(),
+                occurred_at=utcnow(),
                 created_by=user_id,
             )
             db.add(out_entry)
@@ -559,7 +658,7 @@ def move_stock(
                 operation_type="move_in",
                 related_entry_id=out_id,
                 comments=payload.comments,
-                occurred_at=_now(),
+                occurred_at=utcnow(),
                 created_by=user_id,
             )
             db.add(in_entry)
@@ -586,7 +685,7 @@ def move_stock(
             operation_type="move_out",
             related_entry_id=None,  # set after the IN row exists
             comments=payload.comments,
-            occurred_at=_now(),
+            occurred_at=utcnow(),
             created_by=user_id,
         )
         db.add(out_entry)
@@ -602,7 +701,7 @@ def move_stock(
             operation_type="move_in",
             related_entry_id=out_id,
             comments=payload.comments,
-            occurred_at=_now(),
+            occurred_at=utcnow(),
             created_by=user_id,
         )
         db.add(in_entry)
@@ -657,7 +756,7 @@ def adjust_stock(
         status="on_hand",
         operation_type="adjust",
         comments=payload.comments,
-        occurred_at=_now(),
+        occurred_at=utcnow(),
         created_by=user_id,
     )
     db.add(entry)

@@ -69,13 +69,26 @@ def ok(data: T | None = None, message: str = "OK") -> Envelope[T]:
     )
 
 
-def err(category: str, message: str, errors: list[dict] | None = None) -> ErrorEnvelope:
+def err(
+    category: str,
+    message: str,
+    errors: list[dict] | None = None,
+    *,
+    request_id: str | None = None,
+) -> ErrorEnvelope:
     """Build an error envelope. Mirrors :func:`ok` but allows arbitrary
     extra keys (the FastAPI exception handler spreads structured
-    ``detail`` dicts onto the top level)."""
+    ``detail`` dicts onto the top level).
+
+    Pass ``request_id`` (from ``request.state.request_id``) to surface the
+    correlation id in the response body alongside the ``X-Request-Id`` header
+    (BE2-012 / issue #61).
+    """
     body: ErrorEnvelope = {"data": None, "status": {"category": category, "message": message}}
     if errors is not None:
         body["errors"] = errors
+    if request_id is not None:
+        body["request_id"] = request_id
     return body
 
 
@@ -85,28 +98,30 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     # The "message" key (or stringified detail) goes into status.message;
     # any remaining dict keys are spread onto the top-level response so
     # the frontend can act on them (e.g. existing_id from a 409 conflict).
+    rid: str | None = getattr(request.state, "request_id", None)
     if isinstance(exc.detail, dict):
         message = exc.detail.get("message") or str(exc.detail)
-        body = err(_category_for_status(exc.status_code), message)
+        body = err(_category_for_status(exc.status_code), message, request_id=rid)
         for k, v in exc.detail.items():
             if k != "message":
                 body[k] = v
     else:
-        body = err(_category_for_status(exc.status_code), str(exc.detail))
-    # Log every 5xx as an error so the local journal has a full record
-    # of server-side failures (matched by Sentry but not contingent on
-    # it). 4xx is too noisy at INFO; route-level logging fires when a
-    # 4xx is actionable (login failures, etc.).
+        body = err(_category_for_status(exc.status_code), str(exc.detail), request_id=rid)
+    # Log 4xx at INFO (useful "did the FE just regress?" signal) and 5xx at
+    # ERROR (matched by Sentry but preserved independently of it).
+    # BE2-012 / issue #61: request_id is injected by RequestIdFilter via the
+    # contextvar, so it appears in the log record automatically.
+    log_extra = {
+        "status": exc.status_code,
+        "path": request.url.path,
+        "method": request.method,
+        "detail": str(exc.detail)[:500],
+        "request_id": rid,
+    }
     if exc.status_code >= 500:
-        _log.error(
-            "http error",
-            extra={
-                "status": exc.status_code,
-                "path": request.url.path,
-                "method": request.method,
-                "message": str(exc.detail)[:500],
-            },
-        )
+        _log.error("http error", extra=log_extra)
+    else:
+        _log.info("http %d", exc.status_code, extra=log_extra)
     return JSONResponse(status_code=exc.status_code, content=body)
 
 
@@ -126,14 +141,26 @@ def _category_for_status(code: int) -> str:
     return "ok"
 
 
-async def validation_exception_handler(_: Request, exc):  # pydantic ValidationError
+async def validation_exception_handler(request: Request, exc):  # pydantic ValidationError
+    rid: str | None = getattr(request.state, "request_id", None)
     fields = []
     try:
         for e in exc.errors():
             fields.append({"field": ".".join(str(p) for p in e.get("loc", [])), "message": e.get("msg", "")})
     except Exception:
         pass
+    # Log validation failures at INFO so the journal captures "did the
+    # frontend send a malformed body?" signals without requiring Sentry.
+    # BE2-012 / issue #61.
+    _log.info(
+        "validation error",
+        extra={
+            "path": request.url.path,
+            "fields": fields,
+            "request_id": rid,
+        },
+    )
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content=err("validation_error", "validation failed", fields),
+        content=err("validation_error", "validation failed", fields, request_id=rid),
     )

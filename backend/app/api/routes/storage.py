@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -10,6 +9,7 @@ from sqlalchemy import or_, select
 from app.api._helpers import require_resource_access
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
+from app.core.time import utcnow
 from app.domain.storage.models import StorageLocation
 from app.domain.stock.service import (
     history_for_storage,
@@ -139,7 +139,7 @@ def archive_storage(storage_id: UUID, db: DbSession, ws: CurrentWorkspace, user:
                 "blocking": blocking,
             },
         )
-    s.archived_at = datetime.now(timezone.utc)
+    s.archived_at = utcnow()
     return ok(None, "archived")
 
 

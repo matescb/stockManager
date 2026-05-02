@@ -14,7 +14,12 @@ config = context.config
 config.set_main_option("sqlalchemy.url", os.environ.get("DATABASE_URL", settings().DATABASE_URL))
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False preserves app loggers that were
+    # already configured by configure_logging() — without this the alembic
+    # fileConfig() call silently sets logger.disabled=True on every app
+    # logger, causing http_exception_handler and validation_exception_handler
+    # to emit no records during tests (BE2-012 / issue #61).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

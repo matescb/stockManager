@@ -1,17 +1,13 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 
 import sqlalchemy as sa
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 
+from app.core.time import utcnow
 from app.infra.db import Base
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 class Workspace(Base):
@@ -53,7 +49,7 @@ class Workspace(Base):
     # royalty-free default; 'scandit' is opt-in and consumes scanner_license_key.
     scanner = Column(String(40), nullable=False, default="zxing")  # zxing | scandit
     scanner_license_key = Column(String(4096), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 
 class WorkspaceMember(Base):
@@ -67,7 +63,7 @@ class WorkspaceMember(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     role = Column(String(40), nullable=False, default="member")  # owner | admin | member | viewer
     status = Column(String(20), nullable=False, default="active")  # invited | active | disabled
-    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 
 class WorkspaceInvitation(Base):
@@ -103,6 +99,6 @@ class WorkspaceInvitation(Base):
     token_hmac = Column(String(64), nullable=True)
     status = Column(String(20), nullable=False, default="pending")  # pending | accepted | revoked
     invited_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     accepted_at = Column(DateTime(timezone=True), nullable=True)
     accepted_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

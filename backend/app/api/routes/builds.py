@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -10,6 +9,7 @@ from app.api._helpers import require_resource_access
 from app.api.routes._activity import _DEFAULT_LIMIT, _MAX_LIMIT, build_activity
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
+from app.core.time import utcnow
 from app.domain.builds.models import Build
 from app.domain.builds.schemas import BuildCreateIn, BuildPatchIn, ConsumeIn
 from app.domain.builds.service import (
@@ -143,7 +143,7 @@ def archive_build(build_id: UUID, db: DbSession, ws: CurrentWorkspace, user: Cur
         db, Build, build_id, ws=ws, user=user, role="admin", label="build"
     )
     release_reservations(db, workspace_id=ws.id, user_id=user.id, build=b)
-    b.archived_at = datetime.now(timezone.utc)
+    b.archived_at = utcnow()
     return ok(None, "archived")
 
 
