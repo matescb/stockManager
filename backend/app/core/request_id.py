@@ -44,8 +44,10 @@ def _mint_request_id(inbound: str | None) -> str:
 class RequestIdMiddleware(BaseHTTPMiddleware):
     """Mint / reuse a request-id on every request.
 
-    Must be registered *before* CORS / CSRF so the id is available even
-    when those middlewares short-circuit the request.
+    Must wrap CORS / CSRF so the id is available even when those
+    middlewares short-circuit the request. Starlette stacks middleware
+    LIFO, so this means `app.add_middleware(RequestIdMiddleware)` must
+    be the LAST add_middleware() call (outermost wrapper).
     """
 
     async def dispatch(
