@@ -154,6 +154,8 @@ def db(request, engine, monkeypatch):
             yield real_session
         finally:
             real_session.close()
+            _reset_schema(engine)
+            _alembic_upgrade_head(settings().DATABASE_URL)
         return
 
     connection = engine.connect()
