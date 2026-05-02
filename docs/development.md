@@ -136,3 +136,39 @@ Review the generated file (autogenerate is not perfect — especially around
 it's on `main`** — it has already been auto-deployed to prod, and
 editing breaks the alembic chain on the next `alembic upgrade head`. Add
 a new migration instead.
+
+### Migration patterns: widen vs shrink varchar
+
+Postgres treats `varchar(N) → varchar(M)` asymmetrically:
+
+- **Widening (`M > N`)** is a catalog-only change. No table rewrite,
+  no `USING` clause, no truncation risk. The pattern landed in
+  `0016_encrypt_workspace_secrets.py` is canonical:
+
+  ```python
+  op.alter_column(
+      "workspaces", "parts_provider_api_key",
+      existing_type=sa.String(255),
+      type_=sa.String(1024),
+      existing_nullable=True,
+  )
+  ```
+
+- **Shrinking (`M < N`)** hard-fails on the first row whose value is
+  longer than `M` and never auto-truncates. Always add
+  `postgresql_using="left(col, M)"` and a regression test that
+  inserts a too-long row before the migration:
+
+  ```python
+  op.alter_column(
+      "workspaces", "scanner_license_key",
+      existing_type=sa.String(4096),
+      type_=sa.String(2048),
+      existing_nullable=True,
+      postgresql_using="left(scanner_license_key, 2048)",
+  )
+  ```
+
+  Truncating user data is destructive — verify the shrink target is
+  larger than every existing value in the workspace before merging.
+  DB-011 / issue #102.
