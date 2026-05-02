@@ -7,9 +7,11 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
+from app.core.pagination import decode_cursor, paginate
 from app.core.responses import ok
 from app.domain.lots.models import Lot
 from app.domain.lots.schemas import LotAdjustIn, LotPatch
+from app.domain.stock.models import StockEntry
 from app.domain.stock.schemas import AdjustStockIn, MoveStockIn
 from app.domain.stock.service import (
     StockError,
@@ -122,20 +124,47 @@ def adjust_lot(lot_id: UUID, payload: LotAdjustIn, db: DbSession, ws: CurrentWor
     return ok({"id": str(e.id) if e else None, "delta": e.quantity_delta if e else 0})
 
 
+def _serialize_entry(e: StockEntry) -> dict:
+    return {
+        "id": str(e.id),
+        "quantity_delta": e.quantity_delta,
+        "storage_location_id": str(e.storage_location_id) if e.storage_location_id else None,
+        "operation_type": e.operation_type,
+        "comments": e.comments,
+        "occurred_at": e.occurred_at.isoformat(),
+    }
+
+
 @router.get("/{lot_id}/history")
-def lot_history(lot_id: UUID, db: DbSession, ws: CurrentWorkspace, limit: int = Query(default=200, le=1000)):
+def lot_history(
+    lot_id: UUID,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    limit: int = Query(default=200, le=1000),
+    cursor: str | None = Query(default=None),
+    paged: bool = Query(default=False),
+):
     l = _get(db, ws.id, lot_id)
+
+    if cursor is not None or paged:
+        # Cursor-paginated path (opt-in).
+        decoded_cursor = decode_cursor(cursor) if cursor is not None else None
+        stmt = (
+            select(StockEntry)
+            .where(StockEntry.workspace_id == ws.id)
+            .where(StockEntry.lot_id == l.id)
+        )
+        rows, next_cursor = paginate(
+            db,
+            stmt,
+            sort_col=StockEntry.occurred_at,
+            id_col=StockEntry.id,
+            cursor=decoded_cursor,
+            limit=limit,
+            asc=False,
+        )
+        return ok({"items": [_serialize_entry(e) for e in rows], "next_cursor": next_cursor})
+
+    # Legacy bare-list path — unchanged (FE uses ?limit=200).
     rows = history_for_lot(db, workspace_id=ws.id, lot_id=l.id, limit=limit)
-    return ok(
-        [
-            {
-                "id": str(e.id),
-                "quantity_delta": e.quantity_delta,
-                "storage_location_id": str(e.storage_location_id) if e.storage_location_id else None,
-                "operation_type": e.operation_type,
-                "comments": e.comments,
-                "occurred_at": e.occurred_at.isoformat(),
-            }
-            for e in rows
-        ]
-    )
+    return ok([_serialize_entry(e) for e in rows])

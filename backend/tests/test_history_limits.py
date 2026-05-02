@@ -157,3 +157,193 @@ def test_storage_history_foreign_workspace_404(c: TestClient, c2: TestClient):
     _part_id, storage_id = _seed_storage_history(c, n_pairs=5)
     r = c2.get(f"/api/storage/{storage_id}/history?limit=200")
     assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Helpers for cursor-pagination tests
+# ---------------------------------------------------------------------------
+
+def _walk_lot_history_pages(client: TestClient, lot_id: str, page_size: int) -> list[dict]:
+    """Walk all cursor pages for a lot history and return all items."""
+    all_items: list[dict] = []
+    cursor: str | None = None
+    while True:
+        url = f"/api/lots/{lot_id}/history?paged=true&limit={page_size}"
+        if cursor:
+            url += f"&cursor={cursor}"
+        r = client.get(url)
+        assert r.status_code == 200, r.text
+        body = r.json()["data"]
+        all_items.extend(body["items"])
+        cursor = body["next_cursor"]
+        if not cursor:
+            break
+    return all_items
+
+
+def _walk_storage_history_pages(client: TestClient, storage_id: str, page_size: int) -> list[dict]:
+    """Walk all cursor pages for a storage history and return all items."""
+    all_items: list[dict] = []
+    cursor: str | None = None
+    while True:
+        url = f"/api/storage/{storage_id}/history?paged=true&limit={page_size}"
+        if cursor:
+            url += f"&cursor={cursor}"
+        r = client.get(url)
+        assert r.status_code == 200, r.text
+        body = r.json()["data"]
+        all_items.extend(body["items"])
+        cursor = body["next_cursor"]
+        if not cursor:
+            break
+    return all_items
+
+
+# ---------------------------------------------------------------------------
+# Cursor-pagination tests: lot history
+# ---------------------------------------------------------------------------
+
+def test_lot_history_paged_round_trip(c: TestClient):
+    """Seed 250 entries, walk cursor to exhaustion; verify no duplicates and all rows visited."""
+    _part_id, lot_id = _seed_lot_history(c, n_adjusts=250)
+    # 250 adjusts + 1 initial add = 251 entries total
+    all_items = _walk_lot_history_pages(c, lot_id, page_size=100)
+    ids = [item["id"] for item in all_items]
+    assert len(ids) == len(set(ids)), "Duplicate entry ids found across pages"
+    assert len(ids) == 251
+
+
+def test_lot_history_paged_monotonic_desc(c: TestClient):
+    """occurred_at values across pages are monotonically non-increasing (DESC order)."""
+    _part_id, lot_id = _seed_lot_history(c, n_adjusts=60)
+    all_items = _walk_lot_history_pages(c, lot_id, page_size=25)
+    timestamps = [item["occurred_at"] for item in all_items]
+    for i in range(1, len(timestamps)):
+        assert timestamps[i - 1] >= timestamps[i], (
+            f"Out of DESC order at index {i}: {timestamps[i - 1]!r} < {timestamps[i]!r}"
+        )
+
+
+def test_lot_history_paged_last_page_no_cursor(c: TestClient):
+    """The final page must have next_cursor=None."""
+    _part_id, lot_id = _seed_lot_history(c, n_adjusts=10)
+    # 11 entries total; use page_size=6 → 2 pages (6 + 5)
+    cursor: str | None = None
+    last_next_cursor = "sentinel"
+    while True:
+        url = f"/api/lots/{lot_id}/history?paged=true&limit=6"
+        if cursor:
+            url += f"&cursor={cursor}"
+        r = c.get(url)
+        assert r.status_code == 200
+        body = r.json()["data"]
+        last_next_cursor = body["next_cursor"]
+        cursor = last_next_cursor
+        if not cursor:
+            break
+    assert last_next_cursor is None
+
+
+def test_lot_history_cursor_tamper_400(c: TestClient):
+    """A tampered cursor token must return HTTP 400."""
+    _part_id, lot_id = _seed_lot_history(c, n_adjusts=60)
+    r = c.get(f"/api/lots/{lot_id}/history?paged=true&limit=25")
+    assert r.status_code == 200
+    real_cursor = r.json()["data"]["next_cursor"]
+    assert real_cursor is not None, "Expected a next_cursor with 61 entries and limit=25"
+
+    # Tamper — flip last character.
+    chars = list(real_cursor)
+    chars[-1] = "X" if chars[-1] != "X" else "Y"
+    bad_cursor = "".join(chars)
+
+    r2 = c.get(f"/api/lots/{lot_id}/history?paged=true&limit=25&cursor={bad_cursor}")
+    assert r2.status_code == 400, r2.text
+
+
+def test_lot_history_cross_workspace_404_before_400(c: TestClient, c2: TestClient):
+    """Workspace B cannot access workspace A's lot — returns 404 regardless of cursor."""
+    _part_id, lot_id = _seed_lot_history(c, n_adjusts=60)
+    # Get a valid cursor from workspace A.
+    r = c.get(f"/api/lots/{lot_id}/history?paged=true&limit=25")
+    assert r.status_code == 200
+    cursor_a = r.json()["data"]["next_cursor"]
+    assert cursor_a is not None
+
+    # Workspace B tries to access workspace A's lot (with or without cursor).
+    r2 = c2.get(f"/api/lots/{lot_id}/history?paged=true&limit=25&cursor={cursor_a}")
+    assert r2.status_code == 404, r2.text
+
+
+# ---------------------------------------------------------------------------
+# Cursor-pagination tests: storage history
+# ---------------------------------------------------------------------------
+
+def test_storage_history_paged_round_trip(c: TestClient):
+    """Seed 250 entries (125 pairs), walk cursor to exhaustion; verify no duplicates."""
+    _part_id, storage_id = _seed_storage_history(c, n_pairs=125)
+    all_items = _walk_storage_history_pages(c, storage_id, page_size=100)
+    ids = [item["id"] for item in all_items]
+    assert len(ids) == len(set(ids)), "Duplicate entry ids found across pages"
+    assert len(ids) == 250
+
+
+def test_storage_history_paged_monotonic_desc(c: TestClient):
+    """occurred_at values across pages are monotonically non-increasing (DESC order)."""
+    _part_id, storage_id = _seed_storage_history(c, n_pairs=35)
+    all_items = _walk_storage_history_pages(c, storage_id, page_size=25)
+    timestamps = [item["occurred_at"] for item in all_items]
+    for i in range(1, len(timestamps)):
+        assert timestamps[i - 1] >= timestamps[i], (
+            f"Out of DESC order at index {i}: {timestamps[i - 1]!r} < {timestamps[i]!r}"
+        )
+
+
+def test_storage_history_paged_last_page_no_cursor(c: TestClient):
+    """The final page must have next_cursor=None."""
+    _part_id, storage_id = _seed_storage_history(c, n_pairs=6)
+    # 12 entries total; use page_size=7 → 2 pages (7 + 5)
+    cursor: str | None = None
+    last_next_cursor = "sentinel"
+    while True:
+        url = f"/api/storage/{storage_id}/history?paged=true&limit=7"
+        if cursor:
+            url += f"&cursor={cursor}"
+        r = c.get(url)
+        assert r.status_code == 200
+        body = r.json()["data"]
+        last_next_cursor = body["next_cursor"]
+        cursor = last_next_cursor
+        if not cursor:
+            break
+    assert last_next_cursor is None
+
+
+def test_storage_history_cursor_tamper_400(c: TestClient):
+    """A tampered cursor token must return HTTP 400."""
+    _part_id, storage_id = _seed_storage_history(c, n_pairs=35)
+    r = c.get(f"/api/storage/{storage_id}/history?paged=true&limit=25")
+    assert r.status_code == 200
+    real_cursor = r.json()["data"]["next_cursor"]
+    assert real_cursor is not None, "Expected a next_cursor with 70 entries and limit=25"
+
+    chars = list(real_cursor)
+    chars[-1] = "X" if chars[-1] != "X" else "Y"
+    bad_cursor = "".join(chars)
+
+    r2 = c.get(f"/api/storage/{storage_id}/history?paged=true&limit=25&cursor={bad_cursor}")
+    assert r2.status_code == 400, r2.text
+
+
+def test_storage_history_cross_workspace_404_before_400(c: TestClient, c2: TestClient):
+    """Workspace B cannot access workspace A's storage — returns 404 regardless of cursor."""
+    _part_id, storage_id = _seed_storage_history(c, n_pairs=35)
+    # Get a valid cursor from workspace A.
+    r = c.get(f"/api/storage/{storage_id}/history?paged=true&limit=25")
+    assert r.status_code == 200
+    cursor_a = r.json()["data"]["next_cursor"]
+    assert cursor_a is not None
+
+    # Workspace B tries to access workspace A's storage.
+    r2 = c2.get(f"/api/storage/{storage_id}/history?paged=true&limit=25&cursor={cursor_a}")
+    assert r2.status_code == 404, r2.text
