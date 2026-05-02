@@ -146,29 +146,47 @@ def test_cannot_already_member(admin):
 
 
 def test_token_is_stored_as_hash_not_plaintext(admin):
-    """The plaintext returned to the caller must NOT match what's
-    persisted. The DB has only the SHA-256 digest."""
+    """The composite token returned to the caller must NOT appear in plaintext
+    in the DB.  The DB has only the SHA-256 digest (token_hash) and the
+    HMAC-SHA-256 digest (token_hmac).
+
+    SEC2-013: the create response now returns a composite token of the form
+    "{invitation_id}:{plaintext_token}" so the accept flow can look up by
+    PK rather than by hash (no timing oracle).
+    """
     import hashlib
+    import hmac as _hmac
 
     invitee_email = f"hash-{uuid.uuid4().hex[:6]}@x.com"
     inv = admin.post(
         "/api/invitations", json={"email": invitee_email, "role": "member"}
     ).json()["data"]
-    plaintext = inv["token"]
-    assert plaintext, "create response must carry the plaintext token"
+    composite = inv["token"]
+    assert composite, "create response must carry the composite token"
+
+    # Split composite "{id}:{plaintext}" to recover the plaintext portion.
+    inv_id_str, plaintext = composite.split(":", 1)
+    assert inv_id_str == inv["id"], "composite token must be prefixed with the invitation id"
 
     # Reach into the DB and verify what landed.
+    from app.core.config import settings
     from app.domain.workspaces.models import WorkspaceInvitation
     from app.infra.db import SessionLocal
 
     with SessionLocal() as s:
         row = s.get(WorkspaceInvitation, uuid.UUID(inv["id"]))
         assert row is not None
-        # The plaintext is gone — the model only has token_hash now.
+        # The plaintext is gone — the model only has token_hash and token_hmac.
         assert not hasattr(row, "token") or getattr(row, "token", None) is None
         assert row.token_hash == hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
-        # Stored value is NOT the plaintext.
+        # token_hash is NOT the plaintext.
         assert row.token_hash != plaintext
+        # token_hmac is present and is the HMAC-SHA-256 of the plaintext.
+        assert row.token_hmac is not None
+        key = settings().SESSION_SECRET.encode("utf-8")
+        expected_hmac = _hmac.new(key, plaintext.encode("utf-8"), "sha256").hexdigest()
+        assert row.token_hmac == expected_hmac
+        assert row.token_hmac != plaintext
 
 
 def test_list_invitations_does_not_leak_token(admin):
@@ -185,10 +203,18 @@ def test_list_invitations_does_not_leak_token(admin):
 
 
 def test_accept_with_wrong_token_returns_404(admin):
-    """A token that doesn't hash to any stored token_hash → 404
-    (same path as a non-existent invitation)."""
+    """SEC2-013: wrong-token scenarios all return 404.
+
+    Three sub-cases are exercised:
+    a) Composite token with correct id but wrong plaintext — HMAC mismatch.
+    b) Composite token with a non-existent id.
+    c) Malformed token (no colon separator) — rejected before DB lookup.
+    """
     invitee_email = f"wrong-{uuid.uuid4().hex[:6]}@x.com"
-    admin.post("/api/invitations", json={"email": invitee_email, "role": "member"})
+    inv_data = admin.post(
+        "/api/invitations", json={"email": invitee_email, "role": "member"}
+    ).json()["data"]
+    inv_id = inv_data["id"]
 
     invitee = TestClient(app)
     invitee.post(
@@ -196,8 +222,23 @@ def test_accept_with_wrong_token_returns_404(admin):
         json={"email": invitee_email, "name": "x", "password": "TestPass-2026-Stronk"},
     )
 
-    # Submit a wrong token — must not match by hash, must 404.
-    r = invitee.post("/api/invitations/accept", json={"token": "WRONG-TOKEN-VALUE"})
+    # a) Correct id, wrong plaintext — HMAC compare_digest must fail → 404.
+    r = invitee.post(
+        "/api/invitations/accept",
+        json={"token": f"{inv_id}:WRONG-PLAINTEXT-VALUE"},
+    )
+    assert r.status_code == 404, r.text
+
+    # b) Non-existent id — DB lookup returns None → 404.
+    fake_id = str(uuid.uuid4())
+    r = invitee.post(
+        "/api/invitations/accept",
+        json={"token": f"{fake_id}:some-plaintext"},
+    )
+    assert r.status_code == 404, r.text
+
+    # c) Malformed token (no colon) — format validation → 404.
+    r = invitee.post("/api/invitations/accept", json={"token": "NO-COLON-TOKEN"})
     assert r.status_code == 404, r.text
 
 
