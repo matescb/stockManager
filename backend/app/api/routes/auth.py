@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import APIRouter, Request, Response, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.core.auth import (
@@ -16,6 +16,7 @@ from app.core.auth import (
 )
 from app.core.config import settings
 from app.core.deps import CurrentUser, DbSession
+from app.core.errors import ErrorCodes, raise_http
 from app.core.logging import get_logger
 from app.core.ratelimit import limiter
 from app.core.responses import ok
@@ -66,11 +67,19 @@ def signup(request: Request, payload: SignupIn, response: Response, db: DbSessio
     try:
         validate_password_strength(payload.password)
     except WeakPasswordError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        raise_http(
+            status.HTTP_400_BAD_REQUEST,
+            ErrorCodes.AUTH_WEAK_PASSWORD,
+            str(exc),
+        )
     existing = db.query(User).filter(User.email == payload.email).first()
     if existing:
         log.warning("signup conflict", extra={"email": payload.email})
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="email already registered")
+        raise_http(
+            status.HTTP_409_CONFLICT,
+            ErrorCodes.AUTH_EMAIL_TAKEN,
+            "email already registered",
+        )
     user = User(email=payload.email, name=payload.name, password_hash=hash_password(payload.password))
     db.add(user)
     db.flush()
@@ -99,7 +108,11 @@ def login(request: Request, payload: LoginIn, response: Response, db: DbSession)
         # Log failures (without the password). Useful for spotting
         # brute-force patterns alongside the slowapi rate-limit.
         log.warning("login failed", extra={"email": payload.email})
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid credentials")
+        raise_http(
+            status.HTTP_401_UNAUTHORIZED,
+            ErrorCodes.AUTH_INVALID_CREDENTIALS,
+            "invalid credentials",
+        )
     # SEC2-015 — session rotation on login. Drop every previously-issued
     # session for this user before minting the new one so a stolen
     # cookie cannot survive a password change / re-login on a fresh

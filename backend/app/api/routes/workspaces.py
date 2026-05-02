@@ -4,12 +4,13 @@ import secrets
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
+from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter
 from app.core.responses import ok
 from app.core.secrets import decrypt, encrypt
@@ -71,13 +72,12 @@ def create_workspace(
         .count()
     )
     if existing_count >= _OWNED_ORG_WORKSPACE_CAP:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "message": "owned-workspace cap reached",
-                "existing_count": existing_count,
-                "cap": _OWNED_ORG_WORKSPACE_CAP,
-            },
+        raise_http(
+            status.HTTP_409_CONFLICT,
+            ErrorCodes.WORKSPACE_OWNER_CAP,
+            "owned-workspace cap reached",
+            existing_count=existing_count,
+            cap=_OWNED_ORG_WORKSPACE_CAP,
         )
     ws = Workspace(name=payload.name, kind="organization", owner_user_id=user.id, currency_default=payload.currency_default)
     db.add(ws)
@@ -235,7 +235,11 @@ def _active_owner_count(db, ws_id):
 def patch_member(member_id: UUID, payload: MemberPatch, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     m = db.get(WorkspaceMember, member_id)
     if not m or m.workspace_id != ws.id:
-        raise HTTPException(status_code=404, detail="member not found")
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            ErrorCodes.WORKSPACE_MEMBER_NOT_FOUND,
+            "member not found",
+        )
     target_promotion_to_owner = payload.role == "owner"
     target_was_owner = m.role == "owner"
     if target_promotion_to_owner or target_was_owner:
@@ -245,10 +249,18 @@ def patch_member(member_id: UUID, payload: MemberPatch, db: DbSession, ws: Curre
             .first()
         )
         if not my_role or my_role.role != "owner":
-            raise HTTPException(status_code=403, detail="only owners can manage owner role")
+            raise_http(
+                status.HTTP_403_FORBIDDEN,
+                ErrorCodes.WORKSPACE_OWNER_ONLY,
+                "only owners can manage owner role",
+            )
     if target_was_owner and (payload.role and payload.role != "owner"):
         if _active_owner_count(db, ws.id) <= 1:
-            raise HTTPException(status_code=400, detail="cannot demote the last owner")
+            raise_http(
+                status.HTTP_400_BAD_REQUEST,
+                ErrorCodes.WORKSPACE_LAST_OWNER,
+                "cannot demote the last owner",
+            )
     for k, v in payload.model_dump(exclude_unset=True).items():
         setattr(m, k, v)
     return ok({"id": str(m.id), "role": m.role, "status": m.status})
@@ -258,11 +270,23 @@ def patch_member(member_id: UUID, payload: MemberPatch, db: DbSession, ws: Curre
 def remove_member(member_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     m = db.get(WorkspaceMember, member_id)
     if not m or m.workspace_id != ws.id:
-        raise HTTPException(status_code=404, detail="member not found")
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            ErrorCodes.WORKSPACE_MEMBER_NOT_FOUND,
+            "member not found",
+        )
     if m.user_id == user.id:
-        raise HTTPException(status_code=400, detail="cannot remove yourself; transfer ownership first")
+        raise_http(
+            status.HTTP_400_BAD_REQUEST,
+            ErrorCodes.WORKSPACE_SELF_REMOVE,
+            "cannot remove yourself; transfer ownership first",
+        )
     if m.role == "owner" and _active_owner_count(db, ws.id) <= 1:
-        raise HTTPException(status_code=400, detail="cannot remove the last owner")
+        raise_http(
+            status.HTTP_400_BAD_REQUEST,
+            ErrorCodes.WORKSPACE_LAST_OWNER,
+            "cannot remove the last owner",
+        )
     db.delete(m)
     return ok(None, "removed")
 
@@ -295,9 +319,10 @@ def switch_workspace(
         .first()
     )
     if not membership:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="workspace not found",
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            ErrorCodes.WORKSPACE_NOT_FOUND,
+            "workspace not found",
         )
 
     # Hardened cookie attributes:

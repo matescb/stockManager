@@ -27,9 +27,10 @@ import json
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import APIRouter, Request, Response, status
 
 from app.core.config import settings
+from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter
 
 
@@ -77,15 +78,21 @@ async def sentry_tunnel(request: Request) -> Response:
     async for chunk in request.stream():
         total += len(chunk)
         if total > max_bytes:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"envelope exceeds {max_bytes} bytes",
+            raise_http(
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                ErrorCodes.SENTRY_TUNNEL_TOO_LARGE,
+                f"envelope exceeds {max_bytes} bytes",
+                max_bytes=max_bytes,
             )
         chunks.append(chunk)
     envelope = b"".join(chunks)
 
     if not envelope:
-        raise HTTPException(status_code=400, detail="empty envelope")
+        raise_http(
+            status.HTTP_400_BAD_REQUEST,
+            ErrorCodes.SENTRY_TUNNEL_EMPTY,
+            "empty envelope",
+        )
 
     # The first line of every Sentry envelope is a JSON header carrying
     # the DSN the client believes it's sending to. Validate it against
@@ -95,15 +102,27 @@ async def sentry_tunnel(request: Request) -> Response:
     try:
         header = json.loads(header_line.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
-        raise HTTPException(status_code=400, detail="malformed envelope header")
+        raise_http(
+            status.HTTP_400_BAD_REQUEST,
+            ErrorCodes.SENTRY_TUNNEL_MALFORMED_HEADER,
+            "malformed envelope header",
+        )
     client_dsn = header.get("dsn")
     if not client_dsn:
-        raise HTTPException(status_code=400, detail="envelope header missing dsn")
+        raise_http(
+            status.HTTP_400_BAD_REQUEST,
+            ErrorCodes.SENTRY_TUNNEL_MISSING_DSN,
+            "envelope header missing dsn",
+        )
     parsed = urlparse(client_dsn)
     target_host = parsed.hostname
     target_project = parsed.path.strip("/")
     if (target_host, target_project) not in allowed:
-        raise HTTPException(status_code=403, detail="dsn mismatch")
+        raise_http(
+            status.HTTP_403_FORBIDDEN,
+            ErrorCodes.SENTRY_TUNNEL_DSN_MISMATCH,
+            "dsn mismatch",
+        )
 
     upstream = f"https://{target_host}/api/{target_project}/envelope/"
     # 10s is more than enough for an ingest POST; longer would let a hung

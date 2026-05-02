@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy import select
 
@@ -16,6 +16,7 @@ from app.core.deps import (
     DbSession,
     require_role,
 )
+from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter
 from app.core.responses import ok
 from app.domain.users.models import User
@@ -83,7 +84,11 @@ def create_invitation(
         .first()
     )
     if existing_member:
-        raise HTTPException(status_code=409, detail="user is already a member")
+        raise_http(
+            status.HTTP_409_CONFLICT,
+            ErrorCodes.INVITATION_ALREADY_MEMBER,
+            "user is already a member",
+        )
 
     # Existing pending invite for this email — reuse rather than duplicate.
     # Note: we cannot return the existing plaintext token (we don't have
@@ -142,9 +147,18 @@ def list_invitations(
 def revoke_invitation(invitation_id: UUID, db: DbSession, ws: CurrentWorkspace):
     inv = db.get(WorkspaceInvitation, invitation_id)
     if not inv or inv.workspace_id != ws.id:
-        raise HTTPException(status_code=404, detail="invitation not found")
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            ErrorCodes.INVITATION_NOT_FOUND,
+            "invitation not found",
+        )
     if inv.status != "pending":
-        raise HTTPException(status_code=400, detail=f"cannot revoke a {inv.status} invitation")
+        raise_http(
+            status.HTTP_400_BAD_REQUEST,
+            ErrorCodes.INVITATION_NOT_PENDING,
+            f"cannot revoke a {inv.status} invitation",
+            invitation_status=inv.status,
+        )
     inv.status = "revoked"
     return ok(None, "revoked")
 
@@ -178,11 +192,24 @@ def accept_invitation(request: Request, payload: AcceptIn, db: DbSession, user: 
         .first()
     )
     if not inv:
-        raise HTTPException(status_code=404, detail="invitation not found")
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            ErrorCodes.INVITATION_NOT_FOUND,
+            "invitation not found",
+        )
     if inv.status != "pending":
-        raise HTTPException(status_code=400, detail=f"invitation is {inv.status}")
+        raise_http(
+            status.HTTP_400_BAD_REQUEST,
+            ErrorCodes.INVITATION_NOT_PENDING,
+            f"invitation is {inv.status}",
+            invitation_status=inv.status,
+        )
     if inv.email.lower() != user.email.lower():
-        raise HTTPException(status_code=403, detail="invitation is for a different email")
+        raise_http(
+            status.HTTP_403_FORBIDDEN,
+            ErrorCodes.INVITATION_EMAIL_MISMATCH,
+            "invitation is for a different email",
+        )
 
     # Already a member?
     existing = (
