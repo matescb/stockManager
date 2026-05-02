@@ -88,7 +88,7 @@ export default function WorkspaceSettings() {
       refetchCatalogTokens();
       toast.success("Catalog token created.");
     },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Failed"),
+    onError: (e) => toast.error(e instanceof ApiError ? e.userMessage : "Failed"),
   });
 
   const revokeCatalogToken = useMutation({
@@ -98,7 +98,7 @@ export default function WorkspaceSettings() {
       refetchCatalogTokens();
       toast.success("Token revoked.");
     },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Failed"),
+    onError: (e) => toast.error(e instanceof ApiError ? e.userMessage : "Failed"),
   });
 
   const [newName, setNewName] = useState("");
