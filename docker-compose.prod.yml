@@ -49,6 +49,7 @@ services:
   backend-init:
     build: ./backend
     restart: "no"
+    user: "0:0"
     command: ["sh", "-c", "chown -R 1000:1000 /data"]
     volumes:
       - uploads:/data/uploads
