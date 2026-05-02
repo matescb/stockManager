@@ -63,6 +63,12 @@ jobs:
         working-directory: backend
         run: ruff check app --exit-zero
 
+      # SEC2-018: fast pre-pytest gate — fail if any HTTPException passes
+      # traceback / stack-trace data in its detail= argument.
+      - name: check-no-traceback-leaks
+        working-directory: backend
+        run: python scripts/check_no_traceback_leaks.py
+
       - name: pytest
         working-directory: backend
         env:

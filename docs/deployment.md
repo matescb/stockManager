@@ -424,3 +424,28 @@ docker run --rm \
 For point-in-time recovery, off-site replication, or retention policies look
 at `pgBackRest` or `barman` — proper tools for that job; this guide does not
 prescribe one.
+
+## Header hardening (SEC2-018)
+
+Two surfaces were tightened to avoid advertising the stack identity:
+
+**nginx `Server` header suppression.** uvicorn sets `Server: uvicorn` on every
+response. `deploy/nginx-web.conf` now suppresses this with:
+
+- `server_tokens off;` — prevents nginx from emitting its own version string
+  in the `Server` header and in default error pages.
+- `proxy_hide_header Server;` inside the `/api/` proxy block — drops the
+  upstream `Server: uvicorn` header before the response reaches the client.
+
+These directives are in the in-container nginx config that the `web` container
+runs (`web/Dockerfile.prod` copies it to `/etc/nginx/conf.d/default.conf`).
+They take effect on the next `docker compose up --build`.
+
+**CI traceback-leak guard.** `backend/scripts/check_no_traceback_leaks.py`
+walks `backend/app/` via the Python AST and fails if any
+`HTTPException(detail=…)` argument contains traceback-related identifiers
+(`traceback`, `format_exc`, `format_exception`, `exc_info`, `__class__`).
+The check runs as a fast step in `.github/workflows/ci.yml` before pytest,
+preventing accidental stack-trace exposure in error responses from ever
+reaching `main`. The corresponding tests live in
+`backend/tests/test_no_traceback_leaks.py`.
