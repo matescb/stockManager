@@ -73,13 +73,22 @@ def create_invitation(
     ws: CurrentWorkspace,
     user: CurrentUser,
 ):
+    # Email is case-insensitive per RFC 5321 §2.4. We normalise to lower
+    # for both the membership/duplicate-pending lookups and the row
+    # insert so the partial composite index landed in alembic 0020
+    # (`lower(email) WHERE status = 'pending'`) actually gets used. The
+    # admin signup UI already passes lowercased values through Pydantic's
+    # EmailStr in practice, but the explicit `.lower()` here pins the
+    # contract regardless of upstream input. DB-014 / issue #105.
+    email = payload.email.lower()
+
     # Already a member?
     existing_member = (
         db.execute(
             select(WorkspaceMember, User)
             .join(User, User.id == WorkspaceMember.user_id)
             .where(WorkspaceMember.workspace_id == ws.id)
-            .where(User.email == payload.email)
+            .where(User.email == email)
         )
         .first()
     )
@@ -99,7 +108,7 @@ def create_invitation(
         db.execute(
             select(WorkspaceInvitation)
             .where(WorkspaceInvitation.workspace_id == ws.id)
-            .where(WorkspaceInvitation.email == payload.email)
+            .where(WorkspaceInvitation.email == email)
             .where(WorkspaceInvitation.status == "pending")
         )
         .scalars()
@@ -114,7 +123,7 @@ def create_invitation(
     plaintext = secrets.token_urlsafe(32)
     inv = WorkspaceInvitation(
         workspace_id=ws.id,
-        email=payload.email,
+        email=email,
         role=payload.role,
         token_hash=_hash_token(plaintext),
         invited_by=user.id,

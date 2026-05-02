@@ -212,3 +212,49 @@ def test_accept_endpoint_has_rate_limit_decorator():
     assert has_marker, (
         f"expected @limiter.limit on accept_invitation; markers checked: {markers}"
     )
+
+
+def test_create_invitation_lowercases_email_for_dedupe(admin):
+    """Inviting `Foo@Example.com` then `foo@example.com` (case-different)
+    must hit the existing-pending branch on the second call, not create
+    a duplicate row. Also the persisted email is the lowercased form so
+    the partial composite index `ix_invitations_pending_lookup`
+    (alembic 0020) can serve the lookup. DB-014 / issue #105."""
+    suffix = uuid.uuid4().hex[:6]
+    mixed = f"Foo-{suffix}@Example.com"
+    lower = mixed.lower()
+
+    r1 = admin.post("/api/invitations", json={"email": mixed, "role": "member"})
+    assert r1.status_code == 201, r1.text
+    inv1 = r1.json()["data"]
+    assert inv1["email"] == lower, "email must be normalised to lower at insert"
+
+    r2 = admin.post("/api/invitations", json={"email": lower, "role": "member"})
+    assert r2.status_code == 201, r2.text
+    inv2 = r2.json()["data"]
+    # Same row reused — the existing-pending branch never returns the
+    # plaintext token (we don't have it), so token is None on the
+    # second call.
+    assert inv2["id"] == inv1["id"]
+    assert inv2["token"] is None
+
+
+def test_invitation_pending_lookup_index_exists(admin):
+    """Sanity-check: alembic 0020 created the partial composite index.
+    Without it the canonical
+      WHERE workspace_id=… AND lower(email)=… AND status='pending'
+    lookup falls back to the bitmap-merge of the two single-column
+    indexes from 0005."""
+    from sqlalchemy import text
+
+    from app.infra.db import get_engine
+
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT 1 FROM pg_indexes "
+                "WHERE tablename = 'workspace_invitations' "
+                "AND indexname = 'ix_invitations_pending_lookup'"
+            )
+        ).fetchall()
+    assert rows, "ix_invitations_pending_lookup not present (migration 0020)"
