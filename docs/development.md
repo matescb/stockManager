@@ -8,14 +8,19 @@
 ## Running with Docker (recommended)
 
 ```bash
-cp .env.example .env
-docker compose up --build
+cp .env.example .env   # first time only — .env.example includes SESSION_SECRET
+make dev-up
 ```
 
 - Web UI: http://localhost:5173
 - API:    http://localhost:8000/api
 
 The backend container runs `alembic upgrade head` before booting `uvicorn`.
+
+The dev compose file is `docker-compose.dev.yml`; use `make dev-*` targets
+to avoid accidentally starting the dev stack with no `SESSION_SECRET` set.
+The `Makefile` also exposes `prod-up`, `prod-logs`, and `prod-rebuild`
+targets for the prod compose file.
 
 ## Running tests outside Docker
 
