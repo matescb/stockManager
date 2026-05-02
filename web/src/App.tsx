@@ -10,6 +10,8 @@ import { RouteSkeleton } from "@/components/RouteSkeleton";
 // a fallback flash on first paint.
 import Login from "@/routes/auth/Login";
 import Signup from "@/routes/auth/Signup";
+// SEC2-014: email-verification landing page.
+import Verify from "@/routes/auth/Verify";
 
 // Parts area — the home of the app. Eagerly loaded because every authed
 // session lands on /parts and the alternative is a Suspense flash on
@@ -151,6 +153,8 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
+          {/* SEC2-014: email verification landing — pre-auth, no Gate wrapper */}
+          <Route path="/verify" element={<Verify />} />
 
           {/* Single layout route — Gate stays mounted across every
               authed navigation, so AppShell + its state survive. */}
