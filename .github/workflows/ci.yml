@@ -39,7 +39,7 @@ jobs:
         working-directory: backend
         run: |
           uv export --format requirements-txt --hashes --no-dev --no-emit-project -o /tmp/requirements_fresh.lock
-          if ! diff -u requirements.lock /tmp/requirements_fresh.lock; then
+          if ! diff -u <(grep -v '^#' requirements.lock) <(grep -v '^#' /tmp/requirements_fresh.lock); then
             echo "requirements.lock is stale — run: cd backend && uv export --format requirements-txt --hashes --no-dev --no-emit-project -o requirements.lock"
             exit 1
           fi
