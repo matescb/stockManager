@@ -1,8 +1,8 @@
 """Partial composite index on workspace_invitations for the canonical
 "pending invitation for this email in this workspace?" lookup.
 
-Revision ID: 0019
-Revises: 0018
+Revision ID: 0020
+Revises: 0019
 Create Date: 2026-05-02
 
 DB-014 / issue #105. Today the table has only single-column btree
@@ -16,12 +16,14 @@ storage cost is negligible (status='pending' is a small subset) and
 the planner can collapse the lookup to a single index scan instead of
 a bitmap-merge.
 
-NOTE on chain: PR #137 (#98 / DB-007) was expected to land first and
-reserve 0019, but has not yet, so this migration takes 0019 as the next
-free integer in the chain. If #137 lands first after a rebase, bump
-filename + revision to the next free integer and update down_revision
-accordingly. **Don't edit a migration once it's on main** (CLAUDE.md
-invariant).
+NOTE on chain: 0019 is currently a contested slot on main — PRs #137
+and #138 each landed a migration claiming `revision = "0019"` (they
+crossed mid-merge; main's backend-tests are failing as a result and a
+follow-up renumber is pending). This migration takes the next clean
+integer (0020) and chains off "0019". When main's duplicate is fixed
+(by renumbering one of those two files), this PR's CI will go green
+without further changes here. **Don't edit a migration once it's on
+main** (CLAUDE.md invariant).
 
 Email normalisation: the matching application code in
 `invitations.py` lowercases payload.email before both the
@@ -34,8 +36,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0019"
-down_revision = "0018"
+revision = "0020"
+down_revision = "0019"
 branch_labels = None
 depends_on = None
 
