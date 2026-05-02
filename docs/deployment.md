@@ -411,6 +411,25 @@ apache2ctl configtest && systemctl reload apache2
 The `…-le-ssl.conf` companion file is owned by certbot — don't edit it
 unless you mean to.
 
+### If you ever move TLS into the docker stack
+
+Today certbot's Debian package reloads Apache automatically after renewal
+(via `/etc/letsencrypt/renewal-hooks/deploy/apache`).  If TLS ever
+terminates inside the docker stack instead (nginx in the `web` container
+holds the cert), that hook no longer reloads the right thing and the
+container would serve the expired cert until the next `docker compose up`.
+
+- **Apache reload-on-renewal goes away** because there is no Apache in
+  that scenario; the certbot package hook becomes a no-op.
+- **Install the dormant hook** at
+  `deploy/letsencrypt-deploy-hook.sh.example` as
+  `/etc/letsencrypt/renewal-hooks/deploy/stockmanager-reload.sh`
+  (executable, owned by root).  The script runs
+  `docker compose … exec web nginx -s reload` so nginx picks up the fresh
+  cert without a full container restart.
+- **Validate** with
+  `certbot renew --dry-run --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/stockmanager-reload.sh`.
+
 ## Backups
 
 Two volumes need covering:
