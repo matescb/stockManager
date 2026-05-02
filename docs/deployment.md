@@ -352,10 +352,23 @@ sudo -u deploy docker compose -f docker-compose.prod.yml logs -f web
 
 ### psql shell
 
+The `$POSTGRES_USER` / `$POSTGRES_DB` variables must expand **inside the
+container**, not in your host shell (where they are almost certainly unset).
+Use `sh -c '...'` with single quotes so the shell that receives the command
+is the one inside the container, where those variables are already set by
+the postgres image:
+
 ```bash
 cd /srv/stockmanager
 sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
-    exec db psql -U "$POSTGRES_USER" "$POSTGRES_DB"
+    exec db sh -c 'exec psql -U "$POSTGRES_USER" "$POSTGRES_DB"'
+```
+
+Or use the helper script (handles the single-quoting and `sudo -u deploy`
+for you):
+
+```bash
+sudo /srv/stockmanager/deploy/db-shell.sh
 ```
 
 ### Ad-hoc alembic command
@@ -443,6 +456,23 @@ Always use `docker compose -f docker-compose.prod.yml` explicitly on the VPS —
 the repo no longer has a bare `docker-compose.yml` default, so muscle-memory
 `docker compose up -d` without a `-f` flag will error rather than silently
 start the dev stack.
+
+### Wrapper scripts in deploy/
+
+Two helper scripts live in `deploy/` to make the common ops tasks
+less error-prone:
+
+| Script | Purpose |
+|--------|---------|
+| `deploy/db-shell.sh` | Open an interactive `psql` session inside the running `db` container. Reads credentials from `.env.prod` so they never expand in the host shell. |
+| `deploy/db-restore.sh` | Decrypt and restore a `pg_dump` backup. Prompts for confirmation before overwriting. |
+
+Both scripts are designed to be run as root from anywhere on the VPS:
+
+```bash
+sudo /srv/stockmanager/deploy/db-shell.sh
+sudo /srv/stockmanager/deploy/db-restore.sh /path/to/key.txt /path/to/db-YYYY-MM-DD.sql.gz.age
+```
 
 ### Apache vhost edits
 
@@ -632,13 +662,26 @@ All restore commands assume the private key file is available at
 
 Restore the DB (DESTRUCTIVE — overwrites the existing one):
 
+Use the helper script — it prompts for confirmation, reads credentials from
+`.env.prod` directly so the variables never expand in the host shell, and
+handles the `sudo -u deploy` and single-quoting correctly:
+
+```bash
+sudo /srv/stockmanager/deploy/db-restore.sh \
+    /path/to/backup-key.txt \
+    /srv/backups/stockmanager/db-2026-04-30.sql.gz.age
+```
+
+If you need the raw pipeline instead (e.g. piping from stdin), use `sh -c`
+so the variable references expand **inside** the container:
+
 ```bash
 age -d -i /path/to/backup-key.txt \
     /srv/backups/stockmanager/db-2026-04-30.sql.gz.age \
     | gunzip -c \
     | sudo -u deploy docker compose -f /srv/stockmanager/docker-compose.prod.yml \
         --env-file /srv/stockmanager/.env.prod exec -T db \
-        psql -U "$POSTGRES_USER" "$POSTGRES_DB"
+        sh -c 'exec psql -U "$POSTGRES_USER" "$POSTGRES_DB"'
 ```
 
 Restore the uploads volume (DESTRUCTIVE — replaces existing files):
