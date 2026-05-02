@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,9 +32,14 @@ class Settings(BaseSettings):
     SENTRY_TUNNEL_MAX_BYTES: int = 200 * 1024
     # Fernet key (urlsafe-base64-encoded 32 bytes) for encrypting
     # workspace-level secrets at rest: parts_provider_api_key,
-    # parts_provider_api_secret, scanner_license_key. Empty → falls
-    # back to a dev-only default (see app/core/secrets.py) with a
-    # warning logged on first use. Generate with:
+    # parts_provider_api_secret, scanner_license_key.
+    #
+    # In prod the model validator below rejects an empty value — a
+    # missing key fails the import loud rather than silently encrypting
+    # under a fallback. In dev `app/core/secrets.py` generates a
+    # per-process ephemeral key, so local runs work without a `.env`.
+    #
+    # Generate with:
     #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     WORKSPACE_SECRETS_KEY: str = ""
     CORS_ORIGINS: str = "http://localhost:5173"
@@ -56,6 +61,22 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @model_validator(mode="after")
+    def _require_workspace_secrets_key_in_prod(self) -> "Settings":
+        # The 2026-04-30 review (Sec HIGH-9) and the 2026-05-01 v2
+        # teardown (INFRA2-004 / SEC2-002) both turn on this exact gap:
+        # a prod deploy that forgets `WORKSPACE_SECRETS_KEY` would
+        # encrypt every workspace's third-party credentials under the
+        # process's fallback key — useless. Failing closed at import is
+        # the only way to surface the misconfig before data is written.
+        if self.APP_ENV == "prod" and not self.WORKSPACE_SECRETS_KEY:
+            raise ValueError(
+                "WORKSPACE_SECRETS_KEY is required when APP_ENV=prod. "
+                "Generate one with: "
+                'python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
+            )
+        return self
 
 
 @lru_cache
