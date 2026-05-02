@@ -7,7 +7,7 @@ import pytest
 from alembic import command
 from alembic.config import Config as AlembicConfig
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 # Set env BEFORE importing app modules so config picks up the test DB.
@@ -108,17 +108,25 @@ def engine():
 def db(engine, monkeypatch):
     """Per-test transactional session with savepoint rollback (TEST-009).
 
-    SQLAlchemy "Joining a Session into an External Transaction" pattern:
-      1. Open a connection and begin an outer transaction.
-      2. Bind a Session to that connection, opening a SAVEPOINT.
-      3. Listen for `after_transaction_end` to restart the savepoint
-         whenever inner code commits — that turns route-level
-         `db.commit()` calls (e.g. `app.core.deps:49,61`,
-         `app.api.routes.parts:1058`, `app.infra.db.get_db:36`) into
-         savepoint releases that the outer rollback still discards.
-      4. Roll back the outer transaction at teardown — every row written
-         during the test, including via raw `SessionLocal()` calls and
-         via FastAPI handlers, evaporates.
+    Canonical SQLAlchemy 2.x "Joining a Session into an External
+    Transaction" recipe — uses `join_transaction_mode="create_savepoint"`
+    instead of an `after_transaction_end` listener. With this mode the
+    Session opens a SAVEPOINT inside the connection-bound outer
+    transaction as its root, so:
+
+      * `s.commit()` / `s.rollback()` only ever touch session-internal
+        savepoints — they never end the outer transaction.
+      * Production `with db.begin_nested():` (see
+        `app/domain/stock/service.py:513,577`) opens a *deeper*
+        SAVEPOINT inside the session's root savepoint and unwinds
+        cleanly on context-manager exit. The previous listener-based
+        recipe re-entered `session.begin_nested()` while the SA
+        context manager was still in `__exit__`, raising
+        "Can't operate on closed transaction inside context manager"
+        (issue #148).
+      * Roll back the outer transaction at teardown — every row
+        written during the test, including via raw `SessionLocal()`
+        calls and via FastAPI handlers, evaporates.
 
     Also overrides `app.infra.db.SessionLocal` so in-test code that
     instantiates `SessionLocal()` directly (e.g. tests that backdoor
@@ -130,37 +138,25 @@ def db(engine, monkeypatch):
     connection = engine.connect()
     transaction = connection.begin()
     TestSession = sessionmaker(
-        bind=connection, autoflush=False, expire_on_commit=False, future=True
+        bind=connection,
+        join_transaction_mode="create_savepoint",
+        autoflush=False,
+        expire_on_commit=False,
+        future=True,
     )
     s = TestSession()
-    s.begin_nested()
-
-    @event.listens_for(s, "after_transaction_end")
-    def _restart_savepoint(session, trans):
-        # Canonical SQLAlchemy "Joining a Session into an External
-        # Transaction" pattern: only restart the SAVEPOINT once the
-        # session has popped all the way back out of nested
-        # transactions. Service code uses `with db.begin_nested():`
-        # internally (see `app/domain/stock/service.py:513,577`); when
-        # those inner SAVEPOINTs end we must NOT begin a fresh
-        # SAVEPOINT, or we'd reopen one inside an exiting context
-        # manager and SQLAlchemy raises "Can't operate on closed
-        # transaction inside context manager".
-        if trans.nested and not session.in_nested_transaction():
-            session.begin_nested()
 
     # Route any in-test direct `SessionLocal()` use to our connection so
     # raw-SQL backdoors (test_attachments, test_invitations, etc.) share
     # the rolled-back transaction.
     monkeypatch.setattr(_infra_db, "SessionLocal", TestSession)
 
-    # Route the FastAPI `get_db` dep to yield our session. We mirror
-    # the prod dep's commit/rollback semantics so route code that
-    # relies on the dep boundary (e.g. it doesn't call db.commit()
-    # itself and expects the dep to flush) still works. Each
-    # commit/rollback lands on the active SAVEPOINT and the listener
-    # opens a fresh one, so the outer transaction.rollback() at
-    # teardown still discards every write.
+    # Route the FastAPI `get_db` dep to yield the SAME session as the
+    # test fixture (not a fresh `TestSession()` per request) so HTTP
+    # writes and direct fixture writes share one savepoint stack.
+    # `s.commit()` / `s.rollback()` operate on session-internal
+    # savepoints under `create_savepoint` mode — they never end the
+    # connection-bound outer transaction, which the teardown rolls back.
     def _override_get_db():
         try:
             yield s
