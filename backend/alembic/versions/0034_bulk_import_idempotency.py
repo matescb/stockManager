@@ -25,8 +25,8 @@ from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
 
-revision = "0035"
-down_revision = "0034"
+revision = "0034"
+down_revision = "0033"
 branch_labels = None
 depends_on = None
 
