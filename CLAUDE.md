@@ -138,6 +138,11 @@ them, that's the bug.
   first.
 - **`web/vite.config.js`** is auto-emitted by the composite TypeScript
   project — gitignored. Don't commit it.
+- **`--timeout-graceful-shutdown` must be less than `stop_grace_period`.**
+  The backend uvicorn command uses `--timeout-graceful-shutdown 25` and the
+  service has `stop_grace_period: 30s`. Keep the uvicorn value at least 5s
+  below the compose value so Compose's SIGKILL never fires during a clean
+  drain (INFRA2-014).
 - The repo has had transient `review-*` directories and stray venvs
   appear at the root in past sessions. They're gitignored; don't
   unignore them.

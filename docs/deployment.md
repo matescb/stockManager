@@ -52,9 +52,16 @@ Practical consequences:
   `alembic upgrade head` before uvicorn boots, so by the time the new
   workers serve traffic, the schema is at the new revision.
 - **Restart window**: `docker compose up --build` recreates containers in
-  place. There's a ~5–10 s window where Apache returns 502 while uvicorn
-  comes back up. Fine for this app's traffic level; tighten with
-  healthchecks if it ever stops being fine.
+  place. There's a brief window where Apache returns 502 while uvicorn comes
+  back up. Three mitigations reduce the impact (INFRA2-014):
+  1. `stop_grace_period: 30s` + `--timeout-graceful-shutdown 25` on the
+     backend: in-flight requests get up to 25 s to drain before uvicorn
+     exits; Compose's 30 s SIGKILL deadline gives a 5 s safety margin.
+  2. `ProxyPass … retry=2 timeout=30 connectiontimeout=5` on the Apache
+     vhost: Apache retries the backend twice before surfacing the 502, and
+     `Retry-After: 10` tells clients to back off rather than hammering.
+  3. For long migrations use [Drain mode](#drain-mode-for-destructive-migrations)
+     to show users a static maintenance page while the schema changes run.
 - **Red CI** keeps prod on the previous version: the deploy job is gated
   on `needs: [backend-tests, web-build]` and won't start if either failed.
   GitHub emails on red.
@@ -414,8 +421,82 @@ cp /srv/stockmanager/deploy/parts.matescb.cz.conf \
 apache2ctl configtest && systemctl reload apache2
 ```
 
-The `…-le-ssl.conf` companion file is owned by certbot — don't edit it
-unless you mean to.
+The `…-le-ssl.conf` companion file (`deploy/parts.matescb.cz-le-ssl.conf`)
+is canonical in this repo and must also be copied to
+`/etc/apache2/sites-available/` after any edit:
+
+```bash
+cp /srv/stockmanager/deploy/parts.matescb.cz-le-ssl.conf \
+   /etc/apache2/sites-available/parts.matescb.cz-le-ssl.conf
+apache2ctl configtest && systemctl reload apache2
+```
+
+**After a certbot re-issue:** `certbot renew` only rotates the cert files
+(`SSLCertificateFile` / `SSLCertificateKeyFile`) — it does **not** rewrite
+the `ProxyPass` block. However, if you ever run `certbot --apache` again
+from scratch, it regenerates the ssl conf and overwrites any manual edits.
+Re-copy the canonical file from the repo immediately afterwards.
+
+### Drain mode for destructive migrations
+
+Use this procedure when a migration is expected to take more than a few
+seconds (e.g. table rewrites, large backfills) so users see a clean
+"maintenance" page instead of 500/503 errors.
+
+**Enter drain mode**
+
+```bash
+# 1. Copy the maintenance assets onto the host.
+sudo cp /srv/stockmanager/deploy/maintenance.html /var/www/html/maintenance.html
+sudo cp /srv/stockmanager/deploy/parts.matescb.cz.maintenance.conf \
+        /etc/apache2/conf-available/parts-maintenance.conf
+
+# 2. Enable the drop-in (serves 503 + maintenance page for all non-health requests).
+sudo a2enconf parts-maintenance
+sudo apache2ctl configtest && sudo systemctl reload apache2
+
+# 3. Verify: browsing the site shows the maintenance page;
+#    /api/health still returns 200.
+curl -s https://parts.matescb.cz/api/health
+```
+
+**Take a pre-migration snapshot**
+
+```bash
+/srv/stockmanager/deploy/backup.sh
+```
+
+**Run the migration**
+
+```bash
+# In the currently-running backend container (before the new image is built).
+cd /srv/stockmanager
+sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
+    exec backend alembic upgrade head
+```
+
+**Deploy the new image**
+
+```bash
+cd /srv/stockmanager
+sudo -u deploy git fetch --quiet origin main
+sudo -u deploy git reset --hard origin/main
+sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
+    up -d --build
+```
+
+**Exit drain mode**
+
+```bash
+sudo a2disconf parts-maintenance
+sudo apache2ctl configtest && sudo systemctl reload apache2
+```
+
+**Verify**
+
+```bash
+curl -s https://parts.matescb.cz/api/health
+```
 
 ### If you ever move TLS into the docker stack
 
