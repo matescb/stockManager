@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import hashlib
 
-
 # ECMAScript WhiteSpace + LineTerminator characters — the characters that
 # JavaScript's String.prototype.trim() removes.  This is intentionally a
 # strict subset of Python's str.isspace() universe: Python also considers

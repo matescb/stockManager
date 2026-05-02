@@ -4,13 +4,13 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import Envelope, ok
+from app.domain.parts.services.bag_signature import compute_bag_signature
 from app.domain.stock.schemas import (
     AddStockIn,
     AdjustStockIn,
     MoveStockIn,
     RemoveStockIn,
 )
-from app.domain.parts.services.bag_signature import compute_bag_signature
 from app.domain.stock.service import (
     StockConflictError,
     StockError,

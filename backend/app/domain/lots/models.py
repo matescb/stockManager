@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from sqlalchemy import Column, Date, ForeignKey, Index, Integer, Numeric, String, Text
+from sqlalchemy.dialects.postgresql import UUID
 
 from app.domain._mixins import WorkspaceOwned
 from app.infra.db import Base
-from sqlalchemy.dialects.postgresql import UUID
 
 
 class Lot(WorkspaceOwned, Base):

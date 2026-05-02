@@ -21,7 +21,6 @@ import httpx
 
 from app.domain.parts.providers.base import MpnLookupResult
 
-
 _API_BASE = "https://api.digikey.com"
 _TOKEN_PATH = "/v1/oauth2/token"
 _PRODUCT_DETAILS_PATH = "/products/v4/search/{mpn}/productdetails"

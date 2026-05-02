@@ -28,17 +28,16 @@ Hardening notes (SEC2-006):
 """
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import logging
-import socket
-import hashlib
 import os
+import socket
 from urllib.parse import urlparse
 
 import httpx
 
 from app.core.config import settings
-
 
 log = logging.getLogger(__name__)
 

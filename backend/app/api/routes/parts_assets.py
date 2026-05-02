@@ -9,6 +9,7 @@ No URL structure changes from the original monolithic parts.py.
 from __future__ import annotations
 
 import os
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
@@ -16,6 +17,8 @@ from sqlalchemy import select
 
 from app.api.routes._parts_shared import (
     get_part as _get_part,
+)
+from app.api.routes._parts_shared import (
     serialize_part as _serialize,
 )
 from app.core.config import settings
@@ -29,7 +32,6 @@ from app.domain.parts.providers import make_provider
 from app.domain.parts.services.assets import fetch_provider_asset
 from app.domain.parts.services.provider_cache import lookup_fresh
 from app.domain.stock.service import reserved_quantity, total_for_part
-from uuid import UUID
 
 router = APIRouter()
 

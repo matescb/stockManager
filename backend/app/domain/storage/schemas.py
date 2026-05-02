@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 __all__ = [
     "StorageIn",
     "StoragePatch",

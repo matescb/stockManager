@@ -5,6 +5,7 @@ require_member_for_writes — anyone with the URL gets to read.
 """
 from __future__ import annotations
 
+import datetime
 import hashlib
 import hmac
 from html import escape
@@ -12,8 +13,6 @@ from html import escape
 from fastapi import APIRouter, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import select
-
-import datetime
 
 from app.core.config import settings
 from app.core.deps import DbSession

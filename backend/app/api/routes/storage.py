@@ -12,12 +12,12 @@ from app.core.pagination import decode_cursor, paginate
 from app.core.responses import ok
 from app.core.time import utcnow
 from app.domain.stock.models import StockEntry
-from app.domain.storage.models import StorageLocation
-from app.domain.storage.schemas import StorageIn, StoragePatch
 from app.domain.stock.service import (
     history_for_storage,
     stock_for_storage,
 )
+from app.domain.storage.models import StorageLocation
+from app.domain.storage.schemas import StorageIn, StoragePatch
 
 router = APIRouter()
 

@@ -17,7 +17,11 @@ from app.api._helpers import assert_in_workspace, require_resource_access
 from app.api.routes._activity import _DEFAULT_LIMIT, _MAX_LIMIT, build_activity
 from app.api.routes._parts_shared import (
     get_part as _get_part,
+)
+from app.api.routes._parts_shared import (
     image_urls_for_parts as _image_urls_for_parts,
+)
+from app.api.routes._parts_shared import (
     serialize_part as _serialize,
 )
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
@@ -26,6 +30,7 @@ from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import Envelope, ok
 from app.core.time import utcnow
 from app.domain.audit.service import log as _audit_log
+from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part, PartMetaMember, PartSubstitute
 from app.domain.parts.schemas import (
     BulkDeleteIn,
@@ -34,7 +39,6 @@ from app.domain.parts.schemas import (
     PartPatch,
     SubstituteIn,
 )
-from app.domain.custom_fields.models import CustomField
 from app.domain.stock.models import StockEntry
 from app.domain.stock.service import (
     bulk_current_quantities,
@@ -298,7 +302,8 @@ def archive_part(
     ws: CurrentWorkspace,
     user: CurrentUser,
 ):
-    from sqlalchemy import func, select as sa_select
+    from sqlalchemy import func
+    from sqlalchemy import select as sa_select
 
     from app.domain.attachments.models import Attachment
     from app.domain.custom_fields.models import CustomField as CF

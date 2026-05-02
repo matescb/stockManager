@@ -40,7 +40,6 @@ from typing import Any, NoReturn
 
 from fastapi import HTTPException
 
-
 # Default human-readable messages keyed by status code. Used when the
 # caller passes `message=None` so a route only has to pick a `code`.
 _DEFAULT_MESSAGES: dict[int, str] = {
