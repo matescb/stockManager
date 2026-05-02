@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 from datetime import datetime
@@ -54,6 +55,7 @@ from app.domain.storage.models import StorageLocation
 from app.domain.workspaces.models import Workspace
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 # PartIn, PartPatch, BulkDeleteIn, ScanImportIn etc. live in
@@ -396,8 +398,35 @@ def archive_part(
     ws: CurrentWorkspace,
     user: CurrentUser,
 ):
+    from sqlalchemy import func, select as sa_select
+    from app.domain.attachments.models import Attachment
+    from app.domain.custom_fields.models import CustomField as CF
+    from app.domain.tags.models import TagLink
+
     p = require_resource_access(db, Part, part_id, ws=ws, user=user, role="admin", label="part")
     p.archived_at = utcnow()
+
+    # Observability: log how many polymorphic rows are associated with the
+    # archived part so operators can gauge orphan risk without a full scan.
+    def _count(Model, ws_id, obj_id):
+        return db.execute(
+            sa_select(func.count()).select_from(Model).where(
+                Model.workspace_id == ws_id,
+                Model.object_id == obj_id,
+            )
+        ).scalar_one()
+
+    logger.info(
+        "part archived",
+        extra={
+            "workspace_id": str(ws.id),
+            "part_id": str(p.id),
+            "polymorphic_attachments": _count(Attachment, ws.id, p.id),
+            "polymorphic_custom_fields": _count(CF, ws.id, p.id),
+            "polymorphic_tag_links": _count(TagLink, ws.id, p.id),
+        },
+    )
+
     _audit_log(
         db,
         ws=ws,

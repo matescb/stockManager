@@ -19,6 +19,10 @@ class Attachment(WorkspaceOwned, Base):
             "archived_at",
             postgresql_where=text("archived_at IS NULL"),
         ),
+        # (workspace_id, object_id) — added in alembic 0031 (DB-006) to
+        # make orphan-cleanup queries fast (no object_type filter needed
+        # when sweeping a deleted parent's id).
+        Index("ix_attachments_ws_objid_only", "workspace_id", "object_id"),
     )
 
     object_type = Column(String(40), nullable=False)
