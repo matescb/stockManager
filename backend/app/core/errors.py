@@ -1,0 +1,123 @@
+"""Standardised error-raising helper for the API layer.
+
+Every error response in this app flows through
+`app.core.responses.http_exception_handler`, which spreads the
+`HTTPException(detail=...)` dict onto the top-level response so the
+frontend can read structured fields (e.g. `existing_id` on a 409). The
+historical mix of `detail="string"` and `detail={dict}` callsites makes
+the response shape inconsistent — code that expects `body.existing_id`
+breaks against routes that returned a bare string.
+
+`raise_http(status, code, message=None, **fields)` always raises
+`HTTPException(detail={"code", "message", **fields})`, giving the
+frontend a stable machine-readable `code` to switch on, and a
+human-readable `message` orthogonal to the response category derived
+from the status code.
+
+This module is being adopted incrementally — see issue #125 and the
+plan attached to it. PR1 covers auth + workspaces + invitations +
+sentry_tunnel; PR2 the domain services; PR3 the CRUD routes.
+
+Canonical status codes used by this app
+---------------------------------------
+- 401 — unauthenticated (no/expired session)
+- 403 — forbidden (authenticated but lacks the role for this resource;
+        only after resource existence has been confirmed — see
+        `app.api._helpers.require_resource_access`)
+- 404 — not-found OR cross-workspace. NEVER 403 for cross-workspace —
+        that would leak existence to a foreign-id probe
+        (workspace-isolation invariant).
+- 409 — conflict (MPN dup, over-receive, version conflict, …)
+- 422 — validation. Pydantic auto-generates these via
+        `validation_exception_handler`; a manual 422 is rare.
+- 400 — malformed-request shape that Pydantic didn't catch (e.g. a
+        free-form string field that fails a domain-specific rule).
+- 5xx — never raised manually.
+"""
+from __future__ import annotations
+
+from typing import Any, NoReturn
+
+from fastapi import HTTPException
+
+
+# Default human-readable messages keyed by status code. Used when the
+# caller passes `message=None` so a route only has to pick a `code`.
+_DEFAULT_MESSAGES: dict[int, str] = {
+    400: "bad request",
+    401: "unauthenticated",
+    403: "forbidden",
+    404: "not found",
+    409: "conflict",
+    413: "payload too large",
+    422: "validation failed",
+}
+
+
+def raise_http(
+    status_code: int,
+    code: str,
+    message: str | None = None,
+    **fields: Any,
+) -> NoReturn:
+    """Raise an `HTTPException` with a structured dict-form `detail`.
+
+    The `detail` is always a dict containing at minimum `code` and
+    `message`. Any additional keyword arguments are spread into the
+    detail dict and surface on the top-level response (alongside the
+    `data: null` and `status: {category, message}` envelope), so the
+    frontend can read e.g. `body.existing_id` directly.
+
+    `code` is a stable machine-readable string the frontend can switch
+    on (`"workspace.not_found"`, `"part.mpn_conflict"`, …). It is
+    orthogonal to the response category, which is derived from
+    `status_code` by `responses._category_for_status`.
+    """
+    detail: dict[str, Any] = {
+        "code": code,
+        "message": message or _DEFAULT_MESSAGES.get(status_code, ""),
+    }
+    for k, v in fields.items():
+        if k in detail:
+            # Refuse to silently overwrite the canonical keys.
+            raise ValueError(f"reserved field name: {k}")
+        detail[k] = v
+    raise HTTPException(status_code=status_code, detail=detail)
+
+
+class ErrorCodes:
+    """Stable string constants for the `code` field.
+
+    Frontend code can switch on these without depending on humanly-
+    written `message` strings. Group-prefixed (`<area>.<reason>`) so the
+    namespace stays organised as more codes are added.
+
+    Add new codes here as you migrate callsites. Do not rename existing
+    ones — once shipped, they're part of the FE contract.
+    """
+
+    # Auth / session
+    AUTH_INVALID_CREDENTIALS = "auth.invalid_credentials"
+    AUTH_EMAIL_TAKEN = "auth.email_taken"
+    AUTH_WEAK_PASSWORD = "auth.weak_password"
+
+    # Workspace / membership
+    WORKSPACE_NOT_FOUND = "workspace.not_found"
+    WORKSPACE_OWNER_CAP = "workspace.owned_cap_reached"
+    WORKSPACE_MEMBER_NOT_FOUND = "workspace.member_not_found"
+    WORKSPACE_OWNER_ONLY = "workspace.owner_only"
+    WORKSPACE_LAST_OWNER = "workspace.last_owner"
+    WORKSPACE_SELF_REMOVE = "workspace.self_remove"
+
+    # Invitations
+    INVITATION_NOT_FOUND = "invitation.not_found"
+    INVITATION_ALREADY_MEMBER = "invitation.already_member"
+    INVITATION_NOT_PENDING = "invitation.not_pending"
+    INVITATION_EMAIL_MISMATCH = "invitation.email_mismatch"
+
+    # Sentry tunnel
+    SENTRY_TUNNEL_TOO_LARGE = "sentry_tunnel.too_large"
+    SENTRY_TUNNEL_EMPTY = "sentry_tunnel.empty"
+    SENTRY_TUNNEL_MALFORMED_HEADER = "sentry_tunnel.malformed_header"
+    SENTRY_TUNNEL_MISSING_DSN = "sentry_tunnel.missing_dsn"
+    SENTRY_TUNNEL_DSN_MISMATCH = "sentry_tunnel.dsn_mismatch"
