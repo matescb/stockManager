@@ -34,6 +34,9 @@ dev = [
     # Used by tests/test_ci_workflow.py (TEST-014 / issue #116) to parse
     # .github/workflows/ci.yml. Test-only — runtime app doesn't import yaml.
     "pyyaml>=6.0",
+    # Static analysis. Pinned <1.0 to avoid surprise rule churn — see
+    # issue #121 / CQ-005. Configured via [tool.ruff] below.
+    "ruff>=0.6,<1.0",
 ]
 
 [build-system]
@@ -54,3 +57,20 @@ markers = [
     "slow: long-running test (excluded by default; run with `-m slow`)",
 ]
 addopts = "-m 'not slow'"
+
+# Minimal ruff config — CQ-005 / issue #121. Intentionally narrow:
+#   E  — pycodestyle errors
+#   F  — pyflakes (unused imports, undefined names)
+#   I  — isort (import ordering)
+# No formatter, no auto-fix, no opinionated rule sets. CI runs
+# `ruff check backend/app` (see .github/workflows/ci.yml). Bumping the
+# rule list is a deliberate, separate PR — keep this list short.
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Alembic revision files have boilerplate `# revision identifiers, used
+# by Alembic.` blocks that confuse the import-order rule.
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

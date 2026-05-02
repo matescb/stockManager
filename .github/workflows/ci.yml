@@ -56,6 +56,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      # Static analysis gate — CQ-005 / issue #121. `--exit-zero` so
+      # the first land is non-blocking; flip off in a follow-up PR
+      # once the existing violations are triaged.
+      - name: ruff
+        working-directory: backend
+        run: ruff check app --exit-zero
+
       - name: pytest
         working-directory: backend
         env:
@@ -76,6 +83,13 @@ jobs:
       - name: Install web deps
         working-directory: web
         run: npm ci
+
+      # Static analysis gate — CQ-005 / issue #121. `|| true` so the
+      # first land is non-blocking; flip off in a follow-up PR once
+      # the existing violations are triaged.
+      - name: eslint
+        working-directory: web
+        run: npm run lint || true
 
       - name: Vitest
         working-directory: web
