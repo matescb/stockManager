@@ -26,6 +26,7 @@ from app.core.secrets import decrypt
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part, PartMetaMember, PartSubstitute
 from app.domain.parts.providers import make_provider
+from app.domain.parts.services.provider_cache import lookup_fresh, lookup_with_cache
 from app.domain.parts.schemas import (
     BulkDeleteIn,
     MetaMemberIn,
@@ -690,7 +691,10 @@ def refresh_from_provider(
             detail="no parts provider configured (set one in Workspace settings)",
         )
 
-    out = provider.lookup_mpn(p.mpn.strip())
+    # Use lookup_fresh (not lookup_with_cache) — the operator explicitly
+    # triggered a refresh, so we always hit upstream.  The fresh result is
+    # written back to the cache so subsequent lookup_with_cache calls see it.
+    out = lookup_fresh(provider, p.mpn.strip())
     if not out.get("found") or not out.get("result"):
         return ok(
             {
@@ -945,7 +949,7 @@ def bulk_import_from_scan(
         # swallowing — the row still resolves with `lookup_failed` so
         # the operator sees something, but ops aren't blind to the bug.
         try:
-            lookup = provider.lookup_mpn(mpn)
+            lookup = lookup_with_cache(provider, mpn)
         except Exception as exc:
             try:  # local import keeps this path zero-cost when SENTRY_DSN is empty
                 import sentry_sdk

@@ -26,7 +26,7 @@ _API_BASE = "https://api.digikey.com"
 _TOKEN_PATH = "/v1/oauth2/token"
 _PRODUCT_DETAILS_PATH = "/products/v4/search/{mpn}/productdetails"
 _KEYWORD_SEARCH_PATH = "/products/v4/search/keyword"
-_TIMEOUT_SEC = 15.0
+_TIMEOUT_SEC = 8.0  # Cap upstream wall-clock to prevent worker stall (BE2-011).
 
 _LOCALE_SITE = "CZ"
 _LOCALE_LANG = "en"
