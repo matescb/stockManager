@@ -86,7 +86,7 @@ export default function PartInfo() {
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", part.id) });
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", part.id, "custom-fields") });
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Refresh failed");
+      toast.error(e instanceof ApiError ? e.userMessage : "Refresh failed");
     } finally {
       setRefreshing(false);
     }
@@ -98,7 +98,7 @@ export default function PartInfo() {
     : null;
 
   return (
-    <div className="grid grid-cols-2 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
       {linked && (
         <div className="card p-3 col-span-2 flex items-center gap-3 text-sm">
           <RefreshCw size={14} className="text-accent shrink-0" />

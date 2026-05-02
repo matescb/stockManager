@@ -172,7 +172,7 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
       if (inputRef.current) inputRef.current.value = "";
       qc.invalidateQueries({ queryKey });
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Upload failed");
+      toast.error(e instanceof ApiError ? e.userMessage : "Upload failed");
     } finally {
       setBusy(false);
     }
@@ -185,7 +185,7 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
       toast.success("Attachment deleted.");
       qc.invalidateQueries({ queryKey });
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Delete failed");
+      toast.error(e instanceof ApiError ? e.userMessage : "Delete failed");
     }
   }
 
@@ -223,8 +223,9 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
         >
           <div className="flex flex-wrap items-end gap-2">
             <div className="flex-1 min-w-[180px]">
-              <label className="label">File</label>
+              <label className="label" htmlFor="attachment-file">File</label>
               <input
+                id="attachment-file"
                 ref={inputRef}
                 type="file"
                 className="input"
@@ -245,8 +246,9 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
               />
             </div>
             <div className="w-32">
-              <label className="label">Type</label>
+              <label className="label" htmlFor="attachment-type">Type</label>
               <select
+                id="attachment-type"
                 className="input"
                 value={fileType}
                 onChange={ev => setFileType(ev.target.value as FileType)}

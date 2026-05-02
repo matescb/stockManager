@@ -333,6 +333,7 @@ def test_bulk_import_mixed_batch_returns_per_row_status(authed, monkeypatch):
         "created": 1,
         "duplicate": 1,
         "bag_rescan": 0,
+        "bag_signature_mismatch": 0,
         "lookup_failed": 1,
         "invalid": 0,
         "row_failed": 0,

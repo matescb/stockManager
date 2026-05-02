@@ -97,7 +97,7 @@ export default function PartRemoveStock() {
       nav(`/parts/${partId}/stock`);
     },
     onError: (e) => {
-      setErr(e instanceof ApiError ? e.message : "Failed");
+      setErr(e instanceof ApiError ? e.userMessage : "Failed");
     },
   });
 
@@ -129,13 +129,14 @@ export default function PartRemoveStock() {
       <h3 className="text-md font-semibold">Remove stock</h3>
       {err && <div className="text-danger text-sm">{err}</div>}
       <div>
-        <label className="label">Source *</label>
+        <label className="label" htmlFor="remove-stock-source">Source *</label>
         {sources.length === 0 ? (
           <div className="text-sm text-muted py-2">
             Nothing on hand for this part.
           </div>
         ) : (
           <select
+            id="remove-stock-source"
             className="input"
             value={sourceKey}
             onChange={e => {
@@ -155,8 +156,9 @@ export default function PartRemoveStock() {
         )}
       </div>
       <div>
-        <label className="label">Quantity *</label>
+        <label className="label" htmlFor="remove-stock-qty">Quantity *</label>
         <input
+          id="remove-stock-qty"
           className="input"
           type="number"
           min={1}
@@ -173,8 +175,9 @@ export default function PartRemoveStock() {
         )}
       </div>
       <div>
-        <label className="label">Comments</label>
+        <label className="label" htmlFor="remove-stock-comments">Comments</label>
         <textarea
+          id="remove-stock-comments"
           className="input"
           rows={2}
           value={comments}

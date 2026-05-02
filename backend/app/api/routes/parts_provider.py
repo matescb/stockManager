@@ -10,6 +10,7 @@ from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import ok
 from app.core.secrets import decrypt
 from app.domain.parts.providers import make_provider
+from app.domain.parts.services.provider_cache import lookup_with_cache
 
 router = APIRouter()
 
@@ -37,7 +38,7 @@ def lookup_mpn(request: Request, payload: LookupIn, ws: CurrentWorkspace):
             "message": "no provider configured (set one in Workspace settings)",
             "provider": ws.parts_provider or "none",
         })
-    out = provider.lookup_mpn(payload.mpn.strip())
+    out = lookup_with_cache(provider, payload.mpn.strip())
     # Tag the response with the provider name so the UI can label its
     # success/failure note.
     return ok({**out, "provider": provider.name})

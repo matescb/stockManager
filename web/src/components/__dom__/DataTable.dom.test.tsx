@@ -96,6 +96,56 @@ describe("DataTable (DOM)", () => {
     expect(onRowClick).toHaveBeenCalledWith(ROWS[0]);
   });
 
+  it("activates onRowClick via Enter key", () => {
+    const onRowClick = vi.fn();
+    render(
+      <DataTable<Row>
+        rows={ROWS}
+        columns={COLUMNS}
+        rowKey={(r) => r.id}
+        onRowClick={onRowClick}
+      />,
+    );
+    // When onRowClick is set, data <tr> elements get role="button".
+    const rowBtns = screen.getAllByRole("button", { name: /^Open /i });
+    fireEvent.keyDown(rowBtns[0], { key: "Enter" });
+    expect(onRowClick).toHaveBeenCalledWith(ROWS[0]);
+  });
+
+  it("activates onRowClick via Space key", () => {
+    const onRowClick = vi.fn();
+    render(
+      <DataTable<Row>
+        rows={ROWS}
+        columns={COLUMNS}
+        rowKey={(r) => r.id}
+        onRowClick={onRowClick}
+      />,
+    );
+    const rowBtns = screen.getAllByRole("button", { name: /^Open /i });
+    fireEvent.keyDown(rowBtns[0], { key: " " });
+    expect(onRowClick).toHaveBeenCalledWith(ROWS[0]);
+  });
+
+  it("does not activate onRowClick if checkbox Space is pressed", () => {
+    const onRowClick = vi.fn();
+    render(
+      <DataTable<Row>
+        rows={ROWS}
+        columns={COLUMNS}
+        rowKey={(r) => r.id}
+        onRowClick={onRowClick}
+        selectable
+      />,
+    );
+    // The checkbox <td> stops keydown propagation for Enter/Space, so
+    // firing Space on the td (not the row itself) should NOT reach the row handler.
+    const rowBtns = screen.getAllByRole("button", { name: /^Open /i });
+    const checkboxTd = rowBtns[0].querySelector("td");
+    fireEvent.keyDown(checkboxTd!, { key: " " });
+    expect(onRowClick).not.toHaveBeenCalled();
+  });
+
   it("multi-select preserves selection set across a row refetch (FE2-007)", () => {
     const { rerender } = render(
       <DataTable<Row>

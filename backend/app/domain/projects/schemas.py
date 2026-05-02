@@ -42,7 +42,7 @@ class BomEntryIn(BaseModel):
     part_id: UUID | None = None
     meta_part_id: UUID | None = None
     name: str | None = None
-    quantity: float = 1
+    quantity: float = Field(default=1, gt=0)
     comments: str | None = None
     designators: list[str] = []
     cad_footprint: str | None = None
@@ -57,7 +57,7 @@ class BomEntryPatch(BaseModel):
     part_id: UUID | None = None
     meta_part_id: UUID | None = None
     name: str | None = None
-    quantity: float | None = None
+    quantity: float | None = Field(default=None, gt=0)
     comments: str | None = None
     designators: list[str] | None = None
     cad_footprint: str | None = None

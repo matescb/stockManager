@@ -2,7 +2,7 @@ import { useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { wsScope } from "@/lib/queryKeys";
+import { archivePartKeys } from "@/lib/queryKeys";
 import type { Part } from "@/types";
 
 export default function PartOther() {
@@ -19,12 +19,14 @@ export default function PartOther() {
   // don't blow away unrelated data.
   async function archive() {
     await api.post(`/parts/${partId}/archive`);
-    qc.invalidateQueries({ queryKey: wsScope(workspaceId) });
+    for (const k of archivePartKeys(workspaceId, partId!))
+      qc.invalidateQueries({ queryKey: k });
     nav("/parts");
   }
   async function restore() {
     await api.post(`/parts/${partId}/restore`);
-    qc.invalidateQueries({ queryKey: wsScope(workspaceId) });
+    for (const k of archivePartKeys(workspaceId, partId!))
+      qc.invalidateQueries({ queryKey: k });
   }
 
   return (
