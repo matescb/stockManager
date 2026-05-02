@@ -23,7 +23,7 @@ from app.domain.lots.models import Lot
 from app.domain.parts.models import Part, PartMetaMember, PartSubstitute
 from app.domain.projects.models import Project, ProjectEntry
 from app.domain.stock.models import StockEntry
-from app.domain.stock.service import current_quantity
+from app.domain.stock.service import current_quantity, lock_parts_for_stock_write
 from app.domain.storage.models import StorageLocation
 
 
@@ -162,9 +162,20 @@ def apply_reservations(
     only by (build_id, part_id, project_id, entry quantity) — no storage
     location or lot is bound, since the consumer picks those at consume-time.
     """
+    # BE2-008: lock every distinct part_id we're about to touch, in
+    # deterministic order, before any read. Without this, concurrent
+    # apply_reservations / release_reservations / consume on overlapping
+    # BOMs race on the reserved ledger and can either double-write or
+    # under-write the counter rows.
+    consumable = _consumable_entries(db, workspace_id=workspace_id, project=project)
+    lock_parts_for_stock_write(
+        db,
+        workspace_id=workspace_id,
+        part_ids=[e.part_id for e in consumable if e.part_id is not None],
+    )
     now = _now()
     written = 0
-    for e in _consumable_entries(db, workspace_id=workspace_id, project=project):
+    for e in consumable:
         part = db.get(Part, e.part_id)
         if part is None:
             continue
@@ -210,6 +221,15 @@ def release_reservations(
     )
     if not reserve_rows:
         return 0
+    # BE2-008: aggregate distinct part_ids from the reserve set, sort,
+    # take the per-part lock before reading the release-counter set.
+    # This serialises archive-while-consuming and any release flow that
+    # races with another build releasing the same parts.
+    lock_parts_for_stock_write(
+        db,
+        workspace_id=workspace_id,
+        part_ids=[r.part_id for r in reserve_rows],
+    )
     released_ids = set(
         db.execute(
             select(StockEntry.related_entry_id)
@@ -257,6 +277,33 @@ def consume(
     if build.status not in ("planned", "in_progress"):
         raise BuildError(f"build is {build.status}")
 
+    # Take every lock this transaction needs up front, in deterministic
+    # UUID-string order, before any read or write. Bundles together the
+    # part_ids from: the project's BOM (touched by `release_reservations`),
+    # the consume lines themselves, and the optional sub-assembly output.
+    # Calling `lock_parts_for_stock_write` here means the inner
+    # `release_reservations` / per-line writes / `output_lot` insert all
+    # acquire their lock as a re-entrant no-op (Postgres advisory locks
+    # are transaction-scoped). Without bundling, two concurrent consumes
+    # touching overlapping BOM ∪ line sets could acquire locks in
+    # different orders → AB/BA deadlock.
+    bom_part_ids = [
+        e.part_id
+        for e in _consumable_entries(db, workspace_id=workspace_id, project=project)
+        if e.part_id is not None
+    ]
+    line_part_ids = [line.part_id for line in payload.lines]
+    output_part_ids: list[UUID] = (
+        [project.associated_subassembly_part_id]
+        if project.associated_subassembly_part_id is not None
+        else []
+    )
+    lock_parts_for_stock_write(
+        db,
+        workspace_id=workspace_id,
+        part_ids=[*bom_part_ids, *line_part_ids, *output_part_ids],
+    )
+
     # Release any outstanding reservations first so the consumption itself
     # doesn't get double-counted against on_hand+reserved.
     release_reservations(db, workspace_id=workspace_id, user_id=user_id, build=build)
@@ -286,6 +333,7 @@ def consume(
             part_id=part_id,
             lot_id=lot_id,
             storage_location_id=storage_location_id,
+            bucket_match=True,
         )
         if total_demand > avail:
             raise BuildError(
@@ -342,6 +390,7 @@ def consume(
             part_id=line.part_id,
             storage_location_id=line.storage_location_id,
             lot_id=line.lot_id,
+            bucket_match=True,
         )
         if line.quantity > avail:
             raise BuildError(

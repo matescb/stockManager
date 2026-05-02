@@ -40,7 +40,7 @@ def _lock_for_stock_write(db: Session, *, workspace_id: UUID, part_id: UUID) -> 
     The append-only ledger has a TOCTOU race: two concurrent operators
     consuming from the same lot both read available=N from
     `current_quantity()`, both pass `qty <= available`, then both insert
-    a -qty row — the lot ends up at -qty (BE CRIT-1).
+    a -qty row — the lot ends up at -qty (BE CRIT-1 / BE2-001).
 
     `pg_advisory_xact_lock` takes a session-level lock keyed on a
     bigint hash of (workspace_id, part_id). The lock is released
@@ -49,6 +49,19 @@ def _lock_for_stock_write(db: Session, *, workspace_id: UUID, part_id: UUID) -> 
     finish, then re-reads `current_quantity` against the updated
     state. The 0013 trigger is the database-side fall-back if the
     lock is ever bypassed (e.g. raw SQL outside the service layer).
+
+    Acquired by every mutating ledger entry — producer (add / receive /
+    build_produce) and consumer (remove / move / adjust / build_consume
+    / reservation release). The original PR #11 omitted the producer
+    side on the reasoning that "positive deltas can't go negative", but
+    BE2-001 surfaced two real consequences:
+      - producer/consumer races observe inconsistent intermediate
+        balances when invariant checks (single_part_only, default-
+        storage-mandatory) read DB state without holding the lock.
+      - the 0013 trigger fires after every insert; a producer skipping
+        the lock can race with a consumer and turn a controllable 4xx
+        into an uncaught 500 from the trigger.
+    Defence in depth on the producer is cheap (~ms) and removes both.
     """
     # UUID's __str__ is stable RFC 4122 canonical form, so the same
     # (workspace_id, part_id) pair always hashes to the same int8 lock id.
@@ -56,6 +69,24 @@ def _lock_for_stock_write(db: Session, *, workspace_id: UUID, part_id: UUID) -> 
         text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
         {"k": f"{workspace_id}:{part_id}"},
     )
+
+
+def lock_parts_for_stock_write(
+    db: Session, *, workspace_id: UUID, part_ids: Iterable[UUID]
+) -> None:
+    """Take the per-(workspace, part) advisory lock for a set of parts
+    in deterministic UUID-string order. Used by routes that mutate
+    several parts in one transaction — `builds.consume`,
+    `builds.apply_reservations` / `release_reservations`, `orders.receive`.
+
+    Deterministic ordering is what prevents AB/BA deadlocks: two
+    concurrent transactions touching the same set of parts acquire
+    locks in the same sequence, so the second waits cleanly rather
+    than circular-waiting. UUID string sort works because two
+    transactions seeing the same set of UUIDs always produce the same
+    sorted list."""
+    for pid in sorted(set(part_ids), key=str):
+        _lock_for_stock_write(db, workspace_id=workspace_id, part_id=pid)
 
 
 def current_quantity(
@@ -66,17 +97,48 @@ def current_quantity(
     storage_location_id: UUID | None = None,
     lot_id: UUID | None = None,
     status: str = "on_hand",
+    bucket_match: bool = False,
 ) -> int:
+    """On-hand sum of quantity_delta. Two interpretations of `None`:
+
+    - `bucket_match=False` (default, used by global / report queries):
+      `None` means "don't filter on this dimension" — aggregates across
+      every value of `storage_location_id` / `lot_id` for the part.
+
+    - `bucket_match=True` (used by mutate validators): `None` means
+      "match the SQL NULL bucket specifically", using `IS NULL`. Aligns
+      with the 0013 `check_stock_nonneg` trigger which groups by
+      `IS NOT DISTINCT FROM NEW.lot_id` / `IS NOT DISTINCT FROM
+      NEW.storage_location_id` (NULL is a distinct bucket, not a
+      wildcard).
+
+    Without the explicit `bucket_match`, the validator and the trigger
+    diverge whenever a caller omits `lot_id` or `storage_location_id`
+    against a part whose stock lives in a non-NULL bucket: the
+    validator says "you have N globally" → request passes → trigger
+    fires on the NULL-bucket sum (= 0) → `check_violation` → API
+    surfaces 500. This is BE-002 / DB-002 in the v2 teardown.
+    """
     q = (
         select(func.coalesce(func.sum(StockEntry.quantity_delta), 0))
         .where(StockEntry.workspace_id == workspace_id)
         .where(StockEntry.part_id == part_id)
         .where(StockEntry.status == status)
     )
-    if storage_location_id is not None:
-        q = q.where(StockEntry.storage_location_id == storage_location_id)
-    if lot_id is not None:
-        q = q.where(StockEntry.lot_id == lot_id)
+    if bucket_match:
+        if storage_location_id is None:
+            q = q.where(StockEntry.storage_location_id.is_(None))
+        else:
+            q = q.where(StockEntry.storage_location_id == storage_location_id)
+        if lot_id is None:
+            q = q.where(StockEntry.lot_id.is_(None))
+        else:
+            q = q.where(StockEntry.lot_id == lot_id)
+    else:
+        if storage_location_id is not None:
+            q = q.where(StockEntry.storage_location_id == storage_location_id)
+        if lot_id is not None:
+            q = q.where(StockEntry.lot_id == lot_id)
     return int(db.execute(q).scalar_one() or 0)
 
 
@@ -155,6 +217,12 @@ def add_stock(
     user_id: UUID | None,
     payload: AddStockIn,
 ) -> StockEntry:
+    # Producer-side advisory lock (BE2-001). Held for the rest of the
+    # transaction; serialises concurrent producer/consumer writes on
+    # the same (workspace, part) so invariant reads (default-storage,
+    # serial-tracking, single_part_only) and the StockEntry insert are
+    # not interleaved with a remove/move/adjust on another connection.
+    _lock_for_stock_write(db, workspace_id=workspace_id, part_id=payload.part_id)
     part = db.get(Part, payload.part_id)
     if not _belongs(part, workspace_id):
         raise StockError("part not found")
@@ -272,6 +340,7 @@ def remove_stock(
         part_id=part.id,
         storage_location_id=payload.storage_location_id,
         lot_id=payload.lot_id,
+        bucket_match=True,
     )
     if payload.quantity > available:
         raise StockError(f"insufficient stock (have {available}, want {payload.quantity})")
@@ -333,6 +402,7 @@ def move_stock(
         part_id=part.id,
         storage_location_id=payload.source_storage_location_id,
         lot_id=payload.source_lot_id,
+        bucket_match=True,
     )
     if payload.quantity > available:
         raise StockError(f"insufficient stock at source (have {available}, want {payload.quantity})")
@@ -441,6 +511,7 @@ def adjust_stock(
         part_id=part.id,
         storage_location_id=payload.storage_location_id,
         lot_id=payload.lot_id,
+        bucket_match=True,
     )
     delta = payload.actual_quantity - current
     if delta == 0:

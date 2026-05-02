@@ -16,6 +16,7 @@ log = get_logger(__name__)
 from app.domain.orders.schemas import ReceiveIn
 from app.domain.parts.models import Part
 from app.domain.stock.models import StockEntry
+from app.domain.stock.service import lock_parts_for_stock_write
 from app.domain.storage.models import StorageLocation
 from app.domain.workspaces.models import Workspace
 
@@ -59,6 +60,17 @@ def receive(
         .filter(OrderEntry.workspace_id == workspace_id, OrderEntry.order_id == order.id)
         .all()
     }
+
+    # BE2-001: receive is the order-side producer write. Lock every
+    # distinct part this receive touches (across all entries on this
+    # order, even if some lines target only a subset — keeps lock
+    # coverage symmetric with concurrent build_consume / remove paths
+    # on the same parts). Sorted-UUID order keeps it deadlock-safe.
+    lock_parts_for_stock_write(
+        db,
+        workspace_id=workspace_id,
+        part_ids=[e.part_id for e in entries_by_id.values() if e.part_id is not None],
+    )
 
     received_at = _now()
     created_lots: list[Lot] = []
