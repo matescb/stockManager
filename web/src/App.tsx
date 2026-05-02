@@ -130,6 +130,28 @@ function Gate() {
   );
 }
 
+/**
+ * Bounce already-authenticated users away from /login and /signup (FE2-019).
+ * Renders null while the session check is in flight (avoids a flash of the
+ * login form before the redirect fires). Honours state.from so a deep-link
+ * round-trip still lands on the originally-requested page; falls back to
+ * /parts, and avoids a /login → /login loop.
+ */
+function RedirectIfAuthed({ children }: { children: React.ReactNode }) {
+  const { me, loading } = useAuth();
+  const location = useLocation();
+  if (loading) return null;
+  if (me) {
+    const from = (location.state as { from?: Location } | null)?.from;
+    const target =
+      from && from.pathname !== "/login" && from.pathname !== "/signup"
+        ? from.pathname
+        : "/parts";
+    return <Navigate to={target} replace />;
+  }
+  return <>{children}</>;
+}
+
 const lazyFallback = <RouteSkeleton variant="table" />;
 
 /**
@@ -151,8 +173,8 @@ export default function App() {
         <ChunkLoadErrorBoundary>
         <Suspense fallback={lazyFallback}>
         <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/signup" element={<Signup />} />
+          <Route path="/login" element={<RedirectIfAuthed><Login /></RedirectIfAuthed>} />
+          <Route path="/signup" element={<RedirectIfAuthed><Signup /></RedirectIfAuthed>} />
           {/* SEC2-014: email verification landing — pre-auth, no Gate wrapper */}
           <Route path="/verify" element={<Verify />} />
 

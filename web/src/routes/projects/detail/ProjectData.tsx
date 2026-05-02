@@ -20,16 +20,16 @@ export default function ProjectData() {
   return (
     <div className="card p-4 max-w-2xl space-y-3">
       <div>
-        <label className="label">Name</label>
-        <input className="input" value={name} onChange={e => setName(e.target.value)} />
+        <label className="label" htmlFor="project-data-name">Name</label>
+        <input id="project-data-name" className="input" value={name} onChange={e => setName(e.target.value)} />
       </div>
       <div>
-        <label className="label">Description</label>
-        <textarea className="input" rows={3} value={description} onChange={e => setDescription(e.target.value)} />
+        <label className="label" htmlFor="project-data-description">Description</label>
+        <textarea id="project-data-description" className="input" rows={3} value={description} onChange={e => setDescription(e.target.value)} />
       </div>
       <div>
-        <label className="label">Notes (Markdown)</label>
-        <textarea className="input font-mono" rows={6} value={notes} onChange={e => setNotes(e.target.value)} />
+        <label className="label" htmlFor="project-data-notes">Notes (Markdown)</label>
+        <textarea id="project-data-notes" className="input font-mono" rows={6} value={notes} onChange={e => setNotes(e.target.value)} />
       </div>
       <button className="btn-primary" onClick={save}>Save</button>
     </div>

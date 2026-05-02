@@ -70,6 +70,13 @@ export type Part = z.infer<typeof PartSchema>;
 
 export const PartsListSchema = z.array(PartSchema);
 
+/** Paged parts response — returned by GET /parts with cursor pagination. */
+export const PagedPartsSchema = z.object({
+  items: z.array(PartSchema),
+  next_cursor: z.string().nullable(),
+});
+export type PagedParts = z.infer<typeof PagedPartsSchema>;
+
 export const StorageLocationSchema = z.object({
   id: uuid,
   name: z.string(),

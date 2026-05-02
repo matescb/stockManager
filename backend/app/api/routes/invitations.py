@@ -22,6 +22,7 @@ from app.core.deps import (
 from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter
 from app.core.responses import ok
+from app.domain.audit.service import log as _audit_log
 from app.domain.users.models import User
 from app.domain.workspaces.models import Workspace, WorkspaceInvitation, WorkspaceMember
 
@@ -204,6 +205,15 @@ def create_invitation(
         # let the outer transaction fail naturally.
         if existing:
             return ok(_serialize(existing))
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="invitation.created",
+        target_type="invitation",
+        target_ids=[inv.id],
+        comment=f"email={inv.email} role={inv.role}",
+    )
     return ok(_serialize(inv, plaintext_token=plaintext))
 
 
@@ -225,7 +235,7 @@ def list_invitations(
 
 
 @router.delete("/{invitation_id}", dependencies=[Depends(require_role("admin"))])
-def revoke_invitation(invitation_id: UUID, db: DbSession, ws: CurrentWorkspace):
+def revoke_invitation(invitation_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     inv = db.get(WorkspaceInvitation, invitation_id)
     if not inv or inv.workspace_id != ws.id:
         raise_http(
@@ -241,6 +251,15 @@ def revoke_invitation(invitation_id: UUID, db: DbSession, ws: CurrentWorkspace):
             invitation_status=inv.status,
         )
     inv.status = "revoked"
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="invitation.revoked",
+        target_type="invitation",
+        target_ids=[inv.id],
+        comment=f"email={inv.email}",
+    )
     return ok(None, "revoked")
 
 
@@ -362,6 +381,7 @@ def accept_invitation(request: Request, payload: AcceptIn, db: DbSession, user: 
     # the session marks itself as needing a full rollback. We call
     # db.rollback() to restore a clean state, then re-apply writes.
     inv_id = inv.id  # cache before rollback discards ORM identity
+    inv_email = inv.email  # cache before possible rollback
     try:
         with db.begin_nested():
             db.flush()
@@ -388,4 +408,14 @@ def accept_invitation(request: Request, payload: AcceptIn, db: DbSession, user: 
             fresh_inv.accepted_by = user_id
 
     workspace = db.get(Workspace, inv_workspace_id)
+    if workspace:
+        _audit_log(
+            db,
+            ws=workspace,
+            user=user,
+            action="invitation.accepted",
+            target_type="invitation",
+            target_ids=[inv_id],
+            comment=f"email={inv_email} role={inv_role}",
+        )
     return ok({"workspace_id": str(inv_workspace_id), "workspace_name": workspace.name if workspace else None, "role": inv_role})

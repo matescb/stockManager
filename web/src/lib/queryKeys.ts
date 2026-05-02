@@ -62,6 +62,100 @@ export function wsScope(workspaceId: string | null | undefined): unknown[] {
 }
 
 // ---------------------------------------------------------------------
+// Narrow invalidation helpers — each returns a list of query keys
+// (unknown[][]) so callers can loop:
+//
+//   for (const k of archivePartKeys(workspaceId, partId))
+//     qc.invalidateQueries({ queryKey: k });
+//
+// All keys keep the ["ws", workspaceId, …] prefix enforced by wsKeyOf.
+// ---------------------------------------------------------------------
+
+/**
+ * Keys to invalidate after archiving or restoring a part.
+ * Covers the part list, the individual part cache, and the two
+ * reports that roll up stock totals (low-stock, stock-value).
+ */
+export function archivePartKeys(
+  workspaceId: string | null | undefined,
+  partId: string,
+): unknown[][] {
+  return [
+    wsKeyOf(workspaceId, "parts"),
+    wsKeyOf(workspaceId, "part", partId),
+    wsKeyOf(workspaceId, "report", "low-stock"),
+    wsKeyOf(workspaceId, "report", "stock-value"),
+  ];
+}
+
+/**
+ * Keys to invalidate after archiving or restoring a storage location.
+ * Covers the storage list, the individual location cache, and the
+ * stock-value report.
+ */
+export function archiveStorageKeys(
+  workspaceId: string | null | undefined,
+  storageId: string,
+): unknown[][] {
+  return [
+    wsKeyOf(workspaceId, "storage"),
+    wsKeyOf(workspaceId, "storage", storageId),
+    wsKeyOf(workspaceId, "report", "stock-value"),
+  ];
+}
+
+/**
+ * Keys to invalidate after a lot move or adjust-count.
+ *
+ * Both ops change the part's total on-hand quantity, which means the
+ * parts list (drives `on_hand` column) and the three stock-rollup
+ * reports (low-stock, stock-value, expiring) all need to refresh.
+ * Same rationale as `archivePartKeys` — keep these in sync if you
+ * touch one.
+ *
+ * @param lot         The lot object (must have at least `id` and `part_id`).
+ * @param storageIds  Storage location IDs touched by the operation.
+ *                    For a move, callers must include BOTH source and
+ *                    destination — the source's "what's in this bin"
+ *                    and history views go stale otherwise.
+ */
+export function lotMutationKeys(
+  workspaceId: string | null | undefined,
+  lot: { id: string; part_id: string },
+  storageIds: string[] = [],
+): unknown[][] {
+  const keys: unknown[][] = [
+    wsKeyOf(workspaceId, "parts"),
+    wsKeyOf(workspaceId, "lots"),
+    wsKeyOf(workspaceId, "lot", lot.id),
+    // ["ws", ws, "part", partId] is a prefix match — TanStack invalidates
+    // every sub-key (`:stock`, `:lots`, `:history`, `:custom-fields`, …)
+    // off it, so don't enumerate them separately.
+    wsKeyOf(workspaceId, "part", lot.part_id),
+    wsKeyOf(workspaceId, "report", "low-stock"),
+    wsKeyOf(workspaceId, "report", "stock-value"),
+    wsKeyOf(workspaceId, "report", "expiring"),
+  ];
+  for (const sid of storageIds) {
+    keys.push(wsKeyOf(workspaceId, "storage", sid));
+  }
+  return keys;
+}
+
+/**
+ * Keys to invalidate after archiving or restoring a project.
+ */
+export function archiveProjectKeys(
+  workspaceId: string | null | undefined,
+  projectId: string,
+): unknown[][] {
+  return [
+    wsKeyOf(workspaceId, "projects"),
+    wsKeyOf(workspaceId, "project", projectId),
+  ];
+}
+
+// ---------------------------------------------------------------------
 // Auth bus — pub/sub for cross-cutting auth events fired from places
 // that don't sit inside the React tree (e.g. QueryCache.onError).
 // ---------------------------------------------------------------------

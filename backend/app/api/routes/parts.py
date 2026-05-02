@@ -4,6 +4,7 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -19,12 +20,15 @@ from app.api.routes._parts_shared import (
 )
 from app.core.config import settings
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
+from app.core.pagination import decode_cursor, paginate
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import Envelope, ok
 from app.core.secrets import decrypt
+from app.domain.audit.service import log as _audit_log
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part, PartMetaMember, PartSubstitute
 from app.domain.parts.providers import make_provider
+from app.domain.parts.services.provider_cache import lookup_fresh, lookup_with_cache
 from app.domain.parts.schemas import (
     BulkDeleteIn,
     MetaMemberIn,
@@ -151,8 +155,31 @@ def list_parts(
     q: str | None = Query(default=None),
     archived: bool = Query(default=False),
     mpn: str | None = Query(default=None),
-    limit: int = Query(default=200, le=1000),
-) -> Envelope[list[dict]]:
+    limit: int = Query(default=50, le=200),
+    cursor: str | None = Query(default=None),
+    paged: bool = Query(default=False),
+) -> Envelope[Any]:
+    """List parts.
+
+    Two response shapes — keyed off the request, NOT the route:
+
+      - Default (no ``cursor``, no ``paged=true``): bare list of parts.
+        Preserves the pre-cursor public API so the many lookup-style
+        consumers (BOM dropdowns, OrderDetail, ScanImport's MPN dup check,
+        …) keep working without per-call migration.
+
+      - Cursor opt-in (``?cursor=…`` OR ``?paged=true``): paged envelope
+        ``{items: [...], next_cursor: str | null}``.
+        Pass ``?cursor=<next_cursor>`` from the previous response to fetch
+        the next page.  ``next_cursor`` is null when no further pages
+        exist. The ``cursor`` is an HMAC-signed blob — tampering returns
+        400.
+
+    Every query is scoped to the current workspace (CLAUDE.md invariant).
+    """
+    use_paged = paged or cursor is not None
+    decoded_cursor = decode_cursor(cursor) if cursor else None
+
     stmt = select(Part).where(Part.workspace_id == ws.id)
     stmt = stmt.where(Part.archived_at.is_(None) if not archived else Part.archived_at.is_not(None))
     if mpn:
@@ -168,20 +195,39 @@ def list_parts(
                 Part.description.ilike(like),
             )
         )
-    stmt = stmt.order_by(Part.name).limit(limit)
-    parts = list(db.execute(stmt).scalars())
+
+    if use_paged:
+        parts, next_cursor = paginate(
+            db,
+            stmt,
+            sort_col=Part.name,
+            id_col=Part.id,
+            cursor=decoded_cursor,
+            limit=limit,
+        )
+    else:
+        # Legacy bare-list shape — keep the same ORDER BY (name, id) the
+        # paged path uses so two consumers viewing the same workspace in
+        # the same instant agree on row order.
+        parts = list(
+            db.execute(stmt.order_by(Part.name.asc(), Part.id.asc())).scalars()
+        )
+        next_cursor = None
+
     image_urls = _image_urls_for_parts(db, ws.id, [p.id for p in parts])
-    out = []
+    items = []
     for p in parts:
         on_hand = total_for_part(db, workspace_id=ws.id, part_id=p.id)
         reserved = reserved_quantity(db, workspace_id=ws.id, part_id=p.id)
-        out.append(_serialize(
+        items.append(_serialize(
             p,
             on_hand=on_hand,
             reserved=reserved,
             image_url=image_urls.get(p.id),
         ))
-    return ok(out)
+    if use_paged:
+        return ok({"items": items, "next_cursor": next_cursor})
+    return ok(items)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -344,8 +390,13 @@ def patch_part(part_id: UUID, payload: PartPatch, db: DbSession, ws: CurrentWork
 # which fired the role check first and turned the response into a
 # membership oracle (BE2-009).
 @router.post("/{part_id}/archive")
-def archive_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
-    from app.domain._polymorphic_cleanup import purge_polymorphic as _poly_counts
+def archive_part(
+    request: Request,
+    part_id: UUID,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     from sqlalchemy import func, select as sa_select
     from app.domain.attachments.models import Attachment
     from app.domain.custom_fields.models import CustomField as CF
@@ -374,39 +425,110 @@ def archive_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace, user: Curre
             "polymorphic_tag_links": _count(TagLink, ws.id, p.id),
         },
     )
+
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="part.archived",
+        target_type="part",
+        target_ids=[p.id],
+        request_id=getattr(request.state, "request_id", None),
+    )
     return ok(None, "archived")
 
 
 @router.post("/{part_id}/restore")
-def restore_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+def restore_part(
+    request: Request,
+    part_id: UUID,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     p = require_resource_access(db, Part, part_id, ws=ws, user=user, role="admin", label="part")
     p.archived_at = None
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="part.restored",
+        target_type="part",
+        target_ids=[p.id],
+        request_id=getattr(request.state, "request_id", None),
+    )
     return ok(None, "restored")
 
 
 @router.post("/bulk-delete", dependencies=[Depends(require_role("admin"))])
 @limiter.limit("30/minute", key_func=workspace_key)
-def bulk_delete_parts(request: Request, payload: BulkDeleteIn, db: DbSession, ws: CurrentWorkspace):
-    """Soft-delete (archive) the listed parts in one shot. Hard-deleting
-    would foreign-key-cascade into stock_entries / lots / order_entries
-    / bom_entries — the user can already filter `/parts/archived` to
-    review or restore. Workspace-scoped: ids that don't belong are
-    silently skipped (no information leak about other workspaces)."""
+def bulk_delete_parts(
+    request: Request,
+    payload: BulkDeleteIn,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
+    """Soft-delete (archive) the listed parts in one shot.
+
+    Hard-deleting would foreign-key-cascade into stock_entries / lots /
+    order_entries / bom_entries — the user can already filter
+    `/parts/archived` to review or restore.
+
+    Workspace-scoped: ids that don't belong to this workspace are not
+    visible and land in ``not_found_ids`` (no information leak about
+    other workspaces — the shape is the same as for truly missing IDs).
+
+    Response buckets:
+    - ``archived_ids``       — IDs that were active and are now archived.
+    - ``already_archived_ids`` — IDs that existed in this workspace but
+                               were already archived (no-op).
+    - ``not_found_ids``      — IDs not found in this workspace (either
+                               truly missing OR owned by another workspace
+                               — deliberately indistinguishable).
+    """
     now = datetime.now(timezone.utc)
+    requested = set(payload.part_ids)
+
     rows = (
         db.query(Part)
-        .filter(Part.workspace_id == ws.id, Part.id.in_(payload.part_ids))
+        .filter(Part.workspace_id == ws.id, Part.id.in_(requested))
         .all()
     )
+    found_ids = {p.id for p in rows}
+
     archived_ids = []
+    already_archived_ids = []
     for p in rows:
         if p.archived_at is None:
             p.archived_at = now
-            archived_ids.append(str(p.id))
+            archived_ids.append(p.id)
+        else:
+            already_archived_ids.append(p.id)
+
+    not_found_ids = [pid for pid in requested if pid not in found_ids]
+
+    # Emit one audit row for the whole bulk operation.
+    all_touched = archived_ids + already_archived_ids
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="part.bulk_archived",
+        target_type="part",
+        target_ids=all_touched or None,
+        comment=(
+            f"not_found={len(not_found_ids)} "
+            f"already_archived={len(already_archived_ids)}"
+        ) if (not_found_ids or already_archived_ids) else None,
+        request_id=getattr(request.state, "request_id", None),
+    )
+
     return ok(
         {
-            "archived_ids": archived_ids,
-            "skipped": len(payload.part_ids) - len(archived_ids),
+            "archived_ids": [str(i) for i in archived_ids],
+            "already_archived_ids": [str(i) for i in already_archived_ids],
+            "not_found_ids": [str(i) for i in not_found_ids],
         },
         f"archived {len(archived_ids)}",
     )
@@ -675,7 +797,10 @@ def refresh_from_provider(
             detail="no parts provider configured (set one in Workspace settings)",
         )
 
-    out = provider.lookup_mpn(p.mpn.strip())
+    # Use lookup_fresh (not lookup_with_cache) — the operator explicitly
+    # triggered a refresh, so we always hit upstream.  The fresh result is
+    # written back to the cache so subsequent lookup_with_cache calls see it.
+    out = lookup_fresh(provider, p.mpn.strip())
     if not out.get("found") or not out.get("result"):
         return ok(
             {
@@ -930,7 +1055,7 @@ def bulk_import_from_scan(
         # swallowing — the row still resolves with `lookup_failed` so
         # the operator sees something, but ops aren't blind to the bug.
         try:
-            lookup = provider.lookup_mpn(mpn)
+            lookup = lookup_with_cache(provider, mpn)
         except Exception as exc:
             try:  # local import keeps this path zero-cost when SENTRY_DSN is empty
                 import sentry_sdk

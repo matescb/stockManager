@@ -92,7 +92,7 @@ export default function PartMoveStock() {
       nav(`/parts/${partId}/stock`);
     },
     onError: (e) => {
-      setErr(e instanceof ApiError ? e.message : "Failed");
+      setErr(e instanceof ApiError ? e.userMessage : "Failed");
     },
   });
 
@@ -129,13 +129,14 @@ export default function PartMoveStock() {
       <h3 className="text-md font-semibold">Move stock</h3>
       {err && <div className="text-danger text-sm">{err}</div>}
       <div>
-        <label className="label">From *</label>
+        <label className="label" htmlFor="move-stock-from">From *</label>
         {sources.length === 0 ? (
           <div className="text-sm text-muted py-2">
             Nothing on hand for this part.
           </div>
         ) : (
           <select
+            id="move-stock-from"
             className="input"
             value={sourceKey}
             onChange={e => {
@@ -153,8 +154,8 @@ export default function PartMoveStock() {
         )}
       </div>
       <div>
-        <label className="label">To storage *</label>
-        <select className="input" required value={dest} onChange={e => setDest(e.target.value)}>
+        <label className="label" htmlFor="move-stock-to">To storage *</label>
+        <select id="move-stock-to" className="input" required value={dest} onChange={e => setDest(e.target.value)}>
           <option value="">— select —</option>
           {storage?.filter(s => !s.archived_at).map(s => (
             <option key={s.id} value={s.id}>{s.name}</option>
@@ -162,8 +163,9 @@ export default function PartMoveStock() {
         </select>
       </div>
       <div>
-        <label className="label">Quantity *</label>
+        <label className="label" htmlFor="move-stock-qty">Quantity *</label>
         <input
+          id="move-stock-qty"
           className="input"
           type="number"
           min={1}
@@ -184,8 +186,9 @@ export default function PartMoveStock() {
         Split lot at destination
       </label>
       <div>
-        <label className="label">Comments</label>
+        <label className="label" htmlFor="move-stock-comments">Comments</label>
         <textarea
+          id="move-stock-comments"
           className="input"
           rows={2}
           value={comments}
