@@ -1,10 +1,27 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, getConflictDetail } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
 import { useWsKey } from "@/lib/queryKeys";
 import type { MpnLookupResult, ProviderSpec, StorageLocation } from "@/types";
 import MpnLookup from "@/components/MpnLookup";
+
+/**
+ * Mirror of `backend/app/api/routes/_parts_shared.py::PartIn`.
+ * The optional fields are sent as `undefined` when blank — the server
+ * defaults `name` to `mpn` and treats omitted optional FKs as null.
+ */
+type PartCreateRequest = {
+  part_type: "linked" | "local" | "meta" | "sub_assembly";
+  name?: string;
+  manufacturer?: string;
+  mpn?: string;
+  internal_part_number?: string;
+  description?: string;
+  footprint?: string;
+  default_storage_location_id?: string;
+  serialized?: boolean;
+};
 
 export default function PartCreate() {
   const nav = useNavigate();
@@ -62,11 +79,21 @@ export default function PartCreate() {
     setConflict(null);
     setBusy(true);
     try {
-      const payload: any = { ...form };
-      if (!payload.default_storage_location_id) delete payload.default_storage_location_id;
+      const payload: PartCreateRequest = {
+        part_type: form.part_type,
+        manufacturer: form.manufacturer,
+        mpn: form.mpn,
+        internal_part_number: form.internal_part_number,
+        description: form.description,
+        footprint: form.footprint,
+        serialized: form.serialized,
+      };
+      if (form.default_storage_location_id) {
+        payload.default_storage_location_id = form.default_storage_location_id;
+      }
       // Send blank name as undefined so the server defaults it to mpn.
-      if (!payload.name?.trim()) delete payload.name;
-      const res = await api.post<{ id: string }>("/parts", payload);
+      if (form.name?.trim()) payload.name = form.name;
+      const res = await api.post<{ id: string }, PartCreateRequest>("/parts", payload);
 
       // If the user successfully ran the MPN lookup and the part is
       // linked-type with an MPN, re-run the lookup against the new
@@ -83,13 +110,11 @@ export default function PartCreate() {
       }
       nav(`/parts/${res.id}/info`);
     } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        const body = e.body as any;
-        if (body?.existing_id && body?.existing_name) {
-          setConflict({ id: body.existing_id, name: body.existing_name });
-          setErr(null);
-          return;
-        }
+      const detail = getConflictDetail(e);
+      if (detail) {
+        setConflict({ id: detail.existing_id, name: detail.existing_name });
+        setErr(null);
+        return;
       }
       setErr(e instanceof ApiError ? e.message : "Failed");
     } finally {

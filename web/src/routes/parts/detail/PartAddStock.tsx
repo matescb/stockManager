@@ -6,6 +6,26 @@ import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import type { StorageLocation } from "@/types";
 
+/**
+ * Mirror of `backend/app/domain/stock/schemas.py::AddStockIn` (extra="forbid").
+ * Optional sub-objects (`price`, `lot`) follow the BE Pydantic shape so a
+ * future schema change surfaces as a TS error in this file rather than as
+ * silent FE/BE drift on a 4xx response.
+ */
+type AddStockRequest = {
+  part_id: string;
+  quantity: number;
+  storage_location_id?: string;
+  price?: {
+    mode: "per_component" | "entire_lot";
+    currency: string;
+    unit_price?: number;
+    total_price?: number;
+  };
+  lot?: { name?: string; serial_number?: string };
+  comments?: string;
+};
+
 export default function PartAddStock() {
   const { partId } = useParams<{ partId: string }>();
   const nav = useNavigate();
@@ -29,8 +49,8 @@ export default function PartAddStock() {
     setErr(null);
     setBusy(true);
     try {
-      const payload: any = {
-        part_id: partId,
+      const payload: AddStockRequest = {
+        part_id: partId!,
         quantity: Number(qty),
         comments: comments || undefined,
       };
@@ -44,7 +64,7 @@ export default function PartAddStock() {
         };
       }
       if (lotName || serial) payload.lot = { name: lotName || undefined, serial_number: serial || undefined };
-      await api.post("/stock/add", payload);
+      await api.post<unknown, AddStockRequest>("/stock/add", payload);
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId) });
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
       nav(`/parts/${partId}/stock`);

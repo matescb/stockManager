@@ -118,8 +118,16 @@ export function StorageSettings() {
   const { workspaceId } = useAuth();
   const { data } = useQuery({ queryKey: useWsKey("storage", storageId), queryFn: () => api.get<StorageLocation>(`/storage/${storageId}`), enabled: !!storageId });
   if (!data) return null;
-  async function patch(field: string, v: any) {
-    await api.patch(`/storage/${storageId}`, { [field]: v });
+  // Patch fields are a finite set on the backend StorageLocationPatch
+  // model — boolean flags + a few text fields. `unknown` would be too
+  // permissive; the union pins it without dragging the full BE schema
+  // in here (covered separately by #122).
+  type StorageLocationPatchValue = string | number | boolean | null;
+  async function patch(field: string, v: StorageLocationPatchValue) {
+    await api.patch<unknown, Record<string, StorageLocationPatchValue>>(
+      `/storage/${storageId}`,
+      { [field]: v },
+    );
     qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "storage", storageId) });
   }
   return (
