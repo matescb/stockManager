@@ -3,7 +3,7 @@
 Mirrors the JavaScript normalisation in `web/src/lib/bagCode.ts::bagSignature`
 so that the server can independently verify a client-supplied signature.
 
-Normalisation pipeline (order must match the TS implementation):
+Normalisation pipeline (order MUST match the TS implementation):
   1. JS-compatible trim — remove leading/trailing ECMAScript whitespace.
      Python's ``str.strip()`` strips more characters than JS ``.trim()``
      (notably U+001C FS, U+001D GS, U+001E RS, U+001F US which are field
@@ -15,9 +15,13 @@ Normalisation pipeline (order must match the TS implementation):
      instead of raw control chars; every other decoder emits the raw chars.
      The JS and Python replacements share the same six codepoints, in the
      same order.
-  3. JS-compatible trim again — a picture char that was replaced with a
-     plain space can expose new leading/trailing whitespace.
-  4. SHA-256 hex digest of the UTF-8-encoded normalised string.
+  3. SHA-256 hex digest of the UTF-8-encoded normalised string.
+
+The TS implementation intentionally trims **once**, before
+``normalizeControlPictures``.  Trimming again afterwards would diverge
+from TS for any bag whose normalised tail is an ASCII space produced by
+the ``␠`` → ` ` substitution (e.g. ``"FOO␠"``).  Such bags would fail
+server-side recompute and trigger spurious 422 / ``bag_signature_mismatch``.
 
 Returns None for empty / whitespace-only input — mirrors the
 ``if (!normalised) return null`` branch in the TS implementation.
@@ -106,11 +110,11 @@ def compute_bag_signature(raw: str) -> str | None:
         # Mirror the TS pipeline exactly:
         # 1. JS-trim the raw input
         # 2. Substitute control pictures → ASCII
-        # 3. JS-trim again (a picture replaced with SP can leave new trailing WS)
-        # 4. Empty after normalisation → no signature
-        # 5. SHA-256 hex
+        # 3. Empty after normalisation → no signature
+        # 4. SHA-256 hex
+        # NB: TS trims only once — do NOT re-trim after picture substitution,
+        # otherwise ``"FOO␠"`` (and similar tail-space bags) would diverge.
         normalised = _normalise_control_pictures(_js_trim(raw or ""))
-        normalised = _js_trim(normalised)
         if not normalised:
             return None
         return hashlib.sha256(normalised.encode("utf-8")).hexdigest()

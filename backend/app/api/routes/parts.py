@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import os
+import re
 from datetime import datetime, timezone
 from uuid import UUID
-
-import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
@@ -383,13 +383,12 @@ def bulk_delete_parts(request: Request, payload: BulkDeleteIn, db: DbSession, ws
     )
 
 
-_BAG_SIG_RE_STR = r"^[a-f0-9]{64}$"
+_BAG_SIG_RE = re.compile(r"[a-f0-9]{64}")
 
 
 def _is_valid_bag_signature(s: str) -> bool:
     """Return True iff ``s`` is a 64-char lowercase hex string (SHA-256 digest)."""
-    import re
-    return bool(re.fullmatch(r"[a-f0-9]{64}", s))
+    return bool(_BAG_SIG_RE.fullmatch(s))
 
 
 @router.get("/by-bag-signature/{signature}")
