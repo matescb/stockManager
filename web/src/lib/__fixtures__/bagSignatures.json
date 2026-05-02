@@ -1,0 +1,53 @@
+{
+  "_": "Contract document for the bag_signature SHA-256 (TEST-010). Each entry's `raws` are alternate decodings of the same physical bag. They MUST hash to `expected_signature`. The FE test in bagCode.test.ts iterates this fixture; the BE test in tests/test_bag_signature.py replays the same digests through /api/parts/by-bag-signature/{sig}. If either side's normalisation drifts, exactly one of the two tests breaks. DO NOT regenerate the digests without understanding why — the digest IS the contract.",
+  "bags": [
+    {
+      "label": "Mouser real bag — 98266-0897 qty 3, two decoders (scandit raw control chars vs zxing pictograms)",
+      "expected_signature": "c517cbe704991b7bd5acc0f826a3dfe7d72d5594e2645383143910a5c5385aa6",
+      "expected_mpn": "98266-0897",
+      "expected_quantity": 3,
+      "raws": [
+        "[)>\u001e06\u001d1P98266-0897\u001dQ3\u001dK#44861 A #44920\u001e\u0004",
+        "[)>␞06␝1P98266-0897␝Q3␝K#44861␠A␠#44920␞␄"
+      ]
+    },
+    {
+      "label": "Synthetic — FOO-1 with trailing GS, scandit + zxing forms",
+      "expected_signature": "7477cb68fc7756f6786d56aeab8c7d48db958f67b398e1ab71658deef719d476",
+      "expected_mpn": "FOO-1",
+      "raws": [
+        "[)>\u001e06\u001d1PFOO-1\u001d",
+        "[)>␞06␝1PFOO-1␝"
+      ]
+    },
+    {
+      "label": "Plain MPN 1D-barcode case — leading/trailing whitespace gets trimmed",
+      "expected_signature": "13e05c75cdcf4dd4cb3d57948f5638a5b1f4188e9e20150c011909c19414d69f",
+      "expected_mpn": "STM32F103C8T6",
+      "raws": [
+        "STM32F103C8T6",
+        "  STM32F103C8T6  ",
+        "\tSTM32F103C8T6\n"
+      ]
+    },
+    {
+      "label": "Full bag — MPN + quantity + date code + lot",
+      "expected_signature": "872091bb99b70daf94bb15c7ca0088538c3cfe2147a325aee36a94670ea720bf",
+      "expected_mpn": "CAP123",
+      "expected_quantity": 100,
+      "raws": [
+        "[)>\u001e06\u001d1PCAP123\u001dQ100\u001d10D2412\u001d1TAB12\u001e\u0004"
+      ]
+    }
+  ],
+  "distinct_pairs_must_differ": [
+    [
+      "[)>\u001e06\u001d1PFOO-1\u001d",
+      "[)>\u001e06\u001d1PFOO-2\u001d"
+    ],
+    [
+      "STM32F103C8T6",
+      "STM32F103C8T7"
+    ]
+  ]
+}
