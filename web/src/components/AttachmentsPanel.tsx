@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Trash2, Download, UploadCloud, Paperclip } from "lucide-react";
@@ -17,17 +17,102 @@ type Attachment = {
   created_at: string;
 };
 
+type FileType = "other" | "datasheet" | "invoice" | "image" | "cad" | "bom";
+
 type Props = {
   objectType: "part" | "order" | "build";
   objectId: string;
   canWrite: boolean;
 };
 
-function humanSize(bytes: number): string {
+/** 50 MB hard cap — matches the backend's upload limit. */
+export const MAX_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Allowed MIME types and file extensions per file_type dropdown value.
+ * Each entry is checked against both `file.type` (MIME) and the lowercased
+ * filename suffix because browsers on network shares may not populate
+ * `file.type` correctly.
+ *
+ * `other` is intentionally permissive — any extension is accepted
+ * (still subject to MAX_BYTES).
+ */
+export const ALLOWED_MIME_FOR_TYPE: Record<
+  FileType,
+  { mimes: string[]; exts: string[] }
+> = {
+  datasheet: {
+    mimes: ["application/pdf"],
+    exts: [".pdf"],
+  },
+  invoice: {
+    mimes: [
+      "application/pdf",
+      "image/jpeg",
+      "image/png",
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ],
+    exts: [".pdf", ".jpg", ".jpeg", ".png", ".xls", ".xlsx"],
+  },
+  image: {
+    mimes: ["image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml"],
+    exts: [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"],
+  },
+  cad: {
+    mimes: [
+      "model/step",
+      "application/sla",
+      "application/octet-stream",
+    ],
+    exts: [".step", ".stp", ".stl", ".dxf", ".dwg", ".f3d", ".iges", ".igs"],
+  },
+  bom: {
+    mimes: [
+      "text/csv",
+      "application/csv",
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/json",
+      "text/plain",
+    ],
+    exts: [".csv", ".xls", ".xlsx", ".json", ".txt", ".tsv"],
+  },
+  other: {
+    mimes: [],
+    exts: [],
+  },
+};
+
+export function humanSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+/**
+ * Validates a file against the size cap and the type-specific allow-list.
+ * Returns null on pass, or an error string on failure.
+ */
+export function validateFile(file: File, fileType: FileType): string | null {
+  if (file.size > MAX_BYTES) {
+    return `File is too large (${humanSize(file.size)}). Maximum allowed size is ${humanSize(MAX_BYTES)}.`;
+  }
+
+  const rule = ALLOWED_MIME_FOR_TYPE[fileType];
+  // `other` has empty lists — all files are allowed for that type
+  if (rule.exts.length === 0 && rule.mimes.length === 0) return null;
+
+  const nameLower = file.name.toLowerCase();
+  const extOk = rule.exts.some(ext => nameLower.endsWith(ext));
+  const mimeOk = file.type !== "" && rule.mimes.includes(file.type);
+
+  if (!extOk && !mimeOk) {
+    return `"${file.name}" is not allowed for type "${fileType}". Accepted: ${rule.exts.join(", ")}.`;
+  }
+
+  return null;
 }
 
 export default function AttachmentsPanel({ objectType, objectId, canWrite }: Props) {
@@ -41,14 +126,33 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
   });
 
   const [file, setFile] = useState<File | null>(null);
-  const [fileType, setFileType] = useState<string>("other");
+  const [fileType, setFileType] = useState<FileType>("other");
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  /** The `accept` string wired to the file input — pre-filters the OS picker. */
+  const acceptAttr = useMemo(() => {
+    const rule = ALLOWED_MIME_FOR_TYPE[fileType];
+    if (rule.exts.length === 0 && rule.mimes.length === 0) return undefined;
+    return [...rule.mimes, ...rule.exts].join(",");
+  }, [fileType]);
+
+  /** Human-readable summary of allowed types shown in the helper text. */
+  const allowedLabel = useMemo(() => {
+    const rule = ALLOWED_MIME_FOR_TYPE[fileType];
+    if (rule.exts.length === 0) return `Any file type, max ${humanSize(MAX_BYTES)}`;
+    return `Accepted: ${rule.exts.join(", ")} · max ${humanSize(MAX_BYTES)}`;
+  }, [fileType]);
+
   async function doUpload() {
     if (!file) {
       toast.error("Pick a file first.");
+      return;
+    }
+    const err = validateFile(file, fileType);
+    if (err) {
+      toast.error(err);
       return;
     }
     setBusy(true);
@@ -85,7 +189,13 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
     ev.preventDefault();
     setDragOver(false);
     const f = ev.dataTransfer.files?.[0];
-    if (f) setFile(f);
+    if (!f) return;
+    const err = validateFile(f, fileType);
+    if (err) {
+      toast.error(err);
+      return;
+    }
+    setFile(f);
   }
 
   return (
@@ -114,7 +224,20 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
                 ref={inputRef}
                 type="file"
                 className="input"
-                onChange={ev => setFile(ev.target.files?.[0] ?? null)}
+                accept={acceptAttr}
+                onChange={ev => {
+                  const f = ev.target.files?.[0] ?? null;
+                  if (f) {
+                    const err = validateFile(f, fileType);
+                    if (err) {
+                      toast.error(err);
+                      ev.target.value = "";
+                      setFile(null);
+                      return;
+                    }
+                  }
+                  setFile(f);
+                }}
               />
             </div>
             <div className="w-32">
@@ -122,7 +245,7 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
               <select
                 className="input"
                 value={fileType}
-                onChange={ev => setFileType(ev.target.value)}
+                onChange={ev => setFileType(ev.target.value as FileType)}
               >
                 <option value="other">other</option>
                 <option value="datasheet">datasheet</option>
@@ -138,7 +261,7 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
             </button>
           </div>
           <div className="text-xs text-muted mt-2">
-            Drag & drop a file onto this box, or pick one above.
+            Drag & drop a file onto this box, or pick one above. {allowedLabel}.
           </div>
         </div>
       )}
