@@ -15,6 +15,7 @@ kept current:
 - `docs/phases/NN-*.md` — per-feature rationale (Phases 1–10).
 - `CHANGELOG.md` — post-Phase-10 work that didn't get a phase doc
   (production hardening, Sentry, scan-to-import, providers, etc.).
+- `docs/runbooks/` — operational runbooks (secret rotation, etc.).
 
 The single most load-bearing file in this repo is `docs/ARCHITECTURE.md`.
 Don't restate things from there in code or new docs — link to it.

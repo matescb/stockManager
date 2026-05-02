@@ -294,6 +294,8 @@ deploy. Skip this if you'd rather keep the current friction-free flow.
 
 ## Operations
 
+- **Secret rotation** — see [`docs/runbooks/secret-rotation.md`](runbooks/secret-rotation.md) for per-secret playbooks, cadence guidance, and the multi-step `WORKSPACE_SECRETS_KEY` dual-key transition procedure.
+
 All commands below assume you're SSH'd into the VPS. If you don't have a
 shell alias, `ssh root@37.205.15.171` works. Use `sudo -u deploy` on the
 docker-compose commands so they run as the same user CI uses (avoids
