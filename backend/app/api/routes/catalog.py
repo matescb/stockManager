@@ -13,12 +13,14 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import select
 
+import datetime
+
 from app.core.config import settings
 from app.core.deps import DbSession
 from app.core.ratelimit import limiter
 from app.core.responses import ok
 from app.domain.parts.models import Part
-from app.domain.workspaces.models import Workspace
+from app.domain.workspaces.models import Workspace, WorkspaceCatalogToken
 
 router = APIRouter()
 
@@ -67,7 +69,7 @@ def _hmac_token(token: str) -> str:
     ).hexdigest()
 
 
-def _resolve_workspace(db, token: str) -> Workspace:
+def _resolve_workspace(db, token: str, request: Request | None = None) -> Workspace:
     """Constant-time catalog token lookup: hash first, then compare by hash.
 
     SEC2-008: the plaintext token never appears in a SQL WHERE clause.
@@ -76,10 +78,40 @@ def _resolve_workspace(db, token: str) -> Workspace:
     invalid tokens.  catalog_enabled is checked in the same query so
     a disabled workspace is indistinguishable from a wrong token (no
     enabled/disabled oracle).
+
+    SEC2-019: check the workspace_catalog_tokens child table first
+    (per-recipient tokens with individual revocation). Falls back to the
+    legacy Workspace.catalog_token_hash column so existing single tokens
+    continue to work after the 0032 migration.
     """
     if not token:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="catalog not found")
     digest = _hmac_token(token)
+
+    # --- Child table lookup (SEC2-019) ---
+    child = db.execute(
+        select(WorkspaceCatalogToken).where(
+            WorkspaceCatalogToken.token_hmac == digest,
+            WorkspaceCatalogToken.revoked_at.is_(None),
+        )
+    ).scalar_one_or_none()
+
+    if child is not None:
+        ws = db.get(Workspace, child.workspace_id)
+        if ws and ws.catalog_enabled:
+            # Update last_used telemetry (best-effort, non-transactional).
+            now = datetime.datetime.now(datetime.timezone.utc)
+            child.last_used_at = now
+            if request is not None:
+                from slowapi.util import get_remote_address
+                child.last_used_ip = get_remote_address(request)
+            try:
+                db.flush()
+            except Exception:
+                pass
+            return ws
+
+    # --- Legacy fallback: Workspace.catalog_token_hash ---
     ws = db.execute(
         select(Workspace).where(
             Workspace.catalog_token_hash == digest,
@@ -190,7 +222,7 @@ def _render_html(ws: Workspace, parts: list[Part]) -> str:
 @limiter.limit("60/minute", key_func=_token_key)
 @limiter.limit("120/minute")  # parallel IP cap — defence in depth
 def catalog_html(request: Request, token: str, db: DbSession):
-    ws = _resolve_workspace(db, token)
+    ws = _resolve_workspace(db, token, request=request)
     parts = _published_parts(db, ws.id)
     return HTMLResponse(
         content=_render_html(ws, parts),
@@ -203,7 +235,7 @@ def catalog_html(request: Request, token: str, db: DbSession):
 @limiter.limit("60/minute", key_func=_token_key)
 @limiter.limit("120/minute")  # parallel IP cap — defence in depth
 def catalog_json(request: Request, token: str, db: DbSession):
-    ws = _resolve_workspace(db, token)
+    ws = _resolve_workspace(db, token, request=request)
     parts = _published_parts(db, ws.id)
     body = ok(
         {
