@@ -612,24 +612,53 @@ Two volumes need covering:
 - `db_data` — postgres. `pg_dump` is sufficient for a single-host setup.
 - `uploads` — lot photos / datasheets. `pg_dump` does not cover this.
 
-A canonical script ships at [`deploy/backup.sh`](../deploy/backup.sh) and is
-installed under root cron on the VPS:
+Backups run via the project-agnostic **vps-backup** service at
+[matescb/vps-backup](https://github.com/matescb/vps-backup), cloned to
+`/srv/backup/` on the VPS. stockmanager is a profile
+(`profiles/stockmanager.conf`) — the runner does pg_dump, age-encrypt,
+push to NAS, and GFS-prune for every project on the box.
+
+**Pipeline**: `pg_dump | gzip | age -r $RECIPIENT` for the DB,
+`tar czf - <volume> | age -r $RECIPIENT` for uploads. Each artifact is
+verified (size floor + age header check), copied into a VPSfree NAS
+dataset mounted at `/mnt/nas-backups/`, then promoted (hardlinked) into
+`weekly/` on Sundays and `monthly/` on the 1st. GFS retention prunes
+to 14 daily / 8 weekly / 6 monthly.
+
+**Cron** (in `/etc/cron.d/vps-backup`):
 
 ```cron
-30 3 * * * /srv/stockmanager/deploy/backup.sh >> /var/log/stockmanager-backup.log 2>&1
+30 3 * * * root /srv/backup/bin/run-backup.sh stockmanager >> /var/log/vps-backup.log 2>&1
 ```
 
-It writes timestamped artifacts to `/srv/backups/stockmanager/`:
+**Layout on disk**:
 
 ```
-db-2026-04-30.sql.gz.age
-uploads-2026-04-30.tar.gz.age
+/srv/backups/stockmanager/                              # local, 7-day retention
+    db-2026-05-02.sql.gz.age
+    assets-2026-05-02.tar.gz.age
+/mnt/nas-backups/stockmanager/                          # NAS, GFS retention
+    daily/db-2026-05-02.sql.gz.age
+    weekly/db-2026-05-03.sql.gz.age                     # Sundays
+    monthly/db-2026-06-01.sql.gz.age                    # 1st of month
 ```
 
-Each artifact is `age`-encrypted with the recipient public key stored in
-`.env.prod`. …and prunes anything older than 30 days. The script is
-idempotent and fail-loud — non-zero exit → cron emails root if MTA is
-configured.
+The local copy exists for fast restores and verification; the NAS copy is
+the durable one. If the VPS is destroyed, the encrypted NAS dataset is the
+recovery surface (closes INFRA2-003).
+
+The legacy script at [`deploy/backup.sh`](../deploy/backup.sh) is kept in
+the repo for one cycle as a fallback; it will be removed once the new
+service has run cleanly for a week.
+
+Run a backup manually any time before a risky operation:
+
+```bash
+/srv/backup/bin/run-backup.sh stockmanager
+```
+
+Non-zero exit pings `BACKUP_HEALTHCHECK_FAIL_URL` (see below) and surfaces
+in `/var/log/vps-backup.log`.
 
 ### Dead-man's-switch alerting (INFRA-006)
 
@@ -703,47 +732,38 @@ behaviour.
 
 ### Restore (encrypted backups)
 
-All restore commands assume the private key file is available at
-`/path/to/backup-key.txt` on the machine performing the restore.
+The vps-backup service ships an interactive restore script that walks the
+NAS hierarchy (`daily/` → `weekly/` → `monthly/` fallback), prompts for
+the off-VPS identity key, integrity-checks the artifact, and refuses to
+overwrite anything without `--confirm-destructive`.
 
-Restore the DB (DESTRUCTIVE — overwrites the existing one):
-
-Use the helper script — it prompts for confirmation, reads credentials from
-`.env.prod` directly so the variables never expand in the host shell, and
-handles the `sudo -u deploy` and single-quoting correctly:
-
-```bash
-sudo /srv/stockmanager/deploy/db-restore.sh \
-    /path/to/backup-key.txt \
-    /srv/backups/stockmanager/db-2026-04-30.sql.gz.age
-```
-
-If you need the raw pipeline instead (e.g. piping from stdin), use `sh -c`
-so the variable references expand **inside** the container:
+Copy your private key onto the VPS for the restore window only (e.g. via
+`scp backup-key.txt v:/tmp/`), then:
 
 ```bash
-age -d -i /path/to/backup-key.txt \
-    /srv/backups/stockmanager/db-2026-04-30.sql.gz.age \
-    | gunzip -c \
-    | sudo -u deploy docker compose -f /srv/stockmanager/docker-compose.prod.yml \
-        --env-file /srv/stockmanager/.env.prod exec -T db \
-        sh -c 'exec psql -U "$POSTGRES_USER" "$POSTGRES_DB"'
+# Always dry-run first — checks decrypt + gunzip integrity, then aborts:
+/srv/backup/bin/restore.sh stockmanager 2026-05-02 db
+# (prompts for the path to the identity file)
+
+# Real DB restore:
+/srv/backup/bin/restore.sh stockmanager 2026-05-02 db --confirm-destructive
+
+# Same shape for the assets volume:
+/srv/backup/bin/restore.sh stockmanager 2026-05-02 assets --confirm-destructive
 ```
 
-Restore the uploads volume (DESTRUCTIVE — replaces existing files):
+After the restore window, scrub the key from the VPS:
 
 ```bash
-age -d -i /path/to/backup-key.txt \
-    /srv/backups/stockmanager/uploads-2026-04-30.tar.gz.age \
-    | docker run --rm -i \
-        -v stockmanager_uploads:/u \
-        alpine \
-        sh -c "rm -rf /u/* && tar xzf - -C /u"
+shred -u /tmp/backup-key.txt
 ```
 
-For point-in-time recovery, off-site replication, or retention policies look
-at `pgBackRest` or `barman` — proper tools for that job; this guide does not
-prescribe one.
+If the artifact you need is older than `RETAIN_NAS_DAILY` (14 days), the
+restore script will pull it from the `weekly/` or `monthly/` tier
+automatically — same command, same date argument.
+
+For point-in-time recovery look at `pgBackRest` or `barman` — vps-backup
+is daily-granular only and does not stream WAL.
 
 ## Monitoring
 
