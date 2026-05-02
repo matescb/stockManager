@@ -25,7 +25,11 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
   const partsKey = useWsKey("parts", "paged", { archived });
   const [busy, setBusy] = useState(false);
 
-  const baseUrl = `/parts?limit=${PAGE_LIMIT}${archived ? "&archived=true" : ""}`;
+  // `paged=true` opts into the cursor-paged response shape
+  // (`{items, next_cursor}`). Without it, GET /parts returns a bare list
+  // for the many lookup-style consumers that still expect Part[]. See
+  // backend/app/api/routes/parts.py::list_parts.
+  const baseUrl = `/parts?paged=true&limit=${PAGE_LIMIT}${archived ? "&archived=true" : ""}`;
 
   const query = useInfiniteQuery({
     queryKey: partsKey,

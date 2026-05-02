@@ -106,7 +106,7 @@ def test_pagination_250_parts_three_pages():
     pages_fetched = 0
 
     while True:
-        url = "/api/parts?limit=100"
+        url = "/api/parts?paged=true&limit=100"
         if cursor:
             url += f"&cursor={cursor}"
 
@@ -144,7 +144,7 @@ def test_pagination_cursor_monotonic_order():
     cursor: str | None = None
 
     while True:
-        url = "/api/parts?limit=50"
+        url = "/api/parts?paged=true&limit=50"
         if cursor:
             url += f"&cursor={cursor}"
         r = client.get(url)
@@ -166,7 +166,7 @@ def test_pagination_last_page_has_no_next_cursor():
     client, _ = _signup_and_get_client()
     _create_parts_batch(client, 10)
 
-    r = client.get("/api/parts?limit=50")
+    r = client.get("/api/parts?paged=true&limit=50")
     assert r.status_code == 200
     body = r.json()["data"]
     assert len(body["items"]) == 10
@@ -176,11 +176,30 @@ def test_pagination_last_page_has_no_next_cursor():
 def test_pagination_empty_result():
     """An empty workspace returns an empty items list with no next_cursor."""
     client, _ = _signup_and_get_client()
-    r = client.get("/api/parts?limit=50")
+    r = client.get("/api/parts?paged=true&limit=50")
     assert r.status_code == 200
     body = r.json()["data"]
     assert body["items"] == []
     assert body["next_cursor"] is None
+
+
+def test_legacy_bare_list_default_shape():
+    """Without cursor or paged=true, GET /parts returns a bare list — the
+    pre-cursor shape that lookup-style consumers (BOM, OrderDetail, ScanImport's
+    MPN dup check, ...) still rely on. This guards against accidentally
+    breaking those consumers if someone "modernises" the endpoint later."""
+    client, _ = _signup_and_get_client()
+    _create_parts_batch(client, 5)
+
+    r = client.get("/api/parts")
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert isinstance(data, list), f"Expected bare list, got {type(data).__name__}"
+    assert len(data) == 5
+    # Each item must look like a Part record.
+    for item in data:
+        assert "id" in item
+        assert "name" in item
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +220,7 @@ def test_cross_workspace_cursor_rejected():
 
     # A creates 60 parts and fetches first page to get a real next_cursor.
     _create_parts_batch(client_a, 60)
-    r = client_a.get("/api/parts?limit=50")
+    r = client_a.get("/api/parts?paged=true&limit=50")
     assert r.status_code == 200
     cursor_from_a = r.json()["data"]["next_cursor"]
     assert cursor_from_a is not None, "Expected a next_cursor after 60 parts with limit=50"
@@ -231,7 +250,7 @@ def test_tampered_cursor_returns_400():
     _create_parts_batch(client, 60)
 
     # Get a real cursor first.
-    r = client.get("/api/parts?limit=50")
+    r = client.get("/api/parts?paged=true&limit=50")
     assert r.status_code == 200
     cursor = r.json()["data"]["next_cursor"]
     assert cursor is not None

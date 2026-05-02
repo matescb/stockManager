@@ -19,7 +19,6 @@ Design notes:
 """
 from __future__ import annotations
 
-import base64
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -27,7 +26,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from itsdangerous import BadSignature, URLSafeSerializer
-from sqlalchemy import and_, or_, tuple_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -116,6 +115,14 @@ def paginate(
 
     # Apply cursor filter — tuple comparison gives correct pagination
     # semantics without a separate "seek" / double-query technique.
+    #
+    # NULL caveat: `sort_col > NULL` is unknown (i.e. false) in SQL, so if
+    # `sort_col` is nullable AND a cursor row's sort_key is NULL, ANY row
+    # with a NULL sort_col would be silently skipped on subsequent pages.
+    # All current callers (Part.name) sort on a NOT NULL column so this is
+    # safe today; new callers must either use a NOT NULL column or extend
+    # this helper with explicit NULLS FIRST/LAST handling before plugging
+    # in a nullable sort_col.
     if cursor is not None:
         cursor_sort_val: Any = cursor.sort_key
         # Re-inflate datetime sort keys that were serialised as ISO strings.
