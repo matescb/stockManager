@@ -59,3 +59,9 @@ htmlcov/
 
 # tsc emits a .d.ts next to vite.config.ts under composite project refs.
 web/vite.config.d.ts
+
+# Playwright artifacts (TEST-004 / E2E suite).
+web/playwright-report/
+web/test-results/
+web/.playwright/
+

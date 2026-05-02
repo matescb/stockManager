@@ -27,6 +27,18 @@ export default defineConfig({
   // @ts-expect-error vitest config lives next to vite's; types come from vitest/config
   test: {
     setupFiles: ["./vitest.setup.ts"],
+    // Most tests are pure helpers and run on the default node env. The
+    // jsdom env (heavier startup) is opt-in: any file under a `__dom__`
+    // directory or matching `*.dom.test.*` runs against jsdom so RTL
+    // can render. See web/src/components/__dom__/ for the convention.
+    environmentMatchGlobs: [
+      ["**/__dom__/**", "jsdom"],
+      ["**/*.dom.test.{ts,tsx}", "jsdom"],
+    ],
+    // Playwright lives under web/e2e/ and runs via `npm run test:e2e`,
+    // not vitest — exclude it explicitly so vitest doesn't try to load
+    // the spec files.
+    exclude: ["**/node_modules/**", "**/dist/**", "**/e2e/**"],
   },
   build: {
     sourcemap: enableSentryUpload ? "hidden" : false,
