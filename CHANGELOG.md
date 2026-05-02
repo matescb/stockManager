@@ -6,6 +6,15 @@ follow that model — it's a continuous flow of product work + production
 hardening landing per-commit. Themes are summarised below; `git log` is
 the canonical record.
 
+## 2026-05 — teardown follow-ups
+
+- **DB-009 / #100** Corrected the `Revision ID:` docstring header in
+  `0001_initial.py` (was `2a3353f8b5fe`) and
+  `0005_workspace_invitations.py` (was `24ac5d07a692`) to match the
+  canonical `revision = '0001'` / `'0005'` constants Alembic actually
+  reads. Comment-only edit; `alembic upgrade head` is unchanged. Now
+  `git grep` and `alembic show <id>` agree.
+
 ## 2026-05 — security remediation (PRs #1 – #9)
 
 Bulk close-out of the 2026-04-30 review (`review-2026-04-30/`,
