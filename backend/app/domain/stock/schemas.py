@@ -2,10 +2,19 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+
+# Constrained type for bag_signature: must be a 64-char lowercase hex string
+# (SHA-256 digest), or None.  The max_length=64 check that existed before is
+# replaced by this stricter pattern so an adversarial or buggy client cannot
+# persist an arbitrary alphanumeric blob that would corrupt rescan recognition.
+BagSignatureStr = Annotated[
+    str,
+    StringConstraints(pattern=r"^[a-f0-9]{64}$"),
+]
 
 
 class PriceInput(BaseModel):
@@ -39,7 +48,12 @@ class AddStockIn(BaseModel):
     # produced this entry (sha256 of the normalised raw bag code). Other
     # callers leave it None — the manual add-stock flow doesn't have a
     # bag identity.
-    bag_signature: str | None = Field(default=None, max_length=64)
+    bag_signature: BagSignatureStr | None = None
+    # Optional raw bag code — when supplied alongside bag_signature the
+    # server recomputes the digest and rejects the request (422) if the
+    # two disagree, protecting against a buggy or adversarial client.
+    # When absent, bag_signature is accepted verbatim (back-compat).
+    raw_bag_code: str | None = Field(default=None, max_length=4096)
 
 
 class RemoveStockIn(BaseModel):
