@@ -277,6 +277,7 @@ jobs:
       - name: Lint nginx config
         run: |
           docker run --rm \
+            --add-host backend:127.0.0.1 \
             -v "$PWD/deploy/nginx-web.conf:/etc/nginx/conf.d/default.conf:ro" \
             nginx:alpine nginx -t
 
