@@ -2,9 +2,20 @@ import { useState } from "react";
 import { useOutletContext, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
+import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import type { Part, StorageLocation } from "@/types";
+
+type PartPatch = {
+  low_stock_report_quantity: number | null;
+  attrition_percentage: number;
+  attrition_min_quantity: number;
+  default_storage_location_id: string | null;
+  default_storage_mandatory: boolean;
+  serialized: boolean;
+  published: boolean;
+};
 
 export default function PartSettings() {
   const { part } = useOutletContext<{ part: Part }>();
@@ -19,29 +30,37 @@ export default function PartSettings() {
   const [mandatory, setMandatory] = useState(part.default_storage_mandatory);
   const [serialized, setSerialized] = useState(part.serialized);
   const [published, setPublished] = useState(!!part.published);
-  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  async function save() {
-    setErr(null);
-    setBusy(true);
-    try {
-      await api.patch(`/parts/${partId}`, {
-        low_stock_report_quantity: low ? Number(low) : null,
-        attrition_percentage: Number(attrPct),
-        attrition_min_quantity: Number(attrMin),
-        default_storage_location_id: defStorage || null,
-        default_storage_mandatory: mandatory,
-        serialized,
-        published,
-      });
+  // FE2-006: a single mutation per part-id keyed on the resource so
+  // double-clicks don't fire two PATCHes. The form only saves a single
+  // entity so optimistic update isn't worth the cache-shape coupling
+  // here — we just invalidate on success.
+  const saveMutation = useApiMutation<unknown, PartPatch>({
+    mutationKey: ["part", partId, "settings"],
+    mutationFn: (payload) => api.patch(`/parts/${partId}`, payload),
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId) });
-    } catch (e) {
+    },
+    onError: (e) => {
       setErr(e instanceof ApiError ? e.message : "Failed");
-    } finally {
-      setBusy(false);
-    }
+    },
+  });
+
+  function save() {
+    setErr(null);
+    saveMutation.mutate({
+      low_stock_report_quantity: low ? Number(low) : null,
+      attrition_percentage: Number(attrPct),
+      attrition_min_quantity: Number(attrMin),
+      default_storage_location_id: defStorage || null,
+      default_storage_mandatory: mandatory,
+      serialized,
+      published,
+    });
   }
+
+  const busy = saveMutation.isPending;
 
   return (
     <div className="card p-4 max-w-2xl space-y-3">

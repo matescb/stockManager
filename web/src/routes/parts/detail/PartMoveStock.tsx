@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
+import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import type { StorageLocation } from "@/types";
@@ -13,6 +14,16 @@ type StockRow = {
 };
 type StockResp = { total_on_hand: number; rows: StockRow[] };
 type Lot = { id: string; name: string };
+
+type MoveStockRequest = {
+  part_id: string;
+  source_storage_location_id: string | null;
+  source_lot_id: string | null;
+  destination_storage_location_id: string;
+  quantity: number;
+  split_lot: boolean;
+  comments?: string;
+};
 
 function rowKey(r: StockRow): string {
   return `${r.storage_location_id ?? ""}|${r.lot_id ?? ""}`;
@@ -42,7 +53,6 @@ export default function PartMoveStock() {
   const [split, setSplit] = useState(false);
   const [comments, setComments] = useState("");
   const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
   const sources = useMemo(
     () => (stock?.rows ?? []).filter(r => r.quantity > 0),
@@ -71,7 +81,22 @@ export default function PartMoveStock() {
   const selected = sources.find(r => rowKey(r) === sourceKey) ?? null;
   const maxQty = selected?.quantity ?? 0;
 
-  async function submit(e: React.FormEvent) {
+  // FE2-006: like add/remove, move appends ledger entries — gate
+  // concurrent submits on the per-part key.
+  const moveMutation = useApiMutation<unknown, MoveStockRequest>({
+    mutationKey: ["part", partId, "stock-move"],
+    mutationFn: (payload) => api.post<unknown, MoveStockRequest>("/stock/move", payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId) });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId, "stock") });
+      nav(`/parts/${partId}/stock`);
+    },
+    onError: (e) => {
+      setErr(e instanceof ApiError ? e.message : "Failed");
+    },
+  });
+
+  function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
     if (!selected) {
@@ -86,26 +111,18 @@ export default function PartMoveStock() {
       setErr(`Quantity must be between 1 and ${maxQty}.`);
       return;
     }
-    setBusy(true);
-    try {
-      await api.post("/stock/move", {
-        part_id: partId,
-        source_storage_location_id: selected.storage_location_id,
-        source_lot_id: selected.lot_id,
-        destination_storage_location_id: dest,
-        quantity: Number(qty),
-        split_lot: split,
-        comments: comments || undefined,
-      });
-      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId) });
-      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId, "stock") });
-      nav(`/parts/${partId}/stock`);
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Failed");
-    } finally {
-      setBusy(false);
-    }
+    moveMutation.mutate({
+      part_id: partId!,
+      source_storage_location_id: selected.storage_location_id,
+      source_lot_id: selected.lot_id,
+      destination_storage_location_id: dest,
+      quantity: Number(qty),
+      split_lot: split,
+      comments: comments || undefined,
+    });
   }
+
+  const busy = moveMutation.isPending;
 
   return (
     <form onSubmit={submit} className="card p-4 max-w-2xl space-y-3">
