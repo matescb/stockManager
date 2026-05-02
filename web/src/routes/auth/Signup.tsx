@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate, type Location } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import AuthShell from "./AuthShell";
 
 export default function Signup() {
   const nav = useNavigate();
+  const location = useLocation();
   const { refresh } = useAuth();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -13,6 +14,11 @@ export default function Signup() {
   const [workspaceName, setWorkspaceName] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Mirror the Login deep-link replay so a user who hit a protected
+  // route, signed up instead of in, still lands on the original target.
+  const fromLoc = (location.state as { from?: Location } | null)?.from;
+  const fromPath = fromLoc ? `${fromLoc.pathname}${fromLoc.search}${fromLoc.hash}` : null;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -26,7 +32,7 @@ export default function Signup() {
         workspace_name: workspaceName || undefined,
       });
       await refresh();
-      nav("/parts");
+      nav(fromPath || "/parts", { replace: true });
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Signup failed");
     } finally {

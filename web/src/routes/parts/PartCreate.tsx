@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
+import { wsKey } from "@/lib/queryKeys";
 import type { MpnLookupResult, ProviderSpec, StorageLocation } from "@/types";
 import MpnLookup from "@/components/MpnLookup";
 
@@ -36,7 +37,7 @@ export default function PartCreate() {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [specs, setSpecs] = useState<ProviderSpec[]>([]);
   const [hasLookup, setHasLookup] = useState(false);
-  const { data: storage } = useQuery({ queryKey: ["storage"], queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const { data: storage } = useQuery({ queryKey: wsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
 
   function set<K extends keyof typeof form>(k: K, v: (typeof form)[K]) {
     setForm(f => ({ ...f, [k]: v }));

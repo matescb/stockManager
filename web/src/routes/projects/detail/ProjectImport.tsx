@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
+import { wsKey } from "@/lib/queryKeys";
 import { useConfirm, usePrompt } from "@/components/ConfirmDialog";
 
 type Preset = {
@@ -89,7 +90,7 @@ export default function ProjectImport() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ inserted: number; matched: number; unmatched: number } | null>(null);
   const { data: presets, refetch: refetchPresets } = useQuery({
-    queryKey: ["bom-presets"],
+    queryKey: wsKey("bom-presets"),
     queryFn: () => api.get<Preset[]>("/bom-presets"),
   });
 
@@ -182,7 +183,7 @@ export default function ProjectImport() {
         designator_separator: designatorSep,
       });
       setResult(res);
-      qc.invalidateQueries({ queryKey: ["project", projectId, "entries"] });
+      qc.invalidateQueries({ queryKey: wsKey("project", projectId, "entries") });
       setStep("done");
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Import failed");

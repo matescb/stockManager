@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ExternalLink, FileText, Loader2, RefreshCw } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
+import { wsKey } from "@/lib/queryKeys";
 import type { CustomFieldRow, Part } from "@/types";
 
 const PROVIDER_LABEL: Record<string, string> = {
@@ -51,7 +52,7 @@ export default function PartInfo() {
   const { part } = useOutletContext<{ part: Part }>();
   const qc = useQueryClient();
   const { data: cf } = useQuery({
-    queryKey: ["part", part.id, "custom-fields"],
+    queryKey: wsKey("part", part.id, "custom-fields"),
     queryFn: () =>
       api.get<CustomFieldRow[]>(`/custom-fields/by-object/part/${part.id}`),
   });
@@ -80,8 +81,8 @@ export default function PartInfo() {
       } else {
         toast.message(r.message || "No upstream match.");
       }
-      qc.invalidateQueries({ queryKey: ["part", part.id] });
-      qc.invalidateQueries({ queryKey: ["part", part.id, "custom-fields"] });
+      qc.invalidateQueries({ queryKey: wsKey("part", part.id) });
+      qc.invalidateQueries({ queryKey: wsKey("part", part.id, "custom-fields") });
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Refresh failed");
     } finally {

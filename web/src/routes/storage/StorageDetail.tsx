@@ -2,6 +2,8 @@ import { Link, Outlet, useParams, NavLink, useNavigate } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ScanLine } from "lucide-react";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { wsKey, wsScope } from "@/lib/queryKeys";
 import EntityHeader from "@/components/EntityHeader";
 import SubNav from "@/components/SubNav";
 import type { StorageLocation, Part, StockEntry } from "@/types";
@@ -10,7 +12,7 @@ import { DataTable } from "@/components/DataTable";
 export function StorageDetailLayout() {
   const { storageId } = useParams<{ storageId: string }>();
   const { data } = useQuery({
-    queryKey: ["storage", storageId],
+    queryKey: wsKey("storage", storageId),
     queryFn: () => api.get<StorageLocation>(`/storage/${storageId}`),
     enabled: !!storageId,
   });
@@ -57,10 +59,10 @@ export function StorageDetailLayout() {
 export function StorageInfo() {
   const { storageId } = useParams();
   const { data: rows } = useQuery({
-    queryKey: ["storage", storageId, "parts"],
+    queryKey: wsKey("storage", storageId, "parts"),
     queryFn: () => api.get<{ part_id: string; lot_id: string | null; quantity: number }[]>(`/storage/${storageId}/parts`),
   });
-  const { data: parts } = useQuery({ queryKey: ["parts"], queryFn: () => api.get<Part[]>("/parts") });
+  const { data: parts } = useQuery({ queryKey: wsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
   const partName = new Map(parts?.map(p => [p.id, p.name]) ?? []);
   return (
     <div className="card overflow-hidden">
@@ -88,10 +90,10 @@ export function StorageInfo() {
 export function StorageHistory() {
   const { storageId } = useParams();
   const { data } = useQuery({
-    queryKey: ["storage", storageId, "history"],
+    queryKey: wsKey("storage", storageId, "history"),
     queryFn: () => api.get<StockEntry[]>(`/storage/${storageId}/history`),
   });
-  const { data: parts } = useQuery({ queryKey: ["parts"], queryFn: () => api.get<Part[]>("/parts") });
+  const { data: parts } = useQuery({ queryKey: wsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
   const partName = new Map(parts?.map(p => [p.id, p.name]) ?? []);
   return (
     <DataTable
@@ -113,11 +115,11 @@ export function StorageHistory() {
 export function StorageSettings() {
   const { storageId } = useParams();
   const qc = useQueryClient();
-  const { data } = useQuery({ queryKey: ["storage", storageId], queryFn: () => api.get<StorageLocation>(`/storage/${storageId}`), enabled: !!storageId });
+  const { data } = useQuery({ queryKey: wsKey("storage", storageId), queryFn: () => api.get<StorageLocation>(`/storage/${storageId}`), enabled: !!storageId });
   if (!data) return null;
   async function patch(field: string, v: any) {
     await api.patch(`/storage/${storageId}`, { [field]: v });
-    qc.invalidateQueries({ queryKey: ["storage", storageId] });
+    qc.invalidateQueries({ queryKey: wsKey("storage", storageId) });
   }
   return (
     <div className="card p-4 max-w-xl space-y-3">
@@ -141,16 +143,17 @@ export function StorageOther() {
   const { storageId } = useParams();
   const nav = useNavigate();
   const qc = useQueryClient();
-  const { data } = useQuery({ queryKey: ["storage", storageId], queryFn: () => api.get<StorageLocation>(`/storage/${storageId}`), enabled: !!storageId });
+  const { workspaceId } = useAuth();
+  const { data } = useQuery({ queryKey: wsKey("storage", storageId), queryFn: () => api.get<StorageLocation>(`/storage/${storageId}`), enabled: !!storageId });
   if (!data) return null;
   async function arch() {
     await api.post(`/storage/${storageId}/archive`);
-    qc.invalidateQueries();
+    qc.invalidateQueries({ queryKey: wsScope(workspaceId) });
     nav("/storage");
   }
   async function restore() {
     await api.post(`/storage/${storageId}/restore`);
-    qc.invalidateQueries();
+    qc.invalidateQueries({ queryKey: wsScope(workspaceId) });
   }
   return (
     <div className="card p-4 max-w-xl">

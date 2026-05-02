@@ -2,6 +2,7 @@ import { useOutletContext } from "react-router-dom";
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { wsKey } from "@/lib/queryKeys";
 import type { Project } from "@/types";
 
 export default function ProjectData() {
@@ -12,7 +13,7 @@ export default function ProjectData() {
   const [notes, setNotes] = useState(project.notes_markdown ?? "");
   async function save() {
     await api.patch(`/projects/${project.id}`, { name, description: description || null, notes_markdown: notes || null });
-    qc.invalidateQueries({ queryKey: ["project", project.id] });
+    qc.invalidateQueries({ queryKey: wsKey("project", project.id) });
   }
   return (
     <div className="card p-4 max-w-2xl space-y-3">

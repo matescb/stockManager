@@ -14,6 +14,7 @@ import {
   Warehouse,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { wsKey } from "@/lib/queryKeys";
 
 type SearchData = {
   parts: { id: string; name: string; mpn: string | null }[];
@@ -45,7 +46,7 @@ export default function CommandPalette() {
   }, []);
 
   const { data: results } = useQuery({
-    queryKey: ["cp-search", q],
+    queryKey: wsKey("cp-search", q),
     queryFn: () => api.get<SearchData>(`/search?q=${encodeURIComponent(q)}`),
     enabled: open && q.trim().length >= 2,
     staleTime: 30_000,

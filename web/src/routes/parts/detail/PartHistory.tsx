@@ -1,20 +1,21 @@
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { wsKey } from "@/lib/queryKeys";
 import type { StockEntry, StorageLocation } from "@/types";
 import { DataTable } from "@/components/DataTable";
 
 export default function PartHistory() {
   const { partId } = useParams();
   const { data } = useQuery({
-    queryKey: ["part", partId, "history"],
+    queryKey: wsKey("part", partId, "history"),
     queryFn: async () => {
       // history endpoint is global; filter client-side by part for now
       const rows = await api.get<StockEntry[]>("/stock/history?limit=1000");
       return rows.filter(r => r.part_id === partId);
     },
   });
-  const { data: storage } = useQuery({ queryKey: ["storage"], queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const { data: storage } = useQuery({ queryKey: wsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
   const sName = new Map(storage?.map(s => [s.id, s.name]) ?? []);
   return (
     <DataTable

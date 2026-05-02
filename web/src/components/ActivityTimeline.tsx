@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { api } from "@/lib/api";
+import { wsKey } from "@/lib/queryKeys";
 
 type ActivityKind =
   | "stock"
@@ -136,7 +137,7 @@ function summary(e: ActivityEntry): string {
 
 export default function ActivityTimeline({ endpoint }: Props) {
   const { data, isLoading } = useQuery({
-    queryKey: ["activity", endpoint],
+    queryKey: wsKey("activity", endpoint),
     queryFn: () => api.get<ActivityEntry[]>(endpoint),
   });
 

@@ -1,11 +1,9 @@
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
 export default function Account() {
-  const { me } = useAuth();
-  const qc = useQueryClient();
+  const { me, refresh, switchWorkspace } = useAuth();
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -23,10 +21,11 @@ export default function Account() {
       );
       setMsg(`Joined "${out.workspace_name}" as ${out.role}.`);
       setToken("");
-      qc.invalidateQueries();
-      // Switch to the joined workspace
-      await api.post(`/workspaces/${out.workspace_id}/switch`);
-      window.location.reload();
+      // Refresh /auth/me so the new workspace appears in the picker,
+      // then route through `switchWorkspace` — that flushes the query
+      // cache and navigates without a full page reload (FE2-003).
+      await refresh();
+      await switchWorkspace(out.workspace_id);
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Failed");
     } finally {

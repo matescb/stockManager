@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
+import { wsKey } from "@/lib/queryKeys";
 import EntityHeader from "@/components/EntityHeader";
 import { DataTable } from "@/components/DataTable";
 import AttachmentsPanel from "@/components/AttachmentsPanel";
@@ -19,12 +20,12 @@ export default function OrderDetail() {
   const confirm = useConfirm();
 
   const { data } = useQuery({
-    queryKey: ["order", orderId],
+    queryKey: wsKey("order", orderId),
     queryFn: () => api.get<DetailOut>(`/orders/${orderId}`),
     enabled: !!orderId,
   });
-  const { data: parts } = useQuery({ queryKey: ["parts"], queryFn: () => api.get<Part[]>("/parts") });
-  const { data: storage } = useQuery({ queryKey: ["storage"], queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const { data: parts } = useQuery({ queryKey: wsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
+  const { data: storage } = useQuery({ queryKey: wsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
 
   const partsById = new Map(parts?.map(p => [p.id, p]) ?? []);
   const storageById = new Map(storage?.map(s => [s.id, s]) ?? []);
@@ -60,7 +61,7 @@ export default function OrderDetail() {
       setNewName("");
       setNewQty(1);
       setNewPrice("");
-      qc.invalidateQueries({ queryKey: ["order", orderId] });
+      qc.invalidateQueries({ queryKey: wsKey("order", orderId) });
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Failed");
     }
@@ -70,7 +71,7 @@ export default function OrderDetail() {
     if (!(await confirm({ message: "Delete this entry?", severity: "danger" }))) return;
     try {
       await api.delete(`/orders/${orderId}/entries/${entryId}`);
-      qc.invalidateQueries({ queryKey: ["order", orderId] });
+      qc.invalidateQueries({ queryKey: wsKey("order", orderId) });
       toast.success("Entry deleted.");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Delete failed");
@@ -99,8 +100,8 @@ export default function OrderDetail() {
         lines,
       });
       setReceiveLines({});
-      qc.invalidateQueries({ queryKey: ["order", orderId] });
-      qc.invalidateQueries({ queryKey: ["parts"] });
+      qc.invalidateQueries({ queryKey: wsKey("order", orderId) });
+      qc.invalidateQueries({ queryKey: wsKey("parts") });
       toast.success(`Received ${totalQty} unit${totalQty === 1 ? "" : "s"}.`);
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : "Receive failed";
@@ -114,8 +115,8 @@ export default function OrderDetail() {
   async function doArchive() {
     const wasArchived = !!order.archived_at;
     await api.post(`/orders/${orderId}/${wasArchived ? "restore" : "archive"}`);
-    qc.invalidateQueries({ queryKey: ["order", orderId] });
-    qc.invalidateQueries({ queryKey: ["orders"] });
+    qc.invalidateQueries({ queryKey: wsKey("order", orderId) });
+    qc.invalidateQueries({ queryKey: wsKey("orders") });
     toast.success(wasArchived ? "Order restored." : "Order archived.");
     if (!order.archived_at) nav("/orders");
   }

@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { Navigate, Outlet, Route, Routes } from "react-router-dom";
+import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import AppShell from "@/components/layout/AppShell";
 import { ConfirmDialogProvider } from "@/components/ConfirmDialog";
@@ -113,8 +113,12 @@ const WorkspaceSettings = lazy(() => import("@/routes/settings/Workspace"));
  */
 function Gate() {
   const { me, loading } = useAuth();
+  const location = useLocation();
   if (loading) return <div className="p-6 text-muted">Loading…</div>;
-  if (!me) return <Navigate to="/login" replace />;
+  // Preserve the deep-link target across the login round-trip so a user
+  // who hits /parts/abc123 with no session lands back there after
+  // signing in (FE2-010).
+  if (!me) return <Navigate to="/login" replace state={{ from: location }} />;
   return (
     <AppShell>
       <Outlet />

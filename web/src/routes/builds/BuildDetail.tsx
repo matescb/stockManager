@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
+import { wsKey } from "@/lib/queryKeys";
 import EntityHeader from "@/components/EntityHeader";
 import AttachmentsPanel from "@/components/AttachmentsPanel";
 import ActivityTimeline from "@/components/ActivityTimeline";
@@ -18,23 +19,23 @@ export default function BuildDetail() {
   const nav = useNavigate();
 
   const { data } = useQuery({
-    queryKey: ["build", buildId],
+    queryKey: wsKey("build", buildId),
     queryFn: () => api.get<DetailOut>(`/builds/${buildId}`),
     enabled: !!buildId,
   });
   const projectId = data?.build.project_id;
   const { data: project } = useQuery({
-    queryKey: ["project", projectId],
+    queryKey: wsKey("project", projectId),
     queryFn: () => api.get<Project>(`/projects/${projectId}`),
     enabled: !!projectId,
   });
   const { data: entries } = useQuery({
-    queryKey: ["project", projectId, "entries"],
+    queryKey: wsKey("project", projectId, "entries"),
     queryFn: () => api.get<ProjectEntry[]>(`/projects/${projectId}/entries`),
     enabled: !!projectId,
   });
-  const { data: parts } = useQuery({ queryKey: ["parts"], queryFn: () => api.get<Part[]>("/parts") });
-  const { data: storage } = useQuery({ queryKey: ["storage"], queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const { data: parts } = useQuery({ queryKey: wsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
+  const { data: storage } = useQuery({ queryKey: wsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
 
   // consumption plan: project_entry_id → list of consume rows
   const [plan, setPlan] = useState<Record<string, ConsumeRow[]>>({});
@@ -87,8 +88,8 @@ export default function BuildDetail() {
         return;
       }
       await api.post(`/builds/${buildId}/consume`, { lines });
-      qc.invalidateQueries({ queryKey: ["build", buildId] });
-      qc.invalidateQueries({ queryKey: ["parts"] });
+      qc.invalidateQueries({ queryKey: wsKey("build", buildId) });
+      qc.invalidateQueries({ queryKey: wsKey("parts") });
       toast.success("Build complete — stock decremented.");
     } catch (e) {
       const m = e instanceof ApiError ? e.message : "Build failed";
@@ -101,8 +102,8 @@ export default function BuildDetail() {
 
   async function doArchive() {
     await api.post(`/builds/${buildId}/${build.archived_at ? "restore" : "archive"}`);
-    qc.invalidateQueries({ queryKey: ["build", buildId] });
-    qc.invalidateQueries({ queryKey: ["builds"] });
+    qc.invalidateQueries({ queryKey: wsKey("build", buildId) });
+    qc.invalidateQueries({ queryKey: wsKey("builds") });
     if (!build.archived_at) nav("/builds");
   }
 

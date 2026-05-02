@@ -2,6 +2,7 @@ import { useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderKanban } from "lucide-react";
 import { api } from "@/lib/api";
+import { wsKey } from "@/lib/queryKeys";
 import type { Part, ProjectEntry } from "@/types";
 import { useState } from "react";
 import { DataTable } from "@/components/DataTable";
@@ -11,23 +12,23 @@ export default function ProjectBOM() {
   const { projectId } = useParams();
   const qc = useQueryClient();
   const { data: entries } = useQuery({
-    queryKey: ["project", projectId, "entries"],
+    queryKey: wsKey("project", projectId, "entries"),
     queryFn: () => api.get<ProjectEntry[]>(`/projects/${projectId}/entries`),
   });
-  const { data: parts } = useQuery({ queryKey: ["parts"], queryFn: () => api.get<Part[]>("/parts") });
+  const { data: parts } = useQuery({ queryKey: wsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
   const partsById = new Map(parts?.map(p => [p.id, p]) ?? []);
 
   const [matching, setMatching] = useState<{ entryId: string; pick: string } | null>(null);
 
   async function match(entryId: string, partId: string) {
     await api.post(`/projects/${projectId}/entries/${entryId}/match`, { part_id: partId });
-    qc.invalidateQueries({ queryKey: ["project", projectId, "entries"] });
+    qc.invalidateQueries({ queryKey: wsKey("project", projectId, "entries") });
     setMatching(null);
   }
 
   async function delEntry(entryId: string) {
     await api.delete(`/projects/${projectId}/entries/${entryId}`);
-    qc.invalidateQueries({ queryKey: ["project", projectId, "entries"] });
+    qc.invalidateQueries({ queryKey: wsKey("project", projectId, "entries") });
   }
 
   return (

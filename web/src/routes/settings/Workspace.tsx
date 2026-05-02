@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { wsKey, wsScope } from "@/lib/queryKeys";
 import { useConfirm } from "@/components/ConfirmDialog";
 
 type Ws = {
@@ -41,15 +42,15 @@ type Invitation = {
 
 export default function WorkspaceSettings() {
   const confirm = useConfirm();
-  const { me } = useAuth();
+  const { me, workspaceId, refresh, switchWorkspace } = useAuth();
   const qc = useQueryClient();
-  const { data: cur } = useQuery({ queryKey: ["ws", "current"], queryFn: () => api.get<Ws>("/workspaces/current") });
+  const { data: cur } = useQuery({ queryKey: wsKey("ws", "current"), queryFn: () => api.get<Ws>("/workspaces/current") });
   const { data: members, refetch: refetchMembers } = useQuery({
-    queryKey: ["ws", "members"],
+    queryKey: wsKey("ws", "members"),
     queryFn: () => api.get<Member[]>("/workspaces/members"),
   });
   const { data: invites, refetch: refetchInvites } = useQuery({
-    queryKey: ["ws", "invitations"],
+    queryKey: wsKey("ws", "invitations"),
     queryFn: () => api.get<Invitation[]>("/invitations"),
   });
   const [newName, setNewName] = useState("");
@@ -64,17 +65,24 @@ export default function WorkspaceSettings() {
 
   async function createWs() {
     if (!newName.trim()) return;
-    await api.post("/workspaces", { name: newName.trim() });
+    const created = await api.post<{ id: string }>("/workspaces", { name: newName.trim() });
     setNewName("");
-    qc.invalidateQueries();
-    window.location.reload();
+    // Refresh /auth/me so the picker lists the new workspace, then
+    // hop into it through the workspace-switch path. This replaces a
+    // full `window.location.reload()` (FE2-003).
+    await refresh();
+    if (created?.id) {
+      await switchWorkspace(created.id);
+    } else {
+      qc.invalidateQueries({ queryKey: wsScope(workspaceId) });
+    }
   }
 
   async function patch(body: Partial<Ws> & { regenerate_catalog_token?: boolean }) {
     setErr(null);
     try {
       await api.patch("/workspaces/current", body);
-      qc.invalidateQueries({ queryKey: ["ws", "current"] });
+      qc.invalidateQueries({ queryKey: wsKey("ws", "current") });
       toast.success("Workspace settings saved.");
     } catch (e) {
       const m = e instanceof ApiError ? e.message : "Failed";
@@ -317,7 +325,7 @@ export default function WorkspaceSettings() {
                       if (providerKey) body.parts_provider_api_key = providerKey;
                       if (providerSecret) body.parts_provider_api_secret = providerSecret;
                       await api.patch("/workspaces/current", body);
-                      qc.invalidateQueries({ queryKey: ["ws", "current"] });
+                      qc.invalidateQueries({ queryKey: wsKey("ws", "current") });
                       setProviderKey("");
                       setProviderSecret("");
                       toast.success("Credentials saved.");
@@ -347,7 +355,7 @@ export default function WorkspaceSettings() {
                           parts_provider_api_key: "",
                           parts_provider_api_secret: "",
                         });
-                        qc.invalidateQueries({ queryKey: ["ws", "current"] });
+                        qc.invalidateQueries({ queryKey: wsKey("ws", "current") });
                         toast.success("Credentials cleared.");
                       } catch (e) {
                         toast.error(e instanceof ApiError ? e.message : "Failed");
@@ -389,7 +397,7 @@ export default function WorkspaceSettings() {
                       await api.patch("/workspaces/current", {
                         parts_provider_api_key: providerKey,
                       });
-                      qc.invalidateQueries({ queryKey: ["ws", "current"] });
+                      qc.invalidateQueries({ queryKey: wsKey("ws", "current") });
                       setProviderKey("");
                       toast.success(providerKey ? "API key saved." : "API key cleared.");
                     } catch (e) {
@@ -451,8 +459,8 @@ export default function WorkspaceSettings() {
                       await api.patch("/workspaces/current", {
                         scanner_license_key: scannerLicense,
                       });
-                      qc.invalidateQueries({ queryKey: ["ws", "current"] });
-                      qc.invalidateQueries({ queryKey: ["ws", "scanner", "license-key"] });
+                      qc.invalidateQueries({ queryKey: wsKey("ws", "current") });
+                      qc.invalidateQueries({ queryKey: wsKey("ws", "scanner", "license-key") });
                       setScannerLicense("");
                       toast.success(scannerLicense ? "License key saved." : "License key cleared.");
                     } catch (e) {

@@ -2,6 +2,7 @@ import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Warehouse } from "lucide-react";
 import { api } from "@/lib/api";
+import { wsKey } from "@/lib/queryKeys";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import type { StorageLocation } from "@/types";
@@ -9,7 +10,7 @@ import type { StorageLocation } from "@/types";
 export default function StorageList({ archived = false }: { archived?: boolean }) {
   const nav = useNavigate();
   const { data } = useQuery({
-    queryKey: ["storage", { archived }],
+    queryKey: wsKey("storage", { archived }),
     queryFn: () => api.get<StorageLocation[]>(`/storage${archived ? "?archived=true" : ""}`),
   });
   return (

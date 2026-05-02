@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { wsKey } from "@/lib/queryKeys";
 import type { Part } from "@/types";
 
 type Sub = { part_id: string; direction: string };
@@ -9,8 +10,8 @@ type Sub = { part_id: string; direction: string };
 export default function PartSubstitutes() {
   const { partId } = useParams();
   const qc = useQueryClient();
-  const { data: subs } = useQuery({ queryKey: ["part", partId, "subs"], queryFn: () => api.get<Sub[]>(`/parts/${partId}/substitutes`) });
-  const { data: parts } = useQuery({ queryKey: ["parts"], queryFn: () => api.get<Part[]>("/parts") });
+  const { data: subs } = useQuery({ queryKey: wsKey("part", partId, "subs"), queryFn: () => api.get<Sub[]>(`/parts/${partId}/substitutes`) });
+  const { data: parts } = useQuery({ queryKey: wsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
   const partsById = new Map(parts?.map(p => [p.id, p]) ?? []);
   const [pick, setPick] = useState("");
 
@@ -18,11 +19,11 @@ export default function PartSubstitutes() {
     if (!pick) return;
     await api.post(`/parts/${partId}/substitutes`, { substitute_part_id: pick });
     setPick("");
-    qc.invalidateQueries({ queryKey: ["part", partId, "subs"] });
+    qc.invalidateQueries({ queryKey: wsKey("part", partId, "subs") });
   }
   async function remove(id: string) {
     await api.delete(`/parts/${partId}/substitutes/${id}`);
-    qc.invalidateQueries({ queryKey: ["part", partId, "subs"] });
+    qc.invalidateQueries({ queryKey: wsKey("part", partId, "subs") });
   }
 
   return (

@@ -1,13 +1,14 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { wsKey } from "@/lib/queryKeys";
 import type { Lot } from "@/types";
 import { DataTable } from "@/components/DataTable";
 
 export default function PartLots() {
   const { partId } = useParams();
   const nav = useNavigate();
-  const { data } = useQuery({ queryKey: ["part", partId, "lots"], queryFn: () => api.get<Lot[]>(`/parts/${partId}/lots`) });
+  const { data } = useQuery({ queryKey: wsKey("part", partId, "lots"), queryFn: () => api.get<Lot[]>(`/parts/${partId}/lots`) });
   return (
     <DataTable
       rows={data ?? []}

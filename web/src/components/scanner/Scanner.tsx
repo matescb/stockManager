@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { wsKey } from "@/lib/queryKeys";
 
 type WsScanner = {
   scanner: "zxing" | "scandit";
@@ -40,7 +41,7 @@ export default function Scanner({ onScan, className, symbologies }: Props) {
   // Same query key as Settings → Workspace, so the cache is shared across
   // scanner mounts and the settings page.
   const { data: ws, isLoading } = useQuery({
-    queryKey: ["ws", "current"],
+    queryKey: wsKey("ws", "current"),
     queryFn: () => api.get<WsScanner>("/workspaces/current"),
   });
 
@@ -54,8 +55,12 @@ export default function Scanner({ onScan, className, symbologies }: Props) {
     if (!ws.has_scanner_license_key) {
       return (
         <div className={className ?? "flex flex-col h-[70vh]"}>
-          <div className="flex-1 flex items-center justify-center bg-bg-soft rounded-md p-6 text-center">
-            <div className="max-w-sm text-sm text-text-muted">
+          {/* `bg-bg-soft` and `text-text-muted` were stale tokens — neither
+              exists in `tailwind.config.js`, so the panel rendered with a
+              transparent background and inherited text colour. The
+              defined tokens are `bg-panel2` and `text-muted` (FE2-009). */}
+          <div className="flex-1 flex items-center justify-center bg-panel2 rounded-md p-6 text-center">
+            <div className="max-w-sm text-sm text-muted">
               <p className="mb-2 font-medium text-text">Scandit license key missing.</p>
               <p>
                 Set one in <strong className="text-text">Settings → Workspace → Scanner</strong>,
@@ -103,7 +108,7 @@ function ScanditScannerWithKey({
   symbologies?: ReadonlyArray<LicensedSymbology>;
 }) {
   const { data, isLoading, error } = useQuery({
-    queryKey: ["ws", "scanner", "license-key"],
+    queryKey: wsKey("ws", "scanner", "license-key"),
     queryFn: () => api.get<{ license_key: string }>("/workspaces/current/scanner-license-key"),
   });
   if (isLoading) return <div className={className}>Fetching license…</div>;

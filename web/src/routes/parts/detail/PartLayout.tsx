@@ -1,6 +1,7 @@
 import { Outlet, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { wsKey } from "@/lib/queryKeys";
 import EntityHeader from "@/components/EntityHeader";
 import SubNav from "@/components/SubNav";
 import type { Part } from "@/types";
@@ -8,7 +9,7 @@ import type { Part } from "@/types";
 export default function PartLayout() {
   const { partId } = useParams<{ partId: string }>();
   const { data: part } = useQuery({
-    queryKey: ["part", partId],
+    queryKey: wsKey("part", partId),
     queryFn: () => api.get<Part>(`/parts/${partId}`),
     enabled: !!partId,
   });

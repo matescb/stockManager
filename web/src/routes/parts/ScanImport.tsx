@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import Scanner, { ScanResult } from "@/components/scanner/Scanner";
 import { api, ApiError } from "@/lib/api";
+import { wsKey } from "@/lib/queryKeys";
 import { parseBagCode, bagLotName, bagComments, bagSignature, type BagCode } from "@/lib/bagCode";
 import type {
   MpnLookupResult,
@@ -177,7 +178,7 @@ export default function ScanImport() {
   }, [searchParams]);
 
   const { data: storages } = useQuery({
-    queryKey: ["storage-locations"],
+    queryKey: wsKey("storage"),
     queryFn: () => api.get<StorageLocation[]>("/storage"),
   });
 
@@ -264,8 +265,8 @@ export default function ScanImport() {
             : r,
         ),
       );
-      qc.invalidateQueries({ queryKey: ["part", st.part_id] });
-      qc.invalidateQueries({ queryKey: ["part", st.part_id, "stock"] });
+      qc.invalidateQueries({ queryKey: wsKey("part", st.part_id) });
+      qc.invalidateQueries({ queryKey: wsKey("part", st.part_id, "stock") });
       toast.success(`Removed ${quantity} from this bag.`);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Quick-remove failed");
