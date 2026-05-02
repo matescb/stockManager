@@ -61,6 +61,12 @@ def upgrade() -> None:
     # (in the failure window before alembic_version was committed),
     # ALTER COLUMN with the same target type is a no-op rather than an
     # error.
+    #
+    # DB-011 / issue #102: widening varchar(N) -> varchar(M) where M > N is
+    # a Postgres catalog-only change — no table rewrite, no USING clause,
+    # no truncation risk. A future *shrink* (M < N) MUST add
+    # `postgresql_using="left(col, M)"` and a regression test. See
+    # docs/development.md -> "Migration patterns" for the asymmetry.
     op.alter_column(
         "workspaces", "parts_provider_api_key",
         existing_type=sa.String(255),
