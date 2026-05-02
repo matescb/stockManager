@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     SESSION_SECRET: str = "dev-secret-change-me"
     SESSION_COOKIE_NAME: str = "stockmgr_session"
     SESSION_LIFETIME_DAYS: int = 30
+    # Cadence (seconds) of the in-process expired-session purge driven
+    # by the FastAPI lifespan hook. DB-007 / issue #98. Knob exists so
+    # tests can shorten it; ops should not need to touch it. 0 disables
+    # the periodic task entirely (the migration's index still exists,
+    # so a future cron / one-off SQL still benefits).
+    SESSION_PURGE_INTERVAL_SECONDS: int = 3600
     UPLOAD_DIR: str = "/data/uploads"
     # Per-upload size cap. nginx (in web container) and Apache (in front)
     # both cap at 25 MiB, but FastAPI must enforce its own cap so a

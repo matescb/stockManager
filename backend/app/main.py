@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
+from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -122,6 +125,69 @@ from app.core.responses import http_exception_handler, validation_exception_hand
 
 _is_prod = settings().APP_ENV == "prod"
 
+_log = logging.getLogger(__name__)
+
+
+async def _periodic_session_purge(interval_seconds: int) -> None:
+    """Background task: every `interval_seconds` purge sessions whose
+    `expires_at` is in the past. DB-007 / issue #98.
+
+    Uses a fresh `SessionLocal()` each tick so the connection isn't
+    held across the sleep. The DELETE rides
+    `ix_user_sessions_expires_at` (alembic 0019).
+
+    Cancelled cleanly on app shutdown by the lifespan context manager
+    below — `asyncio.CancelledError` is the normal exit path; anything
+    else gets logged.
+    """
+    from app.core.auth import purge_expired_sessions
+    from app.infra.db import SessionLocal
+
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            db = SessionLocal()
+            try:
+                n = purge_expired_sessions(db)
+                db.commit()
+                if n:
+                    _log.info("purge_expired_sessions: removed %d row(s)", n)
+            except Exception:  # noqa: BLE001 — keep the loop alive
+                db.rollback()
+                _log.exception("purge_expired_sessions failed; will retry next tick")
+            finally:
+                db.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — never let the loop die silently
+            _log.exception("periodic session purge: unexpected error")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Spawn the background session-purge task on startup; cancel it on
+    shutdown. DB-007 / issue #98."""
+    interval = settings().SESSION_PURGE_INTERVAL_SECONDS
+    task: asyncio.Task | None = None
+    if interval > 0:
+        _log.info("purge_expired_sessions: scheduled every %ds", interval)
+        task = asyncio.create_task(
+            _periodic_session_purge(interval),
+            name="purge_expired_sessions",
+        )
+    try:
+        yield
+    finally:
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                # CancelledError is the normal shutdown path; anything
+                # else has already been logged inside the task.
+                pass
+
+
 app = FastAPI(
     title="Parts Inventory & Production Manager",
     version="0.1.0",
@@ -131,6 +197,7 @@ app = FastAPI(
     docs_url=None if _is_prod else "/docs",
     redoc_url=None if _is_prod else "/redoc",
     openapi_url=None if _is_prod else "/openapi.json",
+    lifespan=lifespan,
 )
 
 # Rate limiter wired before CORS so 429 responses still get the right headers.
