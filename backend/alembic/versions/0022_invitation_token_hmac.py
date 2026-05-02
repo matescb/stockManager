@@ -1,7 +1,7 @@
 """Add token_hmac column to workspace_invitations (SEC2-013).
 
-Revision ID: 0021
-Revises: 0020
+Revision ID: 0022
+Revises: 0021
 Create Date: 2026-05-02
 
 SEC2-013 fix: the invitation accept flow previously queried
