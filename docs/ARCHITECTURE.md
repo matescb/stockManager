@@ -148,6 +148,13 @@ database — the protection is the consistent code pattern. The
 `tests/test_workspace_isolation.py` test pins this contract for the
 parts router; new endpoints should add equivalent coverage.
 
+**Exception — DB-level trigger:** `parts.default_storage_location_id`
+is additionally protected by a Postgres BEFORE trigger
+(`parts_default_storage_workspace_check`, added in migration 0036).
+The trigger raises ERRCODE 23514 (check_violation) if the referenced
+`storage_locations` row belongs to a different workspace, so that
+even direct SQL bypasses the service-layer guard.
+
 `get_current_workspace()` reads the workspace from the
 `X-Workspace-Id` header or the `stockmgr_workspace` cookie, validates
 membership, and falls back to the user's first active membership.

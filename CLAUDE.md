@@ -86,11 +86,13 @@ them, that's the bug.
   `domain/stock/service.py::current_quantity` or roll-ups built on it.
   Never compute "current stock" by joining or aggregating outside that
   service.
-- **Workspace isolation is enforced in code, not the DB.** Every query in
-  every service filters by `ws.id`, and every cross-table FK lookup is
-  followed by a `workspace_id` equality check. There is no row-level
-  security. New endpoints must replicate this; pin it with a test in
-  `tests/test_workspace_isolation.py` style.
+- **Workspace isolation is enforced in code, not the DB** — except
+  `parts.default_storage_location_id`, which is additionally enforced by a
+  Postgres BEFORE trigger (`parts_default_storage_workspace_check`, migration
+  0036). Every query in every service filters by `ws.id`, and every
+  cross-table FK lookup is followed by a `workspace_id` equality check. There
+  is no row-level security. New endpoints must replicate this; pin it with a
+  test in `tests/test_workspace_isolation.py` style.
 - **API envelope.** Every response is `{ data, status }` — never a bare
   payload. Server-side use `responses.ok()` / `responses.err()`.
   Client-side `lib/api.ts` unwraps `data` and throws `ApiError(status,
