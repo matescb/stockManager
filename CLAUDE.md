@@ -129,6 +129,15 @@ them, that's the bug.
   ran as a separate (failing) shell command. Result: slowapi bucketed
   every client by the docker bridge IP. If you reformat the compose
   file, keep the array form.
+- **`backend-init` one-shot service handles `chown /data` before `backend`
+  starts.** The backend Dockerfile sets `USER appuser` (UID 1000); the
+  runtime container has no root privileges. Ownership of the `uploads`
+  named volume is fixed by `backend-init` (`restart: no`,
+  `command: ["sh","-c","chown -R 1000:1000 /data"]`) which runs as root
+  and exits cleanly. `backend` declares
+  `depends_on: backend-init: condition: service_completed_successfully`
+  so it waits for a clean exit. Don't reintroduce gosu or a root-prefixed
+  `command:` in the backend service — that was the pattern this replaced.
 - **Session cookie `secure` is gated on `APP_ENV == "prod"`** in
   `backend/app/api/routes/auth.py::_set_session_cookie`. Don't make it
   unconditional — local dev runs over HTTP and the cookie wouldn't

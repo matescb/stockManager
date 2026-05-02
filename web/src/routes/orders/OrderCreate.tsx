@@ -29,7 +29,7 @@ export default function OrderCreate() {
       });
       nav(`/orders/${o.id}`);
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Failed");
+      setErr(e instanceof ApiError ? e.userMessage : "Failed");
     } finally {
       setBusy(false);
     }

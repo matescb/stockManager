@@ -42,7 +42,7 @@ export default function MpnLookup({ mpn, onResult }: Props) {
         setNote(data.message || `No match (${label})`);
       }
     } catch (e) {
-      setNote(e instanceof ApiError ? e.message : "Lookup failed");
+      setNote(e instanceof ApiError ? e.userMessage : "Lookup failed");
     } finally {
       setBusy(false);
     }

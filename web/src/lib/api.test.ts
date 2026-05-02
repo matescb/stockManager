@@ -8,7 +8,7 @@
  */
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { z } from "zod";
-import { api, ApiError } from "./api";
+import { api, ApiError, categoryToUserMessage } from "./api";
 
 const Schema = z.object({
   id: z.string().uuid(),
@@ -90,5 +90,104 @@ describe("api.parsed.get", () => {
     await expect(api.parsed.get("/whatever", Schema)).rejects.toMatchObject({
       status: 404,
     });
+  });
+});
+
+describe("categoryToUserMessage", () => {
+  it("maps unauthenticated to session expired message", () => {
+    expect(categoryToUserMessage("unauthenticated")).toBe(
+      "Session expired. Please sign in again.",
+    );
+  });
+
+  it("maps forbidden to permission message", () => {
+    expect(categoryToUserMessage("forbidden")).toBe(
+      "You don't have permission to do that.",
+    );
+  });
+
+  it("maps not_found to not found message", () => {
+    expect(categoryToUserMessage("not_found")).toBe("Not found.");
+  });
+
+  it("maps conflict to duplicate message", () => {
+    expect(categoryToUserMessage("conflict")).toBe(
+      "That's a duplicate or conflicts with existing data.",
+    );
+  });
+
+  it("maps validation_error to form check message", () => {
+    expect(categoryToUserMessage("validation_error")).toBe(
+      "Some fields don't look right. Check the form and retry.",
+    );
+  });
+
+  it("maps server_error to generic fallback", () => {
+    expect(categoryToUserMessage("server_error")).toBe(
+      "Something went wrong. Try again, or refresh.",
+    );
+  });
+
+  it("maps unknown category to generic fallback", () => {
+    expect(categoryToUserMessage("some_future_category")).toBe(
+      "Something went wrong. Try again, or refresh.",
+    );
+  });
+
+  it("maps null/undefined to generic fallback", () => {
+    expect(categoryToUserMessage(null)).toBe(
+      "Something went wrong. Try again, or refresh.",
+    );
+    expect(categoryToUserMessage(undefined)).toBe(
+      "Something went wrong. Try again, or refresh.",
+    );
+  });
+});
+
+describe("ApiError.userMessage", () => {
+  it("populates userMessage from body.status.category", () => {
+    const err = new ApiError(
+      404,
+      { data: null, status: { category: "not_found", message: "DB says nope" } },
+      "DB says nope",
+    );
+    expect(err.message).toBe("DB says nope");
+    expect(err.userMessage).toBe("Not found.");
+  });
+
+  it("populates userMessage as generic fallback when body is null", () => {
+    const err = new ApiError(500, null, "Internal Server Error");
+    expect(err.message).toBe("Internal Server Error");
+    expect(err.userMessage).toBe("Something went wrong. Try again, or refresh.");
+  });
+
+  it("raw message is preserved separately from userMessage", () => {
+    const raw = "sqlalchemy.exc.IntegrityError: DETAIL: Key (mpn)=(ABC) already exists.";
+    const err = new ApiError(
+      409,
+      { data: null, status: { category: "conflict", message: raw } },
+      raw,
+    );
+    expect(err.message).toBe(raw);
+    expect(err.userMessage).toBe(
+      "That's a duplicate or conflicts with existing data.",
+    );
+    expect(err.userMessage).not.toContain("sqlalchemy");
+  });
+
+  it("HTTP 404 ApiError thrown by api.parsed carries correct userMessage", async () => {
+    mockFetch(404, {
+      data: null,
+      status: { category: "not_found", message: "part not found" },
+    });
+    let caught: ApiError | null = null;
+    try {
+      await api.parsed.get("/whatever", Schema);
+    } catch (e) {
+      if (e instanceof ApiError) caught = e;
+    }
+    expect(caught).not.toBeNull();
+    expect(caught!.userMessage).toBe("Not found.");
+    expect(caught!.message).toBe("part not found");
   });
 });

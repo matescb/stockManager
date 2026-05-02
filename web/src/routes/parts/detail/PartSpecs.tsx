@@ -76,7 +76,7 @@ export default function PartSpecs() {
       qc.invalidateQueries({ queryKey });
       toast.success("Spec added.");
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Failed");
+      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
     } finally {
       setBusy(false);
     }
@@ -93,7 +93,7 @@ export default function PartSpecs() {
       });
       qc.invalidateQueries({ queryKey });
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Failed");
+      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
     }
   }
 
@@ -104,7 +104,7 @@ export default function PartSpecs() {
       qc.invalidateQueries({ queryKey });
       toast.success("Spec deleted.");
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Failed");
+      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
     }
   }
 
@@ -114,7 +114,7 @@ export default function PartSpecs() {
       qc.invalidateQueries({ queryKey });
       toast.success("Restored upstream value.");
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Failed");
+      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
     }
   }
 

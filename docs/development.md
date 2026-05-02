@@ -22,9 +22,25 @@ to avoid accidentally starting the dev stack with no `SESSION_SECRET` set.
 The `Makefile` also exposes `prod-up`, `prod-logs`, and `prod-rebuild`
 targets for the prod compose file.
 
+## Backend dependencies (uv)
+
+The backend uses [uv](https://docs.astral.sh/uv/) for dependency
+management. The lockfile `backend/uv.lock` pins every transitive dep so
+builds are reproducible across dev machines, CI, and prod.
+
+**Adding or changing a dependency:**
+
+1. Edit `backend/pyproject.toml` (update the version constraint or add
+   a new entry).
+2. Run `cd backend && uv lock` to regenerate `uv.lock`.
+3. Commit both `pyproject.toml` and `uv.lock` together.
+
+Never edit `uv.lock` by hand.
+
 ## Running tests outside Docker
 
-The backend test suite needs Postgres. With a local Postgres:
+The backend test suite needs Postgres. With a local Postgres and
+[uv installed](https://docs.astral.sh/uv/getting-started/installation/):
 
 ```bash
 sudo apt-get install -y postgresql
@@ -34,11 +50,11 @@ CREATE USER stockmgr WITH PASSWORD 'stockmgr' CREATEDB;
 CREATE DATABASE stockmgr_test OWNER stockmgr;
 SQL
 
-python3 -m venv .venv
-.venv/bin/pip install -e backend -e backend[dev]
+cd backend
+uv sync --frozen --extra dev
 
 TEST_DATABASE_URL="postgresql+psycopg://stockmgr:stockmgr@127.0.0.1:5432/stockmgr_test" \
-    .venv/bin/python -m pytest -q
+    uv run python -m pytest -q
 ```
 
 ### Fixture isolation
