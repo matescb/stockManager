@@ -1,9 +1,9 @@
-import { Outlet, useParams, useNavigate } from "react-router-dom";
+import { Outlet, useParams, useNavigate, useOutletContext } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { useWsKey, wsScope } from "@/lib/queryKeys";
+import { useWsKey, lotMutationKeys } from "@/lib/queryKeys";
 import { formatDateTime } from "@/lib/format";
 import EntityHeader from "@/components/EntityHeader";
 import SubNav from "@/components/SubNav";
@@ -53,6 +53,7 @@ export function LotInfo() {
 
 export function LotMove() {
   const { lotId } = useParams<{ lotId: string }>();
+  const { lot } = useOutletContext<{ lot: Lot }>();
   const nav = useNavigate();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
@@ -68,7 +69,9 @@ export function LotMove() {
       quantity: qty,
       split_lot: split,
     });
-    qc.invalidateQueries({ queryKey: wsScope(workspaceId) });
+    const storageIds = dest ? [dest] : [];
+    for (const k of lotMutationKeys(workspaceId, lot, storageIds))
+      qc.invalidateQueries({ queryKey: k });
     nav(`/lots/${lotId}/info`);
   }
   return (
@@ -95,6 +98,7 @@ export function LotMove() {
 
 export function LotAdjust() {
   const { lotId } = useParams();
+  const { lot } = useOutletContext<{ lot: Lot }>();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
   const [actual, setActual] = useState<number>(0);
@@ -102,7 +106,8 @@ export function LotAdjust() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     await api.post(`/lots/${lotId}/adjust-count`, { actual_quantity: actual, comments });
-    qc.invalidateQueries({ queryKey: wsScope(workspaceId) });
+    for (const k of lotMutationKeys(workspaceId, lot))
+      qc.invalidateQueries({ queryKey: k });
   }
   return (
     <form onSubmit={submit} className="card p-4 max-w-xl space-y-3">

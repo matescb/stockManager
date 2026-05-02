@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { useWsKey, wsKeyOf, wsScope } from "@/lib/queryKeys";
+import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useConfirm } from "@/components/ConfirmDialog";
 
 type Ws = {
@@ -89,7 +89,7 @@ export default function WorkspaceSettings() {
     if (created?.id) {
       await switchWorkspace(created.id);
     } else {
-      qc.invalidateQueries({ queryKey: wsScope(workspaceId) });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "ws", "current") });
     }
   }
 
