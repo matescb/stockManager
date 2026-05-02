@@ -7,8 +7,8 @@ import pytest
 from alembic import command
 from alembic.config import Config as AlembicConfig
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import Session, sessionmaker
 
 # Set env BEFORE importing app modules so config picks up the test DB.
 # This exercises the explicit-DATABASE_URL-override branch in
@@ -51,7 +51,8 @@ _tc_mod.TestClient.__init__ = _patched_init  # type: ignore[method-assign]
 
 from app.core.config import settings  # noqa: E402
 import app.domain.all_models  # noqa: F401,E402
-from app.infra.db import Base  # noqa: E402
+from app.infra import db as _infra_db  # noqa: E402
+from app.infra.db import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 
 
@@ -73,11 +74,18 @@ def _alembic_upgrade_head(database_url: str) -> None:
     cfg = AlembicConfig(str(_BACKEND_ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(_BACKEND_ROOT / "alembic"))
     cfg.set_main_option("sqlalchemy.url", database_url)
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "heads")
 
 
 @pytest.fixture(scope="session", autouse=True)
 def engine():
+    """Session-scope engine: schema is migrated to head exactly once.
+
+    Replaces the previous per-test `_reset_schema()` + Alembic upgrade
+    that cost 4-8 minutes of pytest wall time across the full suite
+    (TEST-009). Per-test isolation now comes from the savepoint-rolled-
+    back `db` fixture below.
+    """
     eng = create_engine(settings().DATABASE_URL, future=True)
     # ensure DB exists by trying a connection; if it fails, create it via maintenance DB
     try:
@@ -97,19 +105,80 @@ def engine():
 
 
 @pytest.fixture
-def db(engine):
-    _reset_schema(engine)
-    _alembic_upgrade_head(settings().DATABASE_URL)
-    Session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
-    s = Session()
+def db(engine, monkeypatch):
+    """Per-test transactional session with savepoint rollback (TEST-009).
+
+    SQLAlchemy "Joining a Session into an External Transaction" pattern:
+      1. Open a connection and begin an outer transaction.
+      2. Bind a Session to that connection, opening a SAVEPOINT.
+      3. Listen for `after_transaction_end` to restart the savepoint
+         whenever inner code commits — that turns route-level
+         `db.commit()` calls (e.g. `app.core.deps:49,61`,
+         `app.api.routes.parts:1058`, `app.infra.db.get_db:36`) into
+         savepoint releases that the outer rollback still discards.
+      4. Roll back the outer transaction at teardown — every row written
+         during the test, including via raw `SessionLocal()` calls and
+         via FastAPI handlers, evaporates.
+
+    Also overrides `app.infra.db.SessionLocal` so in-test code that
+    instantiates `SessionLocal()` directly (e.g. tests that backdoor
+    state via raw SQL) stays inside the same outer transaction. And
+    overrides `app.dependency_overrides[get_db]` so HTTP tests via
+    `client` / `authed_client` see the same rolled-back state, closing
+    the foot-gun where HTTP tests inherited cross-test state.
+    """
+    connection = engine.connect()
+    transaction = connection.begin()
+    TestSession = sessionmaker(
+        bind=connection, autoflush=False, expire_on_commit=False, future=True
+    )
+    s = TestSession()
+    s.begin_nested()
+
+    @event.listens_for(s, "after_transaction_end")
+    def _restart_savepoint(session, trans):
+        # When the inner SAVEPOINT (or a nested one) ends and we're
+        # still inside the outer transaction, open a fresh SAVEPOINT so
+        # the next commit/rollback inside the test code has somewhere
+        # to land.
+        if trans.nested and not trans._parent.nested:  # type: ignore[attr-defined]
+            session.begin_nested()
+
+    # Route any in-test direct `SessionLocal()` use to our connection so
+    # raw-SQL backdoors (test_attachments, test_invitations, etc.) share
+    # the rolled-back transaction.
+    monkeypatch.setattr(_infra_db, "SessionLocal", TestSession)
+
+    # Route the FastAPI `get_db` dep to yield our session. Mirrors the
+    # commit-on-clean / rollback-on-exception semantics of the prod dep
+    # but commits land on a SAVEPOINT (restarted by the listener), so
+    # the outer transaction.rollback() still wins.
+    def _override_get_db():
+        try:
+            yield s
+            s.commit()
+        except Exception:
+            s.rollback()
+            raise
+
+    app.dependency_overrides[get_db] = _override_get_db
     try:
         yield s
     finally:
+        app.dependency_overrides.pop(get_db, None)
         s.close()
+        transaction.rollback()
+        connection.close()
 
 
 @pytest.fixture
-def client():
+def client(db):
+    """HTTP client tied to the per-test transactional session.
+
+    Depends on `db` so every HTTP test gets a clean DB by construction.
+    Previously `client` did not depend on `db`, so cross-test state
+    bled when a test forgot to declare `db` (TEST-009 foot-gun).
+    """
     return TestClient(app)
 
 
@@ -119,7 +188,11 @@ from tests._factories import signup_user as _signup  # noqa: E402,F401
 
 
 @pytest.fixture
-def authed_client():
+def authed_client(db):
+    """Authenticated HTTP client tied to the per-test transactional session.
+
+    Depends on `db` for the same isolation reason as `client`.
+    """
     c = TestClient(app)
     _signup(c)
     return c
@@ -137,3 +210,32 @@ def _mock_hibp(monkeypatch):
 
     with _mock.patch("app.core.auth._hibp_check"):
         yield
+
+
+# ---------------------------------------------------------------------------
+# Opt-out for tests that need real cross-connection commits.
+#
+# `test_stock_concurrency.py` spawns threads that each open their own
+# `TestClient(app)` and need to observe each other's writes — that's
+# fundamentally incompatible with a single shared rolled-back
+# connection. Such tests should request `real_db` (autouse mode flag)
+# instead of `db`; this fixture skips the savepoint plumbing, runs a
+# real `_reset_schema()` + `_alembic_upgrade_head()` for the test, and
+# leaves prod `SessionLocal` / `get_db` untouched. Slow per-test (~1-2s)
+# but only used by the handful of concurrency / cross-connection tests.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def real_db(engine):
+    """Hard-reset DB fixture for tests that need real commits across
+    connections (e.g. threading / advisory-lock tests). Slow; do not
+    use unless the savepoint pattern can't model the test."""
+    _reset_schema(engine)
+    _alembic_upgrade_head(settings().DATABASE_URL)
+    Session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
+    s = Session()
+    try:
+        yield s
+    finally:
+        s.close()
