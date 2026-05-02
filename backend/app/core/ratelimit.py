@@ -42,8 +42,14 @@ def workspace_key(request: Request) -> str:
        probes, etc. Safe because rate limiting is disabled outside prod.
     """
     ws_id = getattr(request.state, "workspace_id", None)
-    if not ws_id:
-        ws_id = request.headers.get("X-Workspace-Id") or request.cookies.get("stockmgr_workspace")
     if ws_id:
         return f"ws:{ws_id}"
+
+    for candidate in (
+        request.headers.get("X-Workspace-Id"),
+        request.cookies.get("stockmgr_workspace"),
+    ):
+        if isinstance(candidate, str) and candidate:
+            return f"ws:{candidate}"
+
     return get_remote_address(request)
