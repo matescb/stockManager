@@ -2,16 +2,12 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 
 from sqlalchemy import Column, DateTime, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 
+from app.core.time import utcnow
 from app.infra.db import Base
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 class AuditLog(Base):
@@ -35,4 +31,4 @@ class AuditLog(Base):
     target_ids = Column(ARRAY(UUID(as_uuid=True)), nullable=True)
     comment = Column(Text, nullable=True)
     request_id = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date
 from decimal import Decimal
 from typing import Iterable
 from uuid import UUID
@@ -10,6 +10,7 @@ from uuid import UUID
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.orm import Session
 
+from app.core.time import utcnow
 from app.domain.lots.models import Lot
 from app.domain.parts.models import Part
 from app.domain.stock.models import StockEntry
@@ -40,9 +41,6 @@ class StockConflictError(StockError):
         self.constraint = constraint
         self.storage_location_id = storage_location_id
 
-
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def _belongs(obj, workspace_id: UUID) -> bool:
@@ -483,7 +481,7 @@ def add_stock(
         operation_type="add",
         comments=payload.comments,
         bag_signature=payload.bag_signature,
-        occurred_at=_now(),
+        occurred_at=utcnow(),
         created_by=user_id,
     )
     db.add(entry)
@@ -534,7 +532,7 @@ def remove_stock(
         status="on_hand",
         operation_type="remove",
         comments=payload.comments,
-        occurred_at=_now(),
+        occurred_at=utcnow(),
         created_by=user_id,
     )
     db.add(entry)
@@ -644,7 +642,7 @@ def move_stock(
                 operation_type="move_out",
                 related_entry_id=None,
                 comments=payload.comments,
-                occurred_at=_now(),
+                occurred_at=utcnow(),
                 created_by=user_id,
             )
             db.add(out_entry)
@@ -660,7 +658,7 @@ def move_stock(
                 operation_type="move_in",
                 related_entry_id=out_id,
                 comments=payload.comments,
-                occurred_at=_now(),
+                occurred_at=utcnow(),
                 created_by=user_id,
             )
             db.add(in_entry)
@@ -687,7 +685,7 @@ def move_stock(
             operation_type="move_out",
             related_entry_id=None,  # set after the IN row exists
             comments=payload.comments,
-            occurred_at=_now(),
+            occurred_at=utcnow(),
             created_by=user_id,
         )
         db.add(out_entry)
@@ -703,7 +701,7 @@ def move_stock(
             operation_type="move_in",
             related_entry_id=out_id,
             comments=payload.comments,
-            occurred_at=_now(),
+            occurred_at=utcnow(),
             created_by=user_id,
         )
         db.add(in_entry)
@@ -758,7 +756,7 @@ def adjust_stock(
         status="on_hand",
         operation_type="adjust",
         comments=payload.comments,
-        occurred_at=_now(),
+        occurred_at=utcnow(),
         created_by=user_id,
     )
     db.add(entry)
