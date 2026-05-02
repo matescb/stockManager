@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import os
+import re
 from datetime import datetime, timezone
 from uuid import UUID
-
-import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
@@ -34,6 +34,7 @@ from app.domain.parts.schemas import (
     ScanImportRow,
     SubstituteIn,
 )
+from app.domain.parts.services.bag_signature import compute_bag_signature
 from app.domain.parts.services.assets import fetch_provider_asset
 from app.domain.stock.models import StockEntry
 from app.domain.stock.schemas import AddStockIn, LotInput
@@ -382,6 +383,14 @@ def bulk_delete_parts(request: Request, payload: BulkDeleteIn, db: DbSession, ws
     )
 
 
+_BAG_SIG_RE = re.compile(r"[a-f0-9]{64}")
+
+
+def _is_valid_bag_signature(s: str) -> bool:
+    """Return True iff ``s`` is a 64-char lowercase hex string (SHA-256 digest)."""
+    return bool(_BAG_SIG_RE.fullmatch(s))
+
+
 @router.get("/by-bag-signature/{signature}")
 def find_by_bag_signature(signature: str, db: DbSession, ws: CurrentWorkspace):
     """Look up the most recent stock_entry whose bag_signature matches.
@@ -389,9 +398,10 @@ def find_by_bag_signature(signature: str, db: DbSession, ws: CurrentWorkspace):
     bag again, the frontend hits this endpoint to surface the prior
     import inline instead of waiting for the bulk-import POST to come
     back with a `bag_rescan` status."""
-    if len(signature) != 64 or not signature.isalnum():
-        # SHA-256 hex digest is exactly 64 hex chars. Reject obvious junk
-        # so this can't be abused for prefix-scan probing.
+    if not _is_valid_bag_signature(signature):
+        # SHA-256 hex digest is exactly 64 lower-case hex chars.  Reject
+        # anything that doesn't match (old code accepted upper-case via
+        # .isalnum(); tightened by BE2-015).
         return ok(None)
     prior = db.execute(
         select(StockEntry)
@@ -827,6 +837,21 @@ def bulk_import_from_scan(
                 })
                 continue
 
+        # Server-side bag_signature verification (BE2-015).  When the
+        # client supplies the raw bag code alongside the signature we
+        # recompute the digest independently.  A mismatch means a buggy
+        # or adversarial client — surface it as `bag_signature_mismatch`
+        # so the operator sees something and ops aren't blind to the bug.
+        if row.bag_signature and row.raw_bag_code is not None:
+            expected = compute_bag_signature(row.raw_bag_code)
+            if expected != row.bag_signature:
+                out_rows.append({
+                    "mpn": mpn,
+                    "status": "bag_signature_mismatch",
+                    "error": "bag_signature does not match recomputed digest of raw_bag_code",
+                })
+                continue
+
         # Bag re-scan recognition — same physical bag scanned again.
         # The first import wrote bag_signature on the resulting
         # stock_entry; finding it now means we should offer the operator
@@ -948,12 +973,13 @@ def bulk_import_from_scan(
     # here pins the batch; the dep's commit on clean exit is a no-op.
     db.commit()
     summary = {
-        "created":        sum(1 for r in out_rows if r["status"] == "created"),
-        "duplicate":      sum(1 for r in out_rows if r["status"] == "duplicate"),
-        "bag_rescan":     sum(1 for r in out_rows if r["status"] == "bag_rescan"),
-        "lookup_failed":  sum(1 for r in out_rows if r["status"] == "lookup_failed"),
-        "invalid":        sum(1 for r in out_rows if r["status"] == "invalid"),
-        "row_failed":     sum(1 for r in out_rows if r["status"] == "row_failed"),
+        "created":                  sum(1 for r in out_rows if r["status"] == "created"),
+        "duplicate":                sum(1 for r in out_rows if r["status"] == "duplicate"),
+        "bag_rescan":               sum(1 for r in out_rows if r["status"] == "bag_rescan"),
+        "bag_signature_mismatch":   sum(1 for r in out_rows if r["status"] == "bag_signature_mismatch"),
+        "lookup_failed":            sum(1 for r in out_rows if r["status"] == "lookup_failed"),
+        "invalid":                  sum(1 for r in out_rows if r["status"] == "invalid"),
+        "row_failed":               sum(1 for r in out_rows if r["status"] == "row_failed"),
     }
     return ok({"rows": out_rows, "summary": summary, "provider": provider.name})
 
