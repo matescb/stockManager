@@ -47,7 +47,7 @@ class OrderEntry(WorkspaceOwned, Base):
     __table_args__ = (
         Index("ix_order_entries_order", "workspace_id", "order_id"),
         Index("ix_order_entries_part", "workspace_id", "part_id"),
-        # DB-005 / migration 0031 — tighten non-negative invariant at DB level.
+        # DB-005 / migration 0032 — tighten non-negative invariant at DB level.
         CheckConstraint("quantity_ordered >= 0", name="ck_order_entries_qty_ordered_nonneg"),
         CheckConstraint("quantity_received >= 0", name="ck_order_entries_qty_received_nonneg"),
     )

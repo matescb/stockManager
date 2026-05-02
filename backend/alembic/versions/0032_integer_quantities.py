@@ -1,8 +1,8 @@
 """Constrain project_entries.quantity to Integer and add non-negative
 CHECK constraints on project_entries.quantity and order_entries quantities.
 
-Revision ID: 0031
-Revises: 0030
+Revision ID: 0032
+Revises: 0031
 Create Date: 2026-05-02
 
 DB-005 / issue #96. project_entries.quantity was Numeric(18,6) while
@@ -20,15 +20,15 @@ Upgrade:
      on order_entries (those columns were already Integer; the constraints
      tighten the invariant at the DB level).
 
-Chain: 0029 (pending_users) -> 0030 (audit_log) -> 0031 (this).
+Chain: 0029 (pending_users) -> 0030 (audit_log) -> 0031 (search_pg_trgm_indexes) -> 0032 (this).
 """
 from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0031"
-down_revision = "0030"
+revision = "0032"
+down_revision = "0031"
 branch_labels = None
 depends_on = None
 

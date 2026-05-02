@@ -324,7 +324,7 @@ def test_bom_entry_rejects_negative_quantity(authed):
 
 
 def test_bom_entry_rejects_fractional_quantity(authed):
-    # DB-005 / migration 0031: BOM quantities are integer-only; fractional
+    # DB-005 / migration 0032: BOM quantities are integer-only; fractional
     # rejected at Pydantic layer with 422.
     c = authed
     r = c.post("/api/projects", json={"name": "QV-Frac"})

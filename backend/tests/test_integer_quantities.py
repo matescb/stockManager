@@ -1,4 +1,4 @@
-"""DB-005 / migration 0031 — integer quantity constraints.
+"""DB-005 / migration 0032 — integer quantity constraints.
 
 Tests:
 1. test_project_entry_quantity_rejects_fraction — POST with quantity=0.5 → 422

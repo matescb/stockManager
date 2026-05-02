@@ -106,7 +106,7 @@ Operations are the unit of audit. Reading the full ledger for a part
 gives the entire stock history; aggregating the ledger gives any
 current view.
 
-### Integer-only quantities (DB-005 / migration 0031)
+### Integer-only quantities (DB-005 / migration 0032)
 
 All quantity fields throughout the system are integers — `stock_entries.
 quantity_delta`, `project_entries.quantity`, and `order_entries.
