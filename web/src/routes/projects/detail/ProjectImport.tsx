@@ -7,7 +7,12 @@ import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import { useConfirm, usePrompt } from "@/components/ConfirmDialog";
 
-const BOM_RAW_MAX_BYTES = 4 * 1024 * 1024; // 4 MB client-side cap
+// Must match server cap in backend/app/domain/projects/bom_import.py
+// (_MAX_DECODED_BYTES = 4_000_000). Using 4 * 1000 * 1000 — decimal MB —
+// so the client preflight is a true superset of the server cap. Files
+// between 4_000_001 and 4 * 1024 * 1024 used to pass the client and 413
+// server-side; the toast string still reads "max 4 MB".
+const BOM_RAW_MAX_BYTES = 4 * 1000 * 1000;
 
 const ACCEPTED_MIME_TYPES = new Set([
   "text/csv",
@@ -167,7 +172,7 @@ export default function ProjectImport() {
 
     // Pre-flight: size check
     if (f.size > BOM_RAW_MAX_BYTES) {
-      const sizeMB = (f.size / (1024 * 1024)).toFixed(2);
+      const sizeMB = (f.size / 1_000_000).toFixed(2);
       toast.error(`BOM file too large — max 4 MB. Selected: ${sizeMB} MB.`);
       return;
     }
