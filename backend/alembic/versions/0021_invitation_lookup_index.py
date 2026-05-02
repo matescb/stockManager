@@ -60,8 +60,11 @@ def upgrade() -> None:
     # because op.create_index doesn't accept SQL expressions in the
     # column list directly; passing the raw column name would index
     # the original (possibly mixed-case) value.
+    # `IF NOT EXISTS` so a partial-failure rerun is idempotent (e.g.
+    # if the upgrade is interrupted after CREATE but before commit on a
+    # subset of installations).
     op.execute(
-        f"CREATE INDEX {_INDEX_NAME} "
+        f"CREATE INDEX IF NOT EXISTS {_INDEX_NAME} "
         f"ON workspace_invitations (workspace_id, lower(email)) "
         f"WHERE status = 'pending'"
     )

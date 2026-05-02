@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from pydantic import BaseModel, ConfigDict, EmailStr
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.deps import (
     CurrentUser,
@@ -82,13 +82,16 @@ def create_invitation(
     # contract regardless of upstream input. DB-014 / issue #105.
     email = payload.email.lower()
 
-    # Already a member?
+    # Already a member? Compare via lower() because users.email is not
+    # normalised at signup (Pydantic EmailStr does not lowercase the
+    # local part), so a row stored as `Foo@Example.com` would otherwise
+    # bypass the dedupe and we'd mint a duplicate invitation.
     existing_member = (
         db.execute(
             select(WorkspaceMember, User)
             .join(User, User.id == WorkspaceMember.user_id)
             .where(WorkspaceMember.workspace_id == ws.id)
-            .where(User.email == email)
+            .where(func.lower(User.email) == email)
         )
         .first()
     )
