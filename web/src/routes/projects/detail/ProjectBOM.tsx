@@ -19,7 +19,7 @@ export default function ProjectBOM() {
     queryFn: () => api.get<ProjectEntry[]>(`/projects/${projectId}/entries`),
   });
   const { data: entries } = entriesQuery;
-  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
+  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts?limit=200") });
   const partsById = new Map(parts?.map(p => [p.id, p]) ?? []);
 
   const [matching, setMatching] = useState<{ entryId: string; pick: string } | null>(null);

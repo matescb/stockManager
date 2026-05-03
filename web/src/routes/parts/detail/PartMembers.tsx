@@ -18,7 +18,7 @@ export default function PartMembers() {
     queryFn: () => api.get<Member[]>(`/parts/${partId}/members`),
   });
   const { data: members } = membersQuery;
-  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
+  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts?limit=200") });
   const partsById = new Map(parts?.map(p => [p.id, p]) ?? []);
 
   const [pick, setPick] = useState("");

@@ -67,7 +67,7 @@ export function StorageInfo() {
     queryKey: storagePartsKey,
     queryFn: () => api.get<{ part_id: string; lot_id: string | null; quantity: number }[]>(`/storage/${storageId}/parts`),
   });
-  const { data: parts } = useQuery({ queryKey: partsKey, queryFn: () => api.get<Part[]>("/parts") });
+  const { data: parts } = useQuery({ queryKey: partsKey, queryFn: () => api.get<Part[]>("/parts?limit=200") });
   // Derived data — safe to compute even when rows/parts are undefined.
   // Hoisted above the `isError` early-return so the hook count stays
   // stable across renders (Rules of Hooks — see #284).
@@ -103,7 +103,7 @@ export function StorageHistory() {
     queryFn: () => api.get<StockEntry[]>(`/storage/${storageId}/history?limit=200`),
   });
   const { data } = historyQuery;
-  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
+  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts?limit=200") });
   const partName = new Map(parts?.map(p => [p.id, p.name]) ?? []);
   return (
     <QueryStateBoundary query={historyQuery} resourceLabel="storage history">

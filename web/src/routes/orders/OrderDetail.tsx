@@ -47,7 +47,7 @@ export default function OrderDetail() {
     queryFn: () => api.get<DetailOut>(`/orders/${orderId}`),
     enabled: !!orderId,
   });
-  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
+  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts?limit=200") });
   const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
 
   const partsById = new Map(parts?.map(p => [p.id, p]) ?? []);

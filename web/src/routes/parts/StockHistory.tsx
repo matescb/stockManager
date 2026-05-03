@@ -15,7 +15,7 @@ export default function StockHistory() {
   const { data } = historyQuery;
   // The parts/storage queries hydrate name maps for the table cells; missing
   // them just falls back to UUIDs in the column, so they stay bare.
-  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
+  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts?limit=200") });
   const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
   const partName = new Map(parts?.map(p => [p.id, p.name]) ?? []);
   const sName = new Map(storage?.map(s => [s.id, s.name]) ?? []);

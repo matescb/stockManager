@@ -202,6 +202,38 @@ def test_legacy_bare_list_default_shape():
         assert "name" in item
 
 
+def test_legacy_bare_list_respects_limit():
+    """Issue #286: GET /api/parts?limit=N must respect ``limit`` even on
+    the legacy bare-list path (previously the limit was silently ignored
+    when neither ``cursor`` nor ``paged=true`` was set, so a workspace
+    with 50k parts shipped the entire catalog over the wire)."""
+    client, _ = _signup_and_get_client()
+    _create_parts_batch(client, 100)
+
+    r = client.get("/api/parts?limit=10")
+    assert r.status_code == 200
+    body = r.json()
+    # Envelope is {data, status} where status is a {category, message} object.
+    assert body["status"]["category"] == "ok"
+    data = body["data"]
+    assert isinstance(data, list)
+    assert len(data) == 10, f"Expected 10 items, got {len(data)}"
+
+
+def test_legacy_bare_list_default_limit_is_50():
+    """Issue #286 — pin the default ``limit`` (50) for the bare-list path.
+    A workspace with more than 50 parts must not receive everything when
+    no ``limit`` is supplied; callers that need the full catalog must
+    pass ``?limit=200`` explicitly."""
+    client, _ = _signup_and_get_client()
+    _create_parts_batch(client, 100)
+
+    r = client.get("/api/parts")
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert len(data) == 50, f"Expected 50 items (default limit), got {len(data)}"
+
+
 # ---------------------------------------------------------------------------
 # Workspace isolation: a cursor from workspace A must not work in workspace B
 # ---------------------------------------------------------------------------
