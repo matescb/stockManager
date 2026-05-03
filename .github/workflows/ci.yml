@@ -482,12 +482,89 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.dev.yml down -v
 
+  ci-policy:
+    # Issue #307: meta-gate that asserts every quality-gate job in this
+    # workflow is wired into `deploy: needs:`. Closes the recurring
+    # failure class where a new gate is added but silently skipped on
+    # deploy:
+    #   #282 — pip-audit / lockfile-drift not gating
+    #   #283 — sourcemap SHA mismatch (gate-existence variant)
+    #   #303 — line-count-budget not gating
+    # The doc note at the top of the deploy: block ("If you add a new
+    # pre-deploy gate, add it here too") was the previous enforcement
+    # mechanism. It depends on contributor discipline and has failed at
+    # least three times. This job parses ci.yml itself and fails loudly
+    # if any non-excluded job is absent from `deploy.needs`. It is itself
+    # listed in `deploy.needs` so it cannot be silently bypassed.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Assert every quality gate is wired into deploy.needs
+        run: |
+          python3 - <<'PY'
+          import sys, pathlib, yaml
+
+          WORKFLOW = ".github/workflows/ci.yml"
+          # Jobs intentionally NOT required to gate deploy:
+          #   - deploy itself (it can't depend on itself).
+          # Add a job name here only with a comment explaining why it is
+          # not a quality gate. The default — and safe — assumption is
+          # that any new top-level job IS a gate.
+          EXCLUDE = {"deploy"}
+
+          cfg = yaml.safe_load(pathlib.Path(WORKFLOW).read_text())
+          jobs = cfg["jobs"]
+          all_jobs = set(jobs.keys())
+          gate_jobs = all_jobs - EXCLUDE
+
+          deploy_needs = list(jobs["deploy"].get("needs") or [])
+
+          # Resolve transitive needs: if A is in deploy.needs and B is in
+          # A.needs, then B is effectively gating deploy. Walk the graph
+          # so the check matches GitHub Actions' real semantics. The
+          # deploy: block's own comment still requires direct listing for
+          # human visibility; this script enforces effective gating.
+          def transitive_needs(seeds):
+              seen = set()
+              stack = list(seeds)
+              while stack:
+                  cur = stack.pop()
+                  if cur in seen:
+                      continue
+                  seen.add(cur)
+                  stack.extend(jobs.get(cur, {}).get("needs") or [])
+              return seen
+
+          effective_needs = transitive_needs(deploy_needs)
+          missing = sorted(gate_jobs - effective_needs)
+
+          if missing:
+              print("ERROR: these quality jobs run on PRs but are NOT in 'deploy: needs:'")
+              for m in missing:
+                  print(f"  - {m}")
+              print()
+              print("Fix: add the missing job(s) to the `deploy: needs:` array")
+              print("in .github/workflows/ci.yml — or, if a job is intentionally")
+              print("non-gating, add it to EXCLUDE in the ci-policy job with a")
+              print("comment explaining why.")
+              sys.exit(1)
+
+          print(
+              f"OK: all {len(gate_jobs)} gate jobs are required by deploy "
+              f"(direct or transitive): {sorted(gate_jobs)}"
+          )
+          PY
+
   # deploy: gates on every quality and security job. The `needs:` list below
   # must enumerate every gate *directly*, not transitively — otherwise a green
   # transitive parent can let a red security-class job slip past (the original
   # SEC2-016 hole that issue #282 closes).
   #
   # Current gates, in dependency order:
+  #   - ci-policy         (#307)       — meta-gate, asserts this list is complete
   #   - lockfile-drift    (SEC2-016)   — pyproject ↔ uv.lock ↔ requirements.lock
   #   - pip-audit         (SEC2-016)   — HIGH/CRITICAL CVEs in the pinned set
   #   - line-count-budget (CQ-002/003) — per-file line-count caps
@@ -498,11 +575,12 @@ jobs:
   #
   # If you add a new pre-deploy gate (lint, secrets-scan, SBOM, smoke, …), add
   # it here too, even if it already chains transitively through some other job.
+  # The `ci-policy` job above will fail CI if you forget.
   deploy:
     # Only redeploy on green main pushes. PRs and feature branches just run
     # the test/validate/security jobs above.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [lockfile-drift, pip-audit, line-count-budget, backend-tests, web-build, prod-validate, playwright-e2e]
+    needs: [ci-policy, lockfile-drift, pip-audit, line-count-budget, backend-tests, web-build, prod-validate, playwright-e2e]
     runs-on: ubuntu-latest
     # Environment association. Today this just scopes any environment-level
     # secrets we add later; if a "Required reviewers" protection rule is
