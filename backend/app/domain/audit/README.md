@@ -1,0 +1,38 @@
+# audit
+
+Audience: engineer
+
+Owns the activity log: a single append-only `AuditLog` table that records "who did what to which entity, when".
+
+## Files
+
+| File | What |
+|---|---|
+| `models.py` | `AuditLog` |
+| `schemas.py` | Pydantic shapes for the audit query API |
+| `service.py` | `log` — the single write entry point |
+
+## Public surface
+
+| Operation | Entry point |
+|---|---|
+| Record an event | `service.py::log` |
+
+Reads are direct SQL from the audit route (`backend/app/api/routes/audit.py`).
+
+## Hard rules (this module)
+
+1. **One write entry point.** All audit writes go through `service.py::log` so the row shape stays uniform.
+2. **Append-only.** Audit rows are never updated or deleted by application code. Retention is a DB-side concern (TODO(verify): retention policy).
+3. **Workspace-scoped.** `AuditLog.workspace_id` is required on every row; the query API filters by the caller's workspace.
+
+## See also
+
+- [API — audit](../../../../docs/api/audit.md) — query surface
+- [Domain doc — data model](../../../../docs/domain/data-model.md) — audit table position in the ER diagram
+
+## Don't
+
+- Don't insert `AuditLog` rows directly from routes — go through `service.py::log`.
+- Don't use the audit log as a source of truth for business state. It's a record of changes, not a substitute for the entity tables.
+- Don't strip workspace_id from a log row "because the action is global" — every row has a workspace.

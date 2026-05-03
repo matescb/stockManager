@@ -1,5 +1,7 @@
 # Secret rotation runbook
 
+Audience: engineer / on-call
+
 This runbook covers every long-lived secret used by the stockManager production
 stack.  Follow it any time you rotate a secret (planned cadence, personnel
 change, or suspected leak).

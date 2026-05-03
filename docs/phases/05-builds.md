@@ -1,5 +1,7 @@
 # Phase 5 — Builds & consume-from-BOM
 
+Audience: engineer
+
 A "build" runs a project's BOM against actual on-hand stock, consuming
 parts and (optionally) producing an output sub-assembly lot.
 

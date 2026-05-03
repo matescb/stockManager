@@ -1,5 +1,7 @@
 # Phase 4 — Purchase orders & receiving
 
+Audience: engineer
+
 Adds purchase orders, line-level receive flow, and the lot-of-purchase
 audit trail that previous phases left scaffolded but unused.
 

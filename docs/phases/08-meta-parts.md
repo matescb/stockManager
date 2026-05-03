@@ -1,5 +1,7 @@
 # Phase 8 — Meta-parts & sub-assemblies
 
+Audience: engineer
+
 The schema already supported four `Part.part_type` values (`linked`,
 `local`, `meta`, `sub_assembly`) and a `part_meta_members` join table.
 Phase 8 adds CRUD for meta members and lets the build engine pull

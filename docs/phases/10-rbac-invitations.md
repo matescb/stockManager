@@ -1,5 +1,7 @@
 # Phase 10 — RBAC + workspace invitations
 
+Audience: engineer
+
 Brings real role-based access to workspace administration and lets a
 workspace owner invite a teammate, who can accept after signing up.
 

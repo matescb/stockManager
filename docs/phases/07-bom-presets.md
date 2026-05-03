@@ -1,5 +1,7 @@
 # Phase 7 — BOM import presets
 
+Audience: engineer
+
 The `bom_import_presets` table existed since Phase 1 but was unused.
 Phase 7 wires it into the import wizard so users can save / recall the
 column-mapping config they normally use for a CAD tool's BOM export.
