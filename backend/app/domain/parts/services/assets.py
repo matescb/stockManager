@@ -33,6 +33,7 @@ import ipaddress
 import logging
 import os
 import socket
+from dataclasses import dataclass
 from urllib.parse import urlparse
 
 import httpx
@@ -44,6 +45,24 @@ log = logging.getLogger(__name__)
 
 _TIMEOUT_SEC = 10.0
 _MAX_BYTES = 10 * 1024 * 1024  # 10 MB ceiling — datasheet PDFs are usually 1-3 MB
+_CHUNK_SIZE = 64 * 1024  # 64 KB — streaming read granularity for the size-cap guard
+
+
+@dataclass
+class _AssetResponse:
+    """Result of `_http_get` after size-capped streaming.
+
+    `body` is `None` when the download was aborted because either the
+    `Content-Length` header or the running stream total exceeded
+    `_MAX_BYTES`. Returning the headers + status separately lets the
+    caller distinguish "oversize" from "non-200" / "empty" without
+    holding any oversized bytes in memory.
+    """
+
+    status_code: int
+    headers: dict[str, str]
+    body: bytes | None
+
 
 # Content-Type → file extension. Falls through to URL-suffix inference
 # for anything that doesn't match. SVG is intentionally absent — see
@@ -117,8 +136,8 @@ def _ext_from_url(url: str) -> str | None:
     return ext if 1 <= len(ext) <= 5 and ext.isalnum() else None
 
 
-def _ext_from_response(resp: httpx.Response, url: str) -> str:
-    ct = (resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+def _ext_from_response(headers: dict[str, str], url: str) -> str:
+    ct = (headers.get("content-type") or "").split(";", 1)[0].strip().lower()
     if ct == "image/svg+xml":
         # Explicit refusal — the file lands as `.bin` and the serve
         # route forces an `attachment` disposition for non-images.
@@ -157,16 +176,59 @@ def _host_is_allowed(host: str) -> bool:
     return ip.is_global
 
 
-def _http_get(url: str) -> httpx.Response:
-    """Network seam — patched by tests.
+def _http_get(url: str) -> _AssetResponse:
+    """Network seam — patched by tests. Streams the response body and
+    aborts as soon as the running byte total exceeds `_MAX_BYTES`,
+    so a hostile multi-GB body can never be fully buffered into memory
+    before the size cap fires (security #285).
 
     `follow_redirects=False` is load-bearing: a 30x upstream is treated
     as a refusal (returns the redirect itself, which the caller rejects
     because `status_code != 200`). Auto-following would void the host
     allow-list since the Location: header could point anywhere.
+
+    The returned `_AssetResponse.body` is `None` when the download was
+    aborted because of the size cap (either Content-Length pre-check or
+    mid-stream chunk-counter); the caller treats that the same as any
+    other refusal and returns `None` to its caller.
     """
     with httpx.Client(timeout=_TIMEOUT_SEC, follow_redirects=False) as client:
-        return client.get(url)
+        with client.stream("GET", url) as resp:
+            headers = dict(resp.headers)
+            status = resp.status_code
+
+            # Belt-and-braces: many CDNs send Content-Length, so we can
+            # short-circuit oversize responses without reading the body.
+            # Treated as advisory — a missing or malformed value falls
+            # through to the chunk-counting guard below.
+            cl = headers.get("content-length")
+            if cl is not None:
+                try:
+                    if int(cl) > _MAX_BYTES:
+                        log.warning(
+                            "provider asset rejected: Content-Length %s > %d (%s)",
+                            cl,
+                            _MAX_BYTES,
+                            url,
+                        )
+                        return _AssetResponse(status, headers, None)
+                except ValueError:
+                    pass
+
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in resp.iter_bytes(chunk_size=_CHUNK_SIZE):
+                total += len(chunk)
+                if total > _MAX_BYTES:
+                    log.warning(
+                        "provider asset rejected: streamed body exceeded %d bytes (%s)",
+                        _MAX_BYTES,
+                        url,
+                    )
+                    return _AssetResponse(status, headers, None)
+                chunks.append(chunk)
+
+            return _AssetResponse(status, headers, b"".join(chunks))
 
 
 def fetch_provider_asset(url: str, workspace_id: str, kind: str) -> str | None:
@@ -202,11 +264,15 @@ def fetch_provider_asset(url: str, workspace_id: str, kind: str) -> str | None:
     # `_http_get` docstring).
     if resp.status_code != 200:
         return None
-    body = resp.content
-    if not body or len(body) > _MAX_BYTES:
+    # `body is None` signals the streaming guard aborted because the
+    # response exceeded `_MAX_BYTES` (see `_http_get`). The size cap is
+    # already enforced upstream; the caller just maps it to the same
+    # "refusal" path as any other failure.
+    body = resp.body
+    if not body:
         return None
 
-    ext = _ext_from_response(resp, url)
+    ext = _ext_from_response(resp.headers, url)
 
     # Magic-byte validation (SEC2-012). Skip check for opaque .bin fallback —
     # those already carry a forced-download Content-Disposition when served.
