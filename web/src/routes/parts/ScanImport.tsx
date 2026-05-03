@@ -18,6 +18,7 @@ import { type ImportResponse, type LookupState, type Row } from "./ScanImport/ty
 import ScanImportSession from "./ScanImport/ScanImportSession";
 import ScanImportQueue from "./ScanImport/ScanImportQueue";
 import ScanImportActions from "./ScanImport/ScanImportActions";
+import { InlineQueryError } from "@/components/QueryStateBoundary";
 
 export default function ScanImport() {
   const nav = useNavigate();
@@ -81,10 +82,11 @@ export default function ScanImport() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
-  const { data: storages } = useQuery({
+  const storagesQuery = useQuery({
     queryKey: useWsKey("storage"),
     queryFn: () => api.get<StorageLocation[]>("/storage"),
   });
+  const { data: storages } = storagesQuery;
 
   const handleRow = useCallback(
     (row: Row) => setRows(prev => [...prev, row]),
@@ -172,6 +174,7 @@ export default function ScanImport() {
           onLookupUpdate={handleLookupUpdate}
         />
         <div className="card p-3 flex flex-col">
+          <InlineQueryError query={storagesQuery} label="storage locations" className="mb-2" />
           <ScanImportActions
             rowCount={rows.length}
             importableCount={importable.length}

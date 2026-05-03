@@ -6,6 +6,7 @@ import { ExternalLink, FileText, Loader2, RefreshCw } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
+import { InlineQueryError } from "@/components/QueryStateBoundary";
 import type { CustomFieldRow, Part } from "@/types";
 
 const PROVIDER_LABEL: Record<string, string> = {
@@ -53,11 +54,12 @@ export default function PartInfo() {
   const { part } = useOutletContext<{ part: Part }>();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
-  const { data: cf } = useQuery({
+  const cfQuery = useQuery({
     queryKey: useWsKey("part", part.id, "custom-fields"),
     queryFn: () =>
       api.get<CustomFieldRow[]>(`/custom-fields/by-object/part/${part.id}`),
   });
+  const { data: cf } = cfQuery;
   const lookupBy = (k: string) => cf?.find(r => r.key === k)?.value || null;
   // Image now lives in the layout header (passed in via Part.image_url);
   // the only Media-card affordance that still belongs on this page is the
@@ -99,6 +101,11 @@ export default function PartInfo() {
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {cfQuery.isError && (
+        <div className="col-span-2">
+          <InlineQueryError query={cfQuery} label="custom fields" />
+        </div>
+      )}
       {linked && (
         <div className="card p-3 col-span-2 flex items-center gap-3 text-sm">
           <RefreshCw size={14} className="text-accent shrink-0" />

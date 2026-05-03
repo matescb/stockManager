@@ -7,6 +7,7 @@ import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import { useConfirm, usePrompt } from "@/components/ConfirmDialog";
+import { InlineQueryError } from "@/components/QueryStateBoundary";
 
 // Must match server cap in backend/app/domain/projects/bom_import.py
 // (_MAX_DECODED_BYTES = 4_000_000). Using 4 * 1000 * 1000 — decimal MB —
@@ -143,10 +144,11 @@ export default function ProjectImport() {
       setErr(e instanceof ApiError ? e.userMessage : "Import failed");
     },
   });
-  const { data: presets, refetch: refetchPresets } = useQuery({
+  const presetsQuery = useQuery({
     queryKey: useWsKey("bom-presets"),
     queryFn: () => api.get<Preset[]>("/bom-presets"),
   });
+  const { data: presets, refetch: refetchPresets } = presetsQuery;
 
   function applyPreset(p: Preset) {
     if (p.config.separator) setSeparator(p.config.separator);
@@ -279,6 +281,7 @@ export default function ProjectImport() {
     <div className="space-y-4">
       <StepIndicator step={step} />
       {err && <div className="card p-3 text-danger text-sm">{err}</div>}
+      <InlineQueryError query={presetsQuery} label="BOM presets" />
       {step === "upload" && (
         <div className="card p-4 space-y-3 max-w-xl">
           <h3 className="text-md font-semibold">Step 1 — upload CSV/TSV</h3>

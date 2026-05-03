@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
+import { InlineQueryError } from "@/components/QueryStateBoundary";
 
 type WsScanner = {
   scanner: "zxing" | "scandit";
@@ -40,11 +41,19 @@ const ScanditScanner = lazy(() => import("./ScanditScanner"));
 export default function Scanner({ onScan, className, symbologies }: Props) {
   // Same query key as Settings → Workspace, so the cache is shared across
   // scanner mounts and the settings page.
-  const { data: ws, isLoading } = useQuery({
+  const wsQuery = useQuery({
     queryKey: useWsKey("ws", "current"),
     queryFn: () => api.get<WsScanner>("/workspaces/current"),
   });
+  const { data: ws, isLoading, isError } = wsQuery;
 
+  if (isError) {
+    return (
+      <div className={className}>
+        <InlineQueryError query={wsQuery} label="scanner config" />
+      </div>
+    );
+  }
   if (isLoading || !ws) {
     return <div className={className}>Loading scanner…</div>;
   }
