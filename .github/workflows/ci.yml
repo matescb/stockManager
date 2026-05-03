@@ -65,6 +65,62 @@ jobs:
         # not whatever the resolver might pick up at audit time.
         run: pip-audit --requirement requirements.lock --skip-editable
 
+  line-count-budget:
+    # CQ-002 / CQ-003 paper-close guard. Caps the line count of files that
+    # were intentionally split so they don't silently grow back. To raise a
+    # cap, do it in the same PR that adds the lines and explain why in the
+    # PR body — the cap is the policy, not an accident.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Enforce per-file line-count budgets
+        run: |
+          set -u
+          fail=0
+          check() {
+            local f="$1" cap="$2"
+            if [ ! -f "$f" ]; then
+              echo "MISSING: $f (budget guard out of sync — update ci.yml)"
+              fail=1
+              return
+            fi
+            local n
+            n=$(wc -l < "$f")
+            if [ "$n" -gt "$cap" ]; then
+              echo "OVER BUDGET: $f has $n lines (cap $cap)"
+              fail=1
+            else
+              echo "ok: $f ($n / $cap)"
+            fi
+          }
+
+          # CQ-002: backend parts route split
+          check backend/app/api/routes/parts_core.py    700
+          check backend/app/api/routes/parts_scan.py    700
+          check backend/app/api/routes/parts_assets.py  400
+
+          # CQ-003: frontend ScanImport split
+          check web/src/routes/parts/ScanImport/ScanImportQueue.tsx    400
+          check web/src/routes/parts/ScanImport/ScanImportSession.tsx  250
+          check web/src/routes/parts/ScanImport/ScanImportActions.tsx  200
+          check web/src/routes/parts/ScanImport.tsx                    250
+
+          # Optional caps — guard against unbounded growth in other route
+          # modules that are already on the larger side.
+          check backend/app/api/routes/orders.py  400
+          check backend/app/api/routes/stock.py   200
+          check backend/app/api/routes/builds.py  300
+
+          if [ "$fail" -ne 0 ]; then
+            echo ""
+            echo "One or more files exceeded their line-count budget."
+            echo "Either split the file or raise the cap in this PR (with a reason in the PR body)."
+            exit 1
+          fi
+
   backend-tests:
     runs-on: ubuntu-latest
     # Restate the minimum required permissions explicitly on each job so the
