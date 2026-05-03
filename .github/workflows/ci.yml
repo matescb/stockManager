@@ -122,6 +122,11 @@ jobs:
           fi
 
   backend-tests:
+    # Make the dependency on lockfile-drift explicit at the job level so the
+    # ordering matches the comment on the lockfile-drift job (it runs *before*
+    # backend-tests). The `uv lock --check` step inside this job is redundant
+    # belt-and-braces; the `needs:` edge is the contract.
+    needs: [lockfile-drift]
     runs-on: ubuntu-latest
     # Restate the minimum required permissions explicitly on each job so the
     # scope is visible next to the steps and survives any future change to the
@@ -462,11 +467,26 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.dev.yml down -v
 
+  # deploy: gates on every quality and security job. The `needs:` list below
+  # must enumerate every gate *directly*, not transitively — otherwise a green
+  # transitive parent can let a red security-class job slip past (the original
+  # SEC2-016 hole that issue #282 closes).
+  #
+  # Current gates, in dependency order:
+  #   - lockfile-drift   (SEC2-016) — pyproject ↔ uv.lock ↔ requirements.lock
+  #   - pip-audit        (SEC2-016) — HIGH/CRITICAL CVEs in the pinned set
+  #   - backend-tests                — pytest + alembic
+  #   - web-build                    — tsc -b + vite build (+ sourcemap upload)
+  #   - prod-validate                — docker compose config sanity check
+  #   - playwright-e2e               — full-stack smoke
+  #
+  # If you add a new pre-deploy gate (lint, secrets-scan, SBOM, smoke, …), add
+  # it here too, even if it already chains transitively through some other job.
   deploy:
     # Only redeploy on green main pushes. PRs and feature branches just run
-    # the three test/validate jobs above.
+    # the test/validate/security jobs above.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [backend-tests, web-build, prod-validate, playwright-e2e]
+    needs: [lockfile-drift, pip-audit, backend-tests, web-build, prod-validate, playwright-e2e]
     runs-on: ubuntu-latest
     # Environment association. Today this just scopes any environment-level
     # secrets we add later; if a "Required reviewers" protection rule is
