@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ReactNode } from "react";
-import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Outlet, Route, Routes, useLocation, type Location } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import AppShell from "@/components/layout/AppShell";
 import { ConfirmDialogProvider } from "@/components/ConfirmDialog";
@@ -143,11 +143,17 @@ function RedirectIfAuthed({ children }: { children: React.ReactNode }) {
   if (loading) return null;
   if (me) {
     const from = (location.state as { from?: Location } | null)?.from;
-    const target =
-      from && from.pathname !== "/login" && from.pathname !== "/signup"
-        ? from.pathname
-        : "/parts";
-    return <Navigate to={target} replace />;
+    // Preserve search + hash so deep-links like /parts/scan-import?storage_id=abc
+    // or /parts/abc?tab=specs#anchor survive the auth round-trip (#304).
+    if (from && from.pathname !== "/login" && from.pathname !== "/signup") {
+      return (
+        <Navigate
+          to={{ pathname: from.pathname, search: from.search, hash: from.hash }}
+          replace
+        />
+      );
+    }
+    return <Navigate to="/parts" replace />;
   }
   return <>{children}</>;
 }
