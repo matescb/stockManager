@@ -131,13 +131,22 @@ def test_prod_with_empty_workspace_secrets_key_fails_closed(monkeypatch):
 
 def test_prod_with_valid_workspace_secrets_key_boots(monkeypatch):
     """The other direction: a real Fernet key in prod must pass
-    validation cleanly."""
+    validation cleanly. Also populates the SMTP_* and APP_BASE_URL vars
+    required by the issue #281 fail-closed validator
+    (`_require_smtp_in_prod`) so this test exercises only the
+    workspace-secrets-key gate."""
     from cryptography.fernet import Fernet
 
     from app.core.config import Settings
 
     monkeypatch.setenv("APP_ENV", "prod")
     monkeypatch.setenv("WORKSPACE_SECRETS_KEY", Fernet.generate_key().decode())
+    # Required by `_require_smtp_in_prod` (issue #281).
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_USER", "user")
+    monkeypatch.setenv("SMTP_PASSWORD", "pw")
+    monkeypatch.setenv("MAIL_FROM", "noreply@example.com")
+    monkeypatch.setenv("APP_BASE_URL", "https://parts.example.com")
 
     s = Settings()
     assert s.APP_ENV == "prod"

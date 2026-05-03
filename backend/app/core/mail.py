@@ -2,12 +2,17 @@
 
 Two backends are available:
 
-* **StdoutBackend** (default in dev): writes the full email body to
-  stdout / the container log so the developer can copy-paste the
-  verification link without needing a real SMTP server.
+* **StdoutBackend** (default in dev): logs a single WARNING containing
+  the verification link so the developer can copy-paste it without
+  needing a real SMTP server. **Refuses to run when ``APP_ENV == "prod"``**
+  (issue #281): the verification link is a bearer credential and must
+  never be written to container logs in prod. The config validator
+  (`_require_smtp_in_prod`) is supposed to have failed closed at import
+  time; the runtime guard here is defence in depth.
 
-* **SmtpBackend**: sends via SMTP with STARTTLS.  Used when
-  ``APP_ENV == "prod"`` and ``SMTP_HOST`` is non-empty.
+* **SmtpBackend**: sends via SMTP with STARTTLS. Selected whenever
+  ``APP_ENV == "prod"``. The validator guarantees ``SMTP_HOST`` etc.
+  are populated.
 
 Call :func:`send_verification_email` from route code — it picks the
 right backend automatically based on the current settings.
@@ -19,6 +24,9 @@ Design notes:
 - No retry logic here.  A failure surfaces as a 500; the caller should
   not mint a ``PendingUser`` row before a successful send so no orphaned
   rows are left behind.
+- Issue #281: never log the message body. The dev backend logs only a
+  one-line WARNING with the link (intentional — the dev workflow needs
+  it visible) and the SMTP backend never logs the body at all.
 """
 from __future__ import annotations
 
@@ -64,29 +72,43 @@ def send_verification_email(*, to: str, verification_link: str) -> None:
 
     Picks the stdout backend in dev and the SMTP backend in prod.
     Raises on failure so the caller can abort the signup transaction.
+
+    Issue #281: the dispatch is on ``APP_ENV`` alone (not on
+    ``APP_ENV and SMTP_HOST``). A misconfigured prod that reached this
+    point would previously have fallen through to the stdout backend and
+    leaked the link into container logs. The config validator now fails
+    closed at import; this dispatch and the guard inside ``_send_stdout``
+    are defence in depth.
     """
     cfg = settings()
-    if cfg.APP_ENV == "prod" and cfg.SMTP_HOST:
+    if cfg.APP_ENV == "prod":
         _send_smtp(to=to, verification_link=verification_link)
     else:
         _send_stdout(to=to, verification_link=verification_link)
 
 
 def _send_stdout(*, to: str, verification_link: str) -> None:
-    """Dev backend: write the email to stdout / container logs."""
-    _log.info(
-        "MAIL (stdout backend) To: %s\nVerification link: %s",
+    """Dev backend: log a single WARNING with the verification link.
+
+    Refuses to run in prod (issue #281) — the verification link is a
+    bearer credential and must never be written to container logs. In
+    dev the link is logged at WARNING so it surfaces under the default
+    log level without needing the older `print` banner.
+    """
+    cfg = settings()
+    if cfg.APP_ENV == "prod":
+        # Belt-and-braces: the config validator should already have
+        # prevented boot, but if some future code path reaches here in
+        # prod, fail loud rather than leak.
+        raise RuntimeError(
+            "stdout mail backend refused in prod (issue #281): SMTP must "
+            "be configured. This indicates a misconfigured deploy that "
+            "bypassed the config validator."
+        )
+    _log.warning(
+        "dev mail backend (SMTP not configured): verification link for %s: %s",
         to,
         verification_link,
-    )
-    # Also print directly so it appears even when log level is WARNING.
-    print(
-        f"\n{'='*60}\n"
-        f"[DEV MAIL] Verification email\n"
-        f"To: {to}\n"
-        f"Link: {verification_link}\n"
-        f"{'='*60}\n",
-        flush=True,
     )
 
 

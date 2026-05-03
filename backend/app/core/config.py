@@ -74,14 +74,19 @@ class Settings(BaseSettings):
     # Email / SMTP for the email-verification flow (SEC2-014).
     # In dev (APP_ENV != "prod") the mail backend writes to stdout so the
     # verification link surfaces in container logs without an SMTP server.
-    # In prod all four SMTP_* vars must be set.
+    # In prod the model_validator below rejects any of SMTP_HOST / SMTP_USER /
+    # SMTP_PASSWORD / MAIL_FROM / APP_BASE_URL being empty (or APP_BASE_URL
+    # being the dev default), so a misconfigured deploy fails fast at boot
+    # instead of silently falling through to the stdout backend and writing
+    # the verification link to container logs (issue #281).
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
     MAIL_FROM: str = "noreply@stockmanager.local"
     # Public-facing base URL for generating verification links.
-    # In dev the default mirrors the Vite dev server.
+    # In dev the default mirrors the Vite dev server; the prod validator
+    # rejects this default (links must be on the public hostname).
     APP_BASE_URL: str = "http://localhost:5173"
     # Enable the two-step email-verification flow on signup (SEC2-014).
     # Defaults to True in prod, False elsewhere so the test suite can
@@ -153,6 +158,32 @@ class Settings(BaseSettings):
                 "Generate one with: "
                 'python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
             )
+        return self
+
+    @model_validator(mode="after")
+    def _require_smtp_in_prod(self) -> "Settings":
+        # Issue #281: in prod the email-verification flow is forced on
+        # (see _default_email_verification_in_prod above), but if any of
+        # the SMTP creds are missing the mail backend silently fell
+        # through to stdout, leaking the verification link into
+        # `docker compose logs backend`. Fail closed at import so a
+        # misconfigured deploy never gets the chance to mint a single
+        # token. The error message lists the missing variable names only
+        # — never the values — so it is safe to paste into a bug report.
+        if self.APP_ENV == "prod":
+            missing: list[str] = []
+            for name in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "MAIL_FROM"):
+                if not getattr(self, name):
+                    missing.append(name)
+            if not self.APP_BASE_URL or self.APP_BASE_URL == "http://localhost:5173":
+                missing.append("APP_BASE_URL")
+            if missing:
+                raise ValueError(
+                    "Email verification is mandatory when APP_ENV=prod, but the "
+                    "following required variables are missing or set to a dev "
+                    f"default: {', '.join(missing)}. Set them in .env.prod "
+                    "before deploying — see deploy/.env.prod.example."
+                )
         return self
 
 

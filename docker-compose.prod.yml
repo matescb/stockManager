@@ -102,6 +102,19 @@ services:
       # also bakes this into the SPA bundle at build time (see web
       # service below).
       VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
+      # Email / SMTP for the email-verification flow (issue #281).
+      # No `:-` defaults on the required values (HOST/USER/PASSWORD/MAIL_FROM/
+      # APP_BASE_URL) — a missing entry in .env.prod becomes a Compose
+      # "variable is not set" warning, AND the backend's
+      # `_require_smtp_in_prod` validator hard-fails at import. Both are
+      # intentional: the silent-fallback failure mode (verification link
+      # written to container logs) is exactly what this issue removed.
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      MAIL_FROM: ${MAIL_FROM}
+      APP_BASE_URL: ${APP_BASE_URL}
     volumes:
       - uploads:/data/uploads
     depends_on:
