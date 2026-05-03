@@ -21,6 +21,7 @@ from app.domain.builds.service import (
 )
 from app.domain.projects.models import Project
 from app.domain.stock.models import StockEntry
+from app.domain.stock.service import StockConflictError
 
 router = APIRouter()
 
@@ -165,6 +166,19 @@ def consume_build(
     try:
         result = consume(
             db, workspace_id=ws.id, user_id=user.id, build=b, project=project, payload=payload
+        )
+    except StockConflictError as exc:
+        # BE-004 follow-up (#280): the build sub-assembly output is a
+        # producer write into the chosen output storage; if that storage
+        # is constrained the violation surfaces as a structured 409 with
+        # the same body shape as /api/stock/add.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": str(exc),
+                "constraint": exc.constraint,
+                "storage_location_id": str(exc.storage_location_id),
+            },
         )
     except BuildError as exc:
         # `get_db` rolls back on raise (BE2-010), so dropping the

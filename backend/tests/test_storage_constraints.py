@@ -390,3 +390,209 @@ def test_single_part_only_cross_part_race_blocked(c):
     # Exactly one succeeds, one is rejected with the structured 409.
     assert successes == 1, f"expected 1 success, got results={results}"
     assert conflicts == 1, f"expected 1 conflict, got results={results}"
+
+
+# ---------------------------------------------------------------------------
+# orders.receive — BE-004 follow-up (#280)
+#
+# `receive` writes a producer StockEntry just like add_stock; the same
+# storage-location constraints (single_part_only, existing_parts_only) must
+# fire. Pre-fix, `receive` skipped the helper entirely so a
+# /api/orders/{id}/receive could land stock into a constrained bin.
+# ---------------------------------------------------------------------------
+
+
+def _create_order(c: TestClient, part_id: str, qty: int = 5) -> tuple[str, str]:
+    """Create an order with a single entry for ``part_id``. Returns
+    ``(order_id, order_entry_id)``."""
+    r = c.post(
+        "/api/orders",
+        json={
+            "name": f"PO-{uuid.uuid4().hex[:6]}",
+            "currency": "USD",
+            "entries": [{"part_id": part_id, "quantity_ordered": qty}],
+        },
+    )
+    assert r.status_code in (200, 201), r.text
+    order_id = r.json()["data"]["id"]
+    detail = c.get(f"/api/orders/{order_id}").json()["data"]
+    entry_id = detail["entries"][0]["id"]
+    return order_id, entry_id
+
+
+def test_orders_receive_rejects_single_part_only_bin_holding_other_part(c):
+    """receive into a single_part_only bin already holding a different
+    part must 409 with the same {constraint, storage_location_id} body
+    that /api/stock/add returns."""
+    loc = _storage(c, "Recv-SPO", single_part_only=True)
+    part_a = _part(c, "RecvA")
+    part_b = _part(c, "RecvB")
+
+    # Seed part A in the constrained bin.
+    _add(c, part_a, 5, loc)
+
+    # Create an order for part B and try to receive into the same bin.
+    order_id, entry_id = _create_order(c, part_b, qty=3)
+    r = c.post(
+        f"/api/orders/{order_id}/receive",
+        json={
+            "lines": [
+                {"order_entry_id": entry_id, "quantity": 3, "storage_location_id": loc}
+            ]
+        },
+    )
+    assert r.status_code == 409, r.text
+    detail = r.json()
+    assert detail.get("constraint") == "single_part_only"
+    assert detail.get("storage_location_id") == loc
+
+
+def test_orders_receive_rejects_existing_parts_only_for_unstocked_part(c):
+    """receive into an existing_parts_only bin where the part has no
+    prior positive history must 409."""
+    loc = _storage(c, "Recv-EPO", existing_parts_only=True)
+    part = _part(c, "RecvNew")
+
+    order_id, entry_id = _create_order(c, part, qty=2)
+    r = c.post(
+        f"/api/orders/{order_id}/receive",
+        json={
+            "lines": [
+                {"order_entry_id": entry_id, "quantity": 2, "storage_location_id": loc}
+            ]
+        },
+    )
+    assert r.status_code == 409, r.text
+    detail = r.json()
+    assert detail.get("constraint") == "existing_parts_only"
+    assert detail.get("storage_location_id") == loc
+
+
+# ---------------------------------------------------------------------------
+# builds.consume — sub-assembly output — BE-004 follow-up (#280)
+#
+# When a project has `associated_subassembly_part_id` set, consume()
+# writes a producer StockEntry for the build output. That write must
+# also respect storage-location constraints.
+# ---------------------------------------------------------------------------
+
+
+def _make_build_with_output(
+    c: TestClient,
+    *,
+    sub_part_id: str,
+    bom_part_id: str,
+    bom_storage_id: str,
+    bom_qty: int = 10,
+) -> tuple[str, str]:
+    """Create a project + build configured for sub-assembly output.
+
+    Returns ``(build_id, project_entry_id)``. The caller posts to
+    /consume with the desired ``output_storage_location_id``.
+    """
+    r = c.post("/api/projects", json={"name": f"Proj-{uuid.uuid4().hex[:6]}"})
+    assert r.status_code in (200, 201), r.text
+    proj_id = r.json()["data"]["id"]
+
+    r = c.post(
+        f"/api/projects/{proj_id}/entries",
+        json={"part_id": bom_part_id, "quantity": bom_qty},
+    )
+    assert r.status_code in (200, 201), r.text
+    entry_id = r.json()["data"]["id"]
+
+    r = c.patch(
+        f"/api/projects/{proj_id}",
+        json={"associated_subassembly_part_id": sub_part_id},
+    )
+    assert r.status_code == 200, r.text
+
+    r = c.post(
+        "/api/builds",
+        json={"name": f"B-{uuid.uuid4().hex[:6]}", "project_id": proj_id, "quantity": 1},
+    )
+    assert r.status_code in (200, 201), r.text
+    build_id = r.json()["data"]["id"]
+    return build_id, entry_id
+
+
+def test_builds_consume_output_rejects_single_part_only_bin(c):
+    """The build output landed into a single_part_only bin already
+    holding another part must 409 — the producer write is now guarded
+    just like add_stock."""
+    storage_in = _storage(c, "Build-Inputs")
+    out_loc = _storage(c, "Build-Out-SPO", single_part_only=True)
+
+    bom_part = _part(c, "BOM-R")
+    sub_part = _part(c, "SUB")
+    blocker = _part(c, "Blocker")
+
+    # Seed plenty of BOM stock and pre-stock the constrained output bin
+    # with a different part so the constraint fires on the output write.
+    _add(c, bom_part, 100, storage_in)
+    _add(c, blocker, 1, out_loc)
+
+    build_id, entry_id = _make_build_with_output(
+        c,
+        sub_part_id=sub_part,
+        bom_part_id=bom_part,
+        bom_storage_id=storage_in,
+        bom_qty=10,
+    )
+
+    r = c.post(
+        f"/api/builds/{build_id}/consume",
+        json={
+            "output_storage_location_id": out_loc,
+            "lines": [
+                {
+                    "project_entry_id": entry_id,
+                    "part_id": bom_part,
+                    "quantity": 10,
+                    "storage_location_id": storage_in,
+                }
+            ],
+        },
+    )
+    assert r.status_code == 409, r.text
+    detail = r.json()
+    assert detail.get("constraint") == "single_part_only"
+    assert detail.get("storage_location_id") == out_loc
+
+
+def test_builds_consume_output_allows_unconstrained_bin_regression(c):
+    """Sanity: an unconstrained output bin still accepts the build
+    output. The new guard must not fire when the destination has no
+    storage-constraint flags set."""
+    storage_in = _storage(c, "Build-Inputs-Reg")
+    out_loc = _storage(c, "Build-Out-Plain")
+
+    bom_part = _part(c, "BOM-R-Reg")
+    sub_part = _part(c, "SUB-Reg")
+
+    _add(c, bom_part, 100, storage_in)
+
+    build_id, entry_id = _make_build_with_output(
+        c,
+        sub_part_id=sub_part,
+        bom_part_id=bom_part,
+        bom_storage_id=storage_in,
+        bom_qty=10,
+    )
+
+    r = c.post(
+        f"/api/builds/{build_id}/consume",
+        json={
+            "output_storage_location_id": out_loc,
+            "lines": [
+                {
+                    "project_entry_id": entry_id,
+                    "part_id": bom_part,
+                    "quantity": 10,
+                    "storage_location_id": storage_in,
+                }
+            ],
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["status"] == "complete"

@@ -16,7 +16,7 @@ log = get_logger(__name__)
 from app.domain.orders.schemas import ReceiveIn
 from app.domain.parts.models import Part
 from app.domain.stock.models import StockEntry
-from app.domain.stock.service import lock_parts_for_stock_write
+from app.domain.stock.service import enforce_storage_constraints, lock_parts_for_stock_write
 from app.domain.storage.models import StorageLocation
 from app.domain.workspaces.models import Workspace
 
@@ -122,6 +122,16 @@ def receive(
                 raise OrderError("storage location is archived")
             if storage.is_full:
                 raise OrderError("storage location is marked full")
+            # BE-004 follow-up (#280): producer paths must enforce
+            # single_part_only / existing_parts_only on the destination,
+            # same as add_stock / move_stock. The per-part advisory lock
+            # was acquired above via lock_parts_for_stock_write; the helper
+            # additionally takes the per-storage lock for the cross-part
+            # race. Raised StockConflictError surfaces as a 409 in the
+            # route layer (mirror of routes/stock.py).
+            enforce_storage_constraints(
+                db, workspace_id=workspace_id, storage=storage, part_id=part.id
+            )
 
         currency = oe.currency or order.currency
         unit_price = oe.unit_price

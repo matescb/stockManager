@@ -128,7 +128,7 @@ def _lock_for_storage_constraint(
     the storage lock without circular waits — there is no path that
     holds the storage lock while waiting for a per-part lock. (The
     multi-part helpers — ``builds.consume``, ``orders.receive`` — do
-    not pass a destination through ``_enforce_storage_constraints``,
+    not pass a destination through ``enforce_storage_constraints``,
     so they don't take a storage lock.)
     """
     db.execute(
@@ -327,7 +327,7 @@ def stock_for_storage(
     ]
 
 
-def _enforce_storage_constraints(
+def enforce_storage_constraints(
     db: Session,
     *,
     workspace_id: UUID,
@@ -337,10 +337,12 @@ def _enforce_storage_constraints(
     """Enforce single_part_only and existing_parts_only constraints using
     current stock (positive on-hand balances), not historical row counts.
 
-    Must be called inside the advisory lock for (workspace_id, part_id) —
-    every caller acquires that via ``_lock_for_stock_write`` first. We
-    additionally acquire the per-(workspace, storage) lock here so that
-    two concurrent writers targeting the *same destination* with
+    Public callers (``add_stock``, ``move_stock``, ``orders.receive``,
+    ``builds.consume``) all acquire the per-(workspace, part) advisory
+    lock via ``_lock_for_stock_write`` / ``lock_parts_for_stock_write``
+    before calling this helper — that lock must be held when this runs.
+    We additionally acquire the per-(workspace, storage) lock here so
+    that two concurrent writers targeting the *same destination* with
     *different parts* can't both pass the single_part_only /
     existing_parts_only check on a stale read and then both insert
     (cross-part race). The per-part lock alone only serialises same-part
@@ -348,10 +350,11 @@ def _enforce_storage_constraints(
     is fixed (part, then storage) to avoid AB/BA deadlocks with
     ``_lock_for_stock_write``.
 
-    Scope: ``add_stock`` and ``move_stock`` (the storage-constrained
-    paths). ``adjust_stock`` / ``remove_stock`` don't enter constrained
-    locations from outside, and the multi-part helpers don't pass a
-    destination through this function.
+    Scope: every producer path whose destination is a constrained
+    location — ``add_stock``, ``move_stock`` (destination side),
+    ``orders.receive`` (each receive line) and ``builds.consume``
+    (sub-assembly output). ``adjust_stock`` / ``remove_stock`` don't
+    enter constrained locations from outside.
 
     Raises StockConflictError on violation.
     """
@@ -413,7 +416,9 @@ def add_stock(
             raise StockError("storage location is archived")
         if storage.is_full:
             raise StockError("storage location is marked full")
-        _enforce_storage_constraints(db, workspace_id=workspace_id, storage=storage, part_id=payload.part_id)
+        enforce_storage_constraints(
+            db, workspace_id=workspace_id, storage=storage, part_id=payload.part_id
+        )
 
     # Mandatory default-storage check (spec §19.2). Previously the chain
     # short-circuited when `storage` was None — any row that simply omitted
@@ -586,7 +591,7 @@ def move_stock(
     if payload.quantity > available:
         raise StockError(f"insufficient stock at source (have {available}, want {payload.quantity})")
 
-    _enforce_storage_constraints(db, workspace_id=workspace_id, storage=dest, part_id=part.id)
+    enforce_storage_constraints(db, workspace_id=workspace_id, storage=dest, part_id=part.id)
 
     # Pre-assign UUIDs so the two StockEntry rows can reference each
     # other via `related_entry_id`. The actual write strategy is a
