@@ -63,7 +63,11 @@ def _migration_db_url() -> str:
         "DATABASE_URL",
         os.environ.get(
             "TEST_DATABASE_URL",
-            "postgresql+psycopg://stockmgr:stockmgr@db:5432/stockmgr_test",
+            # Fallback mirrors conftest.py default (issue #306) — host-side
+            # 127.0.0.1, not the docker-network `db` hostname. In practice
+            # conftest sets DATABASE_URL before this runs, so the fallback
+            # is rarely hit, but it stays consistent.
+            "postgresql+psycopg://stockmgr:stockmgr@127.0.0.1:5432/stockmgr_test",
         ),
     )
     head, db_name = base.rsplit("/", 1)

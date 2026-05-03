@@ -14,8 +14,17 @@ from sqlalchemy.orm import Session, sessionmaker
 # This exercises the explicit-DATABASE_URL-override branch in
 # Settings._assemble_database_url (INFRA2-005): when DATABASE_URL is
 # supplied directly it is used as-is and the POSTGRES_* parts are ignored.
+#
+# The fallback default points at 127.0.0.1 so host-side `pytest` works
+# against a local Postgres without any environment override (issue #306).
+# In-container runs (`docker compose exec backend pytest`) are unaffected:
+# Compose injects DATABASE_URL=...@db:5432/... before Python starts, so
+# `setdefault` is a no-op and the docker hostname is preserved. Operators
+# with non-standard local Postgres setups can still set TEST_DATABASE_URL
+# (or DATABASE_URL) explicitly and that takes precedence.
 os.environ.setdefault(
-    "DATABASE_URL", os.environ.get("TEST_DATABASE_URL", "postgresql+psycopg://stockmgr:stockmgr@db:5432/stockmgr_test")
+    "DATABASE_URL",
+    os.environ.get("TEST_DATABASE_URL", "postgresql+psycopg://stockmgr:stockmgr@127.0.0.1:5432/stockmgr_test"),
 )
 os.environ.setdefault("SESSION_SECRET", "test-secret")
 os.environ.setdefault("UPLOAD_DIR", "/tmp/stockmgr-test-uploads")
