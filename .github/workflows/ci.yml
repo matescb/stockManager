@@ -233,6 +233,17 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
+      # Derive the release name once and reuse it for both the bundle build
+      # (`VITE_APP_VERSION`) and the sourcemap upload. The VPS deploy step
+      # uses `git rev-parse --short=12 HEAD` for `SENTRY_RELEASE`, which is
+      # baked into the runtime bundle. We must produce the same 12-char
+      # string here — otherwise sourcemaps are uploaded under the full
+      # 40-char SHA but the runtime emits events tagged with the short SHA,
+      # and Sentry can't unminify any production stack frame (issue #283).
+      - name: Set release name
+        id: release
+        run: echo "name=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
           node-version: "20"
@@ -284,7 +295,10 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.SENTRY_AUTH_TOKEN || '' }}
           SENTRY_ORG: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.SENTRY_ORG || '' }}
           SENTRY_PROJECT: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.SENTRY_PROJECT || '' }}
-          VITE_APP_VERSION: ${{ github.sha }}
+          # Use the same 12-char short SHA the VPS deploy bakes into the
+          # runtime bundle (`SENTRY_RELEASE` -> `VITE_APP_VERSION`). See
+          # the "Set release name" step above and issue #283.
+          VITE_APP_VERSION: ${{ steps.release.outputs.name }}
         run: npm run build
 
       # INFRA2-010: upload sourcemaps to Sentry from CI so the auth token
@@ -297,9 +311,10 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
-          GIT_SHA: ${{ github.sha }}
+          # Same release identifier baked into the bundle above and into
+          # the runtime image at deploy time (issue #283).
+          RELEASE: ${{ steps.release.outputs.name }}
         run: |
-          RELEASE="${GIT_SHA:0:12}"
           npx @sentry/cli sourcemaps upload \
             --org "$SENTRY_ORG" \
             --project "$SENTRY_PROJECT" \
