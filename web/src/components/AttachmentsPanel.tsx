@@ -5,6 +5,7 @@ import { Trash2, Download, UploadCloud, Paperclip } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
 import { useConfirm } from "@/components/ConfirmDialog";
+import { InlineQueryError } from "@/components/QueryStateBoundary";
 import { formatDateTime } from "@/lib/format";
 
 type Attachment = {
@@ -123,11 +124,12 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
   const confirm = useConfirm();
   const qc = useQueryClient();
   const queryKey = useWsKey("attachments", objectType, objectId);
-  const { data, isLoading } = useQuery({
+  const attachmentsQuery = useQuery({
     queryKey,
     queryFn: () =>
       api.get<Attachment[]>(`/attachments/by-object/${objectType}/${objectId}`),
   });
+  const { data, isLoading, isError } = attachmentsQuery;
 
   const [file, setFile] = useState<File | null>(null);
   const [fileType, setFileType] = useState<FileType>("other");
@@ -272,7 +274,9 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
         </div>
       )}
 
-      {isLoading ? (
+      {isError ? (
+        <InlineQueryError query={attachmentsQuery} label="attachments" />
+      ) : isLoading ? (
         <div className="text-muted text-sm">Loading…</div>
       ) : !data || data.length === 0 ? (
         <div className="text-muted text-sm">No attachments yet.</div>

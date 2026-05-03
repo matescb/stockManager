@@ -5,6 +5,7 @@ import { api, ApiError } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
+import { InlineQueryError } from "@/components/QueryStateBoundary";
 import type { StorageLocation } from "@/types";
 
 type StockRow = {
@@ -34,18 +35,21 @@ export default function PartMoveStock() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
-  const { data: storage } = useQuery({
+  const storageQuery = useQuery({
     queryKey: useWsKey("storage"),
     queryFn: () => api.get<StorageLocation[]>("/storage"),
   });
-  const { data: stock } = useQuery({
+  const stockQuery = useQuery({
     queryKey: useWsKey("part", partId, "stock"),
     queryFn: () => api.get<StockResp>(`/parts/${partId}/stock`),
   });
-  const { data: lots } = useQuery({
+  const lotsQuery = useQuery({
     queryKey: useWsKey("part", partId, "lots"),
     queryFn: () => api.get<Lot[]>(`/parts/${partId}/lots`),
   });
+  const { data: storage } = storageQuery;
+  const { data: stock } = stockQuery;
+  const { data: lots } = lotsQuery;
 
   const [sourceKey, setSourceKey] = useState("");
   const [dest, setDest] = useState("");
@@ -128,6 +132,9 @@ export default function PartMoveStock() {
     <form onSubmit={submit} className="card p-4 max-w-2xl space-y-3">
       <h3 className="text-md font-semibold">Move stock</h3>
       {err && <div className="text-danger text-sm">{err}</div>}
+      <InlineQueryError query={stockQuery} label="current stock" />
+      <InlineQueryError query={storageQuery} label="storage locations" />
+      <InlineQueryError query={lotsQuery} label="lots" />
       <div>
         <label className="label" htmlFor="move-stock-from">From *</label>
         {sources.length === 0 ? (

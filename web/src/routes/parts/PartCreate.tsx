@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useWsKey } from "@/lib/queryKeys";
 import type { MpnLookupResult, ProviderSpec, StorageLocation } from "@/types";
 import MpnLookup from "@/components/MpnLookup";
+import { InlineQueryError } from "@/components/QueryStateBoundary";
 
 /**
  * Mirror of `backend/app/api/routes/_parts_shared.py::PartIn`.
@@ -58,7 +59,8 @@ export default function PartCreate() {
   // an inline banner instead of silently swallowing the error. The part
   // is valid — just missing provider-side fields — so we never DELETE it.
   const [refreshFailed, setRefreshFailed] = useState<{ partId: string } | null>(null);
-  const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const storageQuery = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const { data: storage } = storageQuery;
 
   // FE2-006: gate concurrent submits via mutationKey so a double-click
   // on Create can't post two parts; the 409 conflict-link branch stays
@@ -264,6 +266,7 @@ export default function PartCreate() {
       </label>
       <div>
         <label className="label" htmlFor="part-create-default-storage">Default storage location</label>
+        <InlineQueryError query={storageQuery} label="storage locations" className="mb-2" />
         <select id="part-create-default-storage" className="input" value={form.default_storage_location_id} onChange={e => set("default_storage_location_id", e.target.value)}>
           <option value="">— none —</option>
           {storage?.filter(s => !s.archived_at).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}

@@ -5,6 +5,7 @@ import { api, ApiError } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
+import { InlineQueryError } from "@/components/QueryStateBoundary";
 import type { StorageLocation } from "@/types";
 
 /**
@@ -32,7 +33,8 @@ export default function PartAddStock() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
-  const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const storageQuery = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const { data: storage } = storageQuery;
   const [qty, setQty] = useState<number>(0);
   const [location, setLocation] = useState("");
   const [priceMode, setPriceMode] = useState<"none" | "per_component" | "entire_lot">("none");
@@ -87,6 +89,7 @@ export default function PartAddStock() {
     <form onSubmit={submit} className="card p-4 max-w-2xl space-y-3">
       <h3 className="text-md font-semibold">Add stock</h3>
       {err && <div className="text-danger text-sm">{err}</div>}
+      <InlineQueryError query={storageQuery} label="storage locations" />
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="label" htmlFor="add-stock-qty">Quantity *</label>

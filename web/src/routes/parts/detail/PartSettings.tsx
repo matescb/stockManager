@@ -5,6 +5,7 @@ import { api, ApiError } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
+import { InlineQueryError } from "@/components/QueryStateBoundary";
 import type { Part, StorageLocation } from "@/types";
 
 type PartPatch = {
@@ -22,7 +23,8 @@ export default function PartSettings() {
   const { partId } = useParams();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
-  const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const storageQuery = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const { data: storage } = storageQuery;
   const [low, setLow] = useState(part.low_stock_report_quantity?.toString() ?? "");
   const [attrPct, setAttrPct] = useState(String(part.attrition_percentage));
   const [attrMin, setAttrMin] = useState(String(part.attrition_min_quantity));
@@ -82,6 +84,7 @@ export default function PartSettings() {
       </div>
       <div>
         <label className="label" htmlFor="ps-default-storage">Default storage location</label>
+        <InlineQueryError query={storageQuery} label="storage locations" className="mb-2" />
         <select id="ps-default-storage" className="input" value={defStorage} onChange={e => setDefStorage(e.target.value)}>
           <option value="">— none —</option>
           {storage?.filter(s => !s.archived_at).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}

@@ -7,10 +7,14 @@ import type { Part, StockEntry, StorageLocation } from "@/types";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import PartsTopNav from "@/components/PartsTopNav";
+import QueryStateBoundary from "@/components/QueryStateBoundary";
 import { Link } from "react-router-dom";
 
 export default function StockHistory() {
-  const { data } = useQuery({ queryKey: useWsKey("stock-history"), queryFn: () => api.get<StockEntry[]>("/stock/history?limit=500") });
+  const historyQuery = useQuery({ queryKey: useWsKey("stock-history"), queryFn: () => api.get<StockEntry[]>("/stock/history?limit=500") });
+  const { data } = historyQuery;
+  // The parts/storage queries hydrate name maps for the table cells; missing
+  // them just falls back to UUIDs in the column, so they stay bare.
   const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
   const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
   const partName = new Map(parts?.map(p => [p.id, p.name]) ?? []);
@@ -18,6 +22,7 @@ export default function StockHistory() {
   return (
     <div>
       <PartsTopNav />
+      <QueryStateBoundary query={historyQuery} resourceLabel="stock history">
       <DataTable
         rows={data ?? []}
         rowKey={r => r.id}
@@ -39,6 +44,7 @@ export default function StockHistory() {
           { key: "comments", header: "Comments", accessor: r => r.comments ?? "" },
         ]}
       />
+      </QueryStateBoundary>
     </div>
   );
 }

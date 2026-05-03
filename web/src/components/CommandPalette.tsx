@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
+import { InlineQueryError } from "@/components/QueryStateBoundary";
 
 type SearchData = {
   parts: { id: string; name: string; mpn: string | null }[];
@@ -45,12 +46,13 @@ export default function CommandPalette() {
     };
   }, []);
 
-  const { data: results } = useQuery({
+  const searchQuery = useQuery({
     queryKey: useWsKey("cp-search", q),
     queryFn: () => api.get<SearchData>(`/search?q=${encodeURIComponent(q)}`),
     enabled: open && q.trim().length >= 2,
     staleTime: 30_000,
   });
+  const { data: results } = searchQuery;
 
   function go(href: string) {
     setOpen(false);
@@ -66,6 +68,11 @@ export default function CommandPalette() {
         placeholder="Type to search or jump…"
       />
       <Command.List>
+        {searchQuery.isError && (
+          <div className="p-2">
+            <InlineQueryError query={searchQuery} label="search results" />
+          </div>
+        )}
         <Command.Empty>
           {q.trim().length >= 2 ? "No matches." : "Start typing to search…"}
         </Command.Empty>

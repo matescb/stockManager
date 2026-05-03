@@ -6,6 +6,7 @@ import { useAuth } from "@/lib/auth";
 import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useConfirm } from "@/components/ConfirmDialog";
+import { InlineQueryError } from "@/components/QueryStateBoundary";
 
 type Ws = {
   id: string;
@@ -62,19 +63,23 @@ export default function WorkspaceSettings() {
   const confirm = useConfirm();
   const { me, workspaceId, refresh, switchWorkspace } = useAuth();
   const qc = useQueryClient();
-  const { data: cur } = useQuery({ queryKey: useWsKey("ws", "current"), queryFn: () => api.get<Ws>("/workspaces/current") });
-  const { data: members, refetch: refetchMembers } = useQuery({
+  const curQuery = useQuery({ queryKey: useWsKey("ws", "current"), queryFn: () => api.get<Ws>("/workspaces/current") });
+  const membersQuery = useQuery({
     queryKey: useWsKey("ws", "members"),
     queryFn: () => api.get<Member[]>("/workspaces/members"),
   });
-  const { data: invites, refetch: refetchInvites } = useQuery({
+  const invitesQuery = useQuery({
     queryKey: useWsKey("ws", "invitations"),
     queryFn: () => api.get<Invitation[]>("/invitations"),
   });
-  const { data: catalogTokens, refetch: refetchCatalogTokens } = useQuery({
+  const catalogTokensQuery = useQuery({
     queryKey: useWsKey("ws", "catalog-tokens"),
     queryFn: () => api.get<CatalogToken[]>("/workspaces/current/catalog/tokens"),
   });
+  const { data: cur } = curQuery;
+  const { data: members, refetch: refetchMembers } = membersQuery;
+  const { data: invites, refetch: refetchInvites } = invitesQuery;
+  const { data: catalogTokens, refetch: refetchCatalogTokens } = catalogTokensQuery;
   const [newTokenLabel, setNewTokenLabel] = useState("");
   const [newlyCreatedToken, setNewlyCreatedToken] = useState<string | null>(null);
 
@@ -256,6 +261,12 @@ export default function WorkspaceSettings() {
     <div className="max-w-3xl">
       <h1 className="text-xl font-semibold mb-4">Workspace</h1>
       {err && <div className="card p-3 text-danger text-sm mb-3">{err}</div>}
+      <div className="space-y-2 mb-3">
+        <InlineQueryError query={curQuery} label="workspace settings" />
+        <InlineQueryError query={membersQuery} label="members" />
+        <InlineQueryError query={invitesQuery} label="invitations" />
+        <InlineQueryError query={catalogTokensQuery} label="catalog tokens" />
+      </div>
       {cur && (
         <div className="card p-4 mb-4 space-y-3 text-sm">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

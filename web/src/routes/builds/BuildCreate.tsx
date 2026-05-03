@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
 import { useWsKey } from "@/lib/queryKeys";
+import { InlineQueryError } from "@/components/QueryStateBoundary";
 import type { Build, Project } from "@/types";
 
 type BuildCreatePayload = {
@@ -16,10 +17,11 @@ type BuildCreatePayload = {
 export default function BuildCreate() {
   const nav = useNavigate();
   const [params] = useSearchParams();
-  const { data: projects } = useQuery({
+  const projectsQuery = useQuery({
     queryKey: useWsKey("projects"),
     queryFn: () => api.get<Project[]>("/projects"),
   });
+  const { data: projects } = projectsQuery;
   const [name, setName] = useState("");
   const [projectId, setProjectId] = useState(params.get("project_id") ?? "");
   const [qty, setQty] = useState(1);
@@ -54,6 +56,7 @@ export default function BuildCreate() {
     <form onSubmit={submit} className="card p-4 max-w-2xl space-y-3">
       <h3 className="text-md font-semibold">New build</h3>
       {err && <div className="text-danger text-sm">{err}</div>}
+      <InlineQueryError query={projectsQuery} label="projects" />
       <div>
         <label className="label" htmlFor="build-create-name">Name *</label>
         <input id="build-create-name" className="input" required value={name} onChange={e => setName(e.target.value)} placeholder="BUILD-2026-001" />
