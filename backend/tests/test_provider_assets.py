@@ -26,7 +26,12 @@ from app.domain.parts.services import assets
 from app.main import app
 
 
-def _resp(status_code: int = 200, body: bytes = b"image-bytes", content_type: str = "image/png") -> MagicMock:
+# Default body carries valid PNG magic so the strict #246 magic-byte check
+# accepts it; tests that need other bodies override `body=` explicitly.
+_PNG_BODY = b"\x89PNG\r\n\x1a\n" + b"image-bytes"
+
+
+def _resp(status_code: int = 200, body: bytes = _PNG_BODY, content_type: str = "image/png") -> MagicMock:
     r = MagicMock()
     r.status_code = status_code
     r.content = body
@@ -208,9 +213,10 @@ def test_magic_bytes_match_pdf_accepted(monkeypatch, tmp_path):
     assert out.endswith(".pdf")
 
 
-def test_magic_bytes_unknown_body_with_known_ext_accepted(monkeypatch, tmp_path):
-    """If _sniff_ext returns None (unknown magic bytes), we don't block —
-    the file type just can't be sniffed so we trust the Content-Type."""
+def test_magic_bytes_unknown_body_with_known_ext_rejected(monkeypatch, tmp_path):
+    """If _sniff_ext returns None (unknown magic bytes), we MUST reject —
+    trusting the Content-Type was a content-type-confusion bypass (#246).
+    Strict policy: declared ext must match a known sniff result."""
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
     monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "93.184.216.34")
     # Body with no recognisable magic prefix.
@@ -221,9 +227,46 @@ def test_magic_bytes_unknown_body_with_known_ext_accepted(monkeypatch, tmp_path)
     out = assets.fetch_provider_asset(
         "https://media.digikey.com/opaque.png", str(uuid.uuid4()), "image"
     )
-    # sniff is None → no rejection, falls through.
-    assert out is not None
-    assert out.endswith(".png")
+    # Unknown sniff → rejected outright; no file written.
+    assert out is None
+    assert os.listdir(tmp_path) == []
+
+
+# Per-extension reject tests — declared content-type matches the ext,
+# but the body has no recognisable magic. Each must be refused and leave
+# nothing on disk (#246 round-2 fix).
+@pytest.mark.parametrize(
+    "ext,content_type,url_suffix,kind",
+    [
+        ("png", "image/png", "opaque.png", "image"),
+        ("jpg", "image/jpeg", "opaque.jpg", "image"),
+        ("webp", "image/webp", "opaque.webp", "image"),
+        ("pdf", "application/pdf", "opaque.pdf", "datasheet"),
+        ("gif", "image/gif", "opaque.gif", "image"),
+    ],
+)
+def test_magic_bytes_unknown_body_rejected_per_ext(
+    monkeypatch, tmp_path, ext, content_type, url_suffix, kind
+):
+    """Unknown magic bytes under any declared image/PDF Content-Type are
+    rejected — no .png, .jpg, .webp, .pdf, or .gif bypass.
+    (GIF stays in the allow-list per the issue-246 operator decision;
+    the reject path covers the unknown-magic case for it too.)"""
+    monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
+    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "93.184.216.34")
+    monkeypatch.setattr(
+        assets, "_http_get",
+        lambda _u: _resp(
+            body=b"\x00\x00\x00\x00unknown format bytes for " + ext.encode(),
+            content_type=content_type,
+        ),
+    )
+    out = assets.fetch_provider_asset(
+        f"https://media.digikey.com/{url_suffix}", str(uuid.uuid4()), kind
+    )
+    assert out is None, f"unknown magic under {content_type} must be rejected"
+    # Nothing should have been written to disk for a refused asset.
+    assert os.listdir(tmp_path) == [], f"no file should be written for refused {ext}"
 
 
 def test_magic_bytes_gif_mismatch_rejected(monkeypatch, tmp_path):

@@ -212,11 +212,11 @@ def fetch_provider_asset(url: str, workspace_id: str, kind: str) -> str | None:
     # those already carry a forced-download Content-Disposition when served.
     if ext != "bin":
         sniffed = _sniff_ext(body[:16])
-        if sniffed is not None and sniffed != ext:
+        if sniffed != ext:
             log.warning(
                 "provider asset rejected: magic bytes (%s) do not match "
                 "declared extension (%s) from %s",
-                sniffed,
+                sniffed or "<unknown>",
                 ext,
                 url,
             )
