@@ -12,7 +12,7 @@ import type { Lot, Part, StockEntry, StorageLocation } from "@/types";
 export function LotLayout() {
   const { lotId } = useParams<{ lotId: string }>();
   const { data, isError, error } = useQuery({ queryKey: useWsKey("lot", lotId), queryFn: () => api.get<Lot>(`/lots/${lotId}`), enabled: !!lotId });
-  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts") });
+  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts?limit=200") });
   if (isError) return <div className="text-red-600 text-sm p-4">Failed to load lot. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (!data) return <div className="text-muted">Loading…</div>;
   const part = parts?.find(p => p.id === data.part_id);

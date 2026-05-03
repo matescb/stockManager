@@ -67,10 +67,13 @@ def list_parts(
 
     Two response shapes — keyed off the request, NOT the route:
 
-      - Default (no ``cursor``, no ``paged=true``): bare list of parts.
-        Preserves the pre-cursor public API so the many lookup-style
-        consumers (BOM dropdowns, OrderDetail, ScanImport's MPN dup check,
-        …) keep working without per-call migration.
+      - Default (no ``cursor``, no ``paged=true``): bare list of parts,
+        respecting ``limit`` (default 50, max 200). Preserves the
+        pre-cursor public API so the many lookup-style consumers (BOM
+        dropdowns, OrderDetail, ScanImport's MPN dup check, …) keep
+        working without per-call migration. Callers that need more than
+        the default 50 must pass ``?limit=N`` explicitly (capped at 200).
+        For workspaces larger than 200 parts use the cursor-paged path.
 
       - Cursor opt-in (``?cursor=…`` OR ``?paged=true``): paged envelope
         ``{items: [...], next_cursor: str | null}``.
@@ -78,6 +81,9 @@ def list_parts(
         the next page.  ``next_cursor`` is null when no further pages
         exist. The ``cursor`` is an HMAC-signed blob — tampering returns
         400.
+
+    The ``limit`` query param is honoured in both modes; ``paged=true``
+    only changes the response envelope shape (adds ``next_cursor``).
 
     Every query is scoped to the current workspace (CLAUDE.md invariant).
     """
@@ -112,9 +118,14 @@ def list_parts(
     else:
         # Legacy bare-list shape — keep the same ORDER BY (name, id) the
         # paged path uses so two consumers viewing the same workspace in
-        # the same instant agree on row order.
+        # the same instant agree on row order. ``limit`` is honoured here
+        # too (issue #286) — previously it was silently ignored on this
+        # branch and a workspace with 50k parts would ship the entire
+        # catalog over the wire.
         parts = list(
-            db.execute(stmt.order_by(Part.name.asc(), Part.id.asc())).scalars()
+            db.execute(
+                stmt.order_by(Part.name.asc(), Part.id.asc()).limit(limit)
+            ).scalars()
         )
         next_cursor = None
 
