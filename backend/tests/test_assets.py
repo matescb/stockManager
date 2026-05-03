@@ -22,7 +22,12 @@ def ws_id() -> str:
     return str(uuid.uuid4())
 
 
-def _resp(status_code: int = 200, body: bytes = b"image-bytes", content_type: str = "image/png") -> MagicMock:
+# Minimal PNG magic prefix — needed because magic-byte validation (#246)
+# now rejects bodies whose leading bytes don't match the declared ext.
+_PNG_BODY = b"\x89PNG\r\n\x1a\n" + b"image-bytes"
+
+
+def _resp(status_code: int = 200, body: bytes = _PNG_BODY, content_type: str = "image/png") -> MagicMock:
     r = MagicMock()
     r.status_code = status_code
     r.content = body
@@ -48,7 +53,7 @@ def test_fetch_writes_to_uploads_and_returns_local_path(monkeypatch, ws_id, tmp_
     sha = result.rsplit("/", 1)[-1].split(".")[0]
     on_disk = tmp_path / "parts" / ws_id / f"{sha}.png"
     assert on_disk.exists()
-    assert on_disk.read_bytes() == b"image-bytes"
+    assert on_disk.read_bytes() == _PNG_BODY
 
 
 def test_fetch_is_idempotent(monkeypatch, ws_id, tmp_path):
