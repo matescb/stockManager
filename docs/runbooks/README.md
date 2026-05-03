@@ -27,10 +27,12 @@ How to handle ops scenarios. Each runbook follows the template in [STYLE.md](../
 | [smtp-outage](smtp-outage.md) | SEV-2 | Signup verification + invitation emails fail; degraded paths |
 | [provider-outage](provider-outage.md) | SEV-2 | DigiKey or Mouser API unavailable; user-visible impact and mitigation |
 | [workspace-recovery](workspace-recovery.md) | SEV-2 | Restore a disabled workspace, audit a suspected isolation leak |
+| [analytics-umami](analytics-umami.md) | Routine / SEV-3 | Self-hosted Umami: rotate website ID, disable tracking, debug a missing pageview |
 
 ## Where dashboards live
 
 - **Sentry**: <project URL — TODO(verify): fill from `SENTRY_PROJECT` env in deploy job>
+- **Umami**: `https://stats.matescb.cz` (self-hosted, separate VPS service)
 - **UptimeRobot**: <monitor URL — TODO(verify)>
 - **GitHub Actions**: https://github.com/<org>/stockManager/actions
 - **VPS** (SSH): `ssh deploy@<vps-host>` — host in `docs/deployment.md`

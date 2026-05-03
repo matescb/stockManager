@@ -5,7 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%234ade80'/%3E%3Cpath d='M4 5h8M4 8h8M4 11h5' stroke='%230b0c0f' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E" />
     <title>Parts Inventory & Production Manager</title>
-    <script defer src="https://stats.matescb.cz/script.js" data-website-id="5fdea605-7472-4437-8035-f8602d5bd627"></script>
+    <!--
+      Umami analytics (self-hosted, no cookies, respects DNT).
+      Loads only when both VITE_UMAMI_WEBSITE_ID and VITE_UMAMI_SCRIPT_URL
+      are set at build time (deploy/.env.prod.example documents both).
+      Dev builds ship empty values so the dev console isn't noisy.
+    -->
+    <script>
+      (function () {
+        var id = "%VITE_UMAMI_WEBSITE_ID%";
+        var src = "%VITE_UMAMI_SCRIPT_URL%";
+        // Vite substitutes empty string when the env var is unset; the
+        // raw `%VITE_…%` placeholder leaks through only on the dev
+        // server (which serves index.html untransformed). Skip both.
+        if (!id || !src || id.indexOf("%VITE_") === 0) return;
+        var s = document.createElement("script");
+        s.defer = true;
+        s.src = src;
+        s.setAttribute("data-website-id", id);
+        document.head.appendChild(s);
+      })();
+    </script>
   </head>
   <body class="bg-bg text-text font-sans">
     <div id="root"></div>

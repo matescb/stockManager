@@ -76,6 +76,20 @@ stack traces de-minify.
 - **Empty DSN → SDK no-op.** Dev environments stay quiet; no events,
   no network egress.
 
+## Sister system: Umami (product/usage signal)
+
+Sentry covers errors. Umami covers product/usage — pageviews and SPA
+route changes — with a self-hosted instance at `https://stats.matescb.cz`
+(separate VPS service from stockManager). Wiring is documented in
+[`docs/runbooks/analytics-umami.md`](../runbooks/analytics-umami.md) and
+the choice of self-hosted-Umami over Plausible / GA4 / no-analytics is
+in [`docs/adr/0019-umami-self-hosted-analytics.md`](../adr/0019-umami-self-hosted-analytics.md).
+
+Tracker is gated by `VITE_UMAMI_WEBSITE_ID` + `VITE_UMAMI_SCRIPT_URL`
+build env (per the same Vite-ARG-inlined pattern Sentry uses); both
+empty → no script tag, no network call. Privacy posture: no cookies,
+respects DNT, no PII.
+
 ## Things deferred
 
 - Server-side performance tracing sample rate tuning — currently

@@ -28,3 +28,4 @@ New ADRs follow the template in [STYLE.md](../STYLE.md#adr-pages-docsadrnnnn-slu
 | 0016 | [Sourcemaps emitted in CI only](0016-sourcemaps-ci-only.md) |
 | 0017 | [Step-of-N PRs use `Refs #N`, not `Closes #N`](0017-step-of-n-prs-refs-not-closes.md) |
 | 0018 | [Prod email verification requires SMTP; never log verification tokens](0018-prod-smtp-fail-closed.md) |
+| 0019 | [Self-hosted Umami for product analytics, env-gated tracker](0019-umami-self-hosted-analytics.md) |
