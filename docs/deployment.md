@@ -465,9 +465,20 @@ sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
 ```
 
 Note that **alembic migrations don't auto-roll-back**. If the bad commit
-included a destructive migration, restore from a `pg_dump` taken before the
-deploy (see [Backups](#backups)). Treat any irreversible migration as a
-release-management decision: take a dump first, ship in business hours.
+included a destructive migration, restore from the pre-deploy `pg_dump`
+written by [`deploy/predeploy-dump.sh`](../deploy/predeploy-dump.sh) (see
+[Backups](#backups) for layout). The pre-deploy dump is age-encrypted, so
+the restore pipeline is the same as for the nightlies — bring the private
+key onto the VPS temporarily, decrypt, restore, then `shred -u` the key:
+
+```bash
+sudo /srv/stockmanager/deploy/db-restore.sh /tmp/backup-key.txt \
+    /srv/backups/stockmanager/pre-deploy-<ts>-<sha>.sql.gz.age
+shred -u /tmp/backup-key.txt
+```
+
+Treat any irreversible migration as a release-management decision: take a
+dump first, ship in business hours.
 
 Always use `docker compose -f docker-compose.prod.yml` explicitly on the VPS —
 the repo no longer has a bare `docker-compose.yml` default, so muscle-memory
@@ -482,7 +493,7 @@ less error-prone:
 | Script | Purpose |
 |--------|---------|
 | `deploy/db-shell.sh` | Open an interactive `psql` session inside the running `db` container. Reads credentials from `.env.prod` so they never expand in the host shell. |
-| `deploy/db-restore.sh` | Decrypt and restore a `pg_dump` backup. Prompts for confirmation before overwriting. |
+| `deploy/db-restore.sh` | Decrypt and restore a `pg_dump` backup (works for both nightly `db-*.sql.gz.age` and pre-deploy `pre-deploy-*.sql.gz.age` files — same `age | gunzip | psql` pipeline). Prompts for confirmation before overwriting. |
 
 Both scripts are designed to be run as root from anywhere on the VPS:
 
@@ -646,12 +657,30 @@ to 14 daily / 8 weekly / 6 monthly.
 
 ```
 /srv/backups/stockmanager/                              # local, 7-day retention
-    db-2026-05-02.sql.gz.age
-    assets-2026-05-02.tar.gz.age
+    db-2026-05-02.sql.gz.age                            # nightly
+    assets-2026-05-02.tar.gz.age                        # nightly
+    pre-deploy-2026-05-03T1420-abc1234.sql.gz.age       # pre-deploy (deploy/predeploy-dump.sh)
 /mnt/nas-backups/stockmanager/                          # NAS, GFS retention
     daily/db-2026-05-02.sql.gz.age
     weekly/db-2026-05-03.sql.gz.age                     # Sundays
     monthly/db-2026-06-01.sql.gz.age                    # 1st of month
+```
+
+Pre-deploy dumps are written by [`deploy/predeploy-dump.sh`](../deploy/predeploy-dump.sh)
+from the SSH deploy step (after `git reset --hard origin/main`, before
+`docker compose up --build`). They use the same `pg_dump | gzip | age -r $RECIPIENT`
+pipeline as the nightlies — i.e., **no unencrypted SQL ever touches the VPS disk**
+(closes #287). The script refuses to run if `BACKUP_AGE_RECIPIENT` is unset or still
+the `age1...` placeholder. Retention is the last 14 pre-deploy dumps, separate from
+the nightly schedule.
+
+If you are upgrading past #287 and have legacy `pre-deploy-*.sql.gz` (no `.age`
+suffix) files on the VPS, the new retention loop will not delete them. After the
+first encrypted deploy lands cleanly, remove them by hand:
+
+```bash
+ls /srv/backups/stockmanager/pre-deploy-*.sql.gz   # confirm what's there
+rm /srv/backups/stockmanager/pre-deploy-*.sql.gz   # one-shot cleanup
 ```
 
 The local copy exists for fast restores and verification; the NAS copy is

@@ -10,7 +10,13 @@
 # this script exits non-zero so the SSH deploy aborts and the existing
 # container keeps serving the old code.
 #
-# Output: /srv/backups/stockmanager/pre-deploy-${TS}-${SHA}.sql.gz
+# Output: /srv/backups/stockmanager/pre-deploy-${TS}-${SHA}.sql.gz.age
+#
+# Encryption: the dump is piped through `age -r $BACKUP_AGE_RECIPIENT`
+# before it ever lands on disk, mirroring the off-host nightlies in
+# `backup.sh`. The private key is escrowed off-VPS — see
+# docs/deployment.md#backups. Closes #287 (INFRA2-016 follow-up:
+# pre-deploy dumps were previously gzip-only, not encrypted at rest).
 #
 # Retention: separate from the nightly cron-driven backups in
 # `backup.sh`. Keep the last 14 pre-deploy dumps. Rationale: nightlies
@@ -36,13 +42,22 @@ mkdir -p "${BACKUP_DIR}"
 
 POSTGRES_USER="$(grep -E '^POSTGRES_USER=' "${ENV_FILE}" | cut -d= -f2-)"
 POSTGRES_DB="$(grep -E '^POSTGRES_DB=' "${ENV_FILE}" | cut -d= -f2-)"
+BACKUP_AGE_RECIPIENT="$(grep -E '^BACKUP_AGE_RECIPIENT=' "${ENV_FILE}" | cut -d= -f2-)"
 
 if [[ -z "${POSTGRES_USER}" || -z "${POSTGRES_DB}" ]]; then
     echo "ERROR: POSTGRES_USER / POSTGRES_DB missing from ${ENV_FILE}" >&2
     exit 1
 fi
 
-OUT="${BACKUP_DIR}/pre-deploy-${TS}-${SHA}.sql.gz"
+# Refuse to run if the age recipient is missing or still the placeholder
+# from .env.prod.example — an unencrypted dump on the VPS is exactly the
+# exposure this script is being hardened against (issue #287).
+if [[ -z "${BACKUP_AGE_RECIPIENT}" || "${BACKUP_AGE_RECIPIENT}" == "age1..." ]]; then
+    echo "ERROR: BACKUP_AGE_RECIPIENT not configured in ${ENV_FILE} — refusing to write unencrypted dump" >&2
+    exit 1
+fi
+
+OUT="${BACKUP_DIR}/pre-deploy-${TS}-${SHA}.sql.gz.age"
 
 echo "$(date -Iseconds)  pre-deploy dump  ${SHA}  ->  ${OUT}"
 
@@ -56,7 +71,8 @@ fi
 
 docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" exec -T db \
     pg_dump -U "${POSTGRES_USER}" "${POSTGRES_DB}" \
-    | gzip > "${OUT}.tmp"
+    | gzip \
+    | age -r "${BACKUP_AGE_RECIPIENT}" > "${OUT}.tmp"
 mv "${OUT}.tmp" "${OUT}"
 
 # pg_dump emits non-empty output even for an empty schema (header,
@@ -68,10 +84,12 @@ if [[ ! -s "${OUT}" ]]; then
     exit 1
 fi
 
-echo "$(date -Iseconds)  pre-deploy dump OK  $(du -h "${OUT}" | cut -f1)"
+echo "$(date -Iseconds)  pre-deploy dump OK (age-encrypted)  $(du -h "${OUT}" | cut -f1)"
 
 # Retention: keep the most recent N pre-deploy dumps. Sort by mtime
-# descending, skip the first N, delete the rest.
-ls -1t "${BACKUP_DIR}"/pre-deploy-*.sql.gz 2>/dev/null \
+# descending, skip the first N, delete the rest. NB: the glob is
+# .sql.gz.age — older plain-gzip dumps from before #287 are NOT matched
+# and must be cleaned up manually (one-shot; see docs/deployment.md).
+ls -1t "${BACKUP_DIR}"/pre-deploy-*.sql.gz.age 2>/dev/null \
     | tail -n +$((RETAIN_PREDEPLOY + 1)) \
     | xargs -r rm -v
