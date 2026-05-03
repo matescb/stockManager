@@ -16,7 +16,6 @@ from __future__ import annotations
 import hashlib
 import os
 import uuid
-from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -31,12 +30,17 @@ from app.main import app
 _PNG_BODY = b"\x89PNG\r\n\x1a\n" + b"image-bytes"
 
 
-def _resp(status_code: int = 200, body: bytes = _PNG_BODY, content_type: str = "image/png") -> MagicMock:
-    r = MagicMock()
-    r.status_code = status_code
-    r.content = body
-    r.headers = {"content-type": content_type}
-    return r
+def _resp(
+    status_code: int = 200,
+    body: bytes | None = _PNG_BODY,
+    content_type: str = "image/png",
+) -> assets._AssetResponse:
+    """Match the streaming-aware `_http_get` return type (#285)."""
+    return assets._AssetResponse(
+        status_code=status_code,
+        headers={"content-type": content_type},
+        body=body,
+    )
 
 
 # ---------------------------------------------------------------------------
