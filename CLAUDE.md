@@ -45,13 +45,26 @@ cd web && npm test                                                           # v
 ```
 
 Outside Docker, the backend test suite needs a real Postgres (no SQLite
-fallback — schema uses `UUID`, `ARRAY`, `Numeric`):
+fallback — schema uses `UUID`, `ARRAY`, `Numeric`). `tests/conftest.py`
+defaults `DATABASE_URL` to
+`postgresql+psycopg://stockmgr:stockmgr@127.0.0.1:5432/stockmgr_test`, so
+with a local Postgres listening on `127.0.0.1:5432` and the `stockmgr` user
+(password `stockmgr`, `CREATEDB` privilege) you can simply run:
+
+```bash
+cd backend && python -m pytest -q
+```
+
+The test DB (`stockmgr_test`) is auto-created by conftest if it doesn't
+exist. For a non-default host/port/credentials, set `TEST_DATABASE_URL`:
 
 ```bash
 TEST_DATABASE_URL=postgresql+psycopg://stockmgr:stockmgr@127.0.0.1:5432/stockmgr_test \
   python -m pytest -q
 ```
 
+Note: the dev compose file does not publish Postgres to the host, so host
+pytest needs a separately installed local Postgres (not the Docker one).
 `tests/conftest.py` drops + recreates the public schema between tests.
 
 ### Build / lint
