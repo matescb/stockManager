@@ -27,10 +27,17 @@ ARG VITE_SENTRY_TRACES_SAMPLE_RATE=0.0
 # Release identifier (git SHA) — used as Sentry's `release` tag so Sentry
 # groups issues per release.
 ARG VITE_APP_VERSION=
+# Umami (self-hosted analytics) — both must be set for the loader IIFE
+# in web/index.html to inject the tracker. Empty values disable tracking
+# entirely (no network call, no DOM mutation).
+ARG VITE_UMAMI_WEBSITE_ID=
+ARG VITE_UMAMI_SCRIPT_URL=
 
 ENV VITE_SENTRY_DSN=$VITE_SENTRY_DSN
 ENV VITE_SENTRY_TRACES_SAMPLE_RATE=$VITE_SENTRY_TRACES_SAMPLE_RATE
 ENV VITE_APP_VERSION=$VITE_APP_VERSION
+ENV VITE_UMAMI_WEBSITE_ID=$VITE_UMAMI_WEBSITE_ID
+ENV VITE_UMAMI_SCRIPT_URL=$VITE_UMAMI_SCRIPT_URL
 # SENTRY_AUTH_TOKEN / _ORG / _PROJECT are NOT passed here — source-map
 # upload is handled by the CI web-build job so the token never enters the
 # Docker layer cache (INFRA2-010).
