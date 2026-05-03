@@ -65,6 +65,35 @@ jobs:
         # not whatever the resolver might pick up at audit time.
         run: pip-audit --requirement requirements.lock --skip-editable
 
+  npm-audit:
+    # Issue #305: scan the locked npm dependency set for CVEs.
+    # Hard-fails on any production (--omit=dev) CVE at moderate+.
+    # Dev-only advisories are printed but non-blocking (known: vite/vitest/esbuild).
+    # Mirrors the pip-audit job shape above for the Python side.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web deps
+        working-directory: web
+        run: npm ci
+
+      - name: Audit production dependencies (blocking)
+        working-directory: web
+        run: npm audit --audit-level=moderate --omit=dev
+
+      - name: Audit all dependencies including dev (warn only)
+        working-directory: web
+        run: npm audit --audit-level=moderate || true
+
   line-count-budget:
     # CQ-002 / CQ-003 paper-close guard. Caps the line count of files that
     # were intentionally split so they don't silently grow back. To raise a
@@ -567,6 +596,7 @@ jobs:
   #   - ci-policy         (#307)       — meta-gate, asserts this list is complete
   #   - lockfile-drift    (SEC2-016)   — pyproject ↔ uv.lock ↔ requirements.lock
   #   - pip-audit         (SEC2-016)   — HIGH/CRITICAL CVEs in the pinned set
+  #   - npm-audit         (issue #305) — CVEs in the npm production dep set
   #   - line-count-budget (CQ-002/003) — per-file line-count caps
   #   - backend-tests                  — pytest + alembic
   #   - web-build                      — tsc -b + vite build (+ sourcemap upload)
@@ -580,7 +610,7 @@ jobs:
     # Only redeploy on green main pushes. PRs and feature branches just run
     # the test/validate/security jobs above.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [ci-policy, lockfile-drift, pip-audit, line-count-budget, backend-tests, web-build, prod-validate, playwright-e2e]
+    needs: [ci-policy, lockfile-drift, pip-audit, npm-audit, line-count-budget, backend-tests, web-build, prod-validate, playwright-e2e]
     runs-on: ubuntu-latest
     # Environment association. Today this just scopes any environment-level
     # secrets we add later; if a "Required reviewers" protection rule is
