@@ -17,7 +17,7 @@ Track parts → bag-scan into stock → consume against BOMs → ship builds. Ev
 <br />
 
 [![CI](https://img.shields.io/github/actions/workflow/status/matescb/stockManager/ci.yml?branch=main&label=CI&style=flat-square&logo=githubactions&logoColor=white)](https://github.com/matescb/stockManager/actions/workflows/ci.yml)
-[![Production](https://img.shields.io/website?url=https%3A%2F%2Fparts.matescb.cz%2Fapi%2Fhealth&label=parts.matescb.cz&style=flat-square&up_message=healthy&down_message=down&up_color=brightgreen&down_color=red)](https://parts.matescb.cz/api/health)
+[![Production](https://img.shields.io/website?url=https%3A%2F%2Fparts.matescb.cz%2F&label=parts.matescb.cz&style=flat-square&up_message=up&down_message=down&up_color=brightgreen&down_color=red)](https://parts.matescb.cz/)
 [![Auto-deploy](https://img.shields.io/badge/deploy-auto%20on%20main-blue?style=flat-square&logo=githubactions&logoColor=white)](docs/deployment.md)
 [![Last commit](https://img.shields.io/github/last-commit/matescb/stockManager/main?style=flat-square&logo=git&logoColor=white)](https://github.com/matescb/stockManager/commits/main)
 
