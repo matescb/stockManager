@@ -1,5 +1,7 @@
 # Phase 9 — Serial tracking
 
+Audience: engineer
+
 The schema had `Workspace.serial_tracking_enabled` and
 `Lot.serial_number` since Phase 1, but nothing enforced them. Phase 9
 adds:

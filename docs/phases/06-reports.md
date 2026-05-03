@@ -1,5 +1,7 @@
 # Phase 6 — Reports
 
+Audience: engineer
+
 Read-only roll-ups across the existing data. No schema changes.
 
 ## Endpoints

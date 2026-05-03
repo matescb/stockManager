@@ -4,21 +4,54 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Orientation
 
-Read these in this order — they are the canonical source of truth and are
-kept current:
+`docs/README.md` is the audience map — it routes engineers, on-call, and end
+users to the right shelf. The tree below lists the canonical references in
+the order a new engineer should read them.
 
-- `docs/ARCHITECTURE.md` — cold-start doc: stack, repo layout, the ledger
-  model, workspace isolation, API envelope, domain decomposition,
-  migrations, frontend conventions.
+**Cold-start (read in order):**
+
+- `docs/ARCHITECTURE.md` — stack, repo layout, the ledger model, workspace
+  isolation, API envelope, domain decomposition, migrations, frontend
+  conventions. The single most load-bearing file in this repo. Don't
+  restate things from there in code or new docs — link to it.
 - `docs/development.md` — local dev + how to run tests outside Docker.
 - `docs/deployment.md` — prod architecture, CI/CD, ops, backups.
-- `docs/phases/NN-*.md` — per-feature rationale (Phases 1–10).
-- `CHANGELOG.md` — post-Phase-10 work that didn't get a phase doc
-  (production hardening, Sentry, scan-to-import, providers, etc.).
-- `docs/runbooks/` — operational runbooks (secret rotation, etc.).
 
-The single most load-bearing file in this repo is `docs/ARCHITECTURE.md`.
-Don't restate things from there in code or new docs — link to it.
+**Reference shelves (engineer):**
+
+- `docs/api/` — per-router REST reference (15 areas + envelope/error/auth
+  conventions).
+- `docs/domain/` — entity & data-model reference; `data-model.md` has the
+  full ER diagram.
+- `docs/frontend/` — frontend developer guide (routing, lib/api, TanStack
+  patterns, components, scanner, testing).
+- `docs/adr/` — architecture decision records. The 17 retro-ADRs codify
+  every "Hard invariant" and "Things that have bitten us" rule below.
+  When you find yourself about to undo one of those rules, read the ADR.
+- `docs/phases/NN-*.md` — per-feature rationale (Phases 1–13). 1–3 are
+  retro-documented from migrations; 11–13 cover post-Phase-10 work.
+- `CHANGELOG.md` — release notes; phase docs 11–13 expand the buckets.
+- In-tree module READMEs at `backend/app/domain/*/README.md`,
+  `backend/app/{api/routes,core}/README.md`,
+  `web/src/{lib,components,routes}/README.md` — short orientation,
+  link out to `docs/`.
+
+**Ops shelf (on-call):**
+
+- `docs/runbooks/` — 10 runbooks: secret-rotation, backup-restore,
+  prod-rollback, migration-recovery, sentry-triage, on-call-quickstart,
+  incident-response, smtp-outage, provider-outage, workspace-recovery.
+  `docs/runbooks/README.md` has the severity matrix.
+
+**End-user shelf:**
+
+- `docs/user/` — end-user help pages (audience: operator/warehouse staff).
+  Engineer-only links should never point here, and vice versa.
+
+**Doc-author guide:**
+
+- `docs/STYLE.md` — every page in `docs/` conforms to it. Read before
+  contributing.
 
 ## Commands
 
