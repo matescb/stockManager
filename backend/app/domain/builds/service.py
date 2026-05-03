@@ -23,7 +23,11 @@ from app.domain.lots.models import Lot
 from app.domain.parts.models import Part, PartMetaMember, PartSubstitute
 from app.domain.projects.models import Project, ProjectEntry
 from app.domain.stock.models import StockEntry
-from app.domain.stock.service import current_quantity, lock_parts_for_stock_write
+from app.domain.stock.service import (
+    current_quantity,
+    enforce_storage_constraints,
+    lock_parts_for_stock_write,
+)
 from app.domain.storage.models import StorageLocation
 
 
@@ -441,6 +445,16 @@ def consume(
                 raise BuildError("output storage not in workspace")
             if storage.archived_at is not None or storage.is_full:
                 raise BuildError("output storage archived or full")
+            # BE-004 follow-up (#280): the build-output StockEntry is a
+            # producer write that must respect single_part_only /
+            # existing_parts_only. The per-(workspace, sub_part) advisory
+            # lock was already taken in the bundled lock call earlier in
+            # consume(); the helper additionally acquires the per-storage
+            # lock to close the cross-part race. StockConflictError is
+            # mapped to 409 in routes/builds.py.
+            enforce_storage_constraints(
+                db, workspace_id=workspace_id, storage=storage, part_id=sub_part.id
+            )
 
         output_lot = Lot(
             workspace_id=workspace_id,

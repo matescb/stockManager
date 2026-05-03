@@ -23,6 +23,7 @@ from app.domain.orders.schemas import (
 from app.domain.orders.service import OrderError, receive
 from app.domain.parts.models import Part
 from app.domain.stock.models import StockEntry
+from app.domain.stock.service import StockConflictError
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -296,6 +297,18 @@ def receive_order(order_id: UUID, payload: ReceiveIn, db: DbSession, ws: Current
     o = _get_order(db, ws.id, order_id)
     try:
         result = receive(db, workspace_id=ws.id, user_id=user.id, order=o, payload=payload)
+    except StockConflictError as exc:
+        # BE-004 follow-up (#280): receive lines into a constrained
+        # destination must surface a structured 409 with the same body
+        # shape as /api/stock/add so existing client-side handlers work.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": str(exc),
+                "constraint": exc.constraint,
+                "storage_location_id": str(exc.storage_location_id),
+            },
+        )
     except OrderError as exc:
         # Re-raise as a 4xx — `get_db` rolls back automatically when
         # the route raises (BE2-010), so we don't need an explicit
