@@ -25,9 +25,11 @@ the order a new engineer should read them.
   full ER diagram.
 - `docs/frontend/` — frontend developer guide (routing, lib/api, TanStack
   patterns, components, scanner, testing).
-- `docs/adr/` — architecture decision records. The 17 retro-ADRs codify
-  every "Hard invariant" and "Things that have bitten us" rule below.
-  When you find yourself about to undo one of those rules, read the ADR.
+- `docs/adr/` — architecture decision records. ADRs 0001–0017 are
+  retro-documented and codify every "Hard invariant" and "Things that
+  have bitten us" rule below; 0018 (prod SMTP fail-closed) is the
+  first non-retro entry. When you find yourself about to undo one of
+  those rules, read the ADR.
 - `docs/phases/NN-*.md` — per-feature rationale (Phases 1–13). 1–3 are
   retro-documented from migrations; 11–13 cover post-Phase-10 work.
 - `CHANGELOG.md` — release notes; phase docs 11–13 expand the buckets.

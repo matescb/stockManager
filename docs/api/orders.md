@@ -201,7 +201,7 @@ After all lines, recompute `order.status` from the entries and set `received_on`
 - `"serialized part X must be received one unit per line"` (`service.py:106-110`).
 - `"serialized part X requires a serial_number on the receive line"` (`service.py:111-114`).
 - `"storage location not in workspace"` / `"storage location is archived"` / `"storage location is marked full"` (`service.py:119-124`).
-- `409 stock.conflict_error` — destination storage violates `single_part_only` or `existing_parts_only` constraints; raised by `enforce_storage_constraints` before the ledger write (PR #299, issue #280).
+- `409 stock.conflict_error` — destination storage violates `single_part_only` or `existing_parts_only` constraints; raised by `enforce_storage_constraints` (`backend/app/domain/stock/service.py:330`) before the ledger write (PR #299, issue #280). Body extras: `{ message, constraint, storage_location_id }` where `constraint` is `"single_part_only"` or `"existing_parts_only"`.
 
 **Notes**
 

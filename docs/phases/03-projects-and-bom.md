@@ -92,5 +92,7 @@ any domain object via a `(object_type, object_id)` polymorphic key.
   `tag_links`.
 - Architecture: `docs/ARCHITECTURE.md` — polymorphic tables and the
   `WorkspaceOwned` mixin.
+- Notable follow-up PRs: #221 (BOM integer-quantity CHECK constraint),
+  #222 (reject zero-qty BOM lines at the API layer).
 - Related phases: [Phase 7](07-bom-presets.md) (preset wiring),
   [Phase 11](11-providers-and-scan.md) (custom-field catalog use).

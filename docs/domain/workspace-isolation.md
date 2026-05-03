@@ -20,6 +20,18 @@ if storage is None or storage.workspace_id != ws.id:
     raise StockError("storage location not found")
 ```
 
+### Route-layer helpers (canonical)
+
+The route layer uses three helpers from `backend/app/api/_helpers.py`. **These are the workspace-isolation contract for any route that accepts a UUID**; reach for them before inlining a `db.get` + equality check:
+
+- `assert_in_workspace(db, Model, id_, workspace_id)` (`backend/app/api/_helpers.py:22`) — look up a `WorkspaceOwned` row by id, scoped to the current workspace. Raises 404 on miss *or* on cross-workspace match. Replaces the workspace-blind `db.get(Model, id)` pattern.
+- `assert_child_in_parent(db, Child, child_id, Parent, parent_id, workspace_id)` (`backend/app/api/_helpers.py:99`) — same, plus asserts the child's parent FK matches the supplied parent id.
+- `assert_part_live(...)` — assert a part exists, is in the workspace, and isn't archived.
+
+Generic-typed (`TypeVar` bound to `WorkspaceOwned`) so a typo (`Parts` instead of `Part`) is caught by the type-checker — this is load-bearing.
+
+### Service-layer idiom
+
 The `_belongs(obj, workspace_id)` helper (`backend/app/domain/stock/service.py:46-47`) is the canonical idiom inside the stock service. Other services inline the equality check.
 
 The active leak this prevents — `adjust_stock` validates caller-supplied `lot_id` and `storage_location_id` against the workspace **before** the availability check, because `current_quantity` is workspace-filtered, so a foreign FK target reads as "0 available" and would otherwise let a caller persist a positive `StockEntry` in workspace A whose `lot_id` points at workspace B (`backend/app/domain/stock/service.py:721-738`).

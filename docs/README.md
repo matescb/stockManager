@@ -23,7 +23,7 @@ The single most load-bearing file is `ARCHITECTURE.md`. Don't restate things fro
 | Frontend conventions, lib catalog | [`frontend/`](frontend/README.md) |
 | Why a piece of code looks the way it does | [`adr/`](adr/README.md) |
 | Per-feature rationale (Phases 1–13) | [`phases/`](phases/) |
-| Module-by-module orientation | `backend/app/domain/*/README.md`, `web/src/{lib,components,pages}/README.md` (in-tree) |
+| Module-by-module orientation | `backend/app/domain/*/README.md`, `web/src/{lib,components,routes}/README.md` (in-tree) |
 
 ## I'm on-call or running ops
 

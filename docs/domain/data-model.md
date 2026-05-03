@@ -49,7 +49,7 @@ For the one-line domain table (which router serves which tables), see [`ARCHITEC
 |---|---|---|
 | `StorageLocation` | `storage_locations` | `backend/app/domain/storage/models.py:9` |
 
-`single_part_only` and `existing_parts_only` flags are application-enforced inside `_enforce_storage_constraints` under a per-(workspace, storage) advisory lock — there is no DB CHECK (`backend/app/domain/stock/service.py:330-388`).
+`single_part_only` and `existing_parts_only` flags are application-enforced inside `enforce_storage_constraints` under a per-(workspace, storage) advisory lock — there is no DB CHECK (`backend/app/domain/stock/service.py:330-391`).
 
 ### stock + lots
 

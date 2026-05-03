@@ -15,7 +15,7 @@ That's not just a quantitative drift; it breaks the security property the rate l
 
 ## Decision
 
-The backend uvicorn command in `docker-compose.prod.yml:148` includes `--workers 1`. The number is hard-coded — there is no `WORKERS` env variable to bump it — so a future ops change cannot accidentally multiply the rate limit by editing `.env.prod`.
+The backend uvicorn command in `docker-compose.prod.yml:161` includes `--workers 1`. The number is hard-coded — there is no `WORKERS` env variable to bump it — so a future ops change cannot accidentally multiply the rate limit by editing `.env.prod`.
 
 If traffic ever justifies more workers, the prerequisite is to switch slowapi to a shared backend (Redis) first, so the bucket store is global rather than per-process.
 
@@ -35,6 +35,6 @@ If traffic ever justifies more workers, the prerequisite is to switch slowapi to
 
 ## References
 
-- Source: `docker-compose.prod.yml:133-148` (worker count, command line)
+- Source: `docker-compose.prod.yml:161` (worker count, command line)
 - Source: `backend/app/core/ratelimit.py` (slowapi config)
 - Rule: `CLAUDE.md:150-153`

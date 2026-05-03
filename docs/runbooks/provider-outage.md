@@ -138,7 +138,7 @@ Mitigations:
 
 Don't add `verify=False` or otherwise weaken TLS to "see if it's a
 cert issue" — CI greps for that pattern (CLAUDE.md "No `verify=False`
-on httpx clients", and the gate at `.github/workflows/ci.yml:190-196`).
+on httpx clients", and the gate at `.github/workflows/ci.yml:222-228`).
 
 ### 7. If the provider changed schema
 

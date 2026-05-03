@@ -43,7 +43,7 @@ command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 
 
 ## References
 
-- Source: `docker-compose.prod.yml:148` (backend command)
+- Source: `docker-compose.prod.yml:161` (backend command)
 - Source: `docker-compose.prod.yml:53` (backend-init command)
 - Incident context: slowapi bucketed every client by docker bridge IP after a folded-scalar reformat.
 - Rule: `CLAUDE.md:131-136`

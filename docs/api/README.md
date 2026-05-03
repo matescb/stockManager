@@ -12,7 +12,13 @@ Every response is `{ data, status }`. See [ADR-0003](../adr/0003-api-envelope-da
 
 ### Error body
 
-Non-2xx responses have `data` set to the dict from `HTTPException(detail=…)`, spread by `core/responses.py::http_exception_handler`. Specific error shapes are documented per route (e.g. `409 Conflict` on part create returns `{ existing_id, existing_name, … }`).
+Non-2xx responses keep the `{ data, status }` envelope with `data: null`. The `status` block carries `category` (a short string like `"part.conflict"`) and `message` (human-readable). When a route raises `HTTPException(detail={"message": "…", **extras})`, `core/responses.py::http_exception_handler` (`backend/app/core/responses.py:95-109`) spreads `extras` onto the **top level** of the response body alongside `data` / `status` — not into `data`. So a 409 from part create looks like:
+
+```json
+{ "data": null, "status": { "category": "part.conflict", "message": "…" }, "existing_id": "…", "existing_name": "…" }
+```
+
+Specific extras are documented per route.
 
 ### Authentication
 
@@ -30,7 +36,7 @@ slowapi, per-process bucket store, per-IP. The reverse proxy must set `X-Forward
 
 | File | Prefix | Description |
 |---|---|---|
-| [auth](auth.md) | `/api/auth` | Signup, login, logout, me, password change |
+| [auth](auth.md) | `/api/auth` | Signup, email verification, login, logout, `me` |
 | [workspaces](workspaces.md) | `/api/workspaces` | Workspace CRUD, members, invitations, catalog tokens |
 | [invitations](invitations.md) | `/api/invitations` | Accept invitation (no workspace context) |
 | [parts](parts.md) | `/api/parts` | parts_core + parts_assets + parts_scan + parts_provider |

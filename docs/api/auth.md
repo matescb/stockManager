@@ -10,7 +10,7 @@ See [API conventions](./README.md) for envelope, errors, pagination. All routes 
 
 ## Prod boot invariants (signup mail)
 
-Prod (`APP_ENV == "prod"`) cannot boot if any of `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM`, `APP_BASE_URL` is empty or set to a dev default — the `_require_smtp_in_prod` validator raises at import time. The dev stdout mail backend additionally raises `RuntimeError` if invoked under `APP_ENV == "prod"` and the verification link is **never logged** by either backend. See [ADR-0018](../adr/0018-prod-smtp-fail-closed.md) and the regression test `backend/tests/test_mail_prod_safety.py`.
+Prod (`APP_ENV == "prod"`) cannot boot if any of `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM`, `APP_BASE_URL` is empty or set to a dev default — the `_require_smtp_in_prod` validator raises at import time. The dev stdout mail backend additionally raises `RuntimeError` if invoked under `APP_ENV == "prod"`. In dev (the only env where the stdout backend runs) the verification link is logged at WARNING (`backend/app/core/mail.py:108-112`) so local testing is ergonomic; in prod the SMTP backend is the only path and the link never enters any log. See [ADR-0018](../adr/0018-prod-smtp-fail-closed.md) and the regression test `backend/tests/test_mail_prod_safety.py`.
 
 ## Routes
 

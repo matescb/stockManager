@@ -3,10 +3,10 @@
 Audience: engineer / on-call
 
 Recover from a migration that left prod in a broken state. Migrations
-run on backend container start (`docker-compose.prod.yml:148` —
+run on backend container start (`docker-compose.prod.yml:161` —
 `alembic upgrade head && exec uvicorn …`). A failure aborts the boot,
 the healthcheck never goes green, and the post-deploy gate at
-`.github/workflows/ci.yml:524-540` fails the deploy job. The previous
+`.github/workflows/ci.yml:669-680` fails the deploy job. The previous
 container keeps serving until you intervene — but the new container is
 restarting on a loop and may have applied the migration partially.
 
@@ -125,7 +125,7 @@ this case (CLAUDE.md "There is no staging environment").
    docker compose -f docker-compose.dev.yml exec backend python -m alembic heads
    ```
    Must print exactly one head (matches the CI guard at
-   `.github/workflows/ci.yml:198-204`).
+   `.github/workflows/ci.yml:232-237`).
 6. PR, review, merge. CI will deploy. Restart the backend manually if
    the deploy job times out:
    ```bash
@@ -181,12 +181,12 @@ matching SHA, brings the stack up.
    from app.core.config import settings
    eng = create_engine(settings().DATABASE_URL)
    with eng.begin() as c:
-       row = c.execute(text(\"SELECT mouser_api_key_ct FROM workspaces WHERE mouser_api_key_ct IS NOT NULL LIMIT 1\")).scalar()
+       row = c.execute(text(\"SELECT parts_provider_api_key FROM workspaces WHERE parts_provider_api_key IS NOT NULL LIMIT 1\")).scalar()
    if row: print('decrypt:', _fernet().decrypt(row.encode())[:4], '...')
    else:   print('no encrypted creds present — nothing to verify')
    "
    ```
-   `<TODO(verify): exact column names for encrypted workspace credentials>`
+   The encrypted credential columns on `workspaces` are `parts_provider_api_key` and `parts_provider_api_secret` (`backend/app/domain/workspaces/models.py:45,47`). The `workspace_catalog_tokens` child table holds catalog-token HMACs separately.
 8. Bring the stack back:
    ```bash
    sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \

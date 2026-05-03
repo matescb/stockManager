@@ -108,4 +108,9 @@ gate alongside the existing `pip-audit`.
 - External: [matescb/vps-backup](https://github.com/matescb/vps-backup).
 - Hard invariants: `CLAUDE.md` — "Things that have bitten us — don't
   undo".
+- Notable PRs: #177 (container-as-appuser hardening + backend-init
+  one-shot chown), #199 (age-encrypted backup pipeline), #219
+  (healthchecks.io dead-man's switch on backup heartbeat),
+  #287/#294 (pre-deploy snapshot encryption — predeploy-dump.sh
+  pipes through age before scp).
 - Related phase: [Phase 12](12-observability-sentry.md).

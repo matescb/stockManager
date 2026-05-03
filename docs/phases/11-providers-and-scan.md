@@ -107,5 +107,8 @@ keeps the flow safe against double-imports.
   bulk flow" + "Switchable scanner backend".
 - Hard invariants: `CLAUDE.md` — `bag_signature`, content-addressed
   assets, provider catalog vs spec keys.
+- Notable follow-up PRs: #173/#210 (per-workspace rate limit on
+  provider lookups), #263/#290 (provider-asset magic-byte sniff
+  hardening — reject SVG and unknown content-types).
 - TODO(verify): exact route paths for `/api/parts/bulk-import-from-scan`
   in `backend/app/api/routes/parts_scan.py`.

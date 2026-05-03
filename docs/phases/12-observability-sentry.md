@@ -95,6 +95,8 @@ stack traces de-minify.
   `SENTRY_AUTH_TOKEN`).
 - Hard invariants: `CLAUDE.md` — Sentry auth token, sourcemaps in
   CI only.
+- Notable follow-up PRs: #174 (sourcemap upload moved out of the
+  Docker build context — token never enters the image).
 - Changelog: `CHANGELOG.md` — "Observability — Sentry on both
   runtimes".
 - Related phase: [Phase 13](13-prod-hardening-infra2.md) (digest

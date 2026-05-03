@@ -56,8 +56,8 @@ the failure.
 ### 1. Read the event
 
 1. Open the issue in Sentry.
-2. Note the **Release** tag — short SHA, set by the deploy script
-   (`.github/workflows/ci.yml:503-504`). Cross-check against
+2. Note the **Release** tag — short SHA, exported as `SENTRY_RELEASE`
+   by the deploy job (`.github/workflows/ci.yml:647-648`). Cross-check against
    `git log --oneline` on `main`. If the tag is empty or doesn't
    match a SHA you recognise, the deploy didn't export
    `SENTRY_RELEASE` correctly — flag that as a separate issue.
@@ -68,7 +68,8 @@ the failure.
 ### 2. If frontend frames are minified
 
 The sourcemap upload runs in CI on push-to-main only
-(`.github/workflows/ci.yml:289-302`). If you see things like
+(short-SHA derivation `.github/workflows/ci.yml:274`, upload step
+`.github/workflows/ci.yml:347`). If you see things like
 `a.b.c at https://parts.matescb.cz/assets/index-abcd1234.js:1:12345`:
 
 1. Open the GitHub Actions run for the deploy that introduced the

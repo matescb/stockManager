@@ -34,7 +34,7 @@ The shared truth table is `web/src/lib/__fixtures__/bagSignatures.json`. The Pyt
 
 ### Storage
 
-`stock_entries.bag_signature: varchar(64)` (`backend/app/domain/stock/models.py:84`). Set only by scan-import; NULL elsewhere. Partial GIN-friendly index `ix_stock_ws_bag_signature` excludes the NULL rows (DB-008 / alembic 0019, `backend/app/domain/stock/models.py:40-45`):
+`stock_entries.bag_signature: varchar(64)` (`backend/app/domain/stock/models.py:84`). Set only by scan-import; NULL elsewhere. Partial GIN-friendly index `ix_stock_ws_bag_signature` excludes the NULL rows (DB-008 / alembic `0020_partial_bag_signature_index.py`, `backend/app/domain/stock/models.py:40-45`):
 
 ```sql
 postgresql_where=text("bag_signature IS NOT NULL")

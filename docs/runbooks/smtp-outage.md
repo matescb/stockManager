@@ -188,10 +188,11 @@ Same pattern for invitations:
 
 ## Rollback
 
-- If you flipped `SMTP_HOST` to empty as a test: restore the previous
-  value and restart. Don't leave it empty in prod — `mail.py:69`
-  silently falls back to the stdout backend, and verification emails
-  will only land in container logs from then on.
+- **Don't flip `SMTP_HOST` to empty as a test in prod.** `_require_smtp_in_prod`
+  refuses to construct `Settings` (`backend/app/core/config.py`) and the
+  container won't boot — you'll convert an SMTP outage into a full prod
+  outage. If you accidentally did this: restore the previous `SMTP_HOST`
+  and restart, no silent fallback exists. See [ADR-0018](../adr/0018-prod-smtp-fail-closed.md).
 - If you manually verified a user (step 4) and they later turn out to
   not own the email: disable the user (`UPDATE users SET … WHERE id =
   '<user-id>'`), and treat as a security incident

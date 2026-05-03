@@ -20,7 +20,7 @@ the trap door — see "When you cannot rollback" below.
 - **Owner**: `<TODO(verify): on-call rotation>`
 
 See `docs/deployment.md` for the deploy pipeline and the `git reset --hard
-origin/main` step the CI uses (`.github/workflows/ci.yml:496`). **Don't**
+origin/main` step the CI uses (`.github/workflows/ci.yml:640`). **Don't**
 re-explain the deploy — link.
 
 ## Pre-flight
@@ -65,7 +65,7 @@ is intact and the next deploy doesn't surprise you.
    `production` environment reviewer (CLAUDE.md "Deploy is automatic —
    but gated by a human reviewer"). Approve.
 5. Watch the post-deploy health gate in the SSH log
-   (`.github/workflows/ci.yml:524-540`) — 30 × 5 s polls of
+   (`.github/workflows/ci.yml:669-680`) — polls of
    `https://parts.matescb.cz/api/health`. Green ping = rollback live.
 
 ## B. Emergency VPS reset (only when CI is unavailable)
@@ -90,7 +90,7 @@ of CI lag is unacceptable.
    ```
 4. Re-export the release tag so Sentry groups any new errors against the
    rolled-back code (matches the deploy script at
-   `.github/workflows/ci.yml:503-504`):
+   `.github/workflows/ci.yml:647-648`):
    ```bash
    export SENTRY_RELEASE
    SENTRY_RELEASE=$(git rev-parse --short=12 HEAD)
@@ -125,7 +125,7 @@ deploy ran a migration:
   1. **Forward-fix**: write a new migration + code change that adapts
      to the changed schema. Faster than restore for additive changes.
   2. **Restore from snapshot**: restore the pre-deploy `pg_dump` (taken
-     by `deploy/predeploy-dump.sh` at `.github/workflows/ci.yml:511`)
+     by `deploy/predeploy-dump.sh` at `.github/workflows/ci.yml:655`)
      and roll the code back. See `migration-recovery.md` for the full
      procedure — that runbook owns this case.
 
@@ -160,7 +160,7 @@ If the rollback itself breaks something:
   the gate is too coarse — what signal would have flipped it red?
 - Was the bad SHA easy to identify from Sentry's release tag? If not,
   is `SENTRY_RELEASE` being set correctly?
-  (`.github/workflows/ci.yml:503-504`).
+  (`.github/workflows/ci.yml:647-648`).
 - Did we take path A or B? If B: was the urgency real, or was CI just
   slow that day?
 - If migrations were involved: should this migration have been split

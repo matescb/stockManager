@@ -141,7 +141,7 @@ Apply consumption: release reservations, write negative ledger entries against t
 - Insufficient stock / over-consume — TODO(verify): exact wording (`service.py:392`, `service.py:425`).
 - `"project's sub-assembly part not in workspace"` (`service.py:435`).
 - `"output storage not in workspace"` / `"output storage archived or full"` (`service.py:441-443`).
-- `409 stock.conflict_error` — output storage violates `single_part_only` or `existing_parts_only` constraints; raised by `enforce_storage_constraints` before the output-lot insert (PR #299, issue #280).
+- `409 stock.conflict_error` — output storage violates `single_part_only` or `existing_parts_only` constraints; raised by `enforce_storage_constraints` (`backend/app/domain/stock/service.py:330`) before the output-lot insert (PR #299, issue #280). Body extras: `{ message, constraint, storage_location_id }` where `constraint` is `"single_part_only"` or `"existing_parts_only"`. Note this is a `StockConflictError` mapped to `409`, not an `OrderError`/`BuildError`.
 
 **Notes**
 
