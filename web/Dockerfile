@@ -3,7 +3,15 @@ FROM node:20-alpine
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN for i in 1 2 3; do npm ci --prefer-offline && break || sleep 5; done
+RUN n=0; \
+    until npm ci --prefer-offline; do \
+      n=$((n+1)); \
+      if [ "$n" -ge 3 ]; then \
+        echo "npm ci failed after 3 attempts" >&2; \
+        exit 1; \
+      fi; \
+      sleep 5; \
+    done
 
 COPY . .
 
