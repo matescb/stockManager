@@ -68,8 +68,11 @@ export function StorageInfo() {
     queryFn: () => api.get<{ part_id: string; lot_id: string | null; quantity: number }[]>(`/storage/${storageId}/parts`),
   });
   const { data: parts } = useQuery({ queryKey: partsKey, queryFn: () => api.get<Part[]>("/parts") });
-  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load storage contents. {error instanceof ApiError ? error.userMessage : ""}</div>;
+  // Derived data — safe to compute even when rows/parts are undefined.
+  // Hoisted above the `isError` early-return so the hook count stays
+  // stable across renders (Rules of Hooks — see #284).
   const partName = new Map(parts?.map(p => [p.id, p.name]) ?? []);
+  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load storage contents. {error instanceof ApiError ? error.userMessage : ""}</div>;
   return (
     <div className="card overflow-hidden">
       <table className="table">
