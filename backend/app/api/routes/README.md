@@ -37,7 +37,7 @@ Every public REST endpoint lives here, one file per logical area. This README is
 
 - Every response uses `core/responses.py::ok` / `::err`. Envelope is `{ data, status }`. See [ADR-0003](../../../../docs/adr/0003-api-envelope-data-status.md).
 - `core/deps.py::get_current_user` is on every route; `get_current_workspace` is on every route except invitations and the public catalog.
-- Workspace isolation is the route author's job. See [ADR-0002](../../../../docs/adr/0002-code-enforced-workspace-isolation.md).
+- Workspace isolation is the route author's job. Use the helpers in `app/api/_helpers.py`: `assert_in_workspace(db, Model, id_, workspace_id)` for any caller-supplied UUID, and `assert_child_in_parent(...)` when a child id must also match a parent id. They raise 404 on miss *or* on cross-workspace match — replacing the workspace-blind `db.get(Model, id)`. See [ADR-0002](../../../../docs/adr/0002-code-enforced-workspace-isolation.md) and [docs/domain/workspace-isolation.md](../../../../docs/domain/workspace-isolation.md).
 - Rate limiting via slowapi, single-process bucket. See [ADR-0012](../../../../docs/adr/0012-uvicorn-single-worker-slowapi.md).
 
 ## See also

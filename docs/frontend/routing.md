@@ -142,17 +142,23 @@ The same handoff happens for sessions that expire mid-use: the auth bus
 user back there:
 
 ```tsx
-// web/src/App.tsx:140-153
+// web/src/App.tsx:143-156
 const from = (location.state as { from?: Location } | null)?.from;
-const target =
-  from && from.pathname !== "/login" && from.pathname !== "/signup"
-    ? from.pathname
-    : "/parts";
-return <Navigate to={target} replace />;
+if (from && from.pathname !== "/login" && from.pathname !== "/signup") {
+  return (
+    <Navigate
+      to={{ pathname: from.pathname, search: from.search, hash: from.hash }}
+      replace
+    />
+  );
+}
+return <Navigate to="/parts" replace />;
 ```
 
 The `pathname !== "/login"` guard is the loop-breaker (FE2-019). Default
-landing is `/parts`.
+landing is `/parts`. `search` and `hash` are carried through so deep
+links like `/parts/scan-import?storage_id=abc&tab=queue` survive the
+auth round-trip (PR #311, issue #304).
 
 ## Entry redirects
 

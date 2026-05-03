@@ -24,6 +24,8 @@ Owns the append-only `stock_entries` ledger and every quantity read derived from
 | Write — relocate | `service.py::move_stock` |
 | Write — correction | `service.py::adjust_stock` |
 | Take row lock before a write | `service.py::lock_parts_for_stock_write` |
+| Enforce single-part-only / existing-parts-only on a destination | `service.py::enforce_storage_constraints` |
+| Take per-(workspace, storage) advisory lock before constraint check | `service.py::_lock_for_storage_constraint` |
 | History (part / lot / storage / global) | `service.py::history_for_part`, `::history_for_lot`, `::history_for_storage`, `::history_global` |
 
 ## Hard rules (this module)
