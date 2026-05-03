@@ -33,7 +33,35 @@ trap 'rm -f "$CUR_RAW" "$KEYED_CUR" "$KEYED_BASE"' EXIT
 
 # Capture raw linter output (with line:col) so we can show humans where
 # the new violations live.
-(cd "$WORK_DIR" && eval "$LINT_CMD") 2>&1 \
+#
+# We must distinguish "linter ran cleanly with N violations" from
+# "linter crashed / was missing / misconfigured". The former is exit 0
+# (no findings) or exit 1 (findings); anything else (127 command not
+# found, 126 not executable, signal death, ruff/eslint internal error)
+# is a configuration error and must fail the gate, not be swallowed.
+# Previously the pipeline ended in `|| true`, which masked all of
+# these and let CI go green while no linting actually happened (#302).
+RAW_OUTPUT=""
+RAW_RC=0
+RAW_OUTPUT=$(cd "$WORK_DIR" && eval "$LINT_CMD" 2>&1) || RAW_RC=$?
+case "$RAW_RC" in
+  0|1) ;;
+  *)
+    echo "ERROR: linter command exited with status $RAW_RC (configuration error, not a violation)" >&2
+    echo "  LINT_CMD: $LINT_CMD" >&2
+    echo "  WORK_DIR: $WORK_DIR" >&2
+    echo "  output:" >&2
+    printf '%s\n' "$RAW_OUTPUT" | sed 's/^/    /' >&2
+    exit 2
+    ;;
+esac
+
+# Filter the captured output down to lines that look like
+# "<file>:<line>:<col>: ...". An empty result is fine (zero violations
+# from a clean linter run); the `|| true` here is intentional because
+# `grep` exits 1 when no lines match — that is not a configuration
+# error, unlike the linter exit code handled above.
+printf '%s\n' "$RAW_OUTPUT" \
   | grep -E '^[^[:space:]].+:[0-9]+:[0-9]+:' \
   | sed "s|^$(pwd)/||g" \
   > "$CUR_RAW" || true
