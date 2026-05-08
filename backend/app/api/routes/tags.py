@@ -74,13 +74,12 @@ def link(payload: TagLinkIn, db: DbSession, ws: CurrentWorkspace, user: CurrentU
 
 @router.delete("/links/{link_id}")
 def unlink(link_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    row = db.execute(
-        select(TagLink)
-        .where(TagLink.id == link_id)
-        .where(TagLink.workspace_id == ws.id)
-    ).scalar_one_or_none()
-    if row is not None:
-        db.delete(row)
+    # Per the rest of the API (orders/projects/parts), DELETE on an id
+    # that doesn't exist in this workspace returns 404 — never silently
+    # succeed (would let a caller probe foreign-workspace ids by their
+    # 200/404 split). Use the canonical helper.
+    row = assert_in_workspace(db, TagLink, link_id, ws.id)
+    db.delete(row)
     return ok(None, "deleted")
 
 
