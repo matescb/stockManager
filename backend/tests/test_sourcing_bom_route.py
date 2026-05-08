@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -181,6 +182,9 @@ def test_basic_bom_returns_enriched_lines(authed_client):
     assert data["partial"] is False
     assert data["coverage"]["total_lines"] == 1
     assert data["coverage"]["best_single_distributor"] == "DigiKey"
+    assert data["capacity"]["can_build_now"] == 0
+    assert data["capacity"]["can_build_after_purchase"] == 6
+    assert Decimal(data["capacity"]["est_purchase_cost"]) == Decimal("6.00")
     row = data["rows"][0]
     assert row["required"] == 20
     assert row["available"] == 0

@@ -30,6 +30,96 @@ class DistributorCoverageMatrix:
     best_two_distributor_combo: tuple[str, str] | None
 
 
+@dataclass(frozen=True)
+class BuildCapacity:
+    can_build_now: int
+    can_build_after_purchase: int
+    est_purchase_cost: Decimal | None
+    blocking_lines_now: list[UUID]
+    blocking_lines_after_purchase: list[UUID]
+
+
+def compute_build_capacity(
+    bom_rows: list[SourcingBomLineOut],
+    *,
+    requested_build_quantity: int,
+) -> BuildCapacity:
+    """Compute build capacity from enriched BOM sourcing rows."""
+    effective_rows = [row for row in bom_rows if row.required > 0]
+    if not effective_rows:
+        return BuildCapacity(
+            can_build_now=0,
+            can_build_after_purchase=0,
+            est_purchase_cost=None,
+            blocking_lines_now=[],
+            blocking_lines_after_purchase=[],
+        )
+
+    ratios_now = {
+        row.project_entry_id: _supported_builds(
+            row.available + row.substitute_available,
+            required=row.required,
+            requested_build_quantity=requested_build_quantity,
+        )
+        for row in effective_rows
+    }
+    ratios_after_purchase = {
+        row.project_entry_id: _supported_builds(
+            row.available + row.substitute_available + row.authorized_stock,
+            required=row.required,
+            requested_build_quantity=requested_build_quantity,
+        )
+        for row in effective_rows
+    }
+
+    can_build_now = min(ratios_now.values())
+    can_build_after_purchase = min(ratios_after_purchase.values())
+    blocking_lines_now = [
+        row.project_entry_id
+        for row in effective_rows
+        if ratios_now[row.project_entry_id] == can_build_now
+    ]
+    blocking_lines_after_purchase = [
+        row.project_entry_id
+        for row in effective_rows
+        if ratios_after_purchase[row.project_entry_id] == can_build_after_purchase
+    ]
+
+    est_purchase_cost = Decimal("0")
+    blocking_after = set(blocking_lines_after_purchase)
+    for row in effective_rows:
+        purchase_qty = max(
+            0,
+            _required_for_builds(
+                row.required,
+                builds=can_build_after_purchase,
+                requested_build_quantity=requested_build_quantity,
+            )
+            - (row.available + row.substitute_available),
+        )
+        if purchase_qty == 0:
+            if (
+                row.project_entry_id in blocking_after
+                and ratios_after_purchase[row.project_entry_id] < requested_build_quantity
+                and row.best_offer is None
+            ):
+                est_purchase_cost = None
+            continue
+        if row.best_offer is None or row.best_offer.unit_price is None:
+            est_purchase_cost = None
+            continue
+        if est_purchase_cost is not None:
+            est_purchase_cost += row.best_offer.unit_price * Decimal(purchase_qty)
+
+    return BuildCapacity(
+        can_build_now=can_build_now,
+        can_build_after_purchase=can_build_after_purchase,
+        est_purchase_cost=est_purchase_cost,
+        blocking_lines_now=blocking_lines_now,
+        blocking_lines_after_purchase=blocking_lines_after_purchase,
+    )
+
+
 def compute_coverage(
     bom_rows: list[SourcingBomLineOut],
     *,
@@ -116,6 +206,28 @@ def compute_coverage(
         best_single_distributor=best_single,
         best_two_distributor_combo=best_two,
     )
+
+
+def _supported_builds(
+    available: int,
+    *,
+    required: int,
+    requested_build_quantity: int,
+) -> int:
+    if available <= 0 or requested_build_quantity <= 0:
+        return 0
+    return available * requested_build_quantity // required
+
+
+def _required_for_builds(
+    required: int,
+    *,
+    builds: int,
+    requested_build_quantity: int,
+) -> int:
+    if builds <= 0 or requested_build_quantity <= 0:
+        return 0
+    return (required * builds + requested_build_quantity - 1) // requested_build_quantity
 
 
 def _best_covering_offer(
