@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -33,6 +34,29 @@ class SourcingNotConfigured(Exception):
 
 class SourcingBudgetBlocked(Exception):
     """Workspace exceeded the hard TrustedParts parts-count budget."""
+
+
+def dedupe_mpns(mpns: Iterable[str | None]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for mpn in mpns:
+        if mpn is None:
+            continue
+        clean_mpn = mpn.strip()
+        if not clean_mpn:
+            continue
+        key = clean_mpn.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(clean_mpn)
+    return deduped
+
+
+def chunk_mpns(mpns: Sequence[str], size: int = 50) -> list[list[str]]:
+    if size < 1 or size > 50:
+        raise ValueError("MPN chunk size must be between 1 and 50")
+    return [list(mpns[index : index + size]) for index in range(0, len(mpns), size)]
 
 
 def search(
