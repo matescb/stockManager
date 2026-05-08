@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -18,10 +18,13 @@ from app.domain.sourcing import cache
 from app.domain.sourcing.budget import BUDGET
 from app.domain.sourcing.coverage import compute_build_capacity, compute_coverage
 from app.domain.sourcing.factory import make_sourcing_provider
+from app.domain.sourcing.models import PurchasePlan, PurchasePlanLine
+from app.domain.sourcing.optimizer import Strategy, optimize
 from app.domain.sourcing.pricing import best_unit_price_at_qty
 from app.domain.sourcing.schemas import (
     BuildCapacityOut,
     DistributorCoverageMatrixOut,
+    PurchasePlanOut,
     SourcingAttributionLinks,
     SourcingBomLineOut,
     SourcingBomOfferOut,
@@ -35,6 +38,7 @@ from app.domain.sourcing.schemas import (
 
 TTL_SECONDS = 30 * 60
 BOM_TTL_SECONDS = 10 * 60
+PURCHASE_PLAN_TTL = timedelta(days=7)
 TRUSTEDPARTS_LINKS = SourcingAttributionLinks(
     primary="https://www.trustedparts.com/",
     attribution="https://www.trustedparts.com/en/about",
@@ -47,6 +51,140 @@ class SourcingNotConfigured(Exception):
 
 class SourcingBudgetBlocked(Exception):
     """Workspace exceeded the hard TrustedParts parts-count budget."""
+
+
+def build_purchase_plan(
+    db: Session,
+    *,
+    workspace: Any,
+    project: Any,
+    build_quantity: int,
+    strategy: Strategy = "preferred_first",
+    country: str | None = None,
+    currency: str | None = None,
+    distributors: list[str] | None = None,
+    max_distributors: int | None = None,
+    moq_overbuy_cap: int | None = None,
+    price_tolerance_pct: Decimal = Decimal("5"),
+    requested_by: UUID | None = None,
+) -> PurchasePlan:
+    bom = source_bom(
+        db,
+        workspace=workspace,
+        project=project,
+        build_quantity=build_quantity,
+        country=country,
+        currency=currency,
+        distributors=distributors,
+        in_stock_only=False,
+        use_cached_data=None,
+        requested_by=requested_by,
+    )
+    preferred_distributors = (
+        _clean_distributors(distributors)
+        if distributors is not None
+        else _clean_distributors(workspace.sourcing_preferred_distributors)
+    )
+    outcome = optimize(
+        bom.rows,
+        strategy=strategy,
+        preferred_distributors=preferred_distributors,
+        max_distributors=max_distributors,
+        moq_overbuy_cap=moq_overbuy_cap,
+        price_tolerance_pct=price_tolerance_pct,
+    )
+    created_at = utcnow()
+    plan = PurchasePlan(
+        workspace_id=workspace.id,
+        project_id=project.id,
+        build_quantity=build_quantity,
+        strategy=strategy,
+        country_code=_clean_code(country) or workspace.sourcing_country_code,
+        currency_code=_clean_code(currency) or workspace.sourcing_currency_code,
+        preferred_distributors=preferred_distributors,
+        status="draft",
+        created_at=created_at,
+        expires_at=created_at + PURCHASE_PLAN_TTL,
+        created_by=requested_by,
+    )
+    plan.lines = [
+        PurchasePlanLine(
+            project_entry_id=selection.project_entry_id,
+            part_id=selection.part_id,
+            mpn_searched=selection.mpn_searched,
+            required_qty=selection.required_qty,
+            internal_available_qty=selection.internal_available_qty,
+            shortage_qty=selection.shortage_qty,
+            selected_distributor=selection.selected_distributor,
+            selected_qty=selection.selected_qty,
+            selected_unit_price=selection.selected_unit_price,
+            selected_currency=selection.selected_currency,
+            selected_packaging=selection.selected_packaging,
+            selected_moq=selection.selected_moq,
+            selected_lead_time_days=selection.selected_lead_time_days,
+            selected_url=selection.selected_url,
+            risk_flags=list(selection.risk_flags),
+        )
+        for selection in outcome.selections
+    ]
+    db.add(plan)
+    db.flush()
+    return plan
+
+
+def purchase_plan_to_out(plan: PurchasePlan) -> PurchasePlanOut:
+    lines = sorted(
+        plan.lines,
+        key=lambda line: (
+            str(line.project_entry_id or ""),
+            (line.selected_distributor or "").casefold(),
+            str(line.id),
+        ),
+    )
+    unfilled_count = sum(1 for line in lines if line.selected_distributor is None)
+    if unfilled_count:
+        est_total_cost: Decimal | None = None
+    else:
+        est_total_cost = sum(
+            (
+                line.selected_unit_price * Decimal(line.selected_qty or 0)
+                for line in lines
+                if line.selected_unit_price is not None
+            ),
+            Decimal("0"),
+        )
+    lead_times = [
+        line.selected_lead_time_days
+        for line in lines
+        if line.selected_lead_time_days is not None
+    ]
+    return PurchasePlanOut.model_validate(
+        {
+            "id": plan.id,
+            "project_id": plan.project_id,
+            "build_quantity": plan.build_quantity,
+            "strategy": plan.strategy,
+            "country_code": plan.country_code,
+            "currency_code": plan.currency_code,
+            "preferred_distributors": plan.preferred_distributors,
+            "status": plan.status,
+            "created_at": plan.created_at,
+            "expires_at": plan.expires_at,
+            "created_by": plan.created_by,
+            "lines": lines,
+            "distributors_used": sorted(
+                {
+                    line.selected_distributor
+                    for line in lines
+                    if line.selected_distributor is not None
+                },
+                key=str.casefold,
+            ),
+            "est_total_cost": est_total_cost,
+            "worst_lead_time_days": max(lead_times) if lead_times else None,
+            "unfilled_count": unfilled_count,
+        }
+    )
 
 
 def dedupe_mpns(mpns: Iterable[str | None]) -> list[str]:

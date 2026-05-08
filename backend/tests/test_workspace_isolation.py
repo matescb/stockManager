@@ -16,6 +16,9 @@ from tests._factories import (
     create_part as _create_part,
 )
 from tests._factories import (
+    create_project_with_bom as _create_project_with_bom,
+)
+from tests._factories import (
     create_storage as _create_storage,
 )
 from tests._factories import (
@@ -500,6 +503,32 @@ def test_sourcing_search_uses_caller_workspace_secrets(monkeypatch):
     ]
     assert RecordingTrustedPartsClient.calls[-1]["company_id"] == "company-b"
     assert RecordingTrustedPartsClient.calls[-1]["api_key"] == "api-key-b"
+
+
+def test_purchase_plan_isolated_by_workspace(monkeypatch):
+    a, b = _two_workspaces()
+    part_a = _create_part(a, "A-plan-part")
+    project_a = _create_project_with_bom(
+        a,
+        "A plan",
+        [{"part_id": part_a, "quantity": 1}],
+    )
+
+    def fail_build_purchase_plan(*_args, **_kwargs):
+        pytest.fail("foreign project id reached purchase-plan service")
+
+    monkeypatch.setattr(
+        "app.domain.sourcing.service.build_purchase_plan",
+        fail_build_purchase_plan,
+    )
+
+    r = b.post(
+        f"/api/projects/{project_a}/purchase-plan",
+        json={"build_quantity": 1},
+    )
+
+    assert r.status_code == 404, r.text
+    assert r.json()["status"]["category"] == "not_found"
 
 
 # ---------------------------------------------------------------------------
