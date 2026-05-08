@@ -7,6 +7,7 @@ import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { InlineQueryError } from "@/components/QueryStateBoundary";
+import { SourcingCard } from "./SourcingCard";
 
 type Ws = {
   id: string;
@@ -27,6 +28,13 @@ type Ws = {
   parts_provider: "none" | "mouser" | "digikey";
   has_parts_provider_api_key: boolean;
   has_parts_provider_api_secret: boolean;
+  sourcing_provider: "none" | "trustedparts";
+  sourcing_country_code: string | null;
+  sourcing_currency_code: string | null;
+  sourcing_preferred_distributors: string[] | null;
+  sourcing_use_cached_for_dashboards: boolean;
+  has_sourcing_company_id: boolean;
+  has_sourcing_api_key: boolean;
   scanner: "zxing" | "scandit";
   has_scanner_license_key: boolean;
 };
@@ -646,6 +654,8 @@ export default function WorkspaceSettings() {
           )}
         </div>
       )}
+
+      {cur && <SourcingCard workspace={cur} workspaceId={workspaceId} />}
 
       {cur && (
         <div className="card p-4 mb-4 space-y-3 text-sm">
