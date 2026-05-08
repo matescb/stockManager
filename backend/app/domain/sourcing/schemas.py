@@ -204,6 +204,36 @@ class BuildCapacityOut(BaseModel):
     blocking_lines_after_purchase: list[UUID]
 
 
+class OptimizerSelectionOut(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    project_entry_id: UUID
+    part_id: UUID
+    mpn_searched: str
+    required_qty: int
+    internal_available_qty: int
+    shortage_qty: int
+    selected_distributor: str | None = None
+    selected_qty: int
+    selected_unit_price: Decimal | None = None
+    selected_currency: str | None = None
+    selected_packaging: str | None = None
+    selected_moq: int | None = None
+    selected_lead_time_days: int | None = None
+    selected_url: str | None = None
+    risk_flags: tuple[str, ...] = ()
+
+
+class OptimizerOutcomeOut(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    selections: list[OptimizerSelectionOut]
+    unfilled_lines: list[UUID]
+    distributors_used: list[str]
+    est_total_cost: Decimal | None = None
+    worst_lead_time_days: int | None = None
+
+
 class SourcingBomLineOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
