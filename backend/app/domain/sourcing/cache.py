@@ -33,18 +33,20 @@ def get_or_fetch(
     ttl_seconds: int,
     fetch_fn: Callable[[], dict[str, Any]],
     created_by: UUID | None = None,
+    force_refresh: bool = False,
 ) -> tuple[dict[str, Any], bool]:
     """Return ``(response_json, cache_hit)`` for one workspace-scoped query."""
     now = utcnow()
     query_hash = canonical_query_hash(query)
-    cached = db.execute(
-        select(SourcingCache)
-        .where(SourcingCache.workspace_id == workspace_id)
-        .where(SourcingCache.query_hash == query_hash)
-        .where(SourcingCache.expires_at > now)
-    ).scalar_one_or_none()
-    if cached is not None:
-        return cached.response_json, True
+    if not force_refresh:
+        cached = db.execute(
+            select(SourcingCache)
+            .where(SourcingCache.workspace_id == workspace_id)
+            .where(SourcingCache.query_hash == query_hash)
+            .where(SourcingCache.expires_at > now)
+        ).scalar_one_or_none()
+        if cached is not None:
+            return cached.response_json, True
 
     response = fetch_fn()
     ttl = min(timedelta(seconds=ttl_seconds), SEVEN_DAYS)

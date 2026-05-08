@@ -79,6 +79,50 @@ Parts without an MPN return a successful no-network response.
 - Source: `backend/app/api/routes/sourcing.py:132-220`.
 - Service: `backend/app/domain/sourcing/service.py:62-138`.
 
+### `POST /api/parts/{part_id}/sourcing/refresh`
+
+Force a live TrustedParts fetch for one part's MPN and replace the local cache row.
+
+**Request**
+
+Path: `part_id` is a part UUID in the current workspace. No body.
+
+**Response** — `200 OK` (envelope: `{ data, status }`)
+
+Shape matches `GET /api/parts/{part_id}/sourcing`. `cache_hit` is `false` when the upstream fetch succeeds.
+
+```json
+{
+  "data": {
+    "mpn": "STM32F103C8T6",
+    "offers": [],
+    "request_id": "trustedparts-request-id",
+    "powered_by": "TrustedParts",
+    "cache_hit": false,
+    "reason": "ok"
+  },
+  "status": { "category": "ok", "message": "OK" }
+}
+```
+
+**Errors**
+
+- `404 Not Found` — `part_id` is missing or belongs to another workspace.
+- `409 Conflict` — `{ "data": null, "status": { "category": "conflict", "message": "sourcing not configured" } }`.
+- `422 Unprocessable Entity` — `{ "data": null, "status": { "category": "validation_error", "message": "part has no MPN" } }`.
+- `429 Too Many Requests` — workspace rate limit: 6 requests/minute.
+- `502 Bad Gateway` — TrustedParts auth, rate-limit, timeout, upstream, or response-shape failure.
+- `503 Service Unavailable` — `{ "data": null, "status": { "category": "server_error", "message": "sourcing budget exhausted" } }`.
+
+**Notes**
+
+- The route validates `part_id` with `assert_in_workspace()` before reading the part MPN.
+- Refresh calls sourcing search with `use_cached_data=false`, `ttl_seconds=1800`, and `force_refresh=true`; the cache helper still upserts on `(workspace_id, query_hash)`.
+- Forced refreshes consume the in-process parts-count budget because they always call TrustedParts unless the hard budget check blocks first.
+- Source: `backend/app/api/routes/sourcing.py:214-274`.
+- Service: `backend/app/domain/sourcing/service.py:62-142`.
+- Cache: `backend/app/domain/sourcing/cache.py:28-72`.
+
 ### `POST /api/sourcing/search`
 
 Search TrustedParts for 1-50 exact MPNs using the current workspace's encrypted sourcing credentials.

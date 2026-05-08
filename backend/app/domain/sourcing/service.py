@@ -71,6 +71,7 @@ def search(
     use_cached_data: bool | None = None,
     ttl_seconds: int = TTL_SECONDS,
     requested_by: UUID | None = None,
+    force_refresh: bool = False,
 ) -> SourcingSearchOut:
     clean_mpns = [mpn.strip() for mpn in mpns]
     if not 1 <= len(clean_mpns) <= 50 or any(not mpn for mpn in clean_mpns):
@@ -96,7 +97,7 @@ def search(
     verdict = BUDGET.check(workspace.id, parts_count=len(clean_mpns))
     if not verdict.allow:
         raise SourcingBudgetBlocked(verdict.reason)
-    if verdict.mode == "degraded":
+    if verdict.mode == "degraded" and not force_refresh:
         effective_use_cached = True
 
     provider.country_code = effective_country
@@ -135,6 +136,7 @@ def search(
             ttl_seconds=ttl_seconds,
             fetch_fn=fetch,
             created_by=requested_by,
+            force_refresh=force_refresh,
         )
         if not cache_hit:
             BUDGET.record(workspace.id, 1)

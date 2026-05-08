@@ -211,6 +211,83 @@ def get_part_sourcing(
     )
 
 
+@parts_router.post(
+    "/{part_id}/sourcing/refresh",
+    dependencies=[Depends(require_role("member"))],
+)
+@limiter.limit("6/minute", key_func=workspace_key)
+def refresh_part_sourcing(
+    request: Request,
+    part_id: UUID,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    part = assert_in_workspace(db, Part, part_id, ws.id, label="part")
+    mpn = (part.mpn or "").strip()
+    if not mpn:
+        return _error_response(request, 422, "validation_error", "part has no MPN")
+
+    try:
+        out = sourcing_service.search(
+            db,
+            workspace=ws,
+            mpns=[mpn],
+            use_cached_data=False,
+            ttl_seconds=_PART_SOURCING_TTL_SECONDS,
+            requested_by=user.id,
+            force_refresh=True,
+        )
+    except SourcingNotConfigured:
+        return _error_response(request, 409, "conflict", "sourcing not configured")
+    except SourcingBudgetBlocked:
+        return _error_response(request, 503, "server_error", "sourcing budget exhausted")
+    except SourcingAuthError:
+        return _error_response(
+            request,
+            502,
+            "server_error",
+            "TrustedParts rejected sourcing credentials",
+        )
+    except SourcingRateLimitError:
+        return _error_response(
+            request,
+            502,
+            "server_error",
+            "TrustedParts rate limit reached",
+        )
+    except SourcingTimeoutError:
+        return _error_response(
+            request,
+            502,
+            "server_error",
+            "TrustedParts request timed out",
+        )
+    except SourcingClientError:
+        return _error_response(
+            request,
+            502,
+            "server_error",
+            "TrustedParts sourcing request failed",
+        )
+
+    return ok(_part_sourcing_payload(out))
+
+
+def _part_sourcing_payload(out):
+    result = out.results[0]
+    return {
+        "mpn": result.mpn,
+        "offers": [offer.model_dump(mode="json") for offer in result.offers],
+        "request_id": result.request_id,
+        "powered_by": out.powered_by,
+        "fetched_at": result.fetched_at.isoformat(),
+        "cache_hit": result.cache_hit,
+        "links": out.links.model_dump(mode="json"),
+        "reason": "ok",
+    }
+
+
 def _clean_query_distributors(value: list[str] | None) -> list[str] | None:
     if value is None:
         return None
