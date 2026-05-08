@@ -316,6 +316,65 @@ def test_stock_move_rejects_foreign_source():
     assert r.status_code == 400, r.text
 
 
+def test_sourcing_cache_isolated_by_workspace(db):
+    """Same query hash in two workspaces must not cross-read cache rows."""
+    from app.domain.sourcing.cache import get_or_fetch
+    from app.domain.users.models import User
+    from app.domain.workspaces.models import Workspace
+
+    def make_workspace():
+        user = User(
+            email=f"cache-{uuid.uuid4().hex[:8]}@x.com",
+            name="cache tester",
+            password_hash="test",
+        )
+        db.add(user)
+        db.flush()
+        workspace = Workspace(
+            name=f"cache-ws-{uuid.uuid4().hex[:8]}",
+            kind="organization",
+            owner_user_id=user.id,
+        )
+        db.add(workspace)
+        db.flush()
+        return workspace.id
+
+    workspace_a = make_workspace()
+    workspace_b = make_workspace()
+    query = {"mpn": "same-hash", "country": "CZ"}
+
+    get_or_fetch(
+        db,
+        workspace_id=workspace_a,
+        query=query,
+        ttl_seconds=3600,
+        fetch_fn=lambda: {"workspace": "a"},
+    )
+    first_b, hit_b = get_or_fetch(
+        db,
+        workspace_id=workspace_b,
+        query=query,
+        ttl_seconds=3600,
+        fetch_fn=lambda: {"workspace": "b"},
+    )
+
+    def fail_workspace_b_miss():
+        pytest.fail("workspace B must not miss after writing its own cache row")
+
+    second_b, second_hit_b = get_or_fetch(
+        db,
+        workspace_id=workspace_b,
+        query=query,
+        ttl_seconds=3600,
+        fetch_fn=fail_workspace_b_miss,
+    )
+
+    assert first_b == {"workspace": "b"}
+    assert second_b == {"workspace": "b"}
+    assert hit_b is False
+    assert second_hit_b is True
+
+
 # ---------------------------------------------------------------------------
 # parts.default_storage_location_id on create / patch / bulk-import-from-scan
 # ---------------------------------------------------------------------------
