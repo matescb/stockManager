@@ -16,9 +16,11 @@ from app.domain.builds.service import shortage_analysis
 from app.domain.lots.models import Lot
 from app.domain.parts.models import Part
 from app.domain.projects.models import Project
+from app.domain.reports.schemas import ReplenishmentCostSort
 from app.domain.reports.service import (
     bom_buyability_report,
     low_stock_report,
+    replenishment_cost_report,
     sourcing_risk_report,
 )
 from app.domain.stock.service import (
@@ -145,6 +147,24 @@ def stock_value(db: DbSession, ws: CurrentWorkspace):
             "by_part": sorted(by_part.values(), key=lambda r: r["value"], reverse=True),
         }
     )
+
+
+@router.get("/replenishment-cost")
+@limiter.limit("30/minute", key_func=workspace_key)
+def replenishment_cost(
+    request: Request,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    sort: ReplenishmentCostSort = Query(default="delta_pct"),
+    use_cached_data: bool | None = None,
+):
+    out = replenishment_cost_report(
+        db,
+        workspace=ws,
+        use_cached_data=use_cached_data,
+        sort=sort,
+    )
+    return ok(out.model_dump(mode="json"))
 
 
 @router.get("/expiring-lots")
