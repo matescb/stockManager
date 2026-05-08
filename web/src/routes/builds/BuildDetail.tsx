@@ -10,6 +10,7 @@ import { formatDateTime } from "@/lib/format";
 import EntityHeader from "@/components/EntityHeader";
 import AttachmentsPanel from "@/components/AttachmentsPanel";
 import ActivityTimeline from "@/components/ActivityTimeline";
+import { SourceBomButton } from "@/routes/projects/sourcing/SourceBomButton";
 import type { Build, BuildShortageRow, Part, Project, ProjectEntry, StorageLocation } from "@/types";
 
 type DetailOut = { build: Build; shortage: BuildShortageRow[] };
@@ -177,6 +178,7 @@ export default function BuildDetail() {
         ]}
         actions={
           <div className="flex gap-2">
+            <SourceBomButton projectId={projectId} />
             {isEditable && (
               <button className="btn" onClick={fillSuggested}>Auto-fill</button>
             )}
