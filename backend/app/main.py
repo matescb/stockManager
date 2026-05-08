@@ -117,6 +117,7 @@ from app.api.routes import (
     reports,
     search,
     sentry_tunnel,
+    sourcing,
     stock,
     storage,
     tags,
@@ -384,6 +385,7 @@ app.include_router(attachments.router, prefix="/api/attachments", tags=["attachm
 app.include_router(custom_fields.router, prefix="/api/custom-fields", tags=["custom_fields"], dependencies=_member_gate)
 app.include_router(tags.router, prefix="/api/tags", tags=["tags"], dependencies=_member_gate)
 app.include_router(search.router, prefix="/api/search", tags=["search"], dependencies=_member_gate)
+app.include_router(sourcing.router, prefix="/api/workspaces", tags=["sourcing"])
 app.include_router(
     parts_provider.router,
     prefix="/api/parts",
