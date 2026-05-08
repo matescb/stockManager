@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.core.time import utcnow
 from app.domain.builds.service import shortage_analysis
 from app.domain.parts.models import Part
+from app.domain.projects.models import Project
 from app.domain.sourcing import cache
 from app.domain.sourcing.budget import BUDGET
 from app.domain.sourcing.coverage import compute_build_capacity, compute_coverage
@@ -102,6 +103,9 @@ def build_purchase_plan(
         country_code=_clean_code(country) or workspace.sourcing_country_code,
         currency_code=_clean_code(currency) or workspace.sourcing_currency_code,
         preferred_distributors=preferred_distributors,
+        max_distributors=max_distributors,
+        moq_overbuy_cap=moq_overbuy_cap,
+        price_tolerance_pct=price_tolerance_pct,
         status="draft",
         created_at=created_at,
         expires_at=created_at + PURCHASE_PLAN_TTL,
@@ -128,6 +132,68 @@ def build_purchase_plan(
         for selection in outcome.selections
     ]
     db.add(plan)
+    db.flush()
+    return plan
+
+
+def refresh_purchase_plan(
+    db: Session,
+    *,
+    workspace: Any,
+    plan: PurchasePlan,
+    requested_by: UUID | None = None,
+) -> PurchasePlan:
+    project = db.execute(
+        select(Project).where(Project.id == plan.project_id, Project.workspace_id == workspace.id)
+    ).scalar_one_or_none()
+    if project is None:
+        raise ValueError("purchase plan project not found")
+
+    bom = source_bom(
+        db,
+        workspace=workspace,
+        project=project,
+        build_quantity=plan.build_quantity,
+        country=plan.country_code,
+        currency=plan.currency_code,
+        distributors=plan.preferred_distributors,
+        in_stock_only=False,
+        use_cached_data=False,
+        ttl_seconds=0,
+        requested_by=requested_by,
+        force_refresh=True,
+    )
+    outcome = optimize(
+        bom.rows,
+        strategy=plan.strategy,
+        preferred_distributors=plan.preferred_distributors,
+        max_distributors=plan.max_distributors,
+        moq_overbuy_cap=plan.moq_overbuy_cap,
+        price_tolerance_pct=Decimal(plan.price_tolerance_pct or Decimal("5")),
+    )
+
+    plan.lines = [
+        PurchasePlanLine(
+            project_entry_id=selection.project_entry_id,
+            part_id=selection.part_id,
+            mpn_searched=selection.mpn_searched,
+            required_qty=selection.required_qty,
+            internal_available_qty=selection.internal_available_qty,
+            shortage_qty=selection.shortage_qty,
+            selected_distributor=selection.selected_distributor,
+            selected_qty=selection.selected_qty,
+            selected_unit_price=selection.selected_unit_price,
+            selected_currency=selection.selected_currency,
+            selected_packaging=selection.selected_packaging,
+            selected_moq=selection.selected_moq,
+            selected_lead_time_days=selection.selected_lead_time_days,
+            selected_url=selection.selected_url,
+            risk_flags=list(selection.risk_flags),
+        )
+        for selection in outcome.selections
+    ]
+    plan.status = "refreshed"
+    plan.last_refreshed_at = utcnow()
     db.flush()
     return plan
 
@@ -167,9 +233,13 @@ def purchase_plan_to_out(plan: PurchasePlan) -> PurchasePlanOut:
             "country_code": plan.country_code,
             "currency_code": plan.currency_code,
             "preferred_distributors": plan.preferred_distributors,
+            "max_distributors": plan.max_distributors,
+            "moq_overbuy_cap": plan.moq_overbuy_cap,
+            "price_tolerance_pct": plan.price_tolerance_pct,
             "status": plan.status,
             "created_at": plan.created_at,
             "expires_at": plan.expires_at,
+            "last_refreshed_at": plan.last_refreshed_at,
             "created_by": plan.created_by,
             "lines": lines,
             "distributors_used": sorted(
@@ -223,6 +293,7 @@ def source_bom(
     use_cached_data: bool | None = None,
     ttl_seconds: int = BOM_TTL_SECONDS,
     requested_by: UUID | None = None,
+    force_refresh: bool = False,
 ) -> SourcingBomOut:
     shortage = shortage_analysis(
         db,
@@ -255,6 +326,7 @@ def source_bom(
             use_cached_data=use_cached_data,
             ttl_seconds=ttl_seconds,
             requested_by=requested_by,
+            force_refresh=force_refresh,
         )
         fetched_at_values.append(out.fetched_at)
         for result in out.results:

@@ -146,6 +146,48 @@ Path: `project_id` is a project UUID in the current workspace.
 - `expires_at` is capped to `created_at + 7 days`; refresh and conversion are later Phase-4 endpoints.
 - Decimal monetary fields serialize as strings.
 
+### `POST /api/sourcing/purchase-plans/{plan_id}/refresh`
+
+Re-run a purchase plan with fresh TrustedParts offers and replace its plan lines.
+
+**Request**
+
+Path: `plan_id` is a purchase plan UUID in the current workspace. No request body is accepted; refresh uses the strategy and filters persisted on the plan.
+
+**Response** — `200 OK` (envelope: `{ data, status }`)
+
+Shape matches `POST /api/projects/{project_id}/purchase-plan`, with `status` set to `refreshed` and `last_refreshed_at` populated.
+
+```json
+{
+  "data": {
+    "id": "9b7f7d43-6b5c-4f7d-bc0e-44c6d73f0992",
+    "strategy": "preferred_first",
+    "status": "refreshed",
+    "expires_at": "2026-05-15T12:00:00+00:00",
+    "last_refreshed_at": "2026-05-09T12:00:00+00:00",
+    "lines": []
+  },
+  "status": { "category": "ok", "message": "OK" }
+}
+```
+
+**Errors**
+
+- `404 Not Found` — `plan_id` is missing or belongs to another workspace.
+- `409 Conflict` — the plan has expired, or sourcing is not configured.
+- `422 Unprocessable Entity` — malformed UUID.
+- `429 Too Many Requests` — workspace rate limit: 15 requests/minute.
+- `502 Bad Gateway` — TrustedParts auth, rate-limit, timeout, upstream, or response-shape failure.
+- `503 Service Unavailable` — sourcing budget exhausted.
+
+**Notes**
+
+- Expired plans return `409 Conflict` with `message="plan expired"`.
+- Refresh deletes the old `purchase_plan_lines` and inserts a fresh optimizer outcome.
+- Refresh does not extend `expires_at`; the original 7-day cap stays in force.
+- The service forces a live TrustedParts refresh by using `use_cached_data=false` and bypassing the local cache hit path.
+
 ### `GET /api/parts/{part_id}/sourcing`
 
 Return cached TrustedParts offers for one part's MPN.

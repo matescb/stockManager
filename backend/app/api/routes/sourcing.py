@@ -12,6 +12,7 @@ from app.api._helpers import assert_in_workspace
 from app.core.deps import CurrentUser, CurrentWorkspace, require_role
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import err, ok
+from app.core.time import utcnow
 from app.domain.parts.models import Part
 from app.domain.projects.models import Project
 from app.domain.sourcing import (
@@ -22,6 +23,7 @@ from app.domain.sourcing import (
 )
 from app.domain.sourcing import service as sourcing_service
 from app.domain.sourcing.factory import make_sourcing_provider
+from app.domain.sourcing.models import PurchasePlan
 from app.domain.sourcing.schemas import (
     PurchasePlanIn,
     SourcingBomIn,
@@ -262,6 +264,65 @@ def create_project_purchase_plan(
         )
 
     return ok(sourcing_service.purchase_plan_to_out(plan).model_dump(mode="json"))
+
+
+@search_router.post(
+    "/purchase-plans/{plan_id}/refresh",
+    dependencies=[Depends(require_role("member"))],
+)
+@limiter.limit("15/minute", key_func=workspace_key)
+def refresh_purchase_plan(
+    request: Request,
+    plan_id: UUID,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    plan = assert_in_workspace(db, PurchasePlan, plan_id, ws.id, label="purchase plan")
+    if plan.expires_at <= utcnow():
+        return _error_response(request, 409, "conflict", "plan expired")
+
+    try:
+        refreshed = sourcing_service.refresh_purchase_plan(
+            db,
+            workspace=ws,
+            plan=plan,
+            requested_by=user.id,
+        )
+    except SourcingNotConfigured:
+        return _error_response(request, 409, "conflict", "sourcing not configured")
+    except SourcingBudgetBlocked:
+        return _error_response(request, 503, "server_error", "sourcing budget exhausted")
+    except SourcingAuthError:
+        return _error_response(
+            request,
+            502,
+            "server_error",
+            "TrustedParts rejected sourcing credentials",
+        )
+    except SourcingRateLimitError:
+        return _error_response(
+            request,
+            502,
+            "server_error",
+            "TrustedParts rate limit reached",
+        )
+    except SourcingTimeoutError:
+        return _error_response(
+            request,
+            502,
+            "server_error",
+            "TrustedParts request timed out",
+        )
+    except SourcingClientError:
+        return _error_response(
+            request,
+            502,
+            "server_error",
+            "TrustedParts sourcing request failed",
+        )
+
+    return ok(sourcing_service.purchase_plan_to_out(refreshed).model_dump(mode="json"))
 
 
 @parts_router.get(

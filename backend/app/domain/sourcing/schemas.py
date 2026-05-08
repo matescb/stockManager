@@ -298,9 +298,13 @@ class PurchasePlanOut(BaseModel):
     country_code: str | None = None
     currency_code: str | None = None
     preferred_distributors: list[str] | None = None
+    max_distributors: int | None = None
+    moq_overbuy_cap: int | None = None
+    price_tolerance_pct: Decimal | None = None
     status: str
     created_at: datetime
     expires_at: datetime
+    last_refreshed_at: datetime | None = None
     created_by: UUID | None = None
     lines: list[PurchasePlanLineOut]
     distributors_used: list[str]
