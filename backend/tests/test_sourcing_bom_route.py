@@ -179,6 +179,8 @@ def test_basic_bom_returns_enriched_lines(authed_client):
     datetime.fromisoformat(data["fetched_at"])
     assert data["powered_by"] == "TrustedParts"
     assert data["partial"] is False
+    assert data["coverage"]["total_lines"] == 1
+    assert data["coverage"]["best_single_distributor"] == "DigiKey"
     row = data["rows"][0]
     assert row["required"] == 20
     assert row["available"] == 0

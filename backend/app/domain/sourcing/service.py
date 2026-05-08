@@ -16,13 +16,16 @@ from app.domain.builds.service import shortage_analysis
 from app.domain.parts.models import Part
 from app.domain.sourcing import cache
 from app.domain.sourcing.budget import BUDGET
+from app.domain.sourcing.coverage import compute_coverage
 from app.domain.sourcing.factory import make_sourcing_provider
 from app.domain.sourcing.pricing import best_unit_price_at_qty
 from app.domain.sourcing.schemas import (
+    DistributorCoverageMatrixOut,
     SourcingAttributionLinks,
     SourcingBomLineOut,
     SourcingBomOfferOut,
     SourcingBomOut,
+    SourcingBomPriceBreakOut,
     SourcingQuery,
     SourcingSearchOut,
     SourcingSearchRaw,
@@ -129,6 +132,9 @@ def source_bom(
     ]
     return SourcingBomOut(
         rows=rows,
+        coverage=DistributorCoverageMatrixOut.model_validate(
+            compute_coverage(rows, preferred_distributors=preferred)
+        ),
         fetched_at=max(fetched_at_values, default=utcnow()),
         partial=partial,
         links=TRUSTEDPARTS_LINKS,
@@ -375,6 +381,7 @@ def _joined_offers(
                         packaging=distributor.packaging,
                         moq=distributor.moq,
                         lead_time_days=distributor.lead_time_days,
+                        price_breaks=_price_breaks_for_distributor(distributor),
                         url=distributor.product_url or offer.links.primary,
                     )
                 )
@@ -409,6 +416,23 @@ def _unit_price_for_distributor(distributor: Any, qty: int) -> Decimal | None:
         ]
     best = best_unit_price_at_qty(price_breaks, qty)
     return best[0] if best is not None else None
+
+
+def _price_breaks_for_distributor(distributor: Any) -> list[SourcingBomPriceBreakOut]:
+    price_breaks = list(distributor.price_breaks)
+    if not price_breaks and distributor.unit_price is not None:
+        price_breaks = [
+            {
+                "quantity": max(1, int(distributor.moq or 1)),
+                "unit_price": distributor.unit_price,
+            }
+        ]
+    return [
+        SourcingBomPriceBreakOut(quantity=quantity, unit_price=unit_price)
+        for item in price_breaks
+        if (best := best_unit_price_at_qty([item], 1)) is not None
+        for unit_price, quantity in [best]
+    ]
 
 
 def _risk_flags(
