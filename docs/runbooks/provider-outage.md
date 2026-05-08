@@ -155,10 +155,50 @@ needs a code change:
    "Provider catalog vs spec keys").
 4. PR + deploy.
 
+## TrustedParts outage
+
+TrustedParts sourcing is separate from the Mouser/DigiKey catalog providers. It backs `POST /api/sourcing/search`, the workspace sourcing connection test, and future sourcing UI surfaces; catalog lookup, manual part creation, stock movements, and existing parts remain available.
+
+Integration entry points:
+
+- `backend/app/domain/sourcing/client.py` — TrustedParts API v2 client.
+- `backend/app/domain/sourcing/factory.py:12` — decrypts the current workspace's sourcing credentials and builds the client.
+- `backend/app/domain/sourcing/service.py:39` — cache, budget, and response attribution facade.
+- `backend/app/api/routes/sourcing.py:87` — member search route and error mapping.
+
+### TrustedParts triage
+
+| Symptom | Likely cause | Action |
+|---|---|---|
+| `409 sourcing not configured` | Workspace has no TrustedParts company ID/API key | Workspace admin configures sourcing credentials in workspace settings. |
+| `502 TrustedParts rejected sourcing credentials` | Company ID or API key is invalid/revoked | Workspace admin re-issues credentials in TrustedParts and saves them again. |
+| `502 TrustedParts rate limit reached` | TrustedParts throttled the key | Ask the workspace to pause high-volume sourcing; retry after the provider window clears. |
+| `502 TrustedParts request timed out` or upstream failure | TrustedParts or network outage | Use manual entry/fallback below; retry when provider status recovers. |
+| `503 sourcing budget exhausted` | Local hard parts-count budget blocked live calls | Wait for the rolling window to expire; cached hits still avoid additional budget consumption. |
+
+### Rate-limit recovery
+
+1. Check whether the response is our local `429` route limit, local `503` budget block, or an upstream `502` TrustedParts rate-limit mapping.
+2. For local `429`, wait for the 60/minute workspace route window.
+3. For local `503`, wait for the rolling budget window. The budget is process-local and assumes one uvicorn worker (`backend/app/domain/sourcing/budget.py:104`).
+4. For upstream TrustedParts throttling, reduce sourcing calls from the affected workspace and retry later. Do not bypass the budget, add `SourceIp`, or remove attribution to work around throttling.
+
+### Credential issues
+
+1. Confirm only one workspace is affected.
+2. Ask a workspace admin to update TrustedParts company ID and API key in workspace settings.
+3. Use `POST /api/workspaces/current/sourcing/test` to confirm the credentials probe returns `{ "ok": true }`.
+4. If the test route succeeds but search still fails, inspect `backend/app/domain/sourcing/service.py:39` and `backend/app/api/routes/sourcing.py:87` for regression in defaults, cache, or error mapping.
+
+### Fallback
+
+Users can still create and edit parts manually, set storage/stock, and use catalog providers. TrustedParts sourcing results are convenience procurement data; they must not be replaced by scraped data or mixed public distributor data during an outage without a new approval path. Existing cached results can be served until their short TTL expires, but the cache is not a permanent price-history store.
+
 ## Verification
 
 - A test lookup for a known-good MPN against the affected provider
   succeeds and populates expected fields.
+- A TrustedParts search for a known-good MPN returns `powered_by="TrustedParts"` and attribution links, or the workspace sourcing test returns `{ "ok": true }` after credential repair.
 - Sentry: `httpx.*` from the provider modules drops back to baseline
   rate.
 - A workspace that reported issues confirms autofill is back.

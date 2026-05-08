@@ -375,6 +375,103 @@ def test_sourcing_cache_isolated_by_workspace(db):
     assert second_hit_b is True
 
 
+def test_sourcing_search_uses_caller_workspace_secrets(monkeypatch):
+    """The search route must decrypt only the current workspace's sourcing creds."""
+    from app.core.secrets import decrypt
+    from app.domain.sourcing.budget import BUDGET
+    from app.domain.sourcing.schemas import SourcingQuery, SourcingSearchRaw
+    from app.domain.workspaces.models import Workspace
+    from app.infra.db import SessionLocal
+
+    class RecordingTrustedPartsClient:
+        calls: list[dict] = []
+
+        def __init__(
+            self,
+            company_id: str,
+            api_key: str,
+            country_code: str | None,
+            currency_code: str | None,
+            user_agent: str,
+        ) -> None:
+            self.company_id = company_id
+            self.api_key = api_key
+            self.country_code = country_code
+            self.currency_code = currency_code
+            self.user_agent = user_agent
+
+        def search(self, queries: list[SourcingQuery], *, use_cached_data: bool, **_kwargs):
+            self.calls.append(
+                {
+                    "company_id": self.company_id,
+                    "api_key": self.api_key,
+                    "queries": [query.search_token for query in queries],
+                    "use_cached_data": use_cached_data,
+                }
+            )
+            return SourcingSearchRaw(offers=[], request_id="workspace-secret-check")
+
+    def configure_sourcing(client: TestClient, company_id: str, api_key: str) -> None:
+        r = client.patch(
+            "/api/workspaces/current",
+            json={
+                "sourcing_provider": "trustedparts",
+                "sourcing_company_id": company_id,
+                "sourcing_api_key": api_key,
+                "sourcing_country_code": "CZ",
+                "sourcing_currency_code": "EUR",
+            },
+        )
+        assert r.status_code == 200, r.text
+
+    client_a = TestClient(app)
+    client_b = TestClient(app)
+    ws_a_id = _signup(client_a, f"sourcing-a-{uuid.uuid4().hex[:6]}@x.com")
+    ws_b_id = _signup(client_b, f"sourcing-b-{uuid.uuid4().hex[:6]}@x.com")
+    configure_sourcing(client_a, "company-a", "api-key-a")
+    configure_sourcing(client_b, "company-b", "api-key-b")
+
+    with SessionLocal() as session:
+        ws_a = session.get(Workspace, ws_a_id)
+        ws_b = session.get(Workspace, ws_b_id)
+        assert ws_a is not None
+        assert ws_b is not None
+        a_tokens = {ws_a.sourcing_company_id_enc, ws_a.sourcing_api_key_enc}
+        b_tokens = {ws_b.sourcing_company_id_enc, ws_b.sourcing_api_key_enc}
+
+    seen_tokens: list[str | None] = []
+
+    def decrypt_spy(token: str | None) -> str | None:
+        seen_tokens.append(token)
+        return decrypt(token)
+
+    BUDGET._events.clear()
+    RecordingTrustedPartsClient.calls = []
+    monkeypatch.setattr("app.domain.sourcing.factory.decrypt", decrypt_spy)
+    monkeypatch.setattr(
+        "app.domain.sourcing.factory.TrustedPartsClient",
+        RecordingTrustedPartsClient,
+    )
+
+    r_a = client_a.post("/api/sourcing/search", json={"mpns": ["BAT54C"]})
+    assert r_a.status_code == 200, r_a.text
+    assert r_a.json()["data"]["cache_hit"] is False
+    seen_tokens.clear()
+
+    r = client_b.post("/api/sourcing/search", json={"mpns": ["BAT54C"]})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["cache_hit"] is False
+    assert set(seen_tokens) == b_tokens
+    assert not set(seen_tokens) & a_tokens
+    assert [call["company_id"] for call in RecordingTrustedPartsClient.calls] == [
+        "company-a",
+        "company-b",
+    ]
+    assert RecordingTrustedPartsClient.calls[-1]["company_id"] == "company-b"
+    assert RecordingTrustedPartsClient.calls[-1]["api_key"] == "api-key-b"
+
+
 # ---------------------------------------------------------------------------
 # parts.default_storage_location_id on create / patch / bulk-import-from-scan
 # ---------------------------------------------------------------------------

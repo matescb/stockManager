@@ -1,7 +1,10 @@
 """Pydantic DTOs for TrustedParts sourcing."""
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from datetime import datetime
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class SourcingQuery(BaseModel):
@@ -56,3 +59,65 @@ class SourcingSearchRaw(BaseModel):
 
     offers: list[SourcingOffer]
     request_id: str | None = None
+
+
+class SourcingSearchIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mpns: list[str] = Field(min_length=1, max_length=50)
+    country: str | None = Field(default=None, min_length=2, max_length=2)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    in_stock_only: bool = False
+    distributors: list[str] | None = None
+    use_cached_data: bool | None = None
+
+    @field_validator("mpns")
+    @classmethod
+    def _strip_mpns(cls, value: list[str]) -> list[str]:
+        stripped = [item.strip() for item in value]
+        if any(not item for item in stripped):
+            raise ValueError("mpns must not contain empty values")
+        return stripped
+
+    @field_validator("country", "currency")
+    @classmethod
+    def _uppercase_codes(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip().upper()
+
+    @field_validator("distributors")
+    @classmethod
+    def _strip_distributors(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        stripped = [item.strip() for item in value if item.strip()]
+        return stripped or None
+
+
+class SourcingAttributionLinks(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    primary: str
+    attribution: str
+
+
+class SourcingSearchResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mpn: str
+    offers: list[SourcingOffer] = Field(default_factory=list)
+    request_id: str | None = None
+    fetched_at: datetime
+    cache_hit: bool
+
+
+class SourcingSearchOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    results: list[SourcingSearchResult]
+    request_id: str | None = None
+    powered_by: Literal["TrustedParts"] = "TrustedParts"
+    fetched_at: datetime
+    cache_hit: bool
+    links: SourcingAttributionLinks

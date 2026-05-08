@@ -120,7 +120,7 @@ def test_bad_creds_returns_invalid_credentials(authed_client, monkeypatch):
             raise SourcingAuthError("bad credentials")
 
     monkeypatch.setattr(
-        "app.api.routes.sourcing.TrustedPartsClient",
+        "app.domain.sourcing.factory.TrustedPartsClient",
         BadCredsTrustedPartsClient,
     )
 
@@ -138,7 +138,7 @@ def test_good_creds_returns_ok_and_latency(authed_client, monkeypatch):
     _configure_sourcing(authed_client)
     _SuccessfulTrustedPartsClient.calls = []
     monkeypatch.setattr(
-        "app.api.routes.sourcing.TrustedPartsClient",
+        "app.domain.sourcing.factory.TrustedPartsClient",
         _SuccessfulTrustedPartsClient,
     )
 
@@ -165,7 +165,7 @@ def test_good_creds_returns_ok_and_latency(authed_client, monkeypatch):
 def test_rate_limit_after_6_per_minute(authed_client, monkeypatch, limiter_enabled):
     _configure_sourcing(authed_client)
     monkeypatch.setattr(
-        "app.api.routes.sourcing.TrustedPartsClient",
+        "app.domain.sourcing.factory.TrustedPartsClient",
         _SuccessfulTrustedPartsClient,
     )
 
@@ -224,9 +224,9 @@ def test_workspace_isolation_uses_own_creds(db, monkeypatch):
         return decrypt(token)
 
     _SuccessfulTrustedPartsClient.calls = []
-    monkeypatch.setattr("app.api.routes.sourcing.decrypt", decrypt_spy)
+    monkeypatch.setattr("app.domain.sourcing.factory.decrypt", decrypt_spy)
     monkeypatch.setattr(
-        "app.api.routes.sourcing.TrustedPartsClient",
+        "app.domain.sourcing.factory.TrustedPartsClient",
         _SuccessfulTrustedPartsClient,
     )
 

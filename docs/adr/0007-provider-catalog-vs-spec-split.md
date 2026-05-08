@@ -25,6 +25,8 @@ Both tabs read from the same `custom_fields(source='provider')` rows. The split 
 
 The same key list lives server-side in `backend/app/domain/parts/services/` (TODO(verify): exact filename — CLAUDE.md cites `backend/app/domain/parts/services/provider.py` but the directory contains `assets.py`, `bag_signature.py`, `provider_cache.py` — the catalog-key list may have moved to `provider_cache.py` or one of the `providers/` modules).
 
+TrustedParts procurement sourcing is deliberately outside this catalog/spec split. See [ADR-0020](0020-trustedparts-sourcing-provider-split.md) for the separate sourcing-provider boundary, cache limit, attribution, and no-mixing rules.
+
 ## Consequences
 
 - **Good**: Re-categorising a key (e.g. promoting "Lifecycle" from Sourcing to a header pill) is one PR touching two files, no DB migration. Historical rows automatically re-render under the new categorisation.
@@ -46,3 +48,4 @@ The same key list lives server-side in `backend/app/domain/parts/services/` (TOD
 - Source: `backend/app/domain/parts/services/` (TODO(verify): exact file)
 - Source: `backend/app/domain/parts/providers/mouser.py`, `backend/app/domain/parts/providers/digikey.py` (emit the `specs[]` rows)
 - Rule: `CLAUDE.md:119-124`
+- Related ADR: [ADR-0020](0020-trustedparts-sourcing-provider-split.md)
