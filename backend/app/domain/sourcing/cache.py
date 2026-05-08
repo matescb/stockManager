@@ -78,3 +78,20 @@ def sweep_expired(db: Session, *, workspace_id: UUID) -> int:
         .where(SourcingCache.expires_at < utcnow())
     )
     return result.rowcount or 0
+
+
+def sweep_expired_all_workspaces(db: Session) -> int:
+    """Delete expired rows by iterating through workspace-scoped sweeps."""
+    workspace_ids = (
+        db.execute(
+            select(SourcingCache.workspace_id)
+            .where(SourcingCache.expires_at < utcnow())
+            .distinct()
+        )
+        .scalars()
+        .all()
+    )
+    return sum(
+        sweep_expired(db, workspace_id=workspace_id)
+        for workspace_id in workspace_ids
+    )

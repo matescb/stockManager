@@ -364,7 +364,36 @@ docker-compose commands so they run as the same user CI uses (avoids
 ```bash
 cd /srv/stockmanager
 sudo -u deploy docker compose -f docker-compose.prod.yml logs -f backend
+sudo -u deploy docker compose -f docker-compose.prod.yml logs -f backend-cron
 sudo -u deploy docker compose -f docker-compose.prod.yml logs -f web
+```
+
+### Backend periodic jobs
+
+`backend-cron` runs the allow-listed backend CLI once per hour:
+`python -m app.cli.run_job sourcing-cache-sweep`. The sidecar sleeps after
+each completed run, so a slow sweep delays the next start instead of
+overlapping it. Source: `docker-compose.prod.yml:165-207`,
+`backend/app/cli/run_job.py:46-52`.
+
+The sourcing cache job opens a backend DB session and sweeps expired
+TrustedParts cache rows by workspace-scoped deletes. Source:
+`backend/app/cli/run_job.py:57-87`,
+`backend/app/domain/sourcing/cache.py:83-97`.
+
+Run it manually on the VPS:
+
+```bash
+cd /srv/stockmanager
+sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
+    exec backend python -m app.cli.run_job sourcing-cache-sweep
+```
+
+Run it outside Docker against a local configured backend DB:
+
+```bash
+cd backend
+uv run python -m app.cli.run_job sourcing-cache-sweep
 ```
 
 ### psql shell

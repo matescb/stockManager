@@ -9,7 +9,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.time import utcnow
-from app.domain.sourcing.cache import canonical_query_hash, get_or_fetch, sweep_expired
+from app.domain.sourcing.cache import (
+    canonical_query_hash,
+    get_or_fetch,
+    sweep_expired,
+    sweep_expired_all_workspaces,
+)
 from app.domain.sourcing.models import SourcingCache
 from app.domain.users.models import User
 from app.domain.workspaces.models import Workspace
@@ -224,6 +229,53 @@ def test_sweep_expired_is_scoped_to_workspace(db: Session) -> None:
     assert len(rows) == 1
     assert rows[0].workspace_id == workspace_b
     assert rows[0].response_json == {"workspace": "b"}
+
+
+def test_sweep_expired_all_workspaces_preserves_unexpired_rows(db: Session) -> None:
+    workspace_a = _workspace(db)
+    workspace_b = _workspace(db)
+    db.add_all(
+        [
+            _cache_row(
+                workspace_id=workspace_a,
+                query={"mpn": "expired-a"},
+                response={"workspace": "a", "expired": True},
+                fetched_delta=-timedelta(days=1),
+                ttl=timedelta(minutes=1),
+            ),
+            _cache_row(
+                workspace_id=workspace_a,
+                query={"mpn": "active-a"},
+                response={"workspace": "a", "active": True},
+                ttl=timedelta(days=1),
+            ),
+            _cache_row(
+                workspace_id=workspace_b,
+                query={"mpn": "expired-b"},
+                response={"workspace": "b", "expired": True},
+                fetched_delta=-timedelta(days=1),
+                ttl=timedelta(minutes=1),
+            ),
+            _cache_row(
+                workspace_id=workspace_b,
+                query={"mpn": "active-b"},
+                response={"workspace": "b", "active": True},
+                ttl=timedelta(days=1),
+            ),
+        ]
+    )
+    db.flush()
+
+    assert sweep_expired_all_workspaces(db) == 2
+
+    rows = (
+        db.execute(select(SourcingCache).order_by(SourcingCache.workspace_id))
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 2
+    assert {row.workspace_id for row in rows} == {workspace_a, workspace_b}
+    assert {row.response_json["active"] for row in rows} == {True}
 
 
 def test_workspace_isolation_same_query_hash(db: Session) -> None:
