@@ -4,7 +4,7 @@ import uuid
 
 import sqlalchemy as sa
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, UniqueConstraint, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from app.core.time import utcnow
 from app.infra.db import Base
@@ -45,6 +45,23 @@ class Workspace(Base):
     parts_provider_api_key = Column(String(1024), nullable=True)
     # DigiKey needs a second credential (client_secret). Mouser leaves this NULL.
     parts_provider_api_secret = Column(String(1024), nullable=True)
+    sourcing_provider = Column(
+        String(40),
+        nullable=False,
+        default="none",
+        server_default="none",
+    )
+    sourcing_company_id_enc = Column(String(1024), nullable=True)
+    sourcing_api_key_enc = Column(String(1024), nullable=True)
+    sourcing_country_code = Column(String(2), nullable=True)
+    sourcing_currency_code = Column(String(3), nullable=True)
+    sourcing_preferred_distributors = Column(JSONB, nullable=True)
+    sourcing_use_cached_for_dashboards = Column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=sa.true(),
+    )
     # Which client-side decoder the scanner pages mount. 'zxing' is the
     # royalty-free default; 'scandit' is opt-in and consumes scanner_license_key.
     scanner = Column(String(40), nullable=False, default="zxing")  # zxing | scandit

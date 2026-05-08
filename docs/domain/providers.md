@@ -18,6 +18,22 @@ Provider state lives on the `Workspace` row (`backend/app/domain/workspaces/mode
 
 Encryption envelope: `app.core.secrets.encrypt` / `decrypt`. Plaintext never appears in a column. Read paths call `decrypt(ws.parts_provider_api_key)` immediately before passing to the provider.
 
+## Workspace sourcing settings
+
+TrustedParts sourcing state also lives on the `Workspace` row (`backend/app/domain/workspaces/models.py:48-64`). It is separate from catalog-provider credentials because it drives availability, quoting, and dashboard refresh behaviour rather than one-off MPN enrichment.
+
+| Column | Notes |
+|---|---|
+| `sourcing_provider` | `none` until a sourcing provider integration is configured. DB default `none`. |
+| `sourcing_company_id_enc` | Encrypted sourcing account/company identifier. Exposed only as `has_sourcing_company_id` on `GET /api/workspaces/current`. |
+| `sourcing_api_key_enc` | Encrypted sourcing API key. Exposed only as `has_sourcing_api_key` on `GET /api/workspaces/current`. |
+| `sourcing_country_code` | Optional ISO 3166-1 alpha-2 country code for provider locale. |
+| `sourcing_currency_code` | Optional ISO 4217 currency code for sourcing responses. |
+| `sourcing_preferred_distributors` | Optional JSONB preference payload for distributor ordering/filtering. |
+| `sourcing_use_cached_for_dashboards` | Dashboard refreshes may use cached sourcing data. DB default `true`. |
+
+The workspace serializer (`backend/app/api/routes/workspaces.py:118-136`) returns only non-secret sourcing fields and boolean masks. It never serializes plaintext or ciphertext for the encrypted sourcing credential columns.
+
 ## Provider factory
 
 `backend/app/domain/parts/providers/base.py::make_provider(name, api_key, api_secret=None)` (`backend/app/domain/parts/providers/base.py:44-65`):

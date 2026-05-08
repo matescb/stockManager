@@ -124,6 +124,16 @@ def _serialize_workspace(ws: Workspace, new_token: str | None = None) -> dict:
         # Never echo the API key/secret. Just say whether each is set.
         "has_parts_provider_api_key": bool(ws.parts_provider_api_key),
         "has_parts_provider_api_secret": bool(ws.parts_provider_api_secret),
+        "sourcing_provider": ws.sourcing_provider or "none",
+        "sourcing_country_code": ws.sourcing_country_code,
+        "sourcing_currency_code": ws.sourcing_currency_code,
+        "sourcing_preferred_distributors": ws.sourcing_preferred_distributors,
+        "sourcing_use_cached_for_dashboards": bool(
+            ws.sourcing_use_cached_for_dashboards
+        ),
+        # Sourcing credentials follow the encrypted-at-rest parts-provider pattern.
+        "has_sourcing_company_id": bool(ws.sourcing_company_id_enc),
+        "has_sourcing_api_key": bool(ws.sourcing_api_key_enc),
         "scanner": ws.scanner or "zxing",
         # Same secret-handling pattern as the parts-provider key.
         "has_scanner_license_key": bool(ws.scanner_license_key),
