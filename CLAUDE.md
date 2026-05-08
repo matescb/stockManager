@@ -230,6 +230,9 @@ them, that's the bug.
   on a partial PR auto-closes the issue the moment the PR merges, leaving the
   remaining steps with no tracking. Use `Refs #N` instead, or file a follow-up
   issue and link it. Full rule in `CONTRIBUTING.md` (multi-step issues rule).
+- **Periodic jobs run through one scheduler path.** ADR-0021 chooses a
+  `backend-cron` sidecar + CLI entry point; don't add parallel APScheduler,
+  FastAPI lifespan, host cron, or systemd-timer jobs for app maintenance.
 
 ## Frontend conventions worth preserving
 
