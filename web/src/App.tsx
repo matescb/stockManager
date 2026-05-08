@@ -103,6 +103,7 @@ const ProjectBOM = lazy(() => import("@/routes/projects/detail/ProjectBOM"));
 const ProjectImport = lazy(() => import("@/routes/projects/detail/ProjectImport"));
 const ProjectBuilds = lazy(() => import("@/routes/projects/detail/ProjectBuilds"));
 const ProjectOther = lazy(() => import("@/routes/projects/detail/ProjectOther"));
+const ProjectSourcingPage = lazy(() => import("@/routes/projects/sourcing/ProjectSourcingPage"));
 
 const Account = lazy(() => import("@/routes/settings/Account"));
 const WorkspaceSettings = lazy(() => import("@/routes/settings/Workspace"));
@@ -280,6 +281,7 @@ export default function App() {
               <Route path="bom" element={<LazyRoute><ProjectBOM /></LazyRoute>} />
               <Route path="import" element={<LazyRoute><ProjectImport /></LazyRoute>} />
               <Route path="builds" element={<LazyRoute><ProjectBuilds /></LazyRoute>} />
+              <Route path="sourcing" element={<LazyRoute><ProjectSourcingPage /></LazyRoute>} />
               <Route path="other" element={<LazyRoute><ProjectOther /></LazyRoute>} />
             </Route>
 

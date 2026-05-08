@@ -1,0 +1,313 @@
+// @vitest-environment jsdom
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
+import { ApiError, api } from "@/lib/api";
+import ProjectSourcingPage from "../ProjectSourcingPage";
+import { SourceBomButton } from "../SourceBomButton";
+
+vi.mock("sonner", () => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn(),
+  },
+}));
+
+vi.mock("@/lib/auth", () => ({
+  useAuth: () => ({ workspaceId: "ws-1" }),
+}));
+
+const projectId = "project-123";
+
+function workspace(overrides: Record<string, unknown> = {}) {
+  return {
+    sourcing_country_code: "US",
+    sourcing_currency_code: "USD",
+    sourcing_preferred_distributors: ["DigiKey", "Mouser"],
+    has_sourcing_company_id: true,
+    ...overrides,
+  };
+}
+
+function project() {
+  return {
+    id: projectId,
+    name: "Amplifier",
+    description: null,
+    notes_markdown: null,
+    archived_at: null,
+    created_at: "2026-05-08T12:00:00+00:00",
+    updated_at: "2026-05-08T12:00:00+00:00",
+  };
+}
+
+function sourcingResponse(overrides: Record<string, unknown> = {}) {
+  return {
+    rows: [
+      {
+        project_entry_id: "entry-1",
+        part_id: "part-1",
+        part_name: "STM32",
+        mpn: "STM32F103C8T6",
+        required: 20,
+        available: 4,
+        substitute_ids: [],
+        substitute_available: 0,
+        short_by: 16,
+        authorized_stock: 60,
+        offers: [
+          {
+            mpn: "STM32F103C8T6",
+            distributor: "DigiKey",
+            stock: 60,
+            unit_price: "1.25",
+            currency: "USD",
+            moq: 1,
+            lead_time_days: 3,
+            url: "https://www.trustedparts.com/digikey/stm32",
+          },
+        ],
+        best_offer: {
+          mpn: "STM32F103C8T6",
+          distributor: "DigiKey",
+          stock: 60,
+          unit_price: "1.25",
+          currency: "USD",
+          moq: 1,
+          lead_time_days: 3,
+          url: "https://www.trustedparts.com/digikey/stm32",
+        },
+        est_extended_cost: "20.00",
+        lead_time_days: 3,
+        risk_flags: ["single_source", "lead_time_long"],
+      },
+      {
+        project_entry_id: "entry-2",
+        part_id: "part-2",
+        part_name: "Regulator",
+        mpn: "LM1117",
+        required: 10,
+        available: 0,
+        substitute_ids: [],
+        substitute_available: 0,
+        short_by: 10,
+        authorized_stock: 20,
+        offers: [
+          {
+            mpn: "LM1117",
+            distributor: "Mouser",
+            stock: 20,
+            unit_price: "0.50",
+            currency: "USD",
+            moq: 1,
+            lead_time_days: 7,
+          },
+        ],
+        best_offer: {
+          mpn: "LM1117",
+          distributor: "Mouser",
+          stock: 20,
+          unit_price: "0.50",
+          currency: "USD",
+          moq: 1,
+          lead_time_days: 7,
+        },
+        est_extended_cost: "5.00",
+        lead_time_days: 7,
+        risk_flags: ["preferred_distributor_unmet"],
+      },
+    ],
+    coverage: {
+      rows: [
+        {
+          distributor: "DigiKey",
+          lines_covered: 1,
+          lines_uncovered: ["entry-2"],
+          coverage_pct: 0.5,
+          est_total_cost: "20.00",
+          worst_lead_time_days: 3,
+        },
+        {
+          distributor: "Mouser",
+          lines_covered: 1,
+          lines_uncovered: ["entry-1"],
+          coverage_pct: 0.5,
+          est_total_cost: "5.00",
+          worst_lead_time_days: 7,
+        },
+      ],
+      total_lines: 2,
+      best_single_distributor: "DigiKey",
+      best_two_distributor_combo: ["DigiKey", "Mouser"],
+    },
+    capacity: {
+      can_build_now: 0,
+      can_build_after_purchase: 3,
+      est_purchase_cost: "25.00",
+      blocking_lines_now: ["entry-2"],
+      blocking_lines_after_purchase: ["entry-1"],
+    },
+    powered_by: "TrustedParts" as const,
+    fetched_at: "2026-05-08T12:00:00+00:00",
+    partial: false,
+    links: {
+      primary: "https://www.trustedparts.com/",
+      attribution: "https://www.trustedparts.com/en/about",
+    },
+    ...overrides,
+  };
+}
+
+function apiError(status: number, message: string) {
+  return new ApiError(
+    status,
+    {
+      data: null,
+      status: {
+        category: status === 409 ? "conflict" : "server_error",
+        message,
+      },
+    },
+    message,
+  );
+}
+
+function mockReads(workspaceOverrides: Record<string, unknown> = {}) {
+  vi.spyOn(api, "get").mockImplementation(async path => {
+    if (path === "/workspaces/current") return workspace(workspaceOverrides) as never;
+    if (path === `/projects/${projectId}`) return project() as never;
+    throw new Error(`unexpected GET ${path}`);
+  });
+}
+
+function renderPage() {
+  const client = new QueryClient({
+    defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[`/projects/${projectId}/sourcing`]}>
+        <Routes>
+          <Route path="/projects/:projectId/sourcing" element={<ProjectSourcingPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+beforeEach(() => {
+  cleanup();
+  localStorage.clear();
+  vi.restoreAllMocks();
+  vi.clearAllMocks();
+});
+
+describe("ProjectSourcingPage", () => {
+  it("renders capacity banner with both numbers from server response", async () => {
+    mockReads();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+
+    renderPage();
+
+    expect(await screen.findByText("Can build now")).toBeDefined();
+    expect(screen.getByText("After purchase")).toBeDefined();
+    expect(screen.getByText("3")).toBeDefined();
+    expect(screen.getAllByText("Est. cost").length).toBeGreaterThan(0);
+    expect(screen.getByText("25 USD")).toBeDefined();
+  });
+
+  it("renders coverage matrix with best-single + best-two highlights", async () => {
+    mockReads();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+
+    renderPage();
+
+    const coverage = await screen.findByText("Coverage matrix");
+    expect(coverage).toBeDefined();
+    const table = screen.getAllByRole("table")[0];
+    expect(within(table).getByText("DigiKey")).toBeDefined();
+    expect(within(table).getByText("Best single distributor")).toBeDefined();
+    expect(within(table).getAllByText("Best two-distributor combo")).toHaveLength(2);
+  });
+
+  it("renders risk pills for each flag returned", async () => {
+    mockReads();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+
+    renderPage();
+
+    expect(await screen.findByText("Single source")).toBeDefined();
+    expect(screen.getByText("Long lead time")).toBeDefined();
+    expect(screen.getByText("Preferred unmet")).toBeDefined();
+    expect(screen.getAllByLabelText("Source: TrustedParts").length).toBeGreaterThan(0);
+  });
+
+  it("409 path renders not-configured card with settings link", async () => {
+    mockReads();
+    vi.spyOn(api, "post").mockRejectedValue(apiError(409, "sourcing not configured"));
+
+    renderPage();
+
+    expect(await screen.findByText("Sourcing not configured.")).toBeDefined();
+    const link = screen.getByRole("link", { name: "Open Settings → Sourcing" });
+    expect(link.getAttribute("href")).toBe("/settings/workspace");
+  });
+
+  it("503 path renders budget banner", async () => {
+    mockReads();
+    vi.spyOn(api, "post").mockRejectedValue(apiError(503, "sourcing budget exhausted"));
+
+    renderPage();
+
+    expect(await screen.findByText("TrustedParts request budget reached for this hour. Retry is paused for 5 minutes.")).toBeDefined();
+    expect((screen.getByRole("button", { name: "Retry Source BOM" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("partial flag surfaces the partial badge", async () => {
+    mockReads();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({ partial: true }));
+
+    renderPage();
+
+    expect(await screen.findByText("Partial — some chunks served from cache")).toBeDefined();
+  });
+
+  it("Source BOM button is disabled when workspace lacks sourcing creds", async () => {
+    mockReads({ has_sourcing_company_id: false });
+    const client = new QueryClient({
+      defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <SourceBomButton projectId={projectId} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const button = await screen.findByRole("button", { name: "Source BOM" });
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(true));
+    expect(button.getAttribute("title")).toBe("Sourcing not configured");
+    expect(screen.getByText("Sourcing not configured")).toBeDefined();
+  });
+
+  it("502 path shows toast and retry action", async () => {
+    mockReads();
+    vi.spyOn(api, "post").mockRejectedValue(apiError(502, "TrustedParts request timed out"));
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        "TrustedParts unavailable. Retry?",
+        expect.objectContaining({
+          action: expect.objectContaining({ label: "Retry" }),
+        }),
+      );
+    });
+    expect(screen.getByRole("button", { name: "Retry Source BOM" })).toBeDefined();
+  });
+});

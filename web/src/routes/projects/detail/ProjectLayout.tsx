@@ -5,6 +5,7 @@ import { useWsKey } from "@/lib/queryKeys";
 import EntityHeader from "@/components/EntityHeader";
 import SubNav from "@/components/SubNav";
 import type { Project } from "@/types";
+import { SourceBomButton } from "@/routes/projects/sourcing/SourceBomButton";
 
 export default function ProjectLayout() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -20,7 +21,12 @@ export default function ProjectLayout() {
   ];
   return (
     <div>
-      <EntityHeader title={data.name} subtitle={data.description ?? ""} idCode={data.id} />
+      <EntityHeader
+        title={data.name}
+        subtitle={data.description ?? ""}
+        idCode={data.id}
+        actions={<SourceBomButton projectId={data.id} />}
+      />
       <SubNav items={items} />
       <Outlet key={data.id} context={{ project: data }} />
     </div>
