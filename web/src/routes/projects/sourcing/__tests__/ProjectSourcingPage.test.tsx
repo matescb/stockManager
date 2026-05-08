@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
@@ -191,6 +192,7 @@ function renderPage() {
       <MemoryRouter initialEntries={[`/projects/${projectId}/sourcing`]}>
         <Routes>
           <Route path="/projects/:projectId/sourcing" element={<ProjectSourcingPage />} />
+          <Route path="/projects/:projectId/purchase-plans/:planId" element={<div data-testid="plan-route" />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -262,7 +264,8 @@ describe("ProjectSourcingPage", () => {
     renderPage();
 
     expect(await screen.findByText("TrustedParts request budget reached for this hour. Retry is paused for 5 minutes.")).toBeDefined();
-    expect((screen.getByRole("button", { name: "Retry Source BOM" }) as HTMLButtonElement).disabled).toBe(true);
+    const retry = screen.getByRole("button", { name: "Retry Source BOM" }) as HTMLButtonElement;
+    await waitFor(() => expect(retry.disabled).toBe(true));
   });
 
   it("partial flag surfaces the partial badge", async () => {
@@ -272,6 +275,44 @@ describe("ProjectSourcingPage", () => {
     renderPage();
 
     expect(await screen.findByText("Partial — some chunks served from cache")).toBeDefined();
+  });
+
+  it("Generate purchase plan posts default strategy from current sourcing filters", async () => {
+    mockReads();
+    const post = vi.spyOn(api, "post");
+    post.mockResolvedValueOnce(sourcingResponse());
+    post.mockResolvedValueOnce({
+      id: "plan-1",
+      project_id: projectId,
+      build_quantity: 1,
+      strategy: "preferred_first",
+      status: "draft",
+      created_at: "2026-05-09T12:00:00+00:00",
+      expires_at: "2026-05-15T12:00:00+00:00",
+      lines: [],
+      distributors_used: [],
+      unfilled_count: 0,
+    });
+
+    renderPage();
+
+    await screen.findByText("BOM rows");
+    await userEvent.click(screen.getByRole("button", { name: "Generate purchase plan" }));
+    await userEvent.click(screen.getByRole("button", { name: "Generate" }));
+
+    expect(await screen.findByTestId("plan-route")).toBeDefined();
+    await waitFor(() => {
+      expect(post).toHaveBeenLastCalledWith(
+        `/projects/${projectId}/purchase-plan`,
+        expect.objectContaining({
+          build_quantity: 1,
+          strategy: "preferred_first",
+          country: "US",
+          currency: "USD",
+          distributors: ["DigiKey", "Mouser"],
+        }),
+      );
+    });
   });
 
   it("Source BOM button is disabled when workspace lacks sourcing creds", async () => {
