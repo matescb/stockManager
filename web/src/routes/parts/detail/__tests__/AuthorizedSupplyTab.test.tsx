@@ -36,6 +36,12 @@ function sourcingResponse() {
             packaging: "Tape",
             unit_price: 1.23,
             currency: "EUR",
+            price_breaks: [
+              { quantity: 1, unit_price: 1.23 },
+              { quantity: 10, unit_price: 1.0 },
+              { quantity: 100, unit_price: 0.8 },
+              { quantity: 1000, unit_price: 0.62 },
+            ],
             lead_time_days: 3,
             product_url: "https://www.trustedparts.com/digikey/stm32",
           },
@@ -46,6 +52,11 @@ function sourcingResponse() {
             packaging: "Reel",
             unit_price: 1.11,
             currency: "EUR",
+            price_breaks: [
+              { quantity: 10, unit_price: 1.11 },
+              { quantity: 100, unit_price: 0.7 },
+              { quantity: 1000, unit_price: 0.65 },
+            ],
             lead_time_days: 14,
             product_url: "https://www.trustedparts.com/mouser/stm32",
           },
@@ -225,5 +236,88 @@ describe("AuthorizedSupplyTab", () => {
     const table = screen.getByRole("table");
     const offerLink = within(table).getAllByRole("link", { name: /Open/ })[0];
     expect(offerLink.getAttribute("rel") ?? "").not.toContain("nofollow");
+  });
+
+  it("quantity preset 100 recomputes unit price across rows", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, "get").mockResolvedValue(sourcingResponse());
+
+    renderTab();
+
+    await screen.findByText("Powered by TrustedParts");
+    expect(screen.queryByText("Unit price @ 100")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "100" }));
+
+    expect(screen.getByRole("columnheader", { name: "Unit price @ 100" })).toBeDefined();
+    expect(screen.getByRole("columnheader", { name: "Extended @ 100" })).toBeDefined();
+    expect(screen.getByText("0.8 EUR")).toBeDefined();
+    expect(screen.getByText("0.7 EUR")).toBeDefined();
+    expect(screen.getByText("80 EUR")).toBeDefined();
+    expect(screen.getByText("70 EUR")).toBeDefined();
+  });
+
+  it("custom quantity input is applied on blur", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, "get").mockResolvedValue(sourcingResponse());
+
+    renderTab();
+
+    await screen.findByText("Powered by TrustedParts");
+    const customInput = screen.getByLabelText("Custom:");
+    await user.clear(customInput);
+    await user.type(customInput, "25");
+
+    expect(screen.queryByText("Unit price @ 25")).toBeNull();
+
+    await user.tab();
+
+    expect(screen.getByRole("columnheader", { name: "Unit price @ 25" })).toBeDefined();
+    expect(screen.getByText("25 EUR")).toBeDefined();
+    expect(screen.getByText("27.75 EUR")).toBeDefined();
+  });
+
+  it("quantity change does not refetch", async () => {
+    const user = userEvent.setup();
+    const getSpy = vi.spyOn(api, "get").mockResolvedValue(sourcingResponse());
+
+    renderTab();
+
+    await screen.findByText("Powered by TrustedParts");
+    await user.click(screen.getByRole("button", { name: "1,000" }));
+    await user.click(screen.getByRole("button", { name: "10" }));
+
+    expect(getSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("below-MOQ rendering is visible at low quantities", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, "get").mockResolvedValue(sourcingResponse());
+
+    renderTab();
+
+    await screen.findByText("Powered by TrustedParts");
+    const customInput = screen.getByLabelText("Custom:");
+    await user.clear(customInput);
+    await user.type(customInput, "5");
+    await user.tab();
+
+    expect(screen.getByRole("columnheader", { name: "Unit price @ 5" })).toBeDefined();
+    expect(screen.getByText("Below MOQ")).toBeDefined();
+  });
+
+  it("sorts by unit price at selected quantity", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, "get").mockResolvedValue(sourcingResponse());
+
+    renderTab();
+
+    await screen.findByText("Powered by TrustedParts");
+    await user.click(screen.getByRole("button", { name: "100" }));
+    await user.click(screen.getByRole("columnheader", { name: "Unit price @ 100" }));
+
+    const rows = within(screen.getByRole("table")).getAllByRole("row").slice(1);
+    expect(within(rows[0]).getByText("Mouser")).toBeDefined();
+    expect(within(rows[1]).getByText("DigiKey")).toBeDefined();
   });
 });

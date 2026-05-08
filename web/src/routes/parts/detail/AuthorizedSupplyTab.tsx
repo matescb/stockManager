@@ -8,6 +8,7 @@ import { useAuth } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
 import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
+import { bestUnitPriceAtQty, extendedPrice, type SourcingPriceBreak } from "@/lib/sourcing";
 import type { Column } from "@/components/DataTable";
 import { DataTable } from "@/components/DataTable";
 import { PoweredByTrustedParts } from "@/components/PoweredByTrustedParts";
@@ -24,6 +25,7 @@ type SourcingDistributor = {
   stock?: number | null;
   unit_price?: number | null;
   currency?: string | null;
+  price_breaks?: SourcingPriceBreak[] | null;
   product_url?: string | null;
 };
 
@@ -61,9 +63,12 @@ type SupplyRow = {
   packaging: string | null;
   unitPrice: number | null;
   currency: string | null;
+  priceBreaks: SourcingPriceBreak[];
   leadTimeDays: number | null;
   link: string | null;
 };
+
+const QUANTITY_PRESETS = [1, 10, 100, 1000] as const;
 
 function formatNumber(value: number | null): string {
   return value == null ? "—" : value.toLocaleString();
@@ -71,16 +76,26 @@ function formatNumber(value: number | null): string {
 
 function formatPrice(row: SupplyRow): string {
   if (row.unitPrice == null) return "—";
-  const price = row.unitPrice.toLocaleString(undefined, {
+  return formatPriceValue(row.unitPrice, row.currency);
+}
+
+function formatPriceValue(value: number, currency: string | null): string {
+  const price = value.toLocaleString(undefined, {
     maximumFractionDigits: 6,
     minimumFractionDigits: 0,
   });
-  return row.currency ? `${price} ${row.currency}` : price;
+  return currency ? `${price} ${currency}` : price;
 }
 
 function formatLeadTime(days: number | null): string {
   if (days == null) return "—";
   return days === 1 ? "1 day" : `${days.toLocaleString()} days`;
+}
+
+function normaliseQuantity(value: string): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1) return null;
+  return Math.floor(parsed);
 }
 
 function flattenOffers(data: SourcingResponse | undefined): SupplyRow[] {
@@ -101,6 +116,7 @@ function flattenOffers(data: SourcingResponse | undefined): SupplyRow[] {
       packaging: distributor.packaging ?? null,
       unitPrice: distributor.unit_price ?? null,
       currency: distributor.currency ?? null,
+      priceBreaks: distributor.price_breaks ?? [],
       leadTimeDays: distributor.lead_time_days ?? null,
       link: offer.links?.primary ?? data.links?.primary ?? null,
     })),
@@ -147,6 +163,8 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
   const queryKey = useWsKey("part", partId, "sourcing");
   const invalidateKey = wsKeyOf(workspaceId, "part", partId, "sourcing");
   const [selectedDistributors, setSelectedDistributors] = useState<Set<string>>(() => new Set());
+  const [quantity, setQuantity] = useState(1);
+  const [customQuantity, setCustomQuantity] = useState("1");
 
   const query = useQuery({
     queryKey,
@@ -198,8 +216,41 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
     });
   }, [query.isError, query.error, refetch]);
 
-  const columns = useMemo<Column<SupplyRow>[]>(
-    () => [
+  const columns = useMemo<Column<SupplyRow>[]>(() => {
+    const quantityColumns: Column<SupplyRow>[] = quantity > 1
+      ? [
+          {
+            key: "unitPriceAtQty",
+            header: `Unit price @ ${quantity.toLocaleString()}`,
+            accessor: row => bestUnitPriceAtQty(row.priceBreaks, quantity)?.unitPrice,
+            render: row => {
+              const best = bestUnitPriceAtQty(row.priceBreaks, quantity);
+              return best === null ? (
+                <span className="text-muted">Below MOQ</span>
+              ) : (
+                formatPriceValue(best.unitPrice, row.currency)
+              );
+            },
+            align: "right",
+          },
+          {
+            key: "extendedAtQty",
+            header: `Extended @ ${quantity.toLocaleString()}`,
+            accessor: row => extendedPrice(row.priceBreaks, quantity),
+            render: row => {
+              const extended = extendedPrice(row.priceBreaks, quantity);
+              return extended === null ? (
+                <span className="text-muted">—</span>
+              ) : (
+                formatPriceValue(extended, row.currency)
+              );
+            },
+            align: "right",
+          },
+        ]
+      : [];
+
+    const baseColumns: Column<SupplyRow>[] = [
       {
         key: "distributor",
         header: "Distributor",
@@ -232,6 +283,7 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
         render: row => formatPrice(row),
         align: "right",
       },
+      ...quantityColumns,
       {
         key: "leadTime",
         header: "Lead time",
@@ -258,9 +310,9 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
             <span className="text-muted">—</span>
           ),
       },
-    ],
-    [],
-  );
+    ];
+    return baseColumns;
+  }, [quantity]);
 
   const status = errorStatus(query.error);
   const refreshStatus = errorStatus(refreshMutation.error);
@@ -342,26 +394,75 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
       )}
 
       {distributors.length > 0 && (
-        <label className="label max-w-sm">
-          Distributor filter
-          <select
-            multiple
-            className="input min-h-28"
-            value={Array.from(selectedDistributors)}
-            onChange={event => {
-              const next = new Set(
-                Array.from(event.currentTarget.selectedOptions).map(option => option.value),
-              );
-              setSelectedDistributors(next);
-            }}
-          >
-            {distributors.map(distributor => (
-              <option key={distributor} value={distributor}>
-                {distributor}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="flex flex-wrap items-end gap-4">
+          <label className="label max-w-sm">
+            Distributor filter
+            <select
+              multiple
+              className="input min-h-28"
+              value={Array.from(selectedDistributors)}
+              onChange={event => {
+                const next = new Set(
+                  Array.from(event.currentTarget.selectedOptions).map(option => option.value),
+                );
+                setSelectedDistributors(next);
+              }}
+            >
+              {distributors.map(distributor => (
+                <option key={distributor} value={distributor}>
+                  {distributor}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="space-y-2">
+            <div className="text-xs font-medium uppercase tracking-wide text-muted">
+              Quantity
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {QUANTITY_PRESETS.map(preset => (
+                <button
+                  key={preset}
+                  type="button"
+                  className={preset === quantity ? "btn-primary btn-sm" : "btn btn-sm"}
+                  aria-pressed={preset === quantity}
+                  onClick={() => {
+                    setQuantity(preset);
+                    setCustomQuantity(String(preset));
+                  }}
+                >
+                  {preset.toLocaleString()}
+                </button>
+              ))}
+              <label className="flex items-center gap-2 text-sm text-muted">
+                Custom:
+                <input
+                  className="input h-8 w-24"
+                  type="number"
+                  min={1}
+                  step={1}
+                  inputMode="numeric"
+                  value={customQuantity}
+                  onChange={event => setCustomQuantity(event.currentTarget.value)}
+                  onBlur={() => {
+                    const nextQuantity = normaliseQuantity(customQuantity);
+                    if (nextQuantity === null) {
+                      setCustomQuantity(String(quantity));
+                      return;
+                    }
+                    setQuantity(nextQuantity);
+                    setCustomQuantity(String(nextQuantity));
+                  }}
+                  onKeyDown={event => {
+                    if (event.key === "Enter") {
+                      event.currentTarget.blur();
+                    }
+                  }}
+                />
+              </label>
+            </div>
+          </div>
+        </div>
       )}
 
       <DataTable
