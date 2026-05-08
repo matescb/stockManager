@@ -70,9 +70,11 @@ def get_or_fetch(
     return response, False
 
 
-def sweep_expired(db: Session) -> int:
-    """Delete expired rows and return the number removed."""
+def sweep_expired(db: Session, *, workspace_id: UUID) -> int:
+    """Delete expired rows for one workspace and return the number removed."""
     result = db.execute(
-        delete(SourcingCache).where(SourcingCache.expires_at < utcnow())
+        delete(SourcingCache)
+        .where(SourcingCache.workspace_id == workspace_id)
+        .where(SourcingCache.expires_at < utcnow())
     )
     return result.rowcount or 0

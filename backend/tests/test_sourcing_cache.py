@@ -182,7 +182,7 @@ def test_sweep_expired_only_deletes_expired_rows(db: Session) -> None:
     db.add_all([expired, active])
     db.flush()
 
-    assert sweep_expired(db) == 1
+    assert sweep_expired(db, workspace_id=workspace_id) == 1
 
     rows = (
         db.execute(
@@ -193,6 +193,37 @@ def test_sweep_expired_only_deletes_expired_rows(db: Session) -> None:
     )
     assert len(rows) == 1
     assert rows[0].response_json == {"active": True}
+
+
+def test_sweep_expired_is_scoped_to_workspace(db: Session) -> None:
+    workspace_a = _workspace(db)
+    workspace_b = _workspace(db)
+    db.add_all(
+        [
+            _cache_row(
+                workspace_id=workspace_a,
+                query={"mpn": "expired-a"},
+                response={"workspace": "a"},
+                fetched_delta=-timedelta(days=1),
+                ttl=timedelta(minutes=1),
+            ),
+            _cache_row(
+                workspace_id=workspace_b,
+                query={"mpn": "expired-b"},
+                response={"workspace": "b"},
+                fetched_delta=-timedelta(days=1),
+                ttl=timedelta(minutes=1),
+            ),
+        ]
+    )
+    db.flush()
+
+    assert sweep_expired(db, workspace_id=workspace_a) == 1
+
+    rows = db.execute(select(SourcingCache)).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].workspace_id == workspace_b
+    assert rows[0].response_json == {"workspace": "b"}
 
 
 def test_workspace_isolation_same_query_hash(db: Session) -> None:
