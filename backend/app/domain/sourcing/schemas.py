@@ -232,6 +232,19 @@ class SourcingBomLineOut(BaseModel):
     ] = Field(default_factory=list)
 
 
+class SourcingReportData(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    authorized_stock: int
+    offers: list[SourcingBomOfferOut] = Field(default_factory=list)
+    best_offer: SourcingBomOfferOut | None = None
+    est_replenishment_cost: Decimal | None = None
+    lead_time_days: int | None = None
+    preferred_distributor_available: bool
+    cache_hit: bool
+    fetched_at: datetime
+
+
 class SourcingBomOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
+import { Link, NavLink, Outlet, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { BarChart3, ShoppingCart } from "lucide-react";
@@ -8,8 +8,14 @@ import { useAuth } from "@/lib/auth";
 import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { formatDate, formatMoney } from "@/lib/format";
-import { DataTable } from "@/components/DataTable";
+import { DataTable, type Column } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
+import { PoweredByTrustedParts } from "@/components/PoweredByTrustedParts";
+import { SourcingSourceLabel } from "@/components/SourcingSourceLabel";
+import {
+  CreateOrderLineModal,
+  type CreateOrderLineSource,
+} from "@/routes/parts/detail/CreateOrderLineModal";
 import type { Order, Project } from "@/types";
 
 type LowStockRow = {
@@ -22,6 +28,43 @@ type LowStockRow = {
   available: number;
   threshold: number;
   short_by: number;
+  sourcing?: LowStockSourcing | null;
+};
+
+type LowStockSourcingOffer = {
+  mpn: string;
+  distributor: string;
+  sku?: string | null;
+  stock: number;
+  unit_price?: string | number | null;
+  currency?: string | null;
+  packaging?: string | null;
+  moq?: number | null;
+  lead_time_days?: number | null;
+  url?: string | null;
+};
+
+type LowStockSourcing = {
+  authorized_stock: number;
+  offers: LowStockSourcingOffer[];
+  best_offer?: LowStockSourcingOffer | null;
+  est_replenishment_cost?: string | number | null;
+  lead_time_days?: number | null;
+  preferred_distributor_available: boolean;
+  cache_hit: boolean;
+  fetched_at: string;
+};
+
+type LowStockSourcingStatus = "ok" | "not_configured" | "partial" | "budget_blocked";
+
+type LowStockWithSourcing = {
+  rows: LowStockRow[];
+  sourcing_status: LowStockSourcingStatus;
+  powered_by?: "TrustedParts" | null;
+  links?: {
+    primary: string;
+    attribution: string;
+  } | null;
 };
 
 type StockValue = {
@@ -92,6 +135,39 @@ async function createRestockOrder(
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+function numberOrNull(value: string | number | null | undefined): number | null {
+  if (value == null || value === "") return null;
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function formatSourcingMoney(value: string | number | null | undefined, currency?: string | null): string {
+  const numeric = numberOrNull(value);
+  if (numeric == null) return "—";
+  return formatMoney(numeric, currency);
+}
+
+function formatLeadTime(days: number | null | undefined): string {
+  if (days == null) return "—";
+  return days === 1 ? "1 day" : `${days.toLocaleString()} days`;
+}
+
+function createOrderLineSource(row: LowStockRow): CreateOrderLineSource | null {
+  const offer = row.sourcing?.best_offer;
+  if (!row.sourcing || !offer) return null;
+  return {
+    partId: row.part_id,
+    distributor: offer.distributor,
+    packaging: offer.packaging ?? null,
+    leadTimeDays: offer.lead_time_days ?? null,
+    fetchedAt: row.sourcing.fetched_at ?? null,
+    quantity: Math.max(1, row.short_by, offer.moq ?? 1),
+    unitPrice: numberOrNull(offer.unit_price),
+    currency: offer.currency ?? null,
+    productUrl: offer.url ?? null,
+  };
 }
 
 export default function ReportsLayout() {
@@ -203,9 +279,15 @@ export function LowStockReport() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
-  const { data, isLoading, isError, error } = useQuery({
-    queryKey: useWsKey("report", "low-stock"),
-    queryFn: () => api.get<LowStockRow[]>("/reports/low-stock"),
+  const [searchParams, setSearchParams] = useSearchParams();
+  const includeSourcing = searchParams.get("include_sourcing") === "true";
+  const [orderLineSource, setOrderLineSource] = useState<CreateOrderLineSource | null>(null);
+  const { data, isLoading, isError, error } = useQuery<LowStockRow[] | LowStockWithSourcing>({
+    queryKey: useWsKey("report", "low-stock", includeSourcing),
+    queryFn: () =>
+      includeSourcing
+        ? api.get<LowStockWithSourcing>("/reports/low-stock?include_sourcing=true")
+        : api.get<LowStockRow[]>("/reports/low-stock"),
   });
 
   const restockMutation = useApiMutation<void, { name: string; lines: { part_id: string; quantity: number }[] }>({
@@ -218,8 +300,17 @@ export function LowStockReport() {
 
   if (isError) return <div className="text-red-600 text-sm p-4">Failed to load low-stock report. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (isLoading) return <div className="text-muted">Loading…</div>;
-  const rows = data ?? [];
+  const sourcedData = includeSourcing && data && !Array.isArray(data) ? data : null;
+  const rows = Array.isArray(data) ? data : data?.rows ?? [];
   const busy = restockMutation.isPending;
+  const sourcingStatus = sourcedData?.sourcing_status;
+
+  function setIncludeSourcing(next: boolean) {
+    const params = new URLSearchParams(searchParams);
+    if (next) params.set("include_sourcing", "true");
+    else params.delete("include_sourcing");
+    setSearchParams(params, { replace: false });
+  }
 
   function orderShortages() {
     if (busy || rows.length === 0) return;
@@ -229,10 +320,101 @@ export function LowStockReport() {
     });
   }
 
+  const columns: Column<LowStockRow>[] = [
+    { key: "name", header: "Part", accessor: r => r.name, render: r => <Link className="text-accent" to={`/parts/${r.part_id}/info`}>{r.name}</Link> },
+    { key: "mpn", header: "MPN", accessor: r => r.mpn ?? "" },
+    { key: "manufacturer", header: "Manufacturer", accessor: r => r.manufacturer ?? "" },
+    { key: "on_hand", header: "On hand", accessor: r => r.on_hand, width: "80px" },
+    { key: "reserved", header: "Reserved", accessor: r => r.reserved ?? 0, width: "90px",
+      render: r => <span className="tabular-nums text-muted">{r.reserved ?? 0}</span> },
+    { key: "available", header: "Available", accessor: r => r.available ?? r.on_hand, width: "90px" },
+    { key: "threshold", header: "Threshold", accessor: r => r.threshold, width: "100px" },
+    { key: "short_by", header: "Short by", accessor: r => r.short_by, width: "100px",
+      render: r => <span className="tabular-nums text-danger">{r.short_by}</span> },
+    ...(includeSourcing ? [
+      {
+        key: "authorized_stock",
+        header: "Authorized stock",
+        accessor: (r: LowStockRow) => r.sourcing?.authorized_stock ?? null,
+        render: (r: LowStockRow) => r.sourcing ? <span className="tabular-nums">{r.sourcing.authorized_stock}</span> : <span className="text-muted">—</span>,
+        align: "right" as const,
+      },
+      {
+        key: "best_offer",
+        header: "Best offer",
+        accessor: (r: LowStockRow) => numberOrNull(r.sourcing?.best_offer?.unit_price),
+        render: (r: LowStockRow) => r.sourcing?.best_offer
+          ? formatSourcingMoney(r.sourcing.best_offer.unit_price, r.sourcing.best_offer.currency)
+          : <span className="text-muted">—</span>,
+        align: "right" as const,
+      },
+      {
+        key: "moq",
+        header: "MOQ",
+        accessor: (r: LowStockRow) => r.sourcing?.best_offer?.moq ?? null,
+        render: (r: LowStockRow) => r.sourcing?.best_offer?.moq ?? <span className="text-muted">—</span>,
+        align: "right" as const,
+      },
+      {
+        key: "lead_time",
+        header: "Lead time",
+        accessor: (r: LowStockRow) => r.sourcing?.lead_time_days ?? null,
+        render: (r: LowStockRow) => formatLeadTime(r.sourcing?.lead_time_days),
+        align: "right" as const,
+      },
+      {
+        key: "preferred",
+        header: "Preferred?",
+        accessor: (r: LowStockRow) => r.sourcing?.preferred_distributor_available ?? false,
+        render: (r: LowStockRow) => r.sourcing?.preferred_distributor_available ? "✓" : <span className="text-muted">—</span>,
+        align: "center" as const,
+      },
+      {
+        key: "source",
+        header: "Source",
+        accessor: () => "TrustedParts",
+        render: () => <SourcingSourceLabel source="trustedparts" />,
+      },
+      {
+        key: "draft_po",
+        header: "Draft PO",
+        accessor: (r: LowStockRow) => r.sourcing?.best_offer?.distributor ?? "",
+        render: (r: LowStockRow) => {
+          const source = createOrderLineSource(r);
+          return (
+            <button
+              type="button"
+              className="btn-sm"
+              disabled={!source}
+              onClick={() => setOrderLineSource(source)}
+            >
+              Create draft PO
+            </button>
+          );
+        },
+      },
+    ] satisfies Column<LowStockRow>[] : []),
+  ];
+
   return (
     <div className="space-y-3">
-      {rows.length > 0 && (
-        <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <label className="inline-flex items-center gap-2 text-sm text-text" htmlFor="low-stock-include-sourcing">
+          <input
+            id="low-stock-include-sourcing"
+            type="checkbox"
+            checked={includeSourcing}
+            onChange={event => setIncludeSourcing(event.currentTarget.checked)}
+          />
+          Include sourcing data
+        </label>
+        {includeSourcing && (
+          <div className="flex flex-wrap items-center gap-2">
+            <PoweredByTrustedParts primaryUrl={sourcedData?.links?.primary} />
+            <SourcingSourceLabel source="trustedparts" />
+          </div>
+        )}
+        {rows.length > 0 && (
           <button
             type="button"
             className="btn-primary inline-flex items-center gap-1.5"
@@ -242,7 +424,16 @@ export function LowStockReport() {
             <ShoppingCart size={14} />
             Create restock order ({rows.length})
           </button>
-        </div>
+        )}
+      </div>
+      {includeSourcing && sourcingStatus === "not_configured" && (
+        <div className="card p-3 text-sm text-muted" role="status">Sourcing not configured.</div>
+      )}
+      {includeSourcing && sourcingStatus === "partial" && (
+        <div className="card p-3 text-sm text-warning" role="status">Partial — some rows from cache.</div>
+      )}
+      {includeSourcing && sourcingStatus === "budget_blocked" && (
+        <div className="card p-3 text-sm text-warning" role="status">Budget exhausted — sourcing data omitted for some rows.</div>
       )}
     <DataTable
       rows={rows}
@@ -256,18 +447,12 @@ export function LowStockReport() {
         />
       }
       exportFilename="low-stock"
-      columns={[
-        { key: "name", header: "Part", accessor: r => r.name, render: r => <Link className="text-accent" to={`/parts/${r.part_id}/info`}>{r.name}</Link> },
-        { key: "mpn", header: "MPN", accessor: r => r.mpn ?? "" },
-        { key: "manufacturer", header: "Manufacturer", accessor: r => r.manufacturer ?? "" },
-        { key: "on_hand", header: "On hand", accessor: r => r.on_hand, width: "80px" },
-        { key: "reserved", header: "Reserved", accessor: r => r.reserved ?? 0, width: "90px",
-          render: r => <span className="tabular-nums text-muted">{r.reserved ?? 0}</span> },
-        { key: "available", header: "Available", accessor: r => r.available ?? r.on_hand, width: "90px" },
-        { key: "threshold", header: "Threshold", accessor: r => r.threshold, width: "100px" },
-        { key: "short_by", header: "Short by", accessor: r => r.short_by, width: "100px",
-          render: r => <span className="tabular-nums text-danger">{r.short_by}</span> },
-      ]}
+      columns={columns}
+    />
+    <CreateOrderLineModal
+      open={orderLineSource !== null}
+      source={orderLineSource}
+      onClose={() => setOrderLineSource(null)}
     />
     </div>
   );

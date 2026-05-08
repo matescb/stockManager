@@ -157,7 +157,7 @@ needs a code change:
 
 ## TrustedParts outage
 
-TrustedParts sourcing is separate from the Mouser/DigiKey catalog providers. It backs `POST /api/sourcing/search`, the workspace sourcing connection test, and future sourcing UI surfaces; catalog lookup, manual part creation, stock movements, and existing parts remain available.
+TrustedParts sourcing is separate from the Mouser/DigiKey catalog providers. It backs `POST /api/sourcing/search`, the workspace sourcing connection test, and sourcing UI surfaces; catalog lookup, manual part creation, stock movements, and existing parts remain available. The low-stock report degrades gracefully: `GET /api/reports/low-stock?include_sourcing=true` still returns `200 OK` rows with a `sourcing_status` flag when TrustedParts is unavailable or budget-blocked.
 
 Integration entry points:
 
