@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "test:e2e": "playwright test",
+    "typecheck": "tsc -b",
     "lint": "eslint src"
   },
   "dependencies": {

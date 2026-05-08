@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ReactNode } from "react";
-import { Navigate, Outlet, Route, Routes, useLocation, type Location } from "react-router-dom";
+import { Navigate, Outlet, Route, Routes, useLocation, useParams, type Location } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import AppShell from "@/components/layout/AppShell";
 import { ConfirmDialogProvider } from "@/components/ConfirmDialog";
@@ -39,6 +39,7 @@ import PartSettings from "@/routes/parts/detail/PartSettings";
 import PartOther from "@/routes/parts/detail/PartOther";
 import PartSpecs from "@/routes/parts/detail/PartSpecs";
 import PartSourcing from "@/routes/parts/detail/PartSourcing";
+import AuthorizedSupplyTab from "@/routes/parts/detail/AuthorizedSupplyTab";
 import PartAttachments from "@/routes/parts/detail/PartAttachments";
 import PartActivity from "@/routes/parts/detail/PartActivity";
 
@@ -172,6 +173,12 @@ function LazyRoute({ children }: { children: ReactNode }) {
   return <Suspense fallback={lazyFallback}>{children}</Suspense>;
 }
 
+function AuthorizedSupplyTabRoute() {
+  const { partId } = useParams<{ partId: string }>();
+  if (!partId) return null;
+  return <AuthorizedSupplyTab partId={partId} />;
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -206,6 +213,7 @@ export default function App() {
               <Route path="info" element={<PartInfo />} />
               <Route path="specs" element={<PartSpecs />} />
               <Route path="sourcing" element={<PartSourcing />} />
+              <Route path="authorized-supply" element={<AuthorizedSupplyTabRoute />} />
               <Route path="stock" element={<PartStock />} />
               <Route path="add" element={<PartAddStock />} />
               <Route path="remove" element={<PartRemoveStock />} />
