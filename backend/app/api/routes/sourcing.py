@@ -2,14 +2,17 @@
 from __future__ import annotations
 
 from time import perf_counter
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
+from app.api._helpers import assert_in_workspace
 from app.core.deps import CurrentUser, CurrentWorkspace, require_role
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import err, ok
+from app.domain.parts.models import Part
 from app.domain.sourcing import (
     SourcingAuthError,
     SourcingClientError,
@@ -24,8 +27,10 @@ from app.infra.db import get_db
 
 router = APIRouter()
 search_router = APIRouter()
+parts_router = APIRouter()
 
 _TEST_PROBE_TOKEN = "TEST_PROBE_DO_NOT_BUY"
+_PART_SOURCING_TTL_SECONDS = 1800
 
 
 def _elapsed_ms(started_at: float) -> int:
@@ -122,6 +127,97 @@ def search_sourcing(
         )
 
     return ok(out.model_dump(mode="json"))
+
+
+@parts_router.get(
+    "/{part_id}/sourcing",
+    dependencies=[Depends(require_role("member"))],
+)
+@limiter.limit("60/minute", key_func=workspace_key)
+def get_part_sourcing(
+    request: Request,
+    part_id: UUID,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+    country: str | None = Query(default=None, min_length=2, max_length=2),
+    currency: str | None = Query(default=None, min_length=3, max_length=3),
+    in_stock_only: bool = False,
+    distributors: list[str] | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    part = assert_in_workspace(db, Part, part_id, ws.id, label="part")
+    mpn = (part.mpn or "").strip()
+    if not mpn:
+        return ok({"offers": [], "reason": "no_mpn", "cache_hit": None})
+
+    try:
+        out = sourcing_service.search(
+            db,
+            workspace=ws,
+            mpns=[mpn],
+            country=country,
+            currency=currency,
+            in_stock_only=in_stock_only,
+            distributors=_clean_query_distributors(distributors),
+            use_cached_data=ws.sourcing_use_cached_for_dashboards,
+            ttl_seconds=_PART_SOURCING_TTL_SECONDS,
+            requested_by=user.id,
+        )
+    except SourcingNotConfigured:
+        return _error_response(request, 409, "conflict", "sourcing not configured")
+    except SourcingBudgetBlocked:
+        return _error_response(request, 503, "server_error", "sourcing budget exhausted")
+    except SourcingAuthError:
+        return _error_response(
+            request,
+            502,
+            "server_error",
+            "TrustedParts rejected sourcing credentials",
+        )
+    except SourcingRateLimitError:
+        return _error_response(
+            request,
+            502,
+            "server_error",
+            "TrustedParts rate limit reached",
+        )
+    except SourcingTimeoutError:
+        return _error_response(
+            request,
+            502,
+            "server_error",
+            "TrustedParts request timed out",
+        )
+    except SourcingClientError:
+        return _error_response(
+            request,
+            502,
+            "server_error",
+            "TrustedParts sourcing request failed",
+        )
+
+    result = out.results[0]
+    return ok(
+        {
+            "mpn": result.mpn,
+            "offers": [offer.model_dump(mode="json") for offer in result.offers],
+            "request_id": result.request_id,
+            "powered_by": out.powered_by,
+            "fetched_at": result.fetched_at.isoformat(),
+            "cache_hit": result.cache_hit,
+            "links": out.links.model_dump(mode="json"),
+            "reason": "ok",
+        }
+    )
+
+
+def _clean_query_distributors(value: list[str] | None) -> list[str] | None:
+    if value is None:
+        return None
+    cleaned: list[str] = []
+    for item in value:
+        cleaned.extend(part.strip() for part in item.split(",") if part.strip())
+    return cleaned or None
 
 
 def _error_response(

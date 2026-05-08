@@ -69,6 +69,7 @@ def search(
     in_stock_only: bool = False,
     distributors: list[str] | None = None,
     use_cached_data: bool | None = None,
+    ttl_seconds: int = TTL_SECONDS,
     requested_by: UUID | None = None,
 ) -> SourcingSearchOut:
     clean_mpns = [mpn.strip() for mpn in mpns]
@@ -131,7 +132,7 @@ def search(
             db,
             workspace_id=workspace.id,
             query=query,
-            ttl_seconds=TTL_SECONDS,
+            ttl_seconds=ttl_seconds,
             fetch_fn=fetch,
             created_by=requested_by,
         )

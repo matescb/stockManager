@@ -388,6 +388,12 @@ app.include_router(search.router, prefix="/api/search", tags=["search"], depende
 app.include_router(sourcing.router, prefix="/api/workspaces", tags=["sourcing"])
 app.include_router(sourcing.search_router, prefix="/api/sourcing", tags=["sourcing"])
 app.include_router(
+    sourcing.parts_router,
+    prefix="/api/parts",
+    tags=["sourcing"],
+    dependencies=_member_gate,
+)
+app.include_router(
     parts_provider.router,
     prefix="/api/parts",
     tags=["parts_provider"],

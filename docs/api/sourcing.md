@@ -2,13 +2,82 @@
 
 Audience: engineer
 
-TrustedParts sourcing endpoints for workspace-scoped connection checks and short-lived offer search.
+TrustedParts sourcing endpoints for workspace-scoped connection checks, short-lived offer search, and part-detail sourcing reads.
 
 ## Conventions
 
-See [API conventions](./README.md) for envelope, errors, pagination. Connection checks are mounted under `/api/workspaces`; search is mounted under `/api/sourcing`. Current routes require a cookie session and current workspace.
+See [API conventions](./README.md) for envelope, errors, pagination. Connection checks are mounted under `/api/workspaces`; search is mounted under `/api/sourcing`; part reads are mounted under `/api/parts`. Current routes require a cookie session and current workspace.
 
 ## Routes
+
+### `GET /api/parts/{part_id}/sourcing`
+
+Return cached TrustedParts offers for one part's MPN.
+
+**Request**
+
+Path: `part_id` is a part UUID in the current workspace.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `country` | `string` | No | Two-letter override; falls back to workspace sourcing default. |
+| `currency` | `string` | No | Three-letter override; falls back to workspace sourcing default. |
+| `in_stock_only` | `boolean` | No | Defaults to `false`. |
+| `distributors` | `string[]` | No | Repeatable query param; comma-separated values are also accepted. Falls back to `sourcing_preferred_distributors` when omitted. |
+
+**Response** — `200 OK` (envelope: `{ data, status }`)
+
+```json
+{
+  "data": {
+    "mpn": "STM32F103C8T6",
+    "offers": [
+      {
+        "mpn": "STM32F103C8T6",
+        "distributors": [
+          { "name": "DigiKey", "stock": 42, "unit_price": 1.23, "currency": "EUR" }
+        ]
+      }
+    ],
+    "request_id": "trustedparts-request-id",
+    "powered_by": "TrustedParts",
+    "fetched_at": "2026-05-08T12:00:00+00:00",
+    "cache_hit": false,
+    "links": {
+      "primary": "https://www.trustedparts.com/",
+      "attribution": "https://www.trustedparts.com/en/about"
+    },
+    "reason": "ok"
+  },
+  "status": { "category": "ok", "message": "OK" }
+}
+```
+
+Parts without an MPN return a successful no-network response.
+
+```json
+{
+  "data": { "offers": [], "reason": "no_mpn", "cache_hit": null },
+  "status": { "category": "ok", "message": "OK" }
+}
+```
+
+**Errors**
+
+- `404 Not Found` — `part_id` is missing or belongs to another workspace.
+- `409 Conflict` — `{ "data": null, "status": { "category": "conflict", "message": "sourcing not configured" } }`.
+- `422 Unprocessable Entity` — validation envelope for malformed UUID or invalid query parameter lengths.
+- `429 Too Many Requests` — workspace rate limit: 60 requests/minute.
+- `502 Bad Gateway` — TrustedParts auth, rate-limit, timeout, upstream, or response-shape failure.
+- `503 Service Unavailable` — `{ "data": null, "status": { "category": "server_error", "message": "sourcing budget exhausted" } }`.
+
+**Notes**
+
+- The route validates `part_id` with `assert_in_workspace()` before reading the part MPN.
+- The local cache is scoped by `workspace_id`; the part-detail route calls sourcing search with `ttl_seconds=1800`.
+- The route uses member-or-higher role gating and maps the same sourcing exceptions as `POST /api/sourcing/search`.
+- Source: `backend/app/api/routes/sourcing.py:132-220`.
+- Service: `backend/app/domain/sourcing/service.py:62-138`.
 
 ### `POST /api/sourcing/search`
 
