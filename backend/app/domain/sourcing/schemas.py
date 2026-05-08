@@ -23,6 +23,13 @@ class SourcingPriceBreak(BaseModel):
     unit_price: float
 
 
+class SourcingBomPriceBreakOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    quantity: int
+    unit_price: Decimal
+
+
 class SourcingDistributor(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -163,7 +170,28 @@ class SourcingBomOfferOut(BaseModel):
     packaging: str | None = None
     moq: int | None = None
     lead_time_days: int | None = None
+    price_breaks: list[SourcingBomPriceBreakOut] = Field(default_factory=list)
     url: str | None = None
+
+
+class DistributorCoverageRowOut(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    distributor: str
+    lines_covered: int
+    lines_uncovered: list[UUID]
+    coverage_pct: float
+    est_total_cost: Decimal | None
+    worst_lead_time_days: int | None
+
+
+class DistributorCoverageMatrixOut(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    rows: list[DistributorCoverageRowOut]
+    total_lines: int
+    best_single_distributor: str | None
+    best_two_distributor_combo: tuple[str, str] | None
 
 
 class SourcingBomLineOut(BaseModel):
@@ -198,6 +226,7 @@ class SourcingBomOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     rows: list[SourcingBomLineOut]
+    coverage: DistributorCoverageMatrixOut
     powered_by: Literal["TrustedParts"] = "TrustedParts"
     fetched_at: datetime
     partial: bool
