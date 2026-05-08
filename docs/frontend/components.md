@@ -200,6 +200,19 @@ detail page (parts, storage, lots, projects, orders, builds). Slots:
   `tone` mapped to `text-text` / `text-danger` / `text-warning` /
   `text-success` (`:23-28`, `:71-83`)
 
+## TrustedParts Attribution
+
+`web/src/components/PoweredByTrustedParts.tsx:9-32` renders the visible,
+followable "Powered by TrustedParts" link with `target="_blank"` and
+`rel="noopener noreferrer"`; it intentionally omits `nofollow`
+(`:23-29`). Use `<PoweredByTrustedParts/>` on every TrustedParts-derived
+view; ToU compliance is enforced by review.
+
+`web/src/components/SourcingSourceLabel.tsx:10-29` renders the
+TrustedParts source pill with `aria-label="Source: TrustedParts"`
+(`:20-23`) so TrustedParts-derived distributor data stays visually and
+accessibly labelled.
+
 ## MpnLookup
 
 `web/src/components/MpnLookup.tsx`. Affordance attached to MPN inputs that
