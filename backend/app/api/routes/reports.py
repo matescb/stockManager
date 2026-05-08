@@ -5,16 +5,18 @@ from collections import defaultdict
 from datetime import date, timedelta
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select
 
-from app.core.deps import CurrentWorkspace, DbSession
+from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
 from app.core.errors import ErrorCodes, raise_http
+from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import ok
 from app.domain.builds.service import shortage_analysis
 from app.domain.lots.models import Lot
 from app.domain.parts.models import Part
 from app.domain.projects.models import Project
+from app.domain.reports.service import sourcing_risk_report
 from app.domain.stock.service import (
     bulk_current_quantities,
     bulk_current_quantities_by_lot,
@@ -67,6 +69,26 @@ def low_stock(db: DbSession, ws: CurrentWorkspace):
             )
     out.sort(key=lambda r: r["short_by"], reverse=True)
     return ok(out)
+
+
+@router.get("/sourcing-risk", dependencies=[Depends(require_role("member"))])
+@limiter.limit("30/minute", key_func=workspace_key)
+def sourcing_risk(
+    request: Request,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+    only_with_flags: bool = Query(default=True),
+    use_cached_data: bool | None = Query(default=None),
+):
+    out = sourcing_risk_report(
+        db,
+        workspace=ws,
+        only_with_flags=only_with_flags,
+        use_cached_data=use_cached_data,
+        requested_by=user.id,
+    )
+    return ok(out.model_dump(mode="json"))
 
 
 @router.get("/bom-shortage")
