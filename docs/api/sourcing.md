@@ -188,6 +188,55 @@ Shape matches `POST /api/projects/{project_id}/purchase-plan`, with `status` set
 - Refresh does not extend `expires_at`; the original 7-day cap stays in force.
 - The service forces a live TrustedParts refresh by using `use_cached_data=false` and bypassing the local cache hit path.
 
+### `POST /api/sourcing/purchase-plans/{plan_id}/orders`
+
+Convert a freshly refreshed purchase plan into draft purchase orders.
+
+**Request**
+
+Path: `plan_id` is a purchase plan UUID in the current workspace. No request body is accepted in this phase.
+
+**Response** — `200 OK` (envelope: `{ data, status }`)
+
+```json
+{
+  "data": {
+    "orders": [
+      {
+        "id": "af28ff2a-33e6-4f6f-9825-7840c37f4440",
+        "name": "TrustedParts purchase — DigiKey — 2026-05-09",
+        "supplier": "DigiKey",
+        "status": "draft",
+        "currency": "EUR",
+        "comments": "TrustedParts purchase plan #... — distributor=DigiKey — generated=2026-05-09 — strategy=preferred_first",
+        "entries": [
+          {
+            "part_id": "012f2f63-3b2c-45c4-a841-682ec681f508",
+            "quantity_ordered": 25,
+            "unit_price": "1.04",
+            "currency": "EUR",
+            "comments": "TrustedParts: distributor=DigiKey, packaging=cut-tape, lead_time=3d, plan=9b7f7d43"
+          }
+        ]
+      }
+    ]
+  },
+  "status": { "category": "ok", "message": "OK" }
+}
+```
+
+**Errors**
+
+- `404 Not Found` — `plan_id` is missing or belongs to another workspace.
+- `409 Conflict` — the plan has not been refreshed or its refresh is older than 10 minutes.
+- `422 Unprocessable Entity` — one distributor group contains mixed currencies.
+
+**Notes**
+
+- The route creates one `Order(status="draft")` per selected distributor and one `OrderEntry` per selected plan line.
+- Conversion flips the plan to `converted` in the same transaction.
+- Permanent order comments are compliance-safe summaries. The raw `selected_url` from ephemeral plan lines is never copied into `orders.comments` or `order_entries.comments`.
+
 ### `GET /api/parts/{part_id}/sourcing`
 
 Return cached TrustedParts offers for one part's MPN.

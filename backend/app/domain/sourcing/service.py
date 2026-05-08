@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.time import utcnow
 from app.domain.builds.service import shortage_analysis
+from app.domain.orders.models import Order, OrderEntry
 from app.domain.parts.models import Part
 from app.domain.projects.models import Project
 from app.domain.sourcing import cache
@@ -25,6 +26,7 @@ from app.domain.sourcing.pricing import best_unit_price_at_qty
 from app.domain.sourcing.schemas import (
     BuildCapacityOut,
     DistributorCoverageMatrixOut,
+    PurchasePlanOrdersOut,
     PurchasePlanOut,
     SourcingAttributionLinks,
     SourcingBomLineOut,
@@ -40,6 +42,7 @@ from app.domain.sourcing.schemas import (
 TTL_SECONDS = 30 * 60
 BOM_TTL_SECONDS = 10 * 60
 PURCHASE_PLAN_TTL = timedelta(days=7)
+MAX_PLAN_STALENESS_SECONDS = 600
 TRUSTEDPARTS_LINKS = SourcingAttributionLinks(
     primary="https://www.trustedparts.com/",
     attribution="https://www.trustedparts.com/en/about",
@@ -52,6 +55,14 @@ class SourcingNotConfigured(Exception):
 
 class SourcingBudgetBlocked(Exception):
     """Workspace exceeded the hard TrustedParts parts-count budget."""
+
+
+class PurchasePlanStaleError(Exception):
+    """Purchase plan must be refreshed before conversion."""
+
+
+class PurchasePlanCurrencyError(Exception):
+    """Purchase plan has incompatible currencies in one distributor group."""
 
 
 def build_purchase_plan(
@@ -136,6 +147,55 @@ def build_purchase_plan(
     return plan
 
 
+def convert_plan_to_orders(
+    db: Session,
+    *,
+    workspace: Any,
+    plan: PurchasePlan,
+    user_id: UUID | None,
+) -> list[Order]:
+    if plan.status != "refreshed":
+        raise PurchasePlanStaleError(
+            "plan must be refreshed before conversion; call /refresh first"
+        )
+    if plan.last_refreshed_at is None:
+        raise PurchasePlanStaleError(
+            "plan must be refreshed before conversion; call /refresh first"
+        )
+    if plan.last_refreshed_at < utcnow() - timedelta(seconds=MAX_PLAN_STALENESS_SECONDS):
+        raise PurchasePlanStaleError("plan refresh is stale; refresh again before conversion")
+
+    lines_by_distributor: dict[str, list[PurchasePlanLine]] = {}
+    display_names: dict[str, str] = {}
+    for line in plan.lines:
+        if line.selected_distributor is None:
+            continue
+        key = line.selected_distributor.casefold()
+        lines_by_distributor.setdefault(key, []).append(line)
+        display_names.setdefault(key, line.selected_distributor)
+
+    orders: list[Order] = []
+    for distributor_key in sorted(display_names, key=lambda key: display_names[key].casefold()):
+        lines = sorted(
+            lines_by_distributor[distributor_key],
+            key=lambda line: (str(line.project_entry_id or ""), str(line.id)),
+        )
+        orders.append(
+            _create_order_for_distributor(
+                db,
+                workspace_id=workspace.id,
+                plan=plan,
+                distributor=display_names[distributor_key],
+                lines=lines,
+                user_id=user_id,
+            )
+        )
+
+    plan.status = "converted"
+    db.flush()
+    return orders
+
+
 def refresh_purchase_plan(
     db: Session,
     *,
@@ -196,6 +256,42 @@ def refresh_purchase_plan(
     plan.last_refreshed_at = utcnow()
     db.flush()
     return plan
+
+
+def purchase_plan_orders_to_out(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    orders: list[Order],
+) -> PurchasePlanOrdersOut:
+    return PurchasePlanOrdersOut.model_validate({
+        "orders": [
+            {
+                "id": order.id,
+                "name": order.name,
+                "supplier": order.supplier,
+                "status": order.status,
+                "currency": order.currency,
+                "comments": order.comments,
+                "entries": [
+                    {
+                        "id": entry.id,
+                        "part_id": entry.part_id,
+                        "quantity_ordered": entry.quantity_ordered,
+                        "unit_price": entry.unit_price,
+                        "currency": entry.currency,
+                        "comments": entry.comments,
+                    }
+                    for entry in _order_entries(
+                        db,
+                        workspace_id=workspace_id,
+                        order_id=order.id,
+                    )
+                ],
+            }
+            for order in orders
+        ]
+    })
 
 
 def purchase_plan_to_out(plan: PurchasePlan) -> PurchasePlanOut:
@@ -462,6 +558,89 @@ def search(
         cache_hit=all(result.cache_hit for result in results),
         links=TRUSTEDPARTS_LINKS,
     )
+
+
+def _create_order_for_distributor(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    plan: PurchasePlan,
+    distributor: str,
+    lines: list[PurchasePlanLine],
+    user_id: UUID | None,
+) -> Order:
+    currencies = {
+        line.selected_currency
+        for line in lines
+        if line.selected_currency is not None
+    }
+    if len(currencies) > 1:
+        raise PurchasePlanCurrencyError(
+            f"mixed currencies for distributor {distributor}"
+        )
+
+    today = utcnow().date()
+    currency = next(iter(currencies), None)
+    order = Order(
+        workspace_id=workspace_id,
+        name=f"TrustedParts purchase — {distributor} — {today.isoformat()}",
+        order_type="purchase",
+        supplier=distributor,
+        currency=currency,
+        status="draft",
+        comments=(
+            f"TrustedParts purchase plan #{plan.id} — distributor={distributor} "
+            f"— generated={today.isoformat()} — strategy={plan.strategy}"
+        ),
+        created_by=user_id,
+        updated_by=user_id,
+    )
+    db.add(order)
+    db.flush()
+    for index, line in enumerate(lines):
+        db.add(
+            OrderEntry(
+                workspace_id=workspace_id,
+                order_id=order.id,
+                part_id=line.part_id,
+                quantity_ordered=line.selected_qty or 0,
+                unit_price=line.selected_unit_price,
+                currency=line.selected_currency,
+                comments=(
+                    f"TrustedParts: distributor={distributor}, "
+                    f"packaging={line.selected_packaging or 'unknown'}, "
+                    f"lead_time={_lead_time_label(line.selected_lead_time_days)}, "
+                    f"plan={str(plan.id)[:8]}"
+                ),
+                order_index=index,
+                created_by=user_id,
+                updated_by=user_id,
+            )
+        )
+    db.flush()
+    return order
+
+
+def _order_entries(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    order_id: UUID,
+) -> list[OrderEntry]:
+    return list(
+        db.execute(
+            select(OrderEntry)
+            .where(OrderEntry.workspace_id == workspace_id)
+            .where(OrderEntry.order_id == order_id)
+            .order_by(OrderEntry.order_index)
+        ).scalars()
+    )
+
+
+def _lead_time_label(value: int | None) -> str:
+    if value is None:
+        return "unknown"
+    return f"{value}d"
 
 
 def _canonical_query(
