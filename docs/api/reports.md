@@ -2,7 +2,7 @@
 
 Audience: engineer
 
-Read-only aggregate queries: low-stock parts, BOM shortage at a planned build quantity, stock value, and expiring lots.
+Read-only aggregate queries: low-stock parts, sourcing risk, BOM shortage at a planned build quantity, stock value, and expiring lots.
 
 ## Conventions
 
@@ -58,6 +58,47 @@ Project-wide shortage analysis at a given build quantity. No build is created â€
 
 - Source: `backend/app/api/routes/reports.py:72-86`.
 - Service: `backend/app/domain/builds/service.py::shortage_analysis`.
+
+### `GET /api/reports/sourcing-risk`
+
+Workspace-wide sourcing risk for active parts with an MPN. The route uses TrustedParts through the sourcing service with a 4-hour cache TTL, returns a top-level `sourcing_status`, and recomputes flags on each request.
+
+**Query**
+
+| Field | Type | Notes |
+|---|---|---|
+| `only_with_flags` | bool | Default `true`; when true, clean rows are omitted. |
+| `use_cached_data` | bool \| null | Default `null`; null uses cached TrustedParts data. |
+
+**Response** â€” `200 OK` (envelope: `{ data, status }`)
+
+```json
+{ "data": {
+  "sourcing_status": { "state": "ok", "message": "OK" },
+  "rows": [ { "mpn": "STM32F103", "risk_flags": ["single_source"] } ]
+}, "status": { ... } }
+```
+
+`sourcing_status.state` is `ok`, `not_configured`, `budget_blocked`, or `upstream_error`. Non-`ok` states are reported in the payload so the report page can render a banner without violating the API envelope.
+
+**Risk flags**
+
+| Flag | Heuristic |
+|---|---|
+| `single_source` | Exactly one distributor has authorized stock for the part MPN. |
+| `no_authorized_stock` | No distributor has authorized stock and the part has internal on-hand quantity. |
+| `moq_overbuy` | Best offer MOQ is greater than `5 * typical_reorder_quantity`, where typical is `max(part.low_stock_report_quantity, 10)`. |
+| `lead_time_long` | Best offer lead time is greater than 30 days. |
+| `preferred_distributor_unmet` | Workspace preferred distributors are configured, but none has stock. |
+| `price_delta` | Best replacement price is at least 25% above the latest historical lot purchase price in the same currency. |
+
+**Notes**
+
+- Route: `backend/app/api/routes/reports.py:74-91`.
+- Service: `backend/app/domain/reports/service.py:38-133`.
+- DTOs: `backend/app/domain/reports/schemas.py:13-58`.
+- Stock quantities use `bulk_current_quantities`; no report query aggregates ledger rows directly (`backend/app/domain/reports/service.py:56-62`).
+- Risk history is not persisted; there is no report table or migration for this feature.
 
 ### `GET /api/reports/stock-value`
 

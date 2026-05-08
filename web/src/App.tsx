@@ -94,6 +94,7 @@ const BomShortageReport = lazy(() =>
 const ExpiringLotsReport = lazy(() =>
   import("@/routes/reports/Reports").then(m => ({ default: m.ExpiringLotsReport }))
 );
+const SourcingRiskReport = lazy(() => import("@/routes/reports/SourcingRiskReport"));
 
 const ProjectsList = lazy(() => import("@/routes/projects/ProjectsList"));
 const ProjectCreate = lazy(() => import("@/routes/projects/ProjectCreate"));
@@ -270,6 +271,7 @@ export default function App() {
               <Route path="value" element={<LazyRoute><StockValueReport /></LazyRoute>} />
               <Route path="bom" element={<LazyRoute><BomShortageReport /></LazyRoute>} />
               <Route path="expiring" element={<LazyRoute><ExpiringLotsReport /></LazyRoute>} />
+              <Route path="sourcing-risk" element={<LazyRoute><SourcingRiskReport /></LazyRoute>} />
             </Route>
 
             <Route path="/projects" element={<LazyRoute><ProjectsList /></LazyRoute>} />
