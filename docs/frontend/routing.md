@@ -55,9 +55,10 @@ All under `<Gate>` (`App.tsx:183-276`). Grouped:
   `/parts/lots`, `/parts/stock/history` — eager (`App.tsx:186-196`)
 - `/parts/scan` → `<Navigate to="/parts/scan-import" replace />` —
   legacy redirect for external links (`App.tsx:193`)
-- `/parts/:partId` with nested tabs (`info`, `specs`, `sourcing`, `stock`,
-  `add`, `remove`, `move`, `history`, `lots`, `substitutes`, `members`,
-  `settings`, `other`, `attachments`, `activity`) — eager
+- `/parts/:partId` with nested tabs (`info`, `specs`, `sourcing`,
+  `authorized-supply`, `stock`, `add`, `remove`, `move`, `history`,
+  `lots`, `substitutes`, `members`, `settings`, `other`, `attachments`,
+  `activity`) — eager
   (`App.tsx:198-215`). The index route `<Navigate to="info" replace />` lands
   bare `/parts/:partId` on the Info tab.
 - `/storage`, `/storage/:storageId/{info,history,settings,other}` — eager

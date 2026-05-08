@@ -213,6 +213,13 @@ TrustedParts source pill with `aria-label="Source: TrustedParts"`
 (`:20-23`) so TrustedParts-derived distributor data stays visually and
 accessibly labelled.
 
+`web/src/routes/parts/detail/AuthorizedSupplyTab.tsx` mounts the part
+detail **Authorized supply** tab. It reads
+`GET /api/parts/{part_id}/sourcing`, displays TrustedParts attribution
+with `<PoweredByTrustedParts/>`, labels the table with
+`<SourcingSourceLabel/>`, filters distributors client-side, and refreshes
+with `POST /api/parts/{part_id}/sourcing/refresh`.
+
 ## MpnLookup
 
 `web/src/components/MpnLookup.tsx`. Affordance attached to MPN inputs that
