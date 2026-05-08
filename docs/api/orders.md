@@ -124,6 +124,7 @@ Append an entry. Auto-flips `status="draft"` to `"open"` (`orders.py:258-259`).
 **Notes**
 
 - `order_index` is `max(order_index)+1` (`orders.py:235-243`).
+- The part Authorized-supply tab can create entries through this route; see [parts frontend](../frontend/parts.md) for the UI flow.
 - Source: `backend/app/api/routes/orders.py:231-261`.
 
 ### `PATCH /api/orders/{order_id}/entries/{entry_id}`

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, RefreshCw } from "lucide-react";
+import { ExternalLink, Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { InlineQueryError } from "@/components/QueryStateBoundary";
 import { ApiError, api } from "@/lib/api";
@@ -13,6 +13,10 @@ import type { Column } from "@/components/DataTable";
 import { DataTable } from "@/components/DataTable";
 import { PoweredByTrustedParts } from "@/components/PoweredByTrustedParts";
 import { SourcingSourceLabel } from "@/components/SourcingSourceLabel";
+import {
+  CreateOrderLineModal,
+  type CreateOrderLineSource,
+} from "./CreateOrderLineModal";
 
 type SourcingReason = "ok" | "no_mpn";
 
@@ -118,7 +122,7 @@ function flattenOffers(data: SourcingResponse | undefined): SupplyRow[] {
       currency: distributor.currency ?? null,
       priceBreaks: distributor.price_breaks ?? [],
       leadTimeDays: distributor.lead_time_days ?? null,
-      link: offer.links?.primary ?? data.links?.primary ?? null,
+      link: distributor.product_url ?? offer.links?.primary ?? data.links?.primary ?? null,
     })),
   );
 }
@@ -165,6 +169,7 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
   const [selectedDistributors, setSelectedDistributors] = useState<Set<string>>(() => new Set());
   const [quantity, setQuantity] = useState(1);
   const [customQuantity, setCustomQuantity] = useState("1");
+  const [orderLineSource, setOrderLineSource] = useState<CreateOrderLineSource | null>(null);
 
   const query = useQuery({
     queryKey,
@@ -310,9 +315,36 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
             <span className="text-muted">—</span>
           ),
       },
+      {
+        key: "order",
+        header: "",
+        render: row => (
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => {
+              const best = bestUnitPriceAtQty(row.priceBreaks, quantity);
+              setOrderLineSource({
+                partId,
+                distributor: row.distributor,
+                packaging: row.packaging,
+                leadTimeDays: row.leadTimeDays,
+                fetchedAt: query.data?.fetched_at ?? null,
+                quantity,
+                unitPrice: best?.unitPrice ?? row.unitPrice,
+                currency: row.currency,
+                productUrl: row.link,
+              });
+            }}
+          >
+            <Plus size={14} aria-hidden="true" />
+            Add to order
+          </button>
+        ),
+      },
     ];
     return baseColumns;
-  }, [quantity]);
+  }, [partId, quantity, query.data?.fetched_at]);
 
   const status = errorStatus(query.error);
   const refreshStatus = errorStatus(refreshMutation.error);
@@ -473,6 +505,11 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
         searchPlaceholder="Search offers…"
         exportFilename="authorized-supply"
         empty="No authorized-distributor offers."
+      />
+      <CreateOrderLineModal
+        open={orderLineSource !== null}
+        source={orderLineSource}
+        onClose={() => setOrderLineSource(null)}
       />
     </div>
   );
