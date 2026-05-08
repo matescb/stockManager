@@ -5,12 +5,12 @@ import base64
 import csv
 import io
 from dataclasses import dataclass
-from typing import Iterable
 from uuid import UUID
 
 import chardet
 from fastapi import status
-from sqlalchemy import and_, func, select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.errors import ErrorCodes, raise_http
@@ -96,7 +96,16 @@ def _looks_numeric(s: str) -> bool:
         return False
 
 
-def preview(payload: BomImportPreviewIn) -> BomImportPreviewOut:
+class _SkipRow(Exception):
+    """Auto-create cannot materialise a usable Part from this row."""
+
+
+def preview(
+    payload: BomImportPreviewIn,
+    db: Session | None = None,
+    *,
+    workspace_id: UUID | None = None,
+) -> BomImportPreviewOut:
     raw = _decode_b64(payload.text_b64)
     enc = _detect_encoding(raw, payload.encoding)
     text = raw.decode(enc, errors="replace")
@@ -112,15 +121,27 @@ def preview(payload: BomImportPreviewIn) -> BomImportPreviewOut:
             headers=None,
             rows=[],
         )
-    has_header = payload.has_header if payload.has_header is not None else _looks_like_header(all_rows[0])
+    has_header = (
+        payload.has_header
+        if payload.has_header is not None
+        else _looks_like_header(all_rows[0])
+    )
     headers = all_rows[0] if has_header else None
     body = all_rows[1:] if has_header else all_rows
+    would_auto_create_count, would_skip_count = _preview_auto_create_counts(
+        payload,
+        body,
+        db=db,
+        workspace_id=workspace_id,
+    )
     return BomImportPreviewOut(
         detected_separator=sep,
         detected_encoding=enc,
         has_header=has_header,
         headers=headers,
         rows=[BomPreviewRow(cells=r) for r in body[:200]],
+        would_auto_create_count=would_auto_create_count,
+        would_skip_count=would_skip_count,
     )
 
 
@@ -172,7 +193,11 @@ def _split_designators(value: str, sep: str) -> list[str]:
     return [p for p in parts if p]
 
 
-def _apply_mapping(cells: list[str], mapping: list[BomMappingField], designator_sep: str) -> ParsedRow:
+def _apply_mapping(
+    cells: list[str],
+    mapping: list[BomMappingField],
+    designator_sep: str,
+) -> ParsedRow:
     out = ParsedRow()
     for m in mapping:
         idx = m.column_index
@@ -211,7 +236,10 @@ def _apply_mapping(cells: list[str], mapping: list[BomMappingField], designator_
 
 
 def _match_part(db: Session, *, workspace_id: UUID, row: ParsedRow) -> Part | None:
-    """Spec §16.3 match priority — never auto-create."""
+    """Spec §16.3 match priority — never auto-create.
+
+    Auto-create lives in commit() under the auto_create_missing_parts flag (BOM-001).
+    """
     # 1. internal ID code → we treat the part `id` UUID as the ID code if present.
     if row.id_code:
         try:
@@ -254,12 +282,116 @@ def _match_part(db: Session, *, workspace_id: UUID, row: ParsedRow) -> Part | No
     # 5. exact local name
     if row.part:
         p = db.execute(
-            select(Part).where(Part.workspace_id == workspace_id).where(Part.name == row.part).limit(1)
+            select(Part)
+            .where(Part.workspace_id == workspace_id)
+            .where(Part.name == row.part)
+            .limit(1)
         ).scalars().first()
         if p:
             return p
     # 6. meta-part candidate — out of MVP
     return None
+
+
+def _clean(value: str | None) -> str | None:
+    value = (value or "").strip()
+    return value or None
+
+
+def _auto_create_values(row: ParsedRow) -> dict[str, str | None]:
+    mpn = _clean(row.mpn)
+    name = _clean(row.part) or mpn
+    if not name and not mpn:
+        raise _SkipRow
+    return {
+        "name": name,
+        "mpn": mpn,
+        "manufacturer": _clean(row.manufacturer),
+        "internal_part_number": _clean(row.internal_part_number),
+    }
+
+
+def _auto_create_part(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    user_id: UUID | None,
+    row: ParsedRow,
+) -> Part:
+    values = _auto_create_values(row)
+    part = Part(
+        workspace_id=workspace_id,
+        part_type="local",
+        name=values["name"],
+        mpn=values["mpn"],
+        manufacturer=values["manufacturer"],
+        internal_part_number=values["internal_part_number"],
+        description=None,
+        linked_provider="none",
+        default_storage_location_id=None,
+        created_by=user_id,
+        updated_by=user_id,
+    )
+    db.add(part)
+    db.flush()
+    return part
+
+
+@dataclass
+class _PreviewCreatedKeys:
+    internal_part_numbers: set[str]
+    mpns: set[str]
+    names: set[str]
+
+
+def _preview_row_matches_created(row: ParsedRow, created: _PreviewCreatedKeys) -> bool:
+    if row.internal_part_number and row.internal_part_number in created.internal_part_numbers:
+        return True
+    if row.mpn and row.mpn in created.mpns:
+        return True
+    return bool(row.part and row.part in created.names)
+
+
+def _remember_preview_created(row: ParsedRow, created: _PreviewCreatedKeys) -> None:
+    values = _auto_create_values(row)
+    if values["internal_part_number"]:
+        created.internal_part_numbers.add(values["internal_part_number"])
+    if values["mpn"]:
+        created.mpns.add(values["mpn"])
+    if values["name"]:
+        created.names.add(values["name"])
+
+
+def _preview_auto_create_counts(
+    payload: BomImportPreviewIn,
+    rows: list[list[str]],
+    *,
+    db: Session | None,
+    workspace_id: UUID | None,
+) -> tuple[int, int]:
+    if not payload.auto_create_missing_parts or not payload.mapping:
+        return 0, 0
+
+    would_auto_create = 0
+    would_skip = 0
+    created = _PreviewCreatedKeys(internal_part_numbers=set(), mpns=set(), names=set())
+    for cells in rows:
+        parsed = _apply_mapping(cells, payload.mapping, payload.designator_separator)
+        if _preview_row_matches_created(parsed, created):
+            continue
+        if (
+            db is not None
+            and workspace_id is not None
+            and _match_part(db, workspace_id=workspace_id, row=parsed)
+        ):
+            continue
+        try:
+            _remember_preview_created(parsed, created)
+        except _SkipRow:
+            would_skip += 1
+            continue
+        would_auto_create += 1
+    return would_auto_create, would_skip
 
 
 def commit(
@@ -304,38 +436,67 @@ def commit(
             fractional_rows=fractional_rows,
         )
 
-    inserted = matched = unmatched = 0
-    for parsed in parsed_rows:
-        if parsed.designators is None:
-            parsed.designators = []
-        # quantity default from designator count if not set
-        if parsed.quantity == 1 and parsed.designators:
-            parsed.quantity = len(parsed.designators)
-        candidate = _match_part(db, workspace_id=workspace_id, row=parsed)
-        entry_type = "part" if candidate else "unmatched"
-        entry = ProjectEntry(
-            workspace_id=workspace_id,
-            project_id=project.id,
-            entry_type=entry_type,
-            part_id=candidate.id if candidate else None,
-            name=parsed.part or (candidate.name if candidate else parsed.mpn) or "",
-            quantity=parsed.quantity,
-            comments=parsed.comments,
-            designators=parsed.designators,
-            cad_footprint=parsed.footprint,
-            cad_key=parsed.cad_key,
-            dnp=parsed.dnp,
-            order_index=next_idx,
-            created_by=user_id,
-            updated_by=user_id,
-        )
-        db.add(entry)
-        next_idx += 1
-        inserted += 1
-        if candidate:
-            matched += 1
-        else:
-            unmatched += 1
-    db.flush()
-    return BomImportCommitOut(inserted=inserted, matched=matched, unmatched=unmatched)
+    inserted = matched = unmatched = auto_created = skipped = 0
+    try:
+        for parsed in parsed_rows:
+            if parsed.designators is None:
+                parsed.designators = []
+            # quantity default from designator count if not set
+            if parsed.quantity == 1 and parsed.designators:
+                parsed.quantity = len(parsed.designators)
+            candidate = _match_part(db, workspace_id=workspace_id, row=parsed)
+            created_for_row = False
+            if candidate is None and payload.auto_create_missing_parts:
+                try:
+                    candidate = _auto_create_part(
+                        db,
+                        workspace_id=workspace_id,
+                        user_id=user_id,
+                        row=parsed,
+                    )
+                except _SkipRow:
+                    skipped += 1
+                    continue
+                created_for_row = True
+                auto_created += 1
 
+            entry_type = "part" if candidate else "unmatched"
+            entry = ProjectEntry(
+                workspace_id=workspace_id,
+                project_id=project.id,
+                entry_type=entry_type,
+                part_id=candidate.id if candidate else None,
+                name=parsed.part or (candidate.name if candidate else parsed.mpn) or "",
+                quantity=parsed.quantity,
+                comments=parsed.comments,
+                designators=parsed.designators,
+                cad_footprint=parsed.footprint,
+                cad_key=parsed.cad_key,
+                dnp=parsed.dnp,
+                order_index=next_idx,
+                created_by=user_id,
+                updated_by=user_id,
+            )
+            db.add(entry)
+            next_idx += 1
+            inserted += 1
+            if created_for_row:
+                continue
+            if candidate:
+                matched += 1
+            else:
+                unmatched += 1
+        db.flush()
+    except IntegrityError:
+        raise_http(
+            status.HTTP_409_CONFLICT,
+            "part.mpn_conflict",
+            "MPN already used by another part",
+        )
+    return BomImportCommitOut(
+        inserted=inserted,
+        matched=matched,
+        unmatched=unmatched,
+        auto_created=auto_created,
+        skipped=skipped,
+    )

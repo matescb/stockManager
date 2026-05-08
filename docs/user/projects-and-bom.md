@@ -53,6 +53,20 @@ The fastest way to populate a BOM is to import the export your CAD tool produced
 
 Click **Open BOM** to view the result.
 
+### Auto-create missing parts
+
+If your import screen or integration enables **Auto-create missing parts**, unmatched rows are turned into new parts during import instead of placeholder BOM lines.
+
+The import still tries to match existing parts first. It only creates a part after it fails to match by internal ID, CAD key, internal part number, MPN, or part name.
+
+Auto-created parts start with zero stock. They do not create stock entries or lots. The new part gets:
+
+- **Name** from the BOM's part/name column, or the MPN if the name is blank.
+- **MPN**, **Manufacturer**, and **Internal part number** from the mapped columns when present.
+- **Provider** set to `none`, so you can enrich it later.
+
+Rows with neither an MPN nor a part/name are skipped when auto-create is enabled. They do not create a part or a BOM line.
+
 ### Save your mapping as a preset
 
 If you import BOMs from the same CAD tool repeatedly, save the column mapping:
@@ -86,6 +100,6 @@ Open the project, click **Other**, click **Archive**. The project disappears fro
 ## What to do if it doesn't work
 
 - **Import says "BOM file too large — max 4 MB"** — split the file or strip unused columns.
-- **Lines come back as Unmatched** — the file's MPN or part name didn't match anything in your workspace. Either create the missing parts (via [scan-to-import](scan-import.md) or **+ Part**), then click **Match…** on each row, or re-import after creating the parts.
+- **Lines come back as Unmatched** — the file's MPN or part name didn't match anything in your workspace. Either create the missing parts (via [scan-to-import](scan-import.md) or **+ Part**), then click **Match…** on each row, re-import after creating the parts, or enable auto-create where available.
 - **Designators show up in one cell instead of split** — your **Designator separator** is wrong. Re-import with the right separator (often `,` or `;`).
 - **Imported quantities are off** — your **Separator** or **Has header** detection was wrong. Re-import with the correct values.

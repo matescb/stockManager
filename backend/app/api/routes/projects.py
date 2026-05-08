@@ -256,7 +256,7 @@ def del_entry(project_id: UUID, entry_id: UUID, db: DbSession, ws: CurrentWorksp
 @router.post("/{project_id}/bom/preview")
 def preview_bom(project_id: UUID, payload: BomImportPreviewIn, db: DbSession, ws: CurrentWorkspace):
     _get(db, ws.id, project_id)
-    return ok(bom.preview(payload).model_dump())
+    return ok(bom.preview(payload, db=db, workspace_id=ws.id).model_dump())
 
 
 @router.post("/{project_id}/bom/import")

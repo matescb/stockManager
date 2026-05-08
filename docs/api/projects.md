@@ -158,9 +158,31 @@ The frontend invokes `preview` to render a diff, then `commit` to apply it. Both
 
 Parse a CSV / paste against a column-mapping config and return the proposed entries (no DB writes). The response model is whatever `bom.preview` returns (`BomImportPreview`).
 
-**Request** — `BomImportPreviewIn`. TODO(verify): exact field shape (CSV bytes vs rows; column-mapping config; preset reference).
+**Request** — `BomImportPreviewIn`
 
-**Response** — `200 OK` — `model_dump()` of the preview result.
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `text_b64` | string | yes | Base64 CSV/TSV/plain text payload. Runtime decoded cap is 4 MB. |
+| `separator` | string \| null | no | Auto-detected when omitted. |
+| `encoding` | string \| null | no | Auto-detected when omitted. |
+| `has_header` | bool \| null | no | Auto-detected when omitted. |
+| `auto_create_missing_parts` | bool | no | Default `false`. When `true`, preview reports auto-create and skip counters. |
+| `mapping` | `BomMappingField[]` \| null | no | Required for meaningful auto-create counters because MPN/name columns must be known. |
+| `designator_separator` | string | no | Default `,`. Used when `mapping` contains `designators`. |
+
+**Response** — `200 OK` — envelope: `{ data, status }`
+
+```json
+{
+  "detected_separator": ",",
+  "detected_encoding": "utf-8",
+  "has_header": true,
+  "headers": ["qty", "mpn"],
+  "rows": [{ "cells": ["1", "NEW-MPN"] }],
+  "would_auto_create_count": 1,
+  "would_skip_count": 0
+}
+```
 
 **Notes**
 
@@ -171,13 +193,37 @@ Parse a CSV / paste against a column-mapping config and return the proposed entr
 
 Commit the preview into `project_entries` rows.
 
-**Request** — `BomImportCommitIn`. TODO(verify): exact field shape and preview→commit handoff (token? full payload?).
+**Request** — `BomImportCommitIn`
 
-**Response** — `200 OK` — `model_dump()` of the commit result (counts, conflicts, skipped rows).
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `text_b64` | string | yes | Same base64 payload used for preview. |
+| `separator` | string | yes | Delimiter to parse with. |
+| `encoding` | string | yes | Text encoding to decode with. |
+| `has_header` | bool | yes | Whether to skip the first row. |
+| `mapping` | `BomMappingField[]` | yes | Column-to-field mapping. Targets include `quantity`, `part`, `mpn`, `manufacturer`, `internal_part_number`, `designators`, `comments`, `footprint`, `id_code`, `cad_key`, `dnp`, `ignore`. |
+| `designator_separator` | string | no | Default `,`. |
+| `auto_create_missing_parts` | bool | no | Default `false`. When `true`, rows that do not match but have MPN or part/name create a zero-stock `Part`. Rows with neither MPN nor part/name are skipped. |
+
+**Response** — `200 OK` — envelope: `{ data, status }`
+
+```json
+{
+  "inserted": 1,
+  "matched": 0,
+  "unmatched": 0,
+  "auto_created": 1,
+  "skipped": 0
+}
+```
+
+`auto_created` counts new `Part` rows, not repeated BOM rows that merge onto a part created earlier in the same import.
 
 **Notes**
 
 - The dep rolls back on any raise, so no explicit try/except is needed (`projects.py:265-267`).
+- Auto-create preserves the import match priority in `bom_import.py::_match_part`; creation happens only after no candidate is found.
+- Created parts use the import workspace, `linked_provider='none'`, no default storage location, and no stock entries or lots.
 - Source: `backend/app/api/routes/projects.py:262-269`.
 - Service: `backend/app/domain/projects/bom_import.py::commit`.
 
@@ -242,5 +288,4 @@ Hard-delete (`db.delete`).
 ## TODOs
 
 - TODO(verify): `BomEntryIn`/`BomEntryPatch` — exhaustive field list, `entry_type` allowed values (`domain/projects/schemas.py`).
-- TODO(verify): `BomImportPreviewIn`/`BomImportCommitIn` shape and the preview→commit handoff (`domain/projects/bom_import.py`, `domain/projects/schemas.py`).
 - TODO(verify): `PresetIn`/`PresetPatch` exact shape and whether `config` is validated server-side (`domain/projects/schemas.py`).
