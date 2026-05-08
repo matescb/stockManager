@@ -1,4 +1,5 @@
 """Pydantic DTOs for reports."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -10,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.sourcing.schemas import SourcingAttributionLinks, SourcingBomOfferOut
 
+SourcingReportStatus = Literal["ok", "not_configured", "partial", "budget_blocked"]
 SourcingRiskFlag = Literal[
     "single_source",
     "no_authorized_stock",
@@ -18,6 +20,31 @@ SourcingRiskFlag = Literal[
     "preferred_distributor_unmet",
     "price_delta",
 ]
+
+
+class ProjectBuyabilityRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: UUID
+    project_name: str
+    build_quantity: int
+    can_build_now: int
+    can_build_after_purchase: int
+    blocking_lines_count: int
+    est_purchase_cost: Decimal | None = None
+    partial: bool = False
+
+
+class BomBuyabilityReportOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    build_quantity: int = Field(ge=1)
+    rows: list[ProjectBuyabilityRow]
+    sourcing_status: SourcingReportStatus
+    truncated: bool
+    project_cap: int
+    powered_by: Literal["TrustedParts"] = "TrustedParts"
+    links: SourcingAttributionLinks
 
 
 class SourcingRiskStatusOut(BaseModel):
@@ -56,4 +83,3 @@ class SourcingRiskReportOut(BaseModel):
     partial: bool
     cache_hit: bool | None = None
     links: SourcingAttributionLinks
-

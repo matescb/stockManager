@@ -1,4 +1,5 @@
 """Read-only report services."""
+
 from __future__ import annotations
 
 import logging
@@ -12,9 +13,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.time import utcnow
+from app.domain.builds.service import shortage_analysis
 from app.domain.lots.models import Lot
 from app.domain.parts.models import Part
+from app.domain.projects.models import Project
 from app.domain.reports.schemas import (
+    BomBuyabilityReportOut,
+    ProjectBuyabilityRow,
     SourcingRiskReportOut,
     SourcingRiskRow,
     SourcingRiskStatusOut,
@@ -35,6 +40,8 @@ from app.domain.sourcing.service import SourcingBudgetBlocked, SourcingNotConfig
 from app.domain.stock.service import bulk_current_quantities
 
 LOW_STOCK_SOURCING_TTL_SECONDS = 4 * 3600
+BOM_BUYABILITY_PROJECT_CAP = 50
+BOM_BUYABILITY_TTL_SECONDS = 4 * 60 * 60
 SOURCING_RISK_TTL_SECONDS = 4 * 60 * 60
 PRICE_DELTA_THRESHOLD = Decimal("0.25")
 LEAD_TIME_LONG_DAYS = 30
@@ -43,6 +50,108 @@ MOQ_OVERBUY_MULTIPLIER = 5
 SourcingStatus = Literal["ok", "not_configured", "partial", "budget_blocked"]
 
 _log = logging.getLogger(__name__)
+
+
+def bom_buyability_report(
+    db: Session,
+    *,
+    workspace: Any,
+    build_quantity: int = 1,
+    use_cached_data: bool | None = None,
+) -> BomBuyabilityReportOut:
+    """Workspace-wide per-project buildability scoreboard."""
+    effective_cache = True if use_cached_data is None else use_cached_data
+    projects = list(
+        db.execute(
+            select(Project)
+            .where(Project.workspace_id == workspace.id)
+            .where(Project.archived_at.is_(None))
+            .order_by(Project.created_at.desc(), Project.id.desc())
+            .limit(BOM_BUYABILITY_PROJECT_CAP + 1)
+        ).scalars()
+    )
+    truncated = len(projects) > BOM_BUYABILITY_PROJECT_CAP
+    projects = projects[:BOM_BUYABILITY_PROJECT_CAP]
+
+    rows: list[ProjectBuyabilityRow] = []
+    statuses: set[str] = set()
+    for project in projects:
+        try:
+            sourced = sourcing_service.source_bom(
+                db,
+                workspace=workspace,
+                project=project,
+                build_quantity=build_quantity,
+                use_cached_data=effective_cache,
+                ttl_seconds=BOM_BUYABILITY_TTL_SECONDS,
+            )
+        except SourcingNotConfigured:
+            statuses.add("not_configured")
+            rows.append(
+                _unsourced_row(
+                    db,
+                    workspace=workspace,
+                    project=project,
+                    build_quantity=build_quantity,
+                    partial=True,
+                )
+            )
+        except SourcingBudgetBlocked:
+            statuses.add("budget_blocked")
+            rows.append(
+                _unsourced_row(
+                    db,
+                    workspace=workspace,
+                    project=project,
+                    build_quantity=build_quantity,
+                    partial=True,
+                )
+            )
+        except (
+            SourcingAuthError,
+            SourcingRateLimitError,
+            SourcingTimeoutError,
+            SourcingClientError,
+        ):
+            statuses.add("partial")
+            rows.append(
+                _unsourced_row(
+                    db,
+                    workspace=workspace,
+                    project=project,
+                    build_quantity=build_quantity,
+                    partial=True,
+                )
+            )
+        else:
+            if sourced.partial:
+                statuses.add("partial")
+            capacity = sourced.capacity
+            rows.append(
+                ProjectBuyabilityRow(
+                    project_id=project.id,
+                    project_name=project.name,
+                    build_quantity=build_quantity,
+                    can_build_now=capacity.can_build_now,
+                    can_build_after_purchase=capacity.can_build_after_purchase,
+                    blocking_lines_count=(
+                        len(capacity.blocking_lines_after_purchase)
+                        if capacity.can_build_after_purchase < build_quantity
+                        else 0
+                    ),
+                    est_purchase_cost=capacity.est_purchase_cost,
+                    partial=sourced.partial,
+                )
+            )
+
+    return BomBuyabilityReportOut(
+        build_quantity=build_quantity,
+        rows=rows,
+        sourcing_status=_coalesce_status(statuses),
+        truncated=truncated,
+        project_cap=BOM_BUYABILITY_PROJECT_CAP,
+        links=sourcing_service.TRUSTEDPARTS_LINKS,
+    )
 
 
 def sourcing_risk_report(
@@ -141,6 +250,52 @@ def sourcing_risk_report(
         partial=partial,
         cache_hit=all(cache_hit_values) if cache_hit_values else None,
         links=sourcing_service.TRUSTEDPARTS_LINKS,
+    )
+
+
+def _coalesce_status(statuses: set[str]) -> str:
+    for status in ("budget_blocked", "not_configured", "partial"):
+        if status in statuses:
+            return status
+    return "ok"
+
+
+def _unsourced_row(
+    db: Session,
+    *,
+    workspace: Any,
+    project: Project,
+    build_quantity: int,
+    partial: bool,
+) -> ProjectBuyabilityRow:
+    rows = shortage_analysis(
+        db,
+        workspace_id=workspace.id,
+        project=project,
+        build_quantity=build_quantity,
+    )
+    can_build_now = _can_build_now(rows, build_quantity=build_quantity)
+    return ProjectBuyabilityRow(
+        project_id=project.id,
+        project_name=project.name,
+        build_quantity=build_quantity,
+        can_build_now=can_build_now,
+        can_build_after_purchase=can_build_now,
+        blocking_lines_count=sum(1 for row in rows if int(row["short_by"]) > 0),
+        est_purchase_cost=None,
+        partial=partial,
+    )
+
+
+def _can_build_now(rows: list[dict[str, Any]], *, build_quantity: int) -> int:
+    effective = [row for row in rows if int(row["required"]) > 0]
+    if not effective:
+        return 0
+    return min(
+        (int(row["available"]) + int(row.get("substitute_available", 0)))
+        * build_quantity
+        // int(row["required"])
+        for row in effective
     )
 
 

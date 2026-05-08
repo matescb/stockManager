@@ -23,6 +23,7 @@ What you need to navigate `web/src/`. Conventions are sketched in [`CLAUDE.md`](
 | [components](components.md) | DataTable + reusable component catalog |
 | [parts](parts.md) | Part-detail flows that span tabs and modals |
 | [projects](projects.md) | Project-detail flows, including Source BOM |
+| [reports](reports.md) | Report routes, including BOM buyability |
 | [tailwind-utilities](tailwind-utilities.md) | The `index.css` utility set (`btn`, `card`, `pill`, …) |
 | [auth-flow](auth-flow.md) | `AuthProvider`, workspace switch, 401 redirect bus |
 | [scanner](scanner.md) | ZXing / Scandit dual-mode + `bagCode.ts` parser |
