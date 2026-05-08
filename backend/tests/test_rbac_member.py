@@ -33,7 +33,7 @@ def owner_and_member():
     """Owner creates a workspace, invites a user as `member`, member
     accepts and switches into the shared workspace."""
     owner = TestClient(app)
-    _signup(owner)
+    _, owner_ws_id = _signup(owner)
 
     invitee_email = f"member-{uuid.uuid4().hex[:6]}@x.com"
     inv = owner.post(
@@ -51,11 +51,7 @@ def owner_and_member():
     )
     member.post("/api/invitations/accept", json={"token": token})
 
-    me = member.get("/api/auth/me").json()["data"]
-    member_personal = me["workspaces"][0]["id"]
-    wss = member.get("/api/workspaces").json()["data"]
-    shared = next(w for w in wss if w["id"] != member_personal)
-    member.post(f"/api/workspaces/{shared['id']}/switch")
+    member.post(f"/api/workspaces/{owner_ws_id}/switch")
 
     return owner, member
 

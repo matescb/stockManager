@@ -386,6 +386,7 @@ app.include_router(custom_fields.router, prefix="/api/custom-fields", tags=["cus
 app.include_router(tags.router, prefix="/api/tags", tags=["tags"], dependencies=_member_gate)
 app.include_router(search.router, prefix="/api/search", tags=["search"], dependencies=_member_gate)
 app.include_router(sourcing.router, prefix="/api/workspaces", tags=["sourcing"])
+app.include_router(sourcing.search_router, prefix="/api/sourcing", tags=["sourcing"])
 app.include_router(
     parts_provider.router,
     prefix="/api/parts",

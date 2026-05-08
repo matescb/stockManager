@@ -11,7 +11,6 @@ from __future__ import annotations
 import uuid
 from time import monotonic
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -20,7 +19,11 @@ from app.main import app
 def _signup_with_mouser(c: TestClient) -> str:
     r = c.post(
         "/api/auth/signup",
-        json={"email": f"u-{uuid.uuid4().hex[:8]}@x.com", "name": "u", "password": "TestPass-2026-Stronk"},
+        json={
+            "email": f"u-{uuid.uuid4().hex[:8]}@x.com",
+            "name": "u",
+            "password": "TestPass-2026-Stronk",
+        },
     )
     assert r.status_code == 200, r.text
     c.patch(
@@ -53,9 +56,6 @@ def test_per_row_timeout_marks_row_lookup_failed_neighbours_still_run(monkeypatc
     """A provider call that hangs longer than _BULK_IMPORT_ROW_TIMEOUT_S
     must surface as `lookup_failed` (with a timeout mention) while rows
     before and after it continue to process."""
-    import app.api.routes.parts_scan as parts_mod
-    import app.domain.parts.providers.mouser as mouser_mod
-
     # Make row 2 hang past the per-row timeout by patching the provider-cache
     # lookup to sleep, then lowering the per-row timeout so we don't actually
     # wait. The route uses a function-scope ThreadPoolExecutor that submits
@@ -64,13 +64,32 @@ def test_per_row_timeout_marks_row_lookup_failed_neighbours_still_run(monkeypatc
     # background — the test deliberately exercises that path.
     import time as _time
 
+    import app.api.routes.parts_scan as parts_mod
+    import app.domain.parts.providers.mouser as mouser_mod
     import app.domain.parts.services.provider_cache as _pc
-
-    real_lookup = _pc.lookup_with_cache
 
     def maybe_slow_lookup(provider, mpn):
         if "SLOW" in mpn:
             _time.sleep(2.0)  # well past the 0.1s test timeout
+            # The request abandons this worker after the row timeout. Keep
+            # the abandoned thread deterministic after monkeypatch teardown:
+            # don't re-enter the real provider/cache path later and mutate
+            # module-level circuit-breaker state for following tests.
+            return {
+                "found": True,
+                "result": {
+                    "mpn": mpn,
+                    "manufacturer": "Yageo",
+                    "description": "Resistor",
+                    "category": None,
+                    "footprint": None,
+                    "datasheet_url": None,
+                    "image_url": None,
+                    "source_url": "https://example.com",
+                    "specs": [],
+                },
+            }
+        real_lookup = _pc.lookup_with_cache
         return real_lookup(provider, mpn)
 
     monkeypatch.setattr(parts_mod, "lookup_with_cache", maybe_slow_lookup)
