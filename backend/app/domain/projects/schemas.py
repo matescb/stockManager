@@ -67,23 +67,6 @@ class BomEntryPatch(BaseModel):
     dnp: bool | None = None
 
 
-class BomImportPreviewIn(BaseModel):
-    """Step 1: parse the upload, return preview rows + suggested separator."""
-    model_config = ConfigDict(extra="forbid")
-
-    # Cap base64 input at 6 MB (≈4.5 MB raw after decode). The importer
-    # asserts the decoded size separately at 4 MB so a payload that
-    # squeaks under this Field limit but decodes past the runtime cap
-    # still trips the post-decode 413 guard. The 6 MB / 4 MB pairing
-    # is deliberate: Field validation must allow a payload large enough
-    # for the runtime check to fire, otherwise the layered defence
-    # collapses to just the Pydantic 422. SEC2-007 / BE2-006.
-    text_b64: str = Field(..., max_length=6_000_000)
-    separator: str | None = None  # auto-detect if None
-    encoding: str | None = None
-    has_header: bool | None = None
-
-
 class BomMappingField(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -104,6 +87,26 @@ class BomMappingField(BaseModel):
     ]
 
 
+class BomImportPreviewIn(BaseModel):
+    """Step 1: parse the upload, return preview rows + suggested separator."""
+    model_config = ConfigDict(extra="forbid")
+
+    # Cap base64 input at 6 MB (≈4.5 MB raw after decode). The importer
+    # asserts the decoded size separately at 4 MB so a payload that
+    # squeaks under this Field limit but decodes past the runtime cap
+    # still trips the post-decode 413 guard. The 6 MB / 4 MB pairing
+    # is deliberate: Field validation must allow a payload large enough
+    # for the runtime check to fire, otherwise the layered defence
+    # collapses to just the Pydantic 422. SEC2-007 / BE2-006.
+    text_b64: str = Field(..., max_length=6_000_000)
+    separator: str | None = None  # auto-detect if None
+    encoding: str | None = None
+    has_header: bool | None = None
+    auto_create_missing_parts: bool = Field(default=False)
+    mapping: list[BomMappingField] | None = None
+    designator_separator: str = ","
+
+
 class BomImportCommitIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -114,6 +117,7 @@ class BomImportCommitIn(BaseModel):
     has_header: bool
     mapping: list[BomMappingField]
     designator_separator: str = ","
+    auto_create_missing_parts: bool = Field(default=False)
 
 
 class BomPreviewRow(BaseModel):
@@ -126,12 +130,16 @@ class BomImportPreviewOut(BaseModel):
     has_header: bool
     headers: list[str] | None
     rows: list[BomPreviewRow]
+    would_auto_create_count: int = 0
+    would_skip_count: int = 0
 
 
 class BomImportCommitOut(BaseModel):
     inserted: int
     matched: int
     unmatched: int
+    auto_created: int = 0
+    skipped: int = 0
 
 
 # BOM presets (#252 — lifted from app/api/routes/bom_presets.py)

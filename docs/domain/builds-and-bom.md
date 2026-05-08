@@ -29,6 +29,8 @@ Project ─< ProjectEntry  (the BOM)
 
 `ProjectEntry.dnp` (`backend/app/domain/projects/models.py:78`) — "do not place". Skipped during reservation and consume.
 
+BOM import match priority remains spec §16.3: internal ID, CAD key, internal part number, MPN, local name, then meta-part candidate. BOM-001 amends the failed-match outcome only: when `auto_create_missing_parts=true`, a row with MPN or part/name creates a zero-stock `Part` and becomes `entry_type='part'`; a row with neither MPN nor part/name is skipped. Default imports still create `entry_type='unmatched'` rows on failed match (`backend/app/domain/projects/bom_import.py::commit`).
+
 ## Required-quantity formula
 
 `builds/service.py::_required(entry, part, build_qty)` (`backend/app/domain/builds/service.py:34-43`):
