@@ -17,7 +17,7 @@ TrustedParts is the first sourcing provider because its Inventory API v2 is buil
 
 Sourcing is a separate domain under `backend/app/domain/sourcing/`, not a third `parts_provider` implementation. Workspace sourcing credentials stay on `Workspace`, are encrypted at rest, and are decrypted only in `make_sourcing_provider()` before constructing `TrustedPartsClient` (`backend/app/domain/sourcing/factory.py:12`). `POST /api/sourcing/search` calls the sourcing service facade (`backend/app/domain/sourcing/service.py:39`) and returns an attributed API-envelope response (`backend/app/api/routes/sourcing.py:87`).
 
-The cache is workspace-scoped and short-lived. The database enforces a maximum seven-day retention window (`backend/app/domain/sourcing/models.py:13`), while the service currently uses a 30-minute TTL (`backend/app/domain/sourcing/service.py:24`). The budget is a parts-count budget, not a request-count budget, and is in-process by design while production runs one uvicorn worker (`backend/app/domain/sourcing/budget.py:104`). The client payload does not send `SourceIp`; user attribution is via the app user/session and visible API response attribution, not via TrustedParts `SourceIp`.
+The cache is workspace-scoped and short-lived. The database enforces a maximum seven-day retention window (`backend/app/domain/sourcing/models.py:13`), while the service currently uses a 30-minute TTL (`backend/app/domain/sourcing/service.py:24`). Expired-row cleanup is periodic-job infrastructure owned by ADR-0021. The budget is a parts-count budget, not a request-count budget, and is in-process by design while production runs one uvicorn worker (`backend/app/domain/sourcing/budget.py:104`). The client payload does not send `SourceIp`; user attribution is via the app user/session and visible API response attribution, not via TrustedParts `SourceIp`.
 
 TrustedParts results must stay visibly distinct from catalog-provider data. Public or UI surfaces that combine distributor data from multiple origins need an explicit future decision before launch.
 
@@ -48,5 +48,6 @@ TrustedParts results must stay visibly distinct from catalog-provider data. Publ
 - Source: `backend/app/domain/sourcing/service.py:39`
 - Source: `backend/app/api/routes/sourcing.py:87`
 - Related ADR: [ADR-0007](0007-provider-catalog-vs-spec-split.md)
+- Related ADR: [ADR-0021](0021-periodic-jobs-scheduler.md)
 - Issue: `https://github.com/matescb/stockManager/issues/329`
 - Plan: `/home/matyas/.claude/plans/read-all-the-documentation-robust-giraffe.md`

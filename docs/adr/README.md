@@ -30,3 +30,4 @@ New ADRs follow the template in [STYLE.md](../STYLE.md#adr-pages-docsadrnnnn-slu
 | 0018 | [Prod email verification requires SMTP; never log verification tokens](0018-prod-smtp-fail-closed.md) |
 | 0019 | [Self-hosted Umami for product analytics, env-gated tracker](0019-umami-self-hosted-analytics.md) |
 | 0020 | [TrustedParts sourcing provider split](0020-trustedparts-sourcing-provider-split.md) |
+| 0021 | [Periodic jobs run in a backend-cron sidecar](0021-periodic-jobs-scheduler.md) |
