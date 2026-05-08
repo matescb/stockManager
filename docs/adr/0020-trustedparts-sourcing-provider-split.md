@@ -19,6 +19,12 @@ Sourcing is a separate domain under `backend/app/domain/sourcing/`, not a third 
 
 The cache is workspace-scoped and short-lived. The database enforces a maximum seven-day retention window (`backend/app/domain/sourcing/models.py:13`), while the service currently uses a 30-minute TTL (`backend/app/domain/sourcing/service.py:24`). Expired-row cleanup is periodic-job infrastructure owned by ADR-0021. The budget is a parts-count budget, not a request-count budget, and is in-process by design while production runs one uvicorn worker (`backend/app/domain/sourcing/budget.py:104`). The client payload does not send `SourceIp`; user attribution is via the app user/session and visible API response attribution, not via TrustedParts `SourceIp`.
 
+Purchase plans follow the same retention rule because they hold TrustedParts offer
+snapshots while users review optimizer output. `purchase_plans` enforces
+`expires_at <= created_at + interval '7 days'`, and the existing sourcing sweep job removes
+expired plan rows alongside cache rows (`backend/alembic/versions/0039_purchase_plans.py:68`,
+`backend/app/domain/sourcing/cache.py:95`).
+
 TrustedParts results must stay visibly distinct from catalog-provider data. Public or UI surfaces that combine distributor data from multiple origins need an explicit future decision before launch.
 
 ## Consequences
