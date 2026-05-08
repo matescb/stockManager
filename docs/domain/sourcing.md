@@ -43,6 +43,35 @@ two workspaces create two cache rows and cannot cross-hit. The unique index is s
 Sources: `backend/app/domain/sourcing/cache.py:41`,
 `backend/alembic/versions/0038_sourcing_cache.py:53`
 
+## BOM Coverage Flow
+
+`source_bom()` starts from build shortage analysis, resolves main/substitute/meta-member
+MPNs, dedupes them, checks the budget per <=50-MPN chunk, searches each MPN through the
+workspace-scoped cache, joins offers back onto BOM rows, then derives distributor
+coverage and build capacity.
+
+```text
+project
+  -> shortage_analysis
+  -> dedupe MPNs
+  -> chunk <= 50
+  -> search
+       -> per-MPN sourcing_cache
+  -> join offers to BOM rows
+  -> coverage matrix
+  -> build capacity
+```
+
+The cache boundary is per MPN inside each chunk: `search()` canonicalises one query per
+MPN and calls `get_or_fetch()` with the caller workspace id. Sources:
+`backend/app/domain/sourcing/service.py:88-145`,
+`backend/app/domain/sourcing/service.py:195-231`
+
+Coverage and capacity consume the same joined BOM rows. Distributor coverage records
+which project-entry ids each distributor cannot cover; capacity records the lines that
+limit build count before and after purchase. Source:
+`backend/app/domain/sourcing/coverage.py:43-184`
+
 ## Entry Points
 
 | Operation | Entry point | Notes |

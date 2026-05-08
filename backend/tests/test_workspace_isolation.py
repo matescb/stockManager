@@ -4,14 +4,21 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from app.domain.sourcing.budget import BUDGET
+from app.domain.sourcing.models import SourcingCache
 from app.main import app
-
-
 from tests._factories import (
     add_stock as _factory_add_stock,
+)
+from tests._factories import (
     create_part as _create_part,
+)
+from tests._factories import (
     create_storage as _create_storage,
+)
+from tests._factories import (
     signup_user,
 )
 
@@ -930,6 +937,105 @@ def test_parts_provider_lookup_uses_caller_workspace_secrets():
     assert body["found"] is False
     # The provider name must reflect B's empty config, not A's "mouser"
     assert body["provider"] in (None, "none", ""), body
+
+
+def test_sourcing_bom_isolated_by_workspace(db, monkeypatch):
+    """BOM sourcing must use the caller workspace for both provider config
+    and cache rows. Same MPN in two workspaces should produce two scoped
+    sourcing_cache rows, never a cross-tenant cache hit."""
+    BUDGET._events.clear()
+    calls: list[dict] = []
+
+    def fake_post(_url, json):
+        mpn = json["Queries"][0]["SearchToken"]
+        distributor = "SourceA" if json["CompanyId"] == "company-a" else "SourceB"
+        calls.append({"company_id": json["CompanyId"], "mpn": mpn})
+        return (
+            200,
+            {
+                "RequestId": f"req-{len(calls)}",
+                "PartResults": [
+                    {
+                        "PartNumber": mpn,
+                        "Manufacturer": "IsolationCo",
+                        "ProductUrl": f"https://www.trustedparts.com/{mpn}",
+                        "Distributors": [
+                            {
+                                "Name": distributor,
+                                "DistributorResults": [
+                                    {
+                                        "DistributorPartNumber": f"{mpn}-{distributor}",
+                                        "Pricing": {
+                                            "CurrencyCode": "EUR",
+                                            "MinimumQuantity": 1,
+                                            "Prices": [{"Quantity": 1, "Amount": 1.25}],
+                                        },
+                                        "Stock": {"QuantityOnHand": 10},
+                                        "Packaging": [{"MinimumOrderQuantity": 1}],
+                                        "Links": [],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+    monkeypatch.setattr("app.domain.sourcing.client._post_tp", fake_post)
+    a, b = _two_workspaces()
+    for client, company_id in ((a, "company-a"), (b, "company-b")):
+        r = client.patch(
+            "/api/workspaces/current",
+            json={
+                "sourcing_provider": "trustedparts",
+                "sourcing_company_id": company_id,
+                "sourcing_api_key": f"key-{company_id}",
+                "sourcing_country_code": "CZ",
+                "sourcing_currency_code": "EUR",
+                "sourcing_use_cached_for_dashboards": False,
+            },
+        )
+        assert r.status_code == 200, r.text
+
+    part_a = _create_part(a, "Shared A", mpn="ISO-SHARED")
+    project_a = a.post("/api/projects", json={"name": "A BOM"}).json()["data"]["id"]
+    a.post(
+        f"/api/projects/{project_a}/entries",
+        json={"entry_type": "part", "part_id": part_a, "quantity": 1},
+    )
+    part_b = _create_part(b, "Shared B", mpn="ISO-SHARED")
+    project_b = b.post("/api/projects", json={"name": "B BOM"}).json()["data"]["id"]
+    b.post(
+        f"/api/projects/{project_b}/entries",
+        json={"entry_type": "part", "part_id": part_b, "quantity": 1},
+    )
+    ws_a = a.get("/api/workspaces/current").json()["data"]["id"]
+    ws_b = b.get("/api/workspaces/current").json()["data"]["id"]
+
+    r_a = a.post(f"/api/projects/{project_a}/sourcing", json={"build_quantity": 1})
+    r_b = b.post(f"/api/projects/{project_b}/sourcing", json={"build_quantity": 1})
+
+    assert r_a.status_code == 200, r_a.text
+    assert r_b.status_code == 200, r_b.text
+    offer_a = r_a.json()["data"]["rows"][0]["offers"][0]
+    offer_b = r_b.json()["data"]["rows"][0]["offers"][0]
+    assert offer_a["distributor"] == "SourceA"
+    assert offer_b["distributor"] == "SourceB"
+    assert offer_a["distributor"] != offer_b["distributor"]
+    assert calls == [
+        {"company_id": "company-a", "mpn": "ISO-SHARED"},
+        {"company_id": "company-b", "mpn": "ISO-SHARED"},
+    ]
+
+    rows = db.execute(
+        select(SourcingCache).where(SourcingCache.query_json["mpn"].astext == "ISO-SHARED")
+    ).scalars().all()
+    assert {str(row.workspace_id) for row in rows} == {ws_a, ws_b}
+    assert len(rows) == 2
+    assert len({row.query_hash for row in rows}) == 1
+
+    BUDGET._events.clear()
 
 
 def test_catalog_token_404s_on_wrong_workspace_token():
