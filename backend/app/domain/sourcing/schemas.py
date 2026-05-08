@@ -194,6 +194,16 @@ class DistributorCoverageMatrixOut(BaseModel):
     best_two_distributor_combo: tuple[str, str] | None
 
 
+class BuildCapacityOut(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    can_build_now: int
+    can_build_after_purchase: int
+    est_purchase_cost: Decimal | None
+    blocking_lines_now: list[UUID]
+    blocking_lines_after_purchase: list[UUID]
+
+
 class SourcingBomLineOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -227,6 +237,7 @@ class SourcingBomOut(BaseModel):
 
     rows: list[SourcingBomLineOut]
     coverage: DistributorCoverageMatrixOut
+    capacity: BuildCapacityOut
     powered_by: Literal["TrustedParts"] = "TrustedParts"
     fetched_at: datetime
     partial: bool

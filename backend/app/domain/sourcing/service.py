@@ -16,10 +16,11 @@ from app.domain.builds.service import shortage_analysis
 from app.domain.parts.models import Part
 from app.domain.sourcing import cache
 from app.domain.sourcing.budget import BUDGET
-from app.domain.sourcing.coverage import compute_coverage
+from app.domain.sourcing.coverage import compute_build_capacity, compute_coverage
 from app.domain.sourcing.factory import make_sourcing_provider
 from app.domain.sourcing.pricing import best_unit_price_at_qty
 from app.domain.sourcing.schemas import (
+    BuildCapacityOut,
     DistributorCoverageMatrixOut,
     SourcingAttributionLinks,
     SourcingBomLineOut,
@@ -134,6 +135,12 @@ def source_bom(
         rows=rows,
         coverage=DistributorCoverageMatrixOut.model_validate(
             compute_coverage(rows, preferred_distributors=preferred)
+        ),
+        capacity=BuildCapacityOut.model_validate(
+            compute_build_capacity(
+                rows,
+                requested_build_quantity=build_quantity,
+            )
         ),
         fetched_at=max(fetched_at_values, default=utcnow()),
         partial=partial,
