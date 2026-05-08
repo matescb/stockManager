@@ -83,6 +83,7 @@ def source_bom(
     distributors: list[str] | None = None,
     in_stock_only: bool = False,
     use_cached_data: bool | None = None,
+    ttl_seconds: int = BOM_TTL_SECONDS,
     requested_by: UUID | None = None,
 ) -> SourcingBomOut:
     shortage = shortage_analysis(
@@ -114,7 +115,7 @@ def source_bom(
             in_stock_only=in_stock_only,
             distributors=distributors,
             use_cached_data=use_cached_data,
-            ttl_seconds=BOM_TTL_SECONDS,
+            ttl_seconds=ttl_seconds,
             requested_by=requested_by,
         )
         fetched_at_values.append(out.fetched_at)

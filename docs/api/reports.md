@@ -2,7 +2,7 @@
 
 Audience: engineer
 
-Read-only aggregate queries: low-stock parts, sourcing risk, BOM shortage at a planned build quantity, stock value, and expiring lots.
+Read-only aggregate queries: low-stock parts, sourcing risk, BOM shortage at a planned build quantity, BOM buyability by project, stock value, and expiring lots.
 
 ## Conventions
 
@@ -57,7 +57,7 @@ With `include_sourcing=true`, `data` is an object:
 
 ### `GET /api/reports/bom-shortage`
 
-Project-wide shortage analysis at a given build quantity. No build is created — same engine as the Build detail page.
+Project-wide shortage analysis at a given build quantity. No build is created -- same engine as the Build detail page.
 
 **Query**
 
@@ -78,12 +78,46 @@ Project-wide shortage analysis at a given build quantity. No build is created �
 
 `rows` is whatever `shortage_analysis` returns. TODO(verify): exact per-row shape (likely `{ project_entry_id, part_id, required, available, short_by, candidates? }`).
 
-**Errors** — `404 report.project_not_found` (`reports.py:81-83`).
+**Errors** — `404 report.project_not_found`.
 
 **Notes**
 
-- Source: `backend/app/api/routes/reports.py:72-86`.
 - Service: `backend/app/domain/builds/service.py::shortage_analysis`.
+
+### `GET /api/reports/bom-buyability`
+
+Workspace-wide scoreboard of active projects at one build quantity. The report calls Source-BOM with TrustedParts cached mode enabled and degrades to stock-only rows when sourcing is not configured, budget-blocked, or temporarily unavailable.
+
+**Query**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `build_quantity` | int (`>= 1`) | no | Default `1`. `0` or negative values return `422`. |
+
+**Response** — `200 OK`
+
+```json
+{ "data": {
+    "build_quantity": 2,
+    "sourcing_status": "ok",
+    "truncated": false,
+    "project_cap": 50,
+    "rows": [ {
+      "project_id": "...", "project_name": "Amplifier",
+      "can_build_now": 1, "can_build_after_purchase": 2,
+      "blocking_lines_count": 0, "est_purchase_cost": "12.50",
+      "partial": false
+    } ]
+}, "status": { ... } }
+```
+
+`sourcing_status` is `ok`, `not_configured`, `partial`, or `budget_blocked`. Workspaces with more than 50 active projects return the newest 50 and `truncated: true`.
+
+**Notes**
+
+- Route validates `build_quantity` and rate-limits per workspace.
+- Service filters projects by workspace and `archived_at IS NULL`, caps at 50, and forces cached sourcing.
+- Sourcing failures return `200 OK` with stock-only rows and a status flag.
 
 ### `GET /api/reports/sourcing-risk`
 
@@ -92,7 +126,7 @@ Workspace-wide sourcing risk for active parts with an MPN. The route uses Truste
 **Query**
 
 | Field | Type | Notes |
-|---|---|---|
+|---|---|
 | `only_with_flags` | bool | Default `true`; when true, clean rows are omitted. |
 | `use_cached_data` | bool \| null | Default `null`; null uses cached TrustedParts data. |
 
@@ -120,10 +154,7 @@ Workspace-wide sourcing risk for active parts with an MPN. The route uses Truste
 
 **Notes**
 
-- Route: `backend/app/api/routes/reports.py:74-91`.
-- Service: `backend/app/domain/reports/service.py:38-133`.
-- DTOs: `backend/app/domain/reports/schemas.py:13-58`.
-- Stock quantities use `bulk_current_quantities`; no report query aggregates ledger rows directly (`backend/app/domain/reports/service.py:56-62`).
+- Stock quantities use `bulk_current_quantities`; no report query aggregates ledger rows directly.
 - Risk history is not persisted; there is no report table or migration for this feature.
 
 ### `GET /api/reports/stock-value`
@@ -139,12 +170,11 @@ Sum of `lot.purchase_unit_cost * current_qty_in_lot` across all on-hand stock, b
 }, "status": { ... } }
 ```
 
-A part with lots in multiple currencies has `currency: "MIXED"` (`reports.py:126-127`).
+A part with lots in multiple currencies has `currency: "MIXED"`.
 
 **Notes**
 
 - Sorted: `by_currency` by currency code, `by_part` by `value DESC`.
-- Source: `backend/app/api/routes/reports.py:89-136`.
 
 ### `GET /api/reports/expiring-lots`
 
@@ -153,7 +183,7 @@ Lots that have on-hand quantity > 0 and an `expiration_date` within the next `da
 **Query**
 
 | Field | Type | Notes |
-|---|---|---|
+|---|---|
 | `days` | int | Default `90`, `0 <= days <= 3650`. |
 
 **Response** — `200 OK` — array sorted by `expiration_date ASC`:
@@ -172,7 +202,6 @@ Lots that have on-hand quantity > 0 and an `expiration_date` within the next `da
 **Notes**
 
 - `expired: true` when `days_until_expiry < 0`.
-- Source: `backend/app/api/routes/reports.py:139-178`.
 
 ## TODOs
 

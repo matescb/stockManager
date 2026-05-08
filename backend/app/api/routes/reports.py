@@ -16,7 +16,11 @@ from app.domain.builds.service import shortage_analysis
 from app.domain.lots.models import Lot
 from app.domain.parts.models import Part
 from app.domain.projects.models import Project
-from app.domain.reports.service import low_stock_report, sourcing_risk_report
+from app.domain.reports.service import (
+    bom_buyability_report,
+    low_stock_report,
+    sourcing_risk_report,
+)
 from app.domain.stock.service import (
     bulk_current_quantities_by_lot,
 )
@@ -70,6 +74,27 @@ def bom_shortage(
     rows = shortage_analysis(db, workspace_id=ws.id, project=project, build_quantity=quantity)
     total_short = sum(r["short_by"] for r in rows)
     return ok({"project_id": str(project_id), "quantity": quantity, "rows": rows, "total_short": total_short})
+
+
+@router.get(
+    "/bom-buyability",
+    dependencies=[Depends(require_role("member"))],
+)
+@limiter.limit("30/minute", key_func=workspace_key)
+def bom_buyability(
+    request: Request,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    build_quantity: int = Query(default=1, ge=1),
+):
+    """Workspace-wide per-project BOM buyability report."""
+    out = bom_buyability_report(
+        db,
+        workspace=ws,
+        build_quantity=build_quantity,
+        use_cached_data=True,
+    )
+    return ok(out.model_dump(mode="json"))
 
 
 @router.get("/stock-value")

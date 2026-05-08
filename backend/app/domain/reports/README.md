@@ -1,6 +1,9 @@
 # Reports Domain
 
-Read-only report services over workspace-owned inventory, stock, BOM, and sourcing data.
+Read-only aggregate services for workspace reports.
 
-Report routes live in `backend/app/api/routes/reports.py`. Shared invariants are the workspace-isolation and stock-ledger rules in `docs/ARCHITECTURE.md`; sourcing-risk stock quantities go through `domain/stock/service.py::bulk_current_quantities`.
-
+- Routes live in `backend/app/api/routes/reports.py`.
+- API docs live in `docs/api/reports.md`.
+- Frontend docs live in `docs/frontend/reports.md`.
+- Shared invariants are the workspace-isolation and stock-ledger rules in `docs/ARCHITECTURE.md`.
+- Stock quantities must continue to flow through `backend/app/domain/stock/service.py`.
