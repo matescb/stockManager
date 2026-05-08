@@ -122,6 +122,7 @@ describe("AuthorizedSupplyTab", () => {
     const table = screen.getByRole("table");
     expect(within(table).getByText("DigiKey")).toBeDefined();
     expect(within(table).getByText("Mouser")).toBeDefined();
+    expect(within(table).getAllByRole("button", { name: "Add to order" })).toHaveLength(2);
     expect(screen.getByText("42")).toBeDefined();
     expect(screen.getByText("Tape")).toBeDefined();
   });
