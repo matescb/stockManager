@@ -13,6 +13,7 @@ from app.core.deps import CurrentUser, CurrentWorkspace, require_role
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import err, ok
 from app.domain.parts.models import Part
+from app.domain.projects.models import Project
 from app.domain.sourcing import (
     SourcingAuthError,
     SourcingClientError,
@@ -21,13 +22,14 @@ from app.domain.sourcing import (
 )
 from app.domain.sourcing import service as sourcing_service
 from app.domain.sourcing.factory import make_sourcing_provider
-from app.domain.sourcing.schemas import SourcingQuery, SourcingSearchIn
+from app.domain.sourcing.schemas import SourcingBomIn, SourcingQuery, SourcingSearchIn
 from app.domain.sourcing.service import SourcingBudgetBlocked, SourcingNotConfigured
 from app.infra.db import get_db
 
 router = APIRouter()
 search_router = APIRouter()
 parts_router = APIRouter()
+projects_router = APIRouter()
 
 _TEST_PROBE_TOKEN = "TEST_PROBE_DO_NOT_BUY"
 _PART_SOURCING_TTL_SECONDS = 1800
@@ -90,6 +92,69 @@ def search_sourcing(
             currency=payload.currency,
             in_stock_only=payload.in_stock_only,
             distributors=payload.distributors,
+            use_cached_data=payload.use_cached_data,
+            requested_by=user.id,
+        )
+    except SourcingNotConfigured:
+        return _error_response(request, 409, "conflict", "sourcing not configured")
+    except SourcingBudgetBlocked:
+        return _error_response(request, 503, "server_error", "sourcing budget exhausted")
+    except SourcingAuthError:
+        return _error_response(
+            request,
+            502,
+            "server_error",
+            "TrustedParts rejected sourcing credentials",
+        )
+    except SourcingRateLimitError:
+        return _error_response(
+            request,
+            502,
+            "server_error",
+            "TrustedParts rate limit reached",
+        )
+    except SourcingTimeoutError:
+        return _error_response(
+            request,
+            502,
+            "server_error",
+            "TrustedParts request timed out",
+        )
+    except SourcingClientError:
+        return _error_response(
+            request,
+            502,
+            "server_error",
+            "TrustedParts sourcing request failed",
+        )
+
+    return ok(out.model_dump(mode="json"))
+
+
+@projects_router.post(
+    "/{project_id}/sourcing",
+    dependencies=[Depends(require_role("member"))],
+)
+@limiter.limit("30/minute", key_func=workspace_key)
+def source_project_bom(
+    request: Request,
+    project_id: UUID,
+    payload: SourcingBomIn,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    project = assert_in_workspace(db, Project, project_id, ws.id, label="project")
+    try:
+        out = sourcing_service.source_bom(
+            db,
+            workspace=ws,
+            project=project,
+            build_quantity=payload.build_quantity,
+            country=payload.country,
+            currency=payload.currency,
+            distributors=payload.distributors,
+            in_stock_only=payload.in_stock_only,
             use_cached_data=payload.use_cached_data,
             requested_by=user.id,
         )
