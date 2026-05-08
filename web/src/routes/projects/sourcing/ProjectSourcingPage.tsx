@@ -214,7 +214,7 @@ function CapacityBanner({ data }: { data: SourcingBomResponse }) {
 
   return (
     <div className="card p-4">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <div>
           <div className="section-title">Can build now</div>
           <div className="text-2xl font-semibold tabular-nums">{data.capacity.can_build_now}</div>
