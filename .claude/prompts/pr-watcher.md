@@ -187,7 +187,41 @@ made yourself.
 | `mergeable != "MERGEABLE"` | `gh pr review <num> --request-changes --body "<findings + 'merge conflict — please rebase'>"` then `gh pr edit <num> --add-label reopened` |
 | Any finding `severity = high` | `gh pr review <num> --request-changes --body "<findings>"` then `gh pr edit <num> --add-label reopened`, then **either** `gh issue create --title "[claude-review] PR #<num>: <one-line summary>" --body "<findings>" --label claude-review,reopened` (no prior issue exists — open it with the `reopened` label so it's visible as "PR needs repair"), **or**, if a prior tracking issue for the same bug already exists, `gh issue reopen <num> --comment "<reason>"` (if closed) followed by `gh issue edit <num> --add-label reopened`. The `reopened` label flags any tracking issue whose PR is in a needs-repair state — applies whether the issue was originally closed and reopened, or stayed open the whole time. Never re-create the same issue twice. |
 | Any finding `severity = medium` | `gh pr review <num> --request-changes --body "<findings>"` then `gh pr edit <num> --add-label reopened` (no issue) |
-| All checks pass + only `low` (or zero) findings + not a fork + not draft | `gh pr merge <num> --squash --delete-branch` then `gh pr comment <num> --body "Approved by claude-review (no medium+ findings, CI green)."` |
+| All checks pass + only `low` (or zero) findings + not a fork + not draft | `gh pr merge <num> --squash --delete-branch` then `gh pr comment <num> --body "Approved by claude-review (no medium+ findings, CI green)."` then **close any tracking issue this PR completes** (see §3.5 below) |
+
+### 3.5 Close tracking issues on merge — non-negotiable
+
+Per ADR-0017, step-of-N PRs use `Refs #N`, not `Closes #N`, so GitHub's
+native auto-close does NOT fire. After every successful `gh pr merge`,
+the watcher MUST scan the PR body for issue references and close the
+ones this PR actually completes.
+
+Procedure:
+
+1. `gh pr view <num> --json body` and extract every `#NNN` reference.
+2. For each referenced issue, decide if THIS PR completes it:
+   - **Step-of-N convention**: if the PR title starts with `TP-NNN:` /
+     `Step <k>/<N>:` / similar and the issue title starts with the same
+     `TP-NNN:` / `Step <k>/<N>:` prefix, **this is the issue this PR
+     completes** → close it.
+   - **Bug-fix convention**: if the issue is a `[claude-review]`
+     tracking issue OR a single-bug issue and the PR title clearly
+     fixes it, **close it**.
+   - **Epic / parent issue**: if the issue title starts with `EPIC:` or
+     groups several step issues, **leave it open** — only close when the
+     last child closes. (You can verify by listing other open issues
+     that share the epic's milestone or label.)
+   - **"Surfaced separately" cases** (the PR mentions an issue but
+     wasn't built to fix it; e.g. a docs PR that documents a known
+     bug): **leave open**.
+3. Close with a reference comment:
+   ```bash
+   gh issue close <issue-num> --comment "Closed by PR #<pr-num> (<pr title>). <merge-sha or 'merged at <iso8601>'>"
+   ```
+4. If you are uncertain whether a referenced issue should close, leave
+   it open and post a one-line `gh pr comment <num>` flagging the
+   ambiguous reference for human review. Closing the wrong issue is
+   worse than leaving one open.
 
 After any action, **always** post the sticky marker so the next run
 skips this SHA:
