@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -120,4 +122,83 @@ class SourcingSearchOut(BaseModel):
     powered_by: Literal["TrustedParts"] = "TrustedParts"
     fetched_at: datetime
     cache_hit: bool
+    links: SourcingAttributionLinks
+
+
+class SourcingBomIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    build_quantity: int = Field(ge=1)
+    country: str | None = Field(default=None, min_length=2, max_length=2)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    distributors: list[str] | None = None
+    in_stock_only: bool = False
+    use_cached_data: bool | None = None
+
+    @field_validator("country", "currency")
+    @classmethod
+    def _uppercase_codes(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip().upper()
+
+    @field_validator("distributors")
+    @classmethod
+    def _strip_distributors(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        stripped = [item.strip() for item in value if item.strip()]
+        return stripped or None
+
+
+class SourcingBomOfferOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mpn: str
+    distributor: str
+    sku: str | None = None
+    stock: int
+    unit_price: Decimal | None = None
+    currency: str | None = None
+    packaging: str | None = None
+    moq: int | None = None
+    lead_time_days: int | None = None
+    url: str | None = None
+
+
+class SourcingBomLineOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_entry_id: UUID
+    part_id: UUID
+    part_name: str
+    mpn: str | None = None
+    required: int
+    available: int
+    substitute_ids: list[UUID] = Field(default_factory=list)
+    substitute_available: int
+    short_by: int
+    authorized_stock: int
+    offers: list[SourcingBomOfferOut] = Field(default_factory=list)
+    best_offer: SourcingBomOfferOut | None = None
+    est_extended_cost: Decimal | None = None
+    lead_time_days: int | None = None
+    risk_flags: list[
+        Literal[
+            "single_source",
+            "no_authorized_stock",
+            "moq_overbuy",
+            "lead_time_long",
+            "preferred_distributor_unmet",
+        ]
+    ] = Field(default_factory=list)
+
+
+class SourcingBomOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rows: list[SourcingBomLineOut]
+    powered_by: Literal["TrustedParts"] = "TrustedParts"
+    fetched_at: datetime
+    partial: bool
     links: SourcingAttributionLinks

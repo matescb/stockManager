@@ -10,6 +10,73 @@ See [API conventions](./README.md) for envelope, errors, pagination. Connection 
 
 ## Routes
 
+### `POST /api/projects/{project_id}/sourcing`
+
+Join a project's BOM shortage analysis to TrustedParts authorized-distributor offers.
+
+**Request**
+
+Path: `project_id` is a project UUID in the current workspace.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `build_quantity` | `integer` | Yes | Must be at least `1`. |
+| `country` | `string` | No | Two-letter override; falls back to workspace sourcing default. |
+| `currency` | `string` | No | Three-letter override; falls back to workspace sourcing default. |
+| `distributors` | `string[]` | No | Falls back to `sourcing_preferred_distributors` when omitted. |
+| `in_stock_only` | `boolean` | No | Defaults to `false`. |
+| `use_cached_data` | `boolean` | No | Falls back to `sourcing_use_cached_for_dashboards`; forced true when the request is in degraded budget mode. |
+
+**Response** — `200 OK` (envelope: `{ data, status }`)
+
+```json
+{
+  "data": {
+    "rows": [
+      {
+        "part_name": "STM32",
+        "mpn": "STM32F103C8T6",
+        "required": 20,
+        "available": 0,
+        "short_by": 20,
+        "authorized_stock": 60,
+        "best_offer": {
+          "distributor": "Mouser",
+          "unit_price": "0.10",
+          "currency": "EUR",
+          "moq": 1,
+          "lead_time_days": 3
+        },
+        "est_extended_cost": "2.00",
+        "risk_flags": []
+      }
+    ],
+    "powered_by": "TrustedParts",
+    "fetched_at": "2026-05-08T12:00:00+00:00",
+    "partial": false
+  },
+  "status": { "category": "ok", "message": "OK" }
+}
+```
+
+**Errors**
+
+- `404 Not Found` — `project_id` is missing or belongs to another workspace.
+- `409 Conflict` — `{ "data": null, "status": { "category": "conflict", "message": "sourcing not configured" } }`.
+- `422 Unprocessable Entity` — validation envelope when `build_quantity < 1` or request fields are malformed.
+- `429 Too Many Requests` — workspace rate limit: 30 requests/minute.
+- `502 Bad Gateway` — TrustedParts auth, rate-limit, timeout, upstream, or response-shape failure.
+- `503 Service Unavailable` — `{ "data": null, "status": { "category": "server_error", "message": "sourcing budget exhausted" } }`.
+
+**Notes**
+
+- The route validates `project_id` with `assert_in_workspace()` before calling the sourcing service.
+- The service reuses `shortage_analysis()`, `dedupe_mpns()`, `chunk_mpns()`, and per-MPN `search()` cache rows; BOM chunks use `ttl_seconds=600`.
+- Decimal prices and extended costs serialize as strings.
+- Source: `backend/app/api/routes/sourcing.py:134-194`.
+- Service: `backend/app/domain/sourcing/service.py:71-135`.
+- Pricing: `backend/app/domain/sourcing/pricing.py:9-40`.
+
 ### `GET /api/parts/{part_id}/sourcing`
 
 Return cached TrustedParts offers for one part's MPN.
