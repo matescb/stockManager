@@ -162,6 +162,52 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
 
+  backend-cron:
+    build: ./backend
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: "0.5"
+    pids_limit: 256
+    oom_kill_disable: false
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    environment:
+      # Same runtime config shape as backend. Keep POSTGRES_* discrete so
+      # DATABASE_URL is assembled inside Settings without leaking the password
+      # through docker inspect interpolation.
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      SESSION_SECRET: ${SESSION_SECRET}
+      UPLOAD_DIR: /data/uploads
+      APP_ENV: prod
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      WORKSPACE_SECRETS_KEY: ${WORKSPACE_SECRETS_KEY}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.0}
+      SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+      VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      MAIL_FROM: ${MAIL_FROM}
+      APP_BASE_URL: ${APP_BASE_URL}
+    depends_on:
+      backend:
+        condition: service_healthy
+    # Runs the hourly TrustedParts cache retention sweep through the shared
+    # backend CLI. The sleep happens after each run finishes, so a long run
+    # delays the next start instead of overlapping it.
+    command: ["sh", "-c", "while true; do python -m app.cli.run_job sourcing-cache-sweep; sleep 3600; done"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
   web:
     build:
       # Context is the repo root so the Dockerfile can COPY both `web/` (sources)

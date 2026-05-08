@@ -15,12 +15,12 @@ Also covers INFRA-003 / issue #44: asserts that the Sentry auth token is
 never exposed as a Docker build arg and that sourcemap upload happens
 in CI only.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 
 import yaml
-
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CI_PATH = _REPO_ROOT / ".github" / "workflows" / "ci.yml"
@@ -136,6 +136,23 @@ def test_compose_prod_web_build_args_no_sentry_token():
         f"docker-compose.prod.yml web build.args contains sensitive Sentry "
         f"vars that must live only in GitHub Actions secrets: {leaked}"
     )
+
+
+def test_compose_prod_backend_cron_command_shape():
+    """backend-cron must stay on the shared CLI scheduler path."""
+    assert _COMPOSE_PROD_PATH.exists(), (
+        f"missing compose file at {_COMPOSE_PROD_PATH}"
+    )
+    data = yaml.safe_load(_COMPOSE_PROD_PATH.read_text())
+    cron = data["services"]["backend-cron"]
+    cmd = cron.get("command")
+
+    assert isinstance(cmd, list), (
+        "backend-cron.command must be a YAML list (JSON-array form)"
+    )
+    joined = " ".join(str(part) for part in cmd)
+    assert "python -m app.cli.run_job sourcing-cache-sweep" in joined
+    assert "uvicorn" not in joined
 
 
 def test_dockerfile_prod_no_sentry_token_arg():
