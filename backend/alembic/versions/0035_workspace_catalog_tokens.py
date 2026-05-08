@@ -1,7 +1,7 @@
 """Multi-token catalog access: workspace_catalog_tokens child table.
 
-Revision ID: 0032
-Revises: 0031
+Revision ID: 0035
+Revises: 0034
 Create Date: 2026-05-02
 
 SEC2-019 / issue #77.
@@ -28,9 +28,9 @@ import hmac
 import os
 import uuid
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 revision = "0035"
 down_revision = "0034"
