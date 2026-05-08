@@ -52,6 +52,13 @@ class WorkspacePatch(BaseModel):
     scanner: Literal["zxing", "scandit"] | None = None
     # Same '' clears / non-empty replaces / None leaves alone semantics.
     scanner_license_key: str | None = None
+    sourcing_provider: Literal["none", "trustedparts"] | None = None
+    sourcing_company_id: str | None = Field(default=None, max_length=256)
+    sourcing_api_key: str | None = Field(default=None, max_length=256)
+    sourcing_country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    sourcing_currency_code: str | None = Field(default=None, min_length=3, max_length=3)
+    sourcing_preferred_distributors: list[str] | None = None
+    sourcing_use_cached_for_dashboards: bool | None = None
 
 
 class CatalogTokenIn(BaseModel):

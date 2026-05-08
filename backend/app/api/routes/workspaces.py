@@ -34,6 +34,14 @@ router = APIRouter()
 _OWNED_ORG_WORKSPACE_CAP = 5
 
 
+def _encrypt_patch_credential(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not value.strip():
+        return None
+    return encrypt(value)
+
+
 @router.get("")
 def list_workspaces(user: CurrentUser, db: DbSession):
     memberships = (
@@ -178,10 +186,9 @@ def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace, 
     # log — only the field names.
     _credential_fields_changed: list[str] = []
 
-    # parts_provider_api_key / _api_secret need special handling so ''
-    # actually clears (rather than being stored as an empty string).
-    # All three credentials are encrypted at rest via app.core.secrets
-    # (Sec HIGH-9). Empty string still clears (encrypt('') → None).
+    # Credential fields need special handling so empty input clears
+    # rather than storing an empty string. They are encrypted at rest via
+    # app.core.secrets (Sec HIGH-9).
     if "parts_provider_api_key" in data:
         new_key = data.pop("parts_provider_api_key")
         ws.parts_provider_api_key = encrypt(new_key) if new_key else None
@@ -194,6 +201,14 @@ def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace, 
         new_license = data.pop("scanner_license_key")
         ws.scanner_license_key = encrypt(new_license) if new_license else None
         _credential_fields_changed.append("scanner_license_key")
+    if "sourcing_company_id" in data:
+        new_company_id = data.pop("sourcing_company_id")
+        ws.sourcing_company_id_enc = _encrypt_patch_credential(new_company_id)
+        _credential_fields_changed.append("sourcing_company_id")
+    if "sourcing_api_key" in data:
+        new_api_key = data.pop("sourcing_api_key")
+        ws.sourcing_api_key_enc = _encrypt_patch_credential(new_api_key)
+        _credential_fields_changed.append("sourcing_api_key")
 
     for k, v in data.items():
         setattr(ws, k, v)
