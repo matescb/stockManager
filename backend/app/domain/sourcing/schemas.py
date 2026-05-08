@@ -234,6 +234,85 @@ class OptimizerOutcomeOut(BaseModel):
     worst_lead_time_days: int | None = None
 
 
+class PurchasePlanIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    build_quantity: int = Field(ge=1)
+    strategy: Literal[
+        "lowest_total_price",
+        "fewest_distributors",
+        "fastest_availability",
+        "preferred_first",
+    ] = "preferred_first"
+    country: str | None = Field(default=None, min_length=2, max_length=2)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    distributors: list[str] | None = None
+    max_distributors: int | None = Field(default=None, ge=1)
+    moq_overbuy_cap: int | None = Field(default=None, ge=1)
+    price_tolerance_pct: Decimal = Field(default=Decimal("5"), ge=0)
+
+    @field_validator("country", "currency")
+    @classmethod
+    def _uppercase_codes(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip().upper()
+
+    @field_validator("distributors")
+    @classmethod
+    def _strip_distributors(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        stripped = [item.strip() for item in value if item.strip()]
+        return stripped or None
+
+
+class PurchasePlanLineOut(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    id: UUID
+    project_entry_id: UUID | None
+    part_id: UUID
+    mpn_searched: str
+    required_qty: int
+    internal_available_qty: int
+    shortage_qty: int
+    selected_distributor: str | None = None
+    selected_qty: int | None = None
+    selected_unit_price: Decimal | None = None
+    selected_currency: str | None = None
+    selected_packaging: str | None = None
+    selected_moq: int | None = None
+    selected_lead_time_days: int | None = None
+    selected_url: str | None = None
+    risk_flags: list[str] = Field(default_factory=list)
+
+
+class PurchasePlanOut(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    id: UUID
+    project_id: UUID
+    build_quantity: int
+    strategy: str
+    country_code: str | None = None
+    currency_code: str | None = None
+    preferred_distributors: list[str] | None = None
+    max_distributors: int | None = None
+    moq_overbuy_cap: int | None = None
+    price_tolerance_pct: Decimal | None = None
+    status: str
+    created_at: datetime
+    expires_at: datetime
+    last_refreshed_at: datetime | None = None
+    created_by: UUID | None = None
+    lines: list[PurchasePlanLineOut]
+    distributors_used: list[str]
+    est_total_cost: Decimal | None = None
+    worst_lead_time_days: int | None = None
+    unfilled_count: int
+
+
 class SourcingBomLineOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

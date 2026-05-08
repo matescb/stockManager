@@ -76,6 +76,18 @@ class PurchasePlan(Base):
             "expires_at <= created_at + interval '7 days'",
             name="purchase_plans_max_7_day_ttl",
         ),
+        CheckConstraint(
+            "max_distributors IS NULL OR max_distributors >= 1",
+            name="purchase_plans_max_distributors_positive",
+        ),
+        CheckConstraint(
+            "moq_overbuy_cap IS NULL OR moq_overbuy_cap >= 1",
+            name="purchase_plans_moq_overbuy_cap_positive",
+        ),
+        CheckConstraint(
+            "price_tolerance_pct IS NULL OR price_tolerance_pct >= 0",
+            name="purchase_plans_price_tolerance_pct_nonnegative",
+        ),
         Index("ix_purchase_plans_expires_at", "expires_at"),
         Index("ix_purchase_plans_ws_project", "workspace_id", "project_id"),
         Index("ix_purchase_plans_ws_status", "workspace_id", "status"),
@@ -102,6 +114,9 @@ class PurchasePlan(Base):
     country_code = Column(sa.String(2), nullable=True)
     currency_code = Column(sa.String(3), nullable=True)
     preferred_distributors = Column(JSONB, nullable=True)
+    max_distributors = Column(sa.Integer, nullable=True)
+    moq_overbuy_cap = Column(sa.Integer, nullable=True)
+    price_tolerance_pct = Column(sa.Numeric(8, 4), nullable=True)
     status = Column(
         sa.String(20),
         nullable=False,
@@ -115,6 +130,7 @@ class PurchasePlan(Base):
         server_default=sa.func.now(),
     )
     expires_at = Column(DateTime(timezone=True), nullable=False)
+    last_refreshed_at = Column(DateTime(timezone=True), nullable=True)
     created_by = Column(UUID(as_uuid=True), nullable=True)
 
     lines = relationship(

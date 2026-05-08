@@ -77,6 +77,117 @@ Path: `project_id` is a project UUID in the current workspace.
 - Service: `backend/app/domain/sourcing/service.py:71-135`.
 - Pricing: `backend/app/domain/sourcing/pricing.py:9-40`.
 
+### `POST /api/projects/{project_id}/purchase-plan`
+
+Build and persist a short-lived purchase plan from the current project's sourced BOM.
+
+**Request**
+
+Path: `project_id` is a project UUID in the current workspace.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `build_quantity` | `integer` | Yes | Must be at least `1`. |
+| `strategy` | `string` | No | One of `lowest_total_price`, `fewest_distributors`, `fastest_availability`, `preferred_first`; defaults to `preferred_first`. |
+| `country` | `string` | No | Two-letter override; persisted on the plan. |
+| `currency` | `string` | No | Three-letter override; persisted on the plan. |
+| `distributors` | `string[]` | No | Distributor filter / preferred order for optimizer decisions. |
+| `max_distributors` | `integer` | No | Positive cap used by `fewest_distributors`. |
+| `moq_overbuy_cap` | `integer` | No | Positive cap; offers requiring more than `shortage * cap` are ignored. |
+| `price_tolerance_pct` | `decimal` | No | Preferred-first tolerance; defaults to `5`. |
+
+**Response** — `200 OK` (envelope: `{ data, status }`)
+
+```json
+{
+  "data": {
+    "id": "9b7f7d43-6b5c-4f7d-bc0e-44c6d73f0992",
+    "project_id": "012f2f63-3b2c-45c4-a841-682ec681f508",
+    "build_quantity": 2,
+    "strategy": "preferred_first",
+    "status": "draft",
+    "expires_at": "2026-05-15T12:00:00+00:00",
+    "distributors_used": ["DigiKey"],
+    "est_total_cost": "20.80",
+    "worst_lead_time_days": 3,
+    "unfilled_count": 0,
+    "lines": [
+      {
+        "mpn_searched": "STM32F103C8T6",
+        "required_qty": 20,
+        "internal_available_qty": 0,
+        "shortage_qty": 20,
+        "selected_distributor": "DigiKey",
+        "selected_qty": 20,
+        "selected_unit_price": "1.04",
+        "selected_currency": "EUR",
+        "selected_moq": 1,
+        "selected_url": "https://www.trustedparts.com/..."
+      }
+    ]
+  },
+  "status": { "category": "ok", "message": "OK" }
+}
+```
+
+**Errors**
+
+- `404 Not Found` — `project_id` is missing or belongs to another workspace.
+- `409 Conflict` — sourcing is not configured for the workspace.
+- `422 Unprocessable Entity` — invalid strategy, invalid quantity, malformed codes, or unknown fields.
+- `429 Too Many Requests` — workspace rate limit: 15 requests/minute.
+- `502 Bad Gateway` — TrustedParts auth, rate-limit, timeout, upstream, or response-shape failure.
+- `503 Service Unavailable` — sourcing budget exhausted.
+
+**Notes**
+
+- The route validates `project_id` with `assert_in_workspace()` before creating any plan rows.
+- Plans are snapshots: each call creates a new `purchase_plans` row and child `purchase_plan_lines` rows.
+- `expires_at` is capped to `created_at + 7 days`; refresh and conversion are later Phase-4 endpoints.
+- Decimal monetary fields serialize as strings.
+
+### `POST /api/sourcing/purchase-plans/{plan_id}/refresh`
+
+Re-run a purchase plan with fresh TrustedParts offers and replace its plan lines.
+
+**Request**
+
+Path: `plan_id` is a purchase plan UUID in the current workspace. No request body is accepted; refresh uses the strategy and filters persisted on the plan.
+
+**Response** — `200 OK` (envelope: `{ data, status }`)
+
+Shape matches `POST /api/projects/{project_id}/purchase-plan`, with `status` set to `refreshed` and `last_refreshed_at` populated.
+
+```json
+{
+  "data": {
+    "id": "9b7f7d43-6b5c-4f7d-bc0e-44c6d73f0992",
+    "strategy": "preferred_first",
+    "status": "refreshed",
+    "expires_at": "2026-05-15T12:00:00+00:00",
+    "last_refreshed_at": "2026-05-09T12:00:00+00:00",
+    "lines": []
+  },
+  "status": { "category": "ok", "message": "OK" }
+}
+```
+
+**Errors**
+
+- `404 Not Found` — `plan_id` is missing or belongs to another workspace.
+- `409 Conflict` — the plan has expired, or sourcing is not configured.
+- `422 Unprocessable Entity` — malformed UUID.
+- `429 Too Many Requests` — workspace rate limit: 15 requests/minute.
+- `502 Bad Gateway` — TrustedParts auth, rate-limit, timeout, upstream, or response-shape failure.
+- `503 Service Unavailable` — sourcing budget exhausted.
+
+**Notes**
+
+- Expired plans return `409 Conflict` with `message="plan expired"`.
+- Refresh deletes the old `purchase_plan_lines` and inserts a fresh optimizer outcome.
+- Refresh does not extend `expires_at`; the original 7-day cap stays in force.
+- The service forces a live TrustedParts refresh by using `use_cached_data=false` and bypassing the local cache hit path.
+
 ### `GET /api/parts/{part_id}/sourcing`
 
 Return cached TrustedParts offers for one part's MPN.
