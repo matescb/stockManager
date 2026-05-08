@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 import { ApiError, api } from "@/lib/api";
-import { AuthorizedSupplyTab, authorizedSupplyQueryKey } from "../AuthorizedSupplyTab";
+import { AuthorizedSupplyTab } from "../AuthorizedSupplyTab";
 
 vi.mock("sonner", () => ({
   toast: {
@@ -14,7 +14,12 @@ vi.mock("sonner", () => ({
   },
 }));
 
+vi.mock("@/lib/auth", () => ({
+  useAuth: () => ({ workspaceId: "ws-1" }),
+}));
+
 const partId = "part-123";
+const sourcingQueryKey = ["ws", "ws-1", "part", partId, "sourcing"];
 
 function sourcingResponse() {
   return {
@@ -60,10 +65,17 @@ function sourcingResponse() {
   };
 }
 
-function apiError(status: number, message: string) {
+function apiError(status: number, message: string, extra: Record<string, unknown> = {}) {
+  const category =
+    status === 409 ? "conflict" : status === 429 ? "rate_limited" : "server_error";
+  const body = {
+    data: null,
+    status: { category, message },
+    ...extra,
+  };
   return new ApiError(
     status,
-    { data: null, status: { category: status === 409 ? "conflict" : "server_error", message } },
+    body,
     message,
   );
 }
@@ -130,7 +142,7 @@ describe("AuthorizedSupplyTab", () => {
     await waitFor(() => {
       expect(api.post).toHaveBeenCalledWith(`/parts/${partId}/sourcing/refresh`, {});
     });
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: authorizedSupplyQueryKey(partId) });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: sourcingQueryKey });
   });
 
   it("distributor filter narrows visible rows", async () => {
@@ -165,6 +177,24 @@ describe("AuthorizedSupplyTab", () => {
     renderTab();
 
     expect(await screen.findByText("TrustedParts request budget reached for this hour — try again later.")).toBeDefined();
+  });
+
+  it("429 refresh path shows retry-after banner", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, "get").mockResolvedValue(sourcingResponse());
+    vi.spyOn(api, "post").mockRejectedValue(
+      apiError(429, "rate limit exceeded", { retry_after_seconds: 17 }),
+    );
+
+    renderTab();
+
+    await screen.findByText("Powered by TrustedParts");
+    await user.click(screen.getByRole("button", { name: "Refresh live" }));
+
+    expect(
+      await screen.findByText("TrustedParts refresh rate limit reached — try again in 17 seconds."),
+    ).toBeDefined();
+    expect(toast.error).not.toHaveBeenCalled();
   });
 
   it("502 path shows unavailable toast with retry action", async () => {

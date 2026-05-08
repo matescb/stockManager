@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
+import { InlineQueryError } from "@/components/QueryStateBoundary";
 import { ApiError, api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
+import { useApiMutation } from "@/lib/mutations";
+import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import type { Column } from "@/components/DataTable";
 import { DataTable } from "@/components/DataTable";
 import { PoweredByTrustedParts } from "@/components/PoweredByTrustedParts";
@@ -61,8 +65,6 @@ type SupplyRow = {
   link: string | null;
 };
 
-export const authorizedSupplyQueryKey = (partId: string) => ["sourcing", "part", partId] as const;
-
 function formatNumber(value: number | null): string {
   return value == null ? "—" : value.toLocaleString();
 }
@@ -113,7 +115,7 @@ function EmptyState({
   primaryUrl?: string | null;
 }) {
   return (
-    <div className="card p-4 space-y-3">
+    <div className="card p-4 space-y-3" role="status">
       <PoweredByTrustedParts primaryUrl={primaryUrl ?? undefined} />
       <div className="text-sm text-muted">{children}</div>
     </div>
@@ -124,23 +126,44 @@ function errorStatus(error: unknown): number | null {
   return error instanceof ApiError ? error.status : null;
 }
 
+function retryAfterSeconds(error: unknown): number | null {
+  if (!(error instanceof ApiError) || error.status !== 429) return null;
+  const retryAfter = (error.body as { retry_after_seconds?: unknown } | null)
+    ?.retry_after_seconds;
+  return typeof retryAfter === "number" && Number.isFinite(retryAfter)
+    ? Math.max(1, Math.ceil(retryAfter))
+    : 60;
+}
+
+function rateLimitMessage(seconds: number): string {
+  return `TrustedParts refresh rate limit reached — try again in ${seconds} ${
+    seconds === 1 ? "second" : "seconds"
+  }.`;
+}
+
 export function AuthorizedSupplyTab({ partId }: { partId: string }) {
   const queryClient = useQueryClient();
+  const { workspaceId } = useAuth();
+  const queryKey = useWsKey("part", partId, "sourcing");
+  const invalidateKey = wsKeyOf(workspaceId, "part", partId, "sourcing");
   const [selectedDistributors, setSelectedDistributors] = useState<Set<string>>(() => new Set());
 
   const query = useQuery({
-    queryKey: authorizedSupplyQueryKey(partId),
+    queryKey,
     queryFn: ({ signal }) =>
       api.get<SourcingResponse>(`/parts/${partId}/sourcing`, { signal }),
   });
 
-  const refreshMutation = useMutation({
-    mutationFn: () => api.post<SourcingResponse, Record<string, never>>(`/parts/${partId}/sourcing/refresh`, {}),
+  const refreshMutation = useApiMutation<SourcingResponse, void>({
+    mutationKey: wsKeyOf(workspaceId, "part", partId, "sourcing-refresh"),
+    mutationFn: () =>
+      api.post<SourcingResponse, Record<string, never>>(`/parts/${partId}/sourcing/refresh`, {}),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: authorizedSupplyQueryKey(partId) });
+      queryClient.invalidateQueries({ queryKey: invalidateKey });
     },
     onError: error => {
-      if (errorStatus(error) === 503) return;
+      const status = errorStatus(error);
+      if (status === 429 || status === 503) return;
       toast.error(error instanceof ApiError ? error.message : "Refresh failed");
     },
   });
@@ -240,10 +263,16 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
   );
 
   const status = errorStatus(query.error);
+  const refreshStatus = errorStatus(refreshMutation.error);
+  const retryAfter = retryAfterSeconds(refreshMutation.error) ?? retryAfterSeconds(query.error);
   const primaryUrl = query.data?.links?.primary ?? undefined;
 
   if (query.isLoading) {
-    return <div className="text-muted">Loading…</div>;
+    return (
+      <div className="card p-3 text-sm text-muted" role="status">
+        Loading authorized supply…
+      </div>
+    );
   }
 
   if (query.data?.reason === "no_mpn") {
@@ -278,7 +307,10 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
           type="button"
           className="btn-primary inline-flex items-center gap-1.5"
           disabled={refreshMutation.isPending}
-          onClick={() => refreshMutation.mutate()}
+          onClick={() => {
+            refreshMutation.reset();
+            refreshMutation.mutate();
+          }}
         >
           <RefreshCw size={14} className={refreshMutation.isPending ? "animate-spin" : ""} />
           {refreshMutation.isPending ? "Refreshing…" : "Refresh live"}
@@ -291,18 +323,22 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
         </div>
       )}
 
+      {(status === 429 || refreshStatus === 429) && retryAfter !== null && (
+        <div className="card p-3 text-sm text-muted" role="status">
+          {rateLimitMessage(retryAfter)}
+        </div>
+      )}
+
       {status === 502 && (
-        <div className="card p-3 text-sm text-muted">
+        <div className="card p-3 text-sm text-muted" role="status">
           <button type="button" className="btn" onClick={() => refetch()}>
             Retry TrustedParts
           </button>
         </div>
       )}
 
-      {query.isError && status !== 502 && status !== 503 && status !== 409 && (
-        <div className="text-red-600 text-sm">
-          Failed to load authorized supply. {query.error instanceof ApiError ? query.error.userMessage : ""}
-        </div>
+      {query.isError && status !== 429 && status !== 502 && status !== 503 && status !== 409 && (
+        <InlineQueryError query={query} label="authorized supply" />
       )}
 
       {distributors.length > 0 && (
