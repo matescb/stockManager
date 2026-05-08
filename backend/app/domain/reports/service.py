@@ -1,10 +1,11 @@
 """Read-only report services."""
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import select
@@ -25,14 +26,23 @@ from app.domain.sourcing import (
     SourcingTimeoutError,
 )
 from app.domain.sourcing import service as sourcing_service
-from app.domain.sourcing.schemas import SourcingBomOfferOut, SourcingSearchResult
+from app.domain.sourcing.schemas import (
+    SourcingBomOfferOut,
+    SourcingReportData,
+    SourcingSearchResult,
+)
 from app.domain.sourcing.service import SourcingBudgetBlocked, SourcingNotConfigured
 from app.domain.stock.service import bulk_current_quantities
 
+LOW_STOCK_SOURCING_TTL_SECONDS = 4 * 3600
 SOURCING_RISK_TTL_SECONDS = 4 * 60 * 60
 PRICE_DELTA_THRESHOLD = Decimal("0.25")
 LEAD_TIME_LONG_DAYS = 30
 MOQ_OVERBUY_MULTIPLIER = 5
+
+SourcingStatus = Literal["ok", "not_configured", "partial", "budget_blocked"]
+
+_log = logging.getLogger(__name__)
 
 
 def sourcing_risk_report(
@@ -260,7 +270,171 @@ def _price_delta_pct(
     return (best_offer.unit_price - historical_unit_cost) / historical_unit_cost
 
 
+def low_stock_report(
+    db: Session,
+    *,
+    workspace: Any,
+    include_sourcing: bool = False,
+    requested_by: UUID | None = None,
+) -> list[dict[str, Any]] | dict[str, Any]:
+    parts = _low_stock_candidate_parts(db, workspace_id=workspace.id)
+    rows = _low_stock_rows(db, workspace_id=workspace.id, parts=parts)
+    if not include_sourcing:
+        return rows
+
+    for row in rows:
+        row["sourcing"] = None
+
+    status = _attach_low_stock_sourcing(
+        db,
+        workspace=workspace,
+        rows=rows,
+        requested_by=requested_by,
+    )
+    return {
+        "rows": rows,
+        "sourcing_status": status,
+        "powered_by": "TrustedParts" if status in {"ok", "partial", "budget_blocked"} else None,
+        "links": (
+            sourcing_service.TRUSTEDPARTS_LINKS
+            if status in {"ok", "partial", "budget_blocked"}
+            else None
+        ),
+    }
+
+
+def _low_stock_candidate_parts(db: Session, *, workspace_id: UUID) -> list[Part]:
+    return list(
+        db.execute(
+            select(Part)
+            .where(Part.workspace_id == workspace_id)
+            .where(Part.archived_at.is_(None))
+            .where(Part.low_stock_report_quantity.is_not(None))
+        ).scalars()
+    )
+
+
+def _low_stock_rows(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    parts: list[Part],
+) -> list[dict[str, Any]]:
+    part_ids = [part.id for part in parts]
+    on_hand = bulk_current_quantities(
+        db, workspace_id=workspace_id, part_ids=part_ids, status="on_hand"
+    )
+    reserved = bulk_current_quantities(
+        db, workspace_id=workspace_id, part_ids=part_ids, status="reserved"
+    )
+
+    rows: list[dict[str, Any]] = []
+    for part in parts:
+        cur = on_hand.get(part.id, 0)
+        res = reserved.get(part.id, 0)
+        avail = cur - res
+        threshold = part.low_stock_report_quantity or 0
+        if avail < threshold:
+            rows.append(
+                {
+                    "part_id": str(part.id),
+                    "name": part.name,
+                    "manufacturer": part.manufacturer,
+                    "mpn": part.mpn,
+                    "on_hand": cur,
+                    "reserved": res,
+                    "available": avail,
+                    "threshold": threshold,
+                    "short_by": threshold - avail,
+                }
+            )
+    rows.sort(key=lambda row: row["short_by"], reverse=True)
+    return rows
+
+
+def _attach_low_stock_sourcing(
+    db: Session,
+    *,
+    workspace: Any,
+    rows: list[dict[str, Any]],
+    requested_by: UUID | None,
+) -> SourcingStatus:
+    mpns = sourcing_service.dedupe_mpns(row.get("mpn") for row in rows)
+    if not mpns:
+        return "ok"
+
+    search_results: dict[str, Any] = {}
+    partial = False
+    try:
+        for chunk in sourcing_service.chunk_mpns(mpns):
+            verdict = sourcing_service.BUDGET.check(workspace.id, parts_count=len(chunk))
+            if not verdict.allow:
+                return "budget_blocked" if not search_results else "partial"
+            partial = partial or verdict.mode == "degraded"
+            out = sourcing_service.search(
+                db,
+                workspace=workspace,
+                mpns=chunk,
+                use_cached_data=bool(workspace.sourcing_use_cached_for_dashboards),
+                ttl_seconds=LOW_STOCK_SOURCING_TTL_SECONDS,
+                requested_by=requested_by,
+            )
+            for result in out.results:
+                search_results[result.mpn.casefold()] = result
+    except sourcing_service.SourcingNotConfigured:
+        return "not_configured"
+    except sourcing_service.SourcingBudgetBlocked:
+        return "budget_blocked" if not search_results else "partial"
+    except Exception:
+        _log.exception(
+            "low-stock sourcing enrichment failed",
+            extra={"workspace_id": str(workspace.id)},
+        )
+        return "partial"
+
+    preferred = _preferred_distributors(workspace.sourcing_preferred_distributors)
+    preferred_keys = {item.casefold() for item in preferred}
+    for row in rows:
+        mpn = row.get("mpn")
+        if not mpn:
+            continue
+        result = search_results.get(str(mpn).casefold())
+        if result is None:
+            continue
+        short_by = max(1, int(row["short_by"]))
+        offers = sourcing_service._joined_offers([str(mpn)], search_results, qty=short_by)
+        best_offer = sourcing_service._best_offer_at_qty(offers, short_by)
+        row["sourcing"] = SourcingReportData(
+            authorized_stock=sum(offer.stock for offer in offers),
+            offers=offers,
+            best_offer=best_offer,
+            est_replenishment_cost=_extended_cost(best_offer, short_by),
+            lead_time_days=best_offer.lead_time_days if best_offer is not None else None,
+            preferred_distributor_available=(
+                bool(preferred_keys)
+                and any(
+                    offer.distributor.casefold() in preferred_keys and offer.stock > 0
+                    for offer in offers
+                )
+            ),
+            cache_hit=result.cache_hit,
+            fetched_at=result.fetched_at,
+        )
+    return "partial" if partial else "ok"
+
+
+def _extended_cost(best_offer: Any, quantity: int) -> Decimal | None:
+    if best_offer is None or best_offer.unit_price is None:
+        return None
+    purchase_quantity = max(quantity, int(best_offer.moq or 1))
+    return best_offer.unit_price * Decimal(purchase_quantity)
+
+
 def _clean_distributors(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _preferred_distributors(value: Any) -> list[str]:
+    return _clean_distributors(value)

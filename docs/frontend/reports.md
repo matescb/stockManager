@@ -8,7 +8,12 @@ Frontend report routes and their data-fetching conventions.
 
 | Route | Component | API |
 |---|---|---|
+| `/reports` | `web/src/routes/reports/Reports.tsx` | `GET /api/reports/low-stock` |
 | `/reports/sourcing-risk` | `web/src/routes/reports/SourcingRiskReport.tsx` | `GET /api/reports/sourcing-risk` |
+
+## Low-Stock Sourcing
+
+`LowStockReport` keeps the sourcing toggle in the URL as `include_sourcing=true`; the query key includes that boolean so cached plain low-stock rows and sourced low-stock rows stay separate. When enabled, the table renders TrustedParts attribution, sourcing status banners, sourcing columns, and a per-row draft-PO action that reuses `CreateOrderLineModal` with the row's best offer as its source. Source: `web/src/routes/reports/Reports.tsx`.
 
 The sourcing-risk page uses TanStack Query with `useWsKey("report", "sourcing-risk", onlyWithFlags)`, renders the shared `DataTable`, and keeps the default list sorted by flag count before handing rows to the table. The page uses `PoweredByTrustedParts` and `SourcingSourceLabel` for TrustedParts attribution.
 

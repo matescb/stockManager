@@ -14,6 +14,12 @@ See [API conventions](./README.md) for envelope, errors, pagination. Mounted at 
 
 Live parts whose `available = on_hand - reserved` is below their `low_stock_report_quantity`. Parts without a threshold are skipped.
 
+**Query**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `include_sourcing` | boolean | no | Default `false`. When `true`, enriches rows from the workspace TrustedParts cache/search path with a 4-hour TTL and dashboard cache preference. |
+
 **Response** — `200 OK` — array sorted by `short_by DESC`:
 
 ```json
@@ -24,10 +30,30 @@ Live parts whose `available = on_hand - reserved` is below their `low_stock_repo
 } ], "status": { ... } }
 ```
 
+With `include_sourcing=true`, `data` is an object:
+
+```json
+{ "data": {
+    "sourcing_status": "ok",
+    "rows": [ {
+      "part_id": "...", "short_by": 13,
+      "sourcing": {
+        "authorized_stock": 400,
+        "best_offer": { "distributor": "DigiKey", "moq": 1, "lead_time_days": 3 },
+        "est_replenishment_cost": "3.25",
+        "preferred_distributor_available": true
+      }
+    } ]
+}, "status": { ... } }
+```
+
+`sourcing_status` is one of `ok`, `not_configured`, `partial`, or `budget_blocked`. Sourcing failures do not change the HTTP status; the report still returns `200 OK` with low-stock rows and `sourcing: null` where enrichment was unavailable.
+
 **Notes**
 
-- Filters `archived_at IS NULL` (`reports.py:34`).
-- Source: `backend/app/api/routes/reports.py:26-69`.
+- Filters `archived_at IS NULL` (`backend/app/domain/reports/service.py:61-63`).
+- Source: `backend/app/api/routes/reports.py:26-34`.
+- Service: `backend/app/domain/reports/service.py:24-174`.
 
 ### `GET /api/reports/bom-shortage`
 

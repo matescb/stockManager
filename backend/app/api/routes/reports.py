@@ -16,9 +16,8 @@ from app.domain.builds.service import shortage_analysis
 from app.domain.lots.models import Lot
 from app.domain.parts.models import Part
 from app.domain.projects.models import Project
-from app.domain.reports.service import sourcing_risk_report
+from app.domain.reports.service import low_stock_report, sourcing_risk_report
 from app.domain.stock.service import (
-    bulk_current_quantities,
     bulk_current_quantities_by_lot,
 )
 
@@ -26,49 +25,14 @@ router = APIRouter()
 
 
 @router.get("/low-stock")
-def low_stock(db: DbSession, ws: CurrentWorkspace):
+def low_stock(
+    db: DbSession,
+    ws: CurrentWorkspace,
+    include_sourcing: bool = Query(default=False),
+):
     """Parts whose *available* (on-hand minus reserved) is below their
     `low_stock_report_quantity`. Parts without a threshold are skipped."""
-    parts = list(
-        db.execute(
-            select(Part)
-            .where(Part.workspace_id == ws.id)
-            .where(Part.archived_at.is_(None))
-            .where(Part.low_stock_report_quantity.is_not(None))
-        ).scalars()
-    )
-    # Funnel both per-part aggregations through bulk_current_quantities so
-    # the "current = SUM(delta)" invariant lives in one place (BE2-005).
-    part_ids = [p.id for p in parts]
-    on_hand = bulk_current_quantities(
-        db, workspace_id=ws.id, part_ids=part_ids, status="on_hand"
-    )
-    reserved = bulk_current_quantities(
-        db, workspace_id=ws.id, part_ids=part_ids, status="reserved"
-    )
-
-    out = []
-    for p in parts:
-        cur = on_hand.get(p.id, 0)
-        res = reserved.get(p.id, 0)
-        avail = cur - res
-        threshold = p.low_stock_report_quantity or 0
-        if avail < threshold:
-            out.append(
-                {
-                    "part_id": str(p.id),
-                    "name": p.name,
-                    "manufacturer": p.manufacturer,
-                    "mpn": p.mpn,
-                    "on_hand": cur,
-                    "reserved": res,
-                    "available": avail,
-                    "threshold": threshold,
-                    "short_by": threshold - avail,
-                }
-            )
-    out.sort(key=lambda r: r["short_by"], reverse=True)
-    return ok(out)
+    return ok(low_stock_report(db, workspace=ws, include_sourcing=include_sourcing))
 
 
 @router.get("/sourcing-risk", dependencies=[Depends(require_role("member"))])
