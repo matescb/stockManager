@@ -109,7 +109,7 @@ def test_auto_create_with_mpn(db):
     part = _parts(db, ws)[0]
     assert part.name == "NEW-MPN"
     assert part.mpn == "NEW-MPN"
-    assert part.linked_provider == "none"
+    assert part.linked_provider is None
     assert part.description is None
     assert part.default_storage_location_id is None
     assert part.created_by == user.id

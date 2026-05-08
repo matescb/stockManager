@@ -223,7 +223,7 @@ Commit the preview into `project_entries` rows.
 
 - The dep rolls back on any raise, so no explicit try/except is needed (`projects.py:265-267`).
 - Auto-create preserves the import match priority in `bom_import.py::_match_part`; creation happens only after no candidate is found.
-- Created parts use the import workspace, `linked_provider='none'`, no default storage location, and no stock entries or lots.
+- Created parts use the import workspace, have no linked provider, no default storage location, and no stock entries or lots.
 - Source: `backend/app/api/routes/projects.py:262-269`.
 - Service: `backend/app/domain/projects/bom_import.py::commit`.
 

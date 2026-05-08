@@ -63,7 +63,7 @@ Auto-created parts start with zero stock. They do not create stock entries or lo
 
 - **Name** from the BOM's part/name column, or the MPN if the name is blank.
 - **MPN**, **Manufacturer**, and **Internal part number** from the mapped columns when present.
-- **Provider** set to `none`, so you can enrich it later.
+- **Provider** unset, so you can enrich it later.
 
 Rows with neither an MPN nor a part/name are skipped when auto-create is enabled. They do not create a part or a BOM line.
 

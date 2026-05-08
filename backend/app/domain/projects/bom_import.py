@@ -327,7 +327,7 @@ def _auto_create_part(
         manufacturer=values["manufacturer"],
         internal_part_number=values["internal_part_number"],
         description=None,
-        linked_provider="none",
+        linked_provider=None,
         default_storage_location_id=None,
         created_by=user_id,
         updated_by=user_id,
