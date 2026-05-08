@@ -41,6 +41,7 @@ from app.domain.projects.models import (  # noqa: F401
     Project,
     ProjectEntry,
 )
+from app.domain.sourcing.models import PurchasePlan, PurchasePlanLine, SourcingCache  # noqa: F401
 from app.domain.stock.models import StockEntry  # noqa: F401
 from app.domain.storage.models import StorageLocation  # noqa: F401
 from app.domain.tags.models import Tag, TagLink  # noqa: F401

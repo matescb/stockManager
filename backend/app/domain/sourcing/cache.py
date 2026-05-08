@@ -14,7 +14,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.core.time import utcnow
-from app.domain.sourcing.models import SourcingCache
+from app.domain.sourcing.models import PurchasePlan, SourcingCache
 
 SEVEN_DAYS = timedelta(days=7)
 
@@ -82,9 +82,19 @@ def sweep_expired(db: Session, *, workspace_id: UUID) -> int:
     return result.rowcount or 0
 
 
+def sweep_expired_purchase_plans(db: Session, *, workspace_id: UUID) -> int:
+    """Delete expired purchase plans for one workspace."""
+    result = db.execute(
+        delete(PurchasePlan)
+        .where(PurchasePlan.workspace_id == workspace_id)
+        .where(PurchasePlan.expires_at < utcnow())
+    )
+    return result.rowcount or 0
+
+
 def sweep_expired_all_workspaces(db: Session) -> int:
-    """Delete expired rows by iterating through workspace-scoped sweeps."""
-    workspace_ids = (
+    """Delete expired sourcing rows by iterating through workspace scopes."""
+    cache_workspace_ids = (
         db.execute(
             select(SourcingCache.workspace_id)
             .where(SourcingCache.expires_at < utcnow())
@@ -93,7 +103,18 @@ def sweep_expired_all_workspaces(db: Session) -> int:
         .scalars()
         .all()
     )
+    plan_workspace_ids = (
+        db.execute(
+            select(PurchasePlan.workspace_id)
+            .where(PurchasePlan.expires_at < utcnow())
+            .distinct()
+        )
+        .scalars()
+        .all()
+    )
+    workspace_ids = set(cache_workspace_ids) | set(plan_workspace_ids)
     return sum(
         sweep_expired(db, workspace_id=workspace_id)
+        + sweep_expired_purchase_plans(db, workspace_id=workspace_id)
         for workspace_id in workspace_ids
     )

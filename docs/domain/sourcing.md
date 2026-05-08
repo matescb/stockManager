@@ -34,6 +34,28 @@ The helper also caps caller-supplied TTLs before writing the row.
 Sources: `backend/alembic/versions/0038_sourcing_cache.py:42`,
 `backend/app/domain/sourcing/cache.py:50`
 
+## Purchase Plans
+
+`purchase_plans` stores short-lived optimizer output for one workspace and project:
+build quantity, strategy, country/currency hints, optional preferred distributors, and
+status. `purchase_plan_lines` stores the per-BOM-line shortage and the selected offer
+snapshot the user is reviewing, including distributor, quantity, unit price, MOQ, lead
+time, and offer URL.
+
+Plans inherit the TrustedParts seven-day retention cap:
+
+```sql
+CHECK (expires_at <= created_at + interval '7 days')
+```
+
+The database also pins static strategy and status values with CHECK constraints. Expired
+plans are removed by the same sourcing sweep job as cache rows. When a plan is converted,
+draft orders become the permanent record; offer URLs and raw offer snapshots stay on the
+ephemeral plan rows and are not copied into order comments.
+
+Sources: `backend/alembic/versions/0039_purchase_plans.py:68`,
+`backend/app/domain/sourcing/cache.py:95`
+
 ## Workspace Isolation
 
 Reads filter by both `workspace_id` and `query_hash`, so identical canonical queries in

@@ -9,13 +9,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.time import utcnow
+from app.domain.projects.models import Project
 from app.domain.sourcing.cache import (
     canonical_query_hash,
     get_or_fetch,
     sweep_expired,
     sweep_expired_all_workspaces,
 )
-from app.domain.sourcing.models import SourcingCache
+from app.domain.sourcing.models import PurchasePlan, SourcingCache
 from app.domain.users.models import User
 from app.domain.workspaces.models import Workspace
 
@@ -38,6 +39,16 @@ def _workspace(db: Session) -> uuid.UUID:
     return workspace.id
 
 
+def _project(db: Session, *, workspace_id: uuid.UUID) -> Project:
+    project = Project(
+        workspace_id=workspace_id,
+        name=f"optimizer-project-{uuid.uuid4().hex[:8]}",
+    )
+    db.add(project)
+    db.flush()
+    return project
+
+
 def _cache_row(
     *,
     workspace_id: uuid.UUID,
@@ -54,6 +65,25 @@ def _cache_row(
         response_json=response,
         fetched_at=fetched_at,
         expires_at=fetched_at + ttl,
+    )
+
+
+def _purchase_plan(
+    *,
+    workspace_id: uuid.UUID,
+    project_id: uuid.UUID,
+    created_delta: timedelta = timedelta(),
+    ttl: timedelta = timedelta(days=1),
+) -> PurchasePlan:
+    created_at = utcnow() + created_delta
+    return PurchasePlan(
+        workspace_id=workspace_id,
+        project_id=project_id,
+        build_quantity=1,
+        strategy="lowest_total_price",
+        status="draft",
+        created_at=created_at,
+        expires_at=created_at + ttl,
     )
 
 
@@ -190,9 +220,7 @@ def test_sweep_expired_only_deletes_expired_rows(db: Session) -> None:
     assert sweep_expired(db, workspace_id=workspace_id) == 1
 
     rows = (
-        db.execute(
-            select(SourcingCache).where(SourcingCache.workspace_id == workspace_id)
-        )
+        db.execute(select(SourcingCache).where(SourcingCache.workspace_id == workspace_id))
         .scalars()
         .all()
     )
@@ -268,14 +296,34 @@ def test_sweep_expired_all_workspaces_preserves_unexpired_rows(db: Session) -> N
 
     assert sweep_expired_all_workspaces(db) == 2
 
-    rows = (
-        db.execute(select(SourcingCache).order_by(SourcingCache.workspace_id))
-        .scalars()
-        .all()
-    )
+    rows = db.execute(select(SourcingCache).order_by(SourcingCache.workspace_id)).scalars().all()
     assert len(rows) == 2
     assert {row.workspace_id for row in rows} == {workspace_a, workspace_b}
     assert {row.response_json["active"] for row in rows} == {True}
+
+
+def test_sweeper_also_deletes_expired_purchase_plans(db: Session) -> None:
+    workspace_id = _workspace(db)
+    project = _project(db, workspace_id=workspace_id)
+    expired = _purchase_plan(
+        workspace_id=workspace_id,
+        project_id=project.id,
+        created_delta=-timedelta(days=1),
+        ttl=timedelta(minutes=1),
+    )
+    active = _purchase_plan(
+        workspace_id=workspace_id,
+        project_id=project.id,
+        ttl=timedelta(days=1),
+    )
+    db.add_all([expired, active])
+    db.flush()
+
+    assert sweep_expired_all_workspaces(db) == 1
+
+    rows = db.execute(select(PurchasePlan)).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].id == active.id
 
 
 def test_workspace_isolation_same_query_hash(db: Session) -> None:
