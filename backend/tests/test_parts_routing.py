@@ -15,7 +15,6 @@ from fastapi.routing import APIRoute
 
 from app.main import app
 
-
 # (method, path) tuples expected to be mounted under /api/parts.
 EXPECTED_PARTS_ROUTES: set[tuple[str, str]] = {
     # Assets
@@ -31,6 +30,7 @@ EXPECTED_PARTS_ROUTES: set[tuple[str, str]] = {
     ("GET", "/api/parts/{part_id}/stock"),
     ("GET", "/api/parts/{part_id}/lots"),
     ("GET", "/api/parts/{part_id}/activity"),
+    ("GET", "/api/parts/{part_id}/sourcing"),
     # Substitutes
     ("POST", "/api/parts/{part_id}/substitutes"),
     ("GET", "/api/parts/{part_id}/substitutes"),
