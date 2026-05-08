@@ -31,6 +31,7 @@ EXPECTED_PARTS_ROUTES: set[tuple[str, str]] = {
     ("GET", "/api/parts/{part_id}/lots"),
     ("GET", "/api/parts/{part_id}/activity"),
     ("GET", "/api/parts/{part_id}/sourcing"),
+    ("POST", "/api/parts/{part_id}/sourcing/refresh"),
     # Substitutes
     ("POST", "/api/parts/{part_id}/substitutes"),
     ("GET", "/api/parts/{part_id}/substitutes"),
