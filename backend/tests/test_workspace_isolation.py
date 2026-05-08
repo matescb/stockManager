@@ -226,6 +226,29 @@ def test_tags_reject_cross_workspace_object_id_on_link():
     assert r.status_code == 404, r.text
 
 
+def test_tag_unlink_rejects_foreign_workspace_id():
+    """DELETE /api/tags/links/{id} on a foreign-workspace link MUST 404,
+    not silently 200. A naive `select … where ws=mine` + `if row: delete`
+    pattern returns the same body for "doesn't exist" and "exists in
+    another workspace" — that lets B probe A's link ids by their 200 vs.
+    404 split (issue #316)."""
+    a, b = _two_workspaces()
+    part_a = _create_part(a, "A-pn")
+    tag_a = a.post("/api/tags", json={"name": "Mine"}).json()["data"]["id"]
+    link_a = a.post(
+        "/api/tags/links",
+        json={"tag_id": tag_a, "object_type": "part", "object_id": part_a},
+    ).json()["data"]["id"]
+
+    # B tries to delete A's link; must be 404, not 200.
+    r = b.delete(f"/api/tags/links/{link_a}")
+    assert r.status_code == 404, r.text
+
+    # And A's link is still there (negative side of the regression).
+    listed = a.get(f"/api/tags/by-object/part/{part_a}").json()["data"]
+    assert any(t["id"] == link_a and t["tag"]["id"] == tag_a for t in listed)
+
+
 # ---------------------------------------------------------------------------
 # stock service: cross-workspace lot/storage on adjust/remove/move.
 # adjust_stock was the active leak — `delta = actual_qty - 0` persists a

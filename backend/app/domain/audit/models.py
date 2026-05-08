@@ -27,7 +27,7 @@ class AuditLog(Base):
     )
     action = Column(Text, nullable=False)
     target_type = Column(Text, nullable=True)
-    # PostgreSQL UUID[] — GIN-indexed in migration 0024 (audit_log).
+    # PostgreSQL UUID[] — GIN-indexed in migration 0030 (audit_log).
     target_ids = Column(ARRAY(UUID(as_uuid=True)), nullable=True)
     comment = Column(Text, nullable=True)
     request_id = Column(Text, nullable=True)
