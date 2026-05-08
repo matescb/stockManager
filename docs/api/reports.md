@@ -2,17 +2,24 @@
 
 Audience: engineer
 
-Read-only aggregate queries: low-stock parts, sourcing risk, BOM shortage at a planned build quantity, BOM buyability by project, stock value, and expiring lots.
+Read-only aggregate queries: low-stock parts, BOM shortage at a planned build
+quantity, BOM buyability by project, sourcing risk, stock value, replenishment
+cost, and expiring lots.
 
 ## Conventions
 
-See [API conventions](./README.md) for envelope, errors, pagination. Mounted at `/api/reports` (`backend/app/main.py:376`). All quantity reads funnel through `domain/stock/service.py::bulk_current_quantities` / `bulk_current_quantities_by_lot` so the SUM-of-delta invariant lives in one place (BE2-005, [ADR-0001](../adr/0001-append-only-stock-ledger.md)).
+See [API conventions](./README.md) for envelope, errors, pagination. Mounted at
+`/api/reports` (`backend/app/main.py:376`). All quantity reads funnel through
+`domain/stock/service.py::bulk_current_quantities` /
+`bulk_current_quantities_by_lot` so the SUM-of-delta invariant lives in one
+place (BE2-005, [ADR-0001](../adr/0001-append-only-stock-ledger.md)).
 
 ## Routes
 
 ### `GET /api/reports/low-stock`
 
-Live parts whose `available = on_hand - reserved` is below their `low_stock_report_quantity`. Parts without a threshold are skipped.
+Live parts whose `available = on_hand - reserved` is below their
+`low_stock_report_quantity`. Parts without a threshold are skipped.
 
 **Query**
 
@@ -20,7 +27,7 @@ Live parts whose `available = on_hand - reserved` is below their `low_stock_repo
 |---|---|---|---|
 | `include_sourcing` | boolean | no | Default `false`. When `true`, enriches rows from the workspace TrustedParts cache/search path with a 4-hour TTL and dashboard cache preference. |
 
-**Response** — `200 OK` — array sorted by `short_by DESC`:
+**Response** - `200 OK` - array sorted by `short_by DESC`:
 
 ```json
 { "data": [ {
@@ -30,34 +37,15 @@ Live parts whose `available = on_hand - reserved` is below their `low_stock_repo
 } ], "status": { ... } }
 ```
 
-With `include_sourcing=true`, `data` is an object:
-
-```json
-{ "data": {
-    "sourcing_status": "ok",
-    "rows": [ {
-      "part_id": "...", "short_by": 13,
-      "sourcing": {
-        "authorized_stock": 400,
-        "best_offer": { "distributor": "DigiKey", "moq": 1, "lead_time_days": 3 },
-        "est_replenishment_cost": "3.25",
-        "preferred_distributor_available": true
-      }
-    } ]
-}, "status": { ... } }
-```
-
-`sourcing_status` is one of `ok`, `not_configured`, `partial`, or `budget_blocked`. Sourcing failures do not change the HTTP status; the report still returns `200 OK` with low-stock rows and `sourcing: null` where enrichment was unavailable.
-
-**Notes**
-
-- Filters `archived_at IS NULL` (`backend/app/domain/reports/service.py:61-63`).
-- Source: `backend/app/api/routes/reports.py:26-34`.
-- Service: `backend/app/domain/reports/service.py:24-174`.
+With `include_sourcing=true`, `data` is an object with `rows`,
+`sourcing_status`, `powered_by`, and TrustedParts `links`. Sourcing failures do
+not change the HTTP status; the report still returns `200 OK` with low-stock
+rows and `sourcing: null` where enrichment was unavailable.
 
 ### `GET /api/reports/bom-shortage`
 
-Project-wide shortage analysis at a given build quantity. No build is created -- same engine as the Build detail page.
+Project-wide shortage analysis at a given build quantity. No build is created;
+same engine as the Build detail page.
 
 **Query**
 
@@ -66,7 +54,7 @@ Project-wide shortage analysis at a given build quantity. No build is created --
 | `project_id` | UUID | yes | |
 | `quantity` | int (>0) | no | Default `1`. |
 
-**Response** — `200 OK`
+**Response** - `200 OK`
 
 ```json
 { "data": {
@@ -76,17 +64,18 @@ Project-wide shortage analysis at a given build quantity. No build is created --
 }, "status": { ... } }
 ```
 
-`rows` is whatever `shortage_analysis` returns. TODO(verify): exact per-row shape (likely `{ project_entry_id, part_id, required, available, short_by, candidates? }`).
+`rows` is whatever `shortage_analysis` returns. TODO(verify): exact per-row
+shape (likely `{ project_entry_id, part_id, required, available, short_by,
+candidates? }`).
 
-**Errors** — `404 report.project_not_found`.
-
-**Notes**
-
-- Service: `backend/app/domain/builds/service.py::shortage_analysis`.
+**Errors** - `404 report.project_not_found`.
 
 ### `GET /api/reports/bom-buyability`
 
-Workspace-wide scoreboard of active projects at one build quantity. The report calls Source-BOM with TrustedParts cached mode enabled and degrades to stock-only rows when sourcing is not configured, budget-blocked, or temporarily unavailable.
+Workspace-wide scoreboard of active projects at one build quantity. The report
+calls Source-BOM with TrustedParts cached mode enabled and degrades to
+stock-only rows when sourcing is not configured, budget-blocked, or temporarily
+unavailable.
 
 **Query**
 
@@ -94,7 +83,7 @@ Workspace-wide scoreboard of active projects at one build quantity. The report c
 |---|---|---|---|
 | `build_quantity` | int (`>= 1`) | no | Default `1`. `0` or negative values return `422`. |
 
-**Response** — `200 OK`
+**Response** - `200 OK`
 
 ```json
 { "data": {
@@ -111,26 +100,24 @@ Workspace-wide scoreboard of active projects at one build quantity. The report c
 }, "status": { ... } }
 ```
 
-`sourcing_status` is `ok`, `not_configured`, `partial`, or `budget_blocked`. Workspaces with more than 50 active projects return the newest 50 and `truncated: true`.
-
-**Notes**
-
-- Route validates `build_quantity` and rate-limits per workspace.
-- Service filters projects by workspace and `archived_at IS NULL`, caps at 50, and forces cached sourcing.
-- Sourcing failures return `200 OK` with stock-only rows and a status flag.
+`sourcing_status` is `ok`, `not_configured`, `partial`, or `budget_blocked`.
+Workspaces with more than 50 active projects return the newest 50 and
+`truncated: true`.
 
 ### `GET /api/reports/sourcing-risk`
 
-Workspace-wide sourcing risk for active parts with an MPN. The route uses TrustedParts through the sourcing service with a 4-hour cache TTL, returns a top-level `sourcing_status`, and recomputes flags on each request.
+Workspace-wide sourcing risk for active parts with an MPN. The route uses
+TrustedParts through the sourcing service with a 4-hour cache TTL, returns a
+top-level `sourcing_status`, and recomputes flags on each request.
 
 **Query**
 
 | Field | Type | Notes |
-|---|---|
+|---|---|---|
 | `only_with_flags` | bool | Default `true`; when true, clean rows are omitted. |
 | `use_cached_data` | bool \| null | Default `null`; null uses cached TrustedParts data. |
 
-**Response** — `200 OK` (envelope: `{ data, status }`)
+**Response** - `200 OK` (envelope: `{ data, status }`)
 
 ```json
 { "data": {
@@ -139,7 +126,9 @@ Workspace-wide sourcing risk for active parts with an MPN. The route uses Truste
 }, "status": { ... } }
 ```
 
-`sourcing_status.state` is `ok`, `not_configured`, `budget_blocked`, or `upstream_error`. Non-`ok` states are reported in the payload so the report page can render a banner without violating the API envelope.
+`sourcing_status.state` is `ok`, `not_configured`, `budget_blocked`, or
+`upstream_error`. Non-`ok` states are reported in the payload so the report page
+can render a banner without violating the API envelope.
 
 **Risk flags**
 
@@ -152,56 +141,63 @@ Workspace-wide sourcing risk for active parts with an MPN. The route uses Truste
 | `preferred_distributor_unmet` | Workspace preferred distributors are configured, but none has stock. |
 | `price_delta` | Best replacement price is at least 25% above the latest historical lot purchase price in the same currency. |
 
-**Notes**
-
-- Stock quantities use `bulk_current_quantities`; no report query aggregates ledger rows directly.
-- Risk history is not persisted; there is no report table or migration for this feature.
-
 ### `GET /api/reports/stock-value`
 
-Sum of `lot.purchase_unit_cost * current_qty_in_lot` across all on-hand stock, broken down by currency and by part. Lots without a recorded purchase cost contribute `0`.
+Sum of `lot.purchase_unit_cost * current_qty_in_lot` across all on-hand stock,
+broken down by currency and by part. Lots without a recorded purchase cost
+contribute `0`.
 
-**Response** — `200 OK`
+### `GET /api/reports/replenishment-cost`
 
-```json
-{ "data": {
-    "by_currency": [ { "currency": "USD", "value": 12345.6789 } ],
-    "by_part":     [ { "part_id": "...", "name": "...", "on_hand": 100, "value": 42.0, "currency": "USD" } ]
-}, "status": { ... } }
-```
-
-A part with lots in multiple currencies has `currency: "MIXED"`.
-
-**Notes**
-
-- Sorted: `by_currency` by currency code, `by_part` by `value DESC`.
-
-### `GET /api/reports/expiring-lots`
-
-Lots that have on-hand quantity > 0 and an `expiration_date` within the next `days` days (or already past).
+Transient replacement-cost view for each on-hand part with an MPN. Historical
+cost comes from current on-hand lot quantities and `lot.purchase_unit_cost`;
+replacement cost comes from the best current TrustedParts offer. TrustedParts
+prices are recomputed through the sourcing cache on each request and are not
+stored in a report table.
 
 **Query**
 
 | Field | Type | Notes |
-|---|---|
-| `days` | int | Default `90`, `0 <= days <= 3650`. |
+|---|---|---|
+| `sort` | `delta_pct \| delta_abs \| name` | Default `delta_pct`. |
+| `use_cached_data` | bool | Optional TrustedParts dashboard-cache preference override. |
 
-**Response** — `200 OK` — array sorted by `expiration_date ASC`:
+**Response** - `200 OK`
 
 ```json
-{ "data": [ {
-    "lot_id": "...", "name": "...",
-    "part_id": "...", "part_name": "...",
-    "on_hand": 25,
-    "expiration_date": "2026-07-01",
-    "days_until_expiry": 60,
-    "expired": false
-} ], "status": { ... } }
+{ "data": {
+    "rows": [ {
+      "part_id": "...", "name": "...", "mpn": "STM32F103C8T6",
+      "on_hand": 10,
+      "historical_costs": [ { "currency": "EUR", "value": "5.000000" } ],
+      "replacement_cost": "7.50",
+      "delta_abs": "2.500000",
+      "delta_pct": "50.00",
+      "reason": null,
+      "source": "trustedparts"
+    } ],
+    "totals": [ { "currency": "EUR", "historical_cost": "5.000000", "replacement_cost": "7.50", "delta_abs": "2.500000" } ],
+    "sourcing_status": { "state": "ok", "powered_by": "TrustedParts" }
+}, "status": { ... } }
 ```
 
-**Notes**
+`reason` is `currency_mismatch` when the TrustedParts offer currency does not
+match any historical lot currency for the part. Sourcing configuration, budget,
+auth, rate-limit, timeout, and upstream failures return `200 OK` with
+`sourcing_status.state` set and row replacement fields left null.
 
-- `expired: true` when `days_until_expiry < 0`.
+### `GET /api/reports/expiring-lots`
+
+Lots that have on-hand quantity > 0 and an `expiration_date` within the next
+`days` days (or already past).
+
+**Query**
+
+| Field | Type | Notes |
+|---|---|---|
+| `days` | int | Default `90`, `0 <= days <= 3650`. |
+
+**Response** - `200 OK` - array sorted by `expiration_date ASC`.
 
 ## TODOs
 

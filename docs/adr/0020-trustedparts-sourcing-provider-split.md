@@ -27,6 +27,10 @@ expired plan rows alongside cache rows (`backend/alembic/versions/0039_purchase_
 
 TrustedParts results must stay visibly distinct from catalog-provider data. Public or UI surfaces that combine distributor data from multiple origins need an explicit future decision before launch.
 
+## Reports policy: no persistent price history
+
+Reports may use TrustedParts prices only as a transient request-time input. The replenishment-cost report recomputes replacement cost from existing on-hand lot costs and the short-lived sourcing cache on each request (`backend/app/domain/reports/service.py:39`); it must not add a report-specific table, column, or long-lived price snapshot because that would turn cached TrustedParts offers into persistent price history.
+
 ## Consequences
 
 - **Good**:

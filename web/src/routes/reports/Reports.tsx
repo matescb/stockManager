@@ -177,6 +177,7 @@ export default function ReportsLayout() {
       <div className="flex items-center gap-1">
         <NavLink end to="/reports" className={({ isActive }) => "btn " + (isActive ? "border-accent/50 text-accent" : "")}>Low stock</NavLink>
         <NavLink to="/reports/value" className={({ isActive }) => "btn " + (isActive ? "border-accent/50 text-accent" : "")}>Stock value</NavLink>
+        <NavLink to="/reports/replenishment-cost" className={({ isActive }) => "btn " + (isActive ? "border-accent/50 text-accent" : "")}>Replenishment cost</NavLink>
         <NavLink to="/reports/bom" className={({ isActive }) => "btn " + (isActive ? "border-accent/50 text-accent" : "")}>BOM shortage</NavLink>
         <NavLink to="/reports/buyability" className={({ isActive }) => "btn " + (isActive ? "border-accent/50 text-accent" : "")}>BOM buyability</NavLink>
         <NavLink to="/reports/expiring" className={({ isActive }) => "btn " + (isActive ? "border-accent/50 text-accent" : "")}>Expiring lots</NavLink>

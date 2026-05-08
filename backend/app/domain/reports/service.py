@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from collections.abc import Sequence
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Literal
 from uuid import UUID
 
@@ -19,7 +20,13 @@ from app.domain.parts.models import Part
 from app.domain.projects.models import Project
 from app.domain.reports.schemas import (
     BomBuyabilityReportOut,
+    CurrencyAmountOut,
     ProjectBuyabilityRow,
+    ReplenishmentCostReportOut,
+    ReplenishmentCostRow,
+    ReplenishmentCostSort,
+    ReplenishmentCostStatusOut,
+    ReplenishmentCostTotalOut,
     SourcingRiskReportOut,
     SourcingRiskRow,
     SourcingRiskStatusOut,
@@ -37,15 +44,83 @@ from app.domain.sourcing.schemas import (
     SourcingSearchResult,
 )
 from app.domain.sourcing.service import SourcingBudgetBlocked, SourcingNotConfigured
-from app.domain.stock.service import bulk_current_quantities
+from app.domain.stock.service import bulk_current_quantities, bulk_current_quantities_by_lot
 
 LOW_STOCK_SOURCING_TTL_SECONDS = 4 * 3600
 BOM_BUYABILITY_PROJECT_CAP = 50
 BOM_BUYABILITY_TTL_SECONDS = 4 * 60 * 60
+REPLENISHMENT_COST_TTL_SECONDS = 4 * 60 * 60
 SOURCING_RISK_TTL_SECONDS = 4 * 60 * 60
 PRICE_DELTA_THRESHOLD = Decimal("0.25")
 LEAD_TIME_LONG_DAYS = 30
 MOQ_OVERBUY_MULTIPLIER = 5
+_MONEY_ZERO = Decimal("0")
+_PCT_QUANT = Decimal("0.01")
+
+
+def replenishment_cost_report(
+    db: Session,
+    *,
+    workspace: Any,
+    use_cached_data: bool | None = None,
+    sort: ReplenishmentCostSort = "delta_pct",
+) -> ReplenishmentCostReportOut:
+    """Transient replacement-cost report.
+
+    TrustedParts-derived prices are read through the short-lived sourcing
+    cache and are never persisted outside that cache.
+    """
+    parts = list(
+        db.execute(
+            select(Part)
+            .where(Part.workspace_id == workspace.id)
+            .where(Part.archived_at.is_(None))
+            .where(Part.mpn.is_not(None))
+        ).scalars()
+    )
+    on_hand_by_part = bulk_current_quantities(
+        db,
+        workspace_id=workspace.id,
+        part_ids=[part.id for part in parts],
+        status="on_hand",
+    )
+    report_parts = [
+        part
+        for part in parts
+        if on_hand_by_part.get(part.id, 0) > 0 and part.mpn and part.mpn.strip()
+    ]
+    if not report_parts:
+        return ReplenishmentCostReportOut(
+            rows=[],
+            totals=[],
+            sourcing_status=_status_ok(),
+        )
+
+    historical_by_part = _historical_costs_by_part(db, workspace_id=workspace.id)
+    search_results, status = _search_replenishment_offers(
+        db,
+        workspace=workspace,
+        mpns=[part.mpn or "" for part in report_parts],
+        use_cached_data=use_cached_data,
+    )
+
+    rows = [
+        _row_for_part(
+            part,
+            on_hand=on_hand_by_part.get(part.id, 0),
+            historical_costs=historical_by_part.get(part.id, {}),
+            search_result=search_results.get((part.mpn or "").casefold()),
+            sourcing_status=status,
+        )
+        for part in report_parts
+    ]
+    rows.sort(key=_sort_key(sort))
+    return ReplenishmentCostReportOut(
+        rows=rows,
+        totals=_totals(rows),
+        sourcing_status=status,
+    )
+
 
 SourcingStatus = Literal["ok", "not_configured", "partial", "budget_blocked"]
 
@@ -296,6 +371,259 @@ def _can_build_now(rows: list[dict[str, Any]], *, build_quantity: int) -> int:
         * build_quantity
         // int(row["required"])
         for row in effective
+    )
+
+
+def _historical_costs_by_part(
+    db: Session,
+    *,
+    workspace_id: UUID,
+) -> dict[UUID, dict[str | None, Decimal]]:
+    lot_qty = bulk_current_quantities_by_lot(db, workspace_id=workspace_id)
+    lots = {
+        lot.id: lot
+        for lot in db.execute(select(Lot).where(Lot.workspace_id == workspace_id)).scalars()
+    }
+    by_part: dict[UUID, dict[str | None, Decimal]] = defaultdict(lambda: defaultdict(Decimal))
+    for lot_id, qty in lot_qty.items():
+        if qty <= 0:
+            continue
+        lot = lots.get(lot_id)
+        if lot is None:
+            continue
+        unit_cost = Decimal(lot.purchase_unit_cost or 0)
+        by_part[lot.part_id][lot.purchase_currency] += unit_cost * Decimal(qty)
+    return {part_id: dict(values) for part_id, values in by_part.items()}
+
+
+def _search_replenishment_offers(
+    db: Session,
+    *,
+    workspace: Any,
+    mpns: list[str],
+    use_cached_data: bool | None,
+) -> tuple[dict[str, SourcingSearchResult], ReplenishmentCostStatusOut]:
+    results: dict[str, SourcingSearchResult] = {}
+    fetched_at_values: list[datetime] = []
+    cache_hits: list[bool] = []
+    partial = False
+
+    for chunk in sourcing_service.chunk_mpns(sourcing_service.dedupe_mpns(mpns)):
+        try:
+            out = sourcing_service.search(
+                db,
+                workspace=workspace,
+                mpns=chunk,
+                use_cached_data=use_cached_data,
+                ttl_seconds=REPLENISHMENT_COST_TTL_SECONDS,
+            )
+        except SourcingNotConfigured:
+            return {}, ReplenishmentCostStatusOut(
+                state="not_configured",
+                message="sourcing not configured",
+                links=sourcing_service.TRUSTEDPARTS_LINKS,
+            )
+        except SourcingBudgetBlocked:
+            partial = True
+            break
+        except (
+            SourcingAuthError,
+            SourcingRateLimitError,
+            SourcingTimeoutError,
+            SourcingClientError,
+        ):
+            return results, ReplenishmentCostStatusOut(
+                state="error",
+                message="TrustedParts sourcing unavailable",
+                partial=bool(results),
+                links=sourcing_service.TRUSTEDPARTS_LINKS,
+            )
+
+        fetched_at_values.append(out.fetched_at)
+        cache_hits.append(out.cache_hit)
+        for result in out.results:
+            results[result.mpn.casefold()] = result
+
+    if partial:
+        return results, ReplenishmentCostStatusOut(
+            state="degraded",
+            message="TrustedParts budget exhausted; partial report returned",
+            fetched_at=max(fetched_at_values, default=None),
+            cache_hit=all(cache_hits) if cache_hits else None,
+            partial=True,
+            links=sourcing_service.TRUSTEDPARTS_LINKS,
+        )
+
+    return results, ReplenishmentCostStatusOut(
+        state="ok",
+        fetched_at=max(fetched_at_values, default=utcnow()),
+        cache_hit=all(cache_hits) if cache_hits else None,
+        links=sourcing_service.TRUSTEDPARTS_LINKS,
+    )
+
+
+def _status_ok() -> ReplenishmentCostStatusOut:
+    return ReplenishmentCostStatusOut(
+        state="ok",
+        fetched_at=utcnow(),
+        cache_hit=None,
+        links=sourcing_service.TRUSTEDPARTS_LINKS,
+    )
+
+
+def _row_for_part(
+    part: Part,
+    *,
+    on_hand: int,
+    historical_costs: dict[str | None, Decimal],
+    search_result: SourcingSearchResult | None,
+    sourcing_status: ReplenishmentCostStatusOut,
+) -> ReplenishmentCostRow:
+    best_offer = _best_replacement_offer(search_result, qty=on_hand)
+    historical_items = [
+        CurrencyAmountOut(currency=currency, value=value)
+        for currency, value in sorted(historical_costs.items(), key=lambda item: item[0] or "")
+    ]
+    if not historical_items:
+        historical_items = [CurrencyAmountOut(currency=None, value=_MONEY_ZERO)]
+
+    if best_offer is None:
+        reason = (
+            "sourcing_not_configured"
+            if sourcing_status.state == "not_configured"
+            else "sourcing_unavailable"
+            if sourcing_status.state in {"degraded", "error"}
+            else "no_offer"
+        )
+        return ReplenishmentCostRow(
+            part_id=part.id,
+            name=part.name,
+            manufacturer=part.manufacturer,
+            mpn=part.mpn or "",
+            on_hand=on_hand,
+            currency=_single_currency(historical_costs),
+            historical_costs=historical_items,
+            historical_cost=_single_historical_cost(historical_costs),
+            reason=reason,
+        )
+
+    unit_price, currency = best_offer
+    replacement_cost = unit_price * Decimal(on_hand)
+    historical_cost = historical_costs.get(currency)
+    if historical_cost is None:
+        return ReplenishmentCostRow(
+            part_id=part.id,
+            name=part.name,
+            manufacturer=part.manufacturer,
+            mpn=part.mpn or "",
+            on_hand=on_hand,
+            currency=currency,
+            historical_costs=historical_items,
+            replacement_unit_price=unit_price,
+            replacement_cost=replacement_cost,
+            replacement_currency=currency,
+            reason="currency_mismatch",
+            source="trustedparts",
+        )
+
+    delta_abs = replacement_cost - historical_cost
+    delta_pct = None
+    if historical_cost != 0:
+        delta_pct = ((delta_abs / historical_cost) * Decimal("100")).quantize(
+            _PCT_QUANT,
+            rounding=ROUND_HALF_UP,
+        )
+    return ReplenishmentCostRow(
+        part_id=part.id,
+        name=part.name,
+        manufacturer=part.manufacturer,
+        mpn=part.mpn or "",
+        on_hand=on_hand,
+        currency=currency,
+        historical_costs=historical_items,
+        historical_cost=historical_cost,
+        replacement_unit_price=unit_price,
+        replacement_cost=replacement_cost,
+        replacement_currency=currency,
+        delta_abs=delta_abs,
+        delta_pct=delta_pct,
+        source="trustedparts",
+    )
+
+
+def _best_replacement_offer(
+    search_result: SourcingSearchResult | None,
+    *,
+    qty: int,
+) -> tuple[Decimal, str | None] | None:
+    if search_result is None or qty < 1:
+        return None
+
+    best: tuple[Decimal, str | None] | None = None
+    for offer in search_result.offers:
+        for distributor in offer.distributors:
+            price = sourcing_service._unit_price_for_distributor(distributor, qty)
+            if price is None:
+                continue
+            candidate = (price, distributor.currency)
+            if best is None or candidate[0] < best[0]:
+                best = candidate
+    return best
+
+
+def _single_currency(values: dict[str | None, Decimal]) -> str | None:
+    currencies = list(values.keys())
+    if len(currencies) == 1:
+        return currencies[0]
+    if len(currencies) > 1:
+        return "MIXED"
+    return None
+
+
+def _single_historical_cost(values: dict[str | None, Decimal]) -> Decimal | None:
+    if len(values) == 1:
+        return next(iter(values.values()))
+    return None
+
+
+def _totals(rows: list[ReplenishmentCostRow]) -> list[ReplenishmentCostTotalOut]:
+    historical: dict[str | None, Decimal] = defaultdict(Decimal)
+    replacement: dict[str | None, Decimal] = defaultdict(Decimal)
+    for row in rows:
+        for item in row.historical_costs:
+            historical[item.currency] += item.value
+        if row.replacement_cost is not None:
+            replacement[row.replacement_currency] += row.replacement_cost
+
+    currencies = sorted(set(historical) | set(replacement), key=lambda item: item or "")
+    return [
+        ReplenishmentCostTotalOut(
+            currency=currency,
+            historical_cost=historical.get(currency, _MONEY_ZERO),
+            replacement_cost=replacement.get(currency, _MONEY_ZERO),
+            delta_abs=(
+                replacement.get(currency, _MONEY_ZERO) - historical.get(currency, _MONEY_ZERO)
+                if currency in replacement
+                else None
+            ),
+        )
+        for currency in currencies
+    ]
+
+
+def _sort_key(sort: ReplenishmentCostSort):
+    if sort == "name":
+        return lambda row: (row.name.casefold(), row.mpn.casefold())
+    if sort == "delta_abs":
+        return lambda row: (
+            row.delta_abs is None,
+            -(row.delta_abs or _MONEY_ZERO),
+            row.name.casefold(),
+        )
+    return lambda row: (
+        row.delta_pct is None,
+        -(row.delta_pct or _MONEY_ZERO),
+        row.name.casefold(),
     )
 
 
