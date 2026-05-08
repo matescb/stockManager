@@ -246,7 +246,7 @@ def test_tag_unlink_rejects_foreign_workspace_id():
 
     # And A's link is still there (negative side of the regression).
     listed = a.get(f"/api/tags/by-object/part/{part_a}").json()["data"]
-    assert any(t["id"] == tag_a for t in listed)
+    assert any(t["id"] == link_a and t["tag"]["id"] == tag_a for t in listed)
 
 
 # ---------------------------------------------------------------------------
