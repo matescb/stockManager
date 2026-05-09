@@ -313,6 +313,35 @@ class PurchasePlanOut(BaseModel):
     unfilled_count: int
 
 
+class PurchasePlanCreatedOrderEntryOut(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    id: UUID
+    part_id: UUID | None = None
+    quantity_ordered: int
+    unit_price: Decimal | None = None
+    currency: str | None = None
+    comments: str | None = None
+
+
+class PurchasePlanCreatedOrderOut(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    id: UUID
+    name: str
+    supplier: str | None = None
+    status: str
+    currency: str | None = None
+    comments: str | None = None
+    entries: list[PurchasePlanCreatedOrderEntryOut]
+
+
+class PurchasePlanOrdersOut(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    orders: list[PurchasePlanCreatedOrderOut]
+
+
 class SourcingBomLineOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

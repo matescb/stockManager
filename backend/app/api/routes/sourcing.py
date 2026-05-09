@@ -325,6 +325,39 @@ def refresh_purchase_plan(
     return ok(sourcing_service.purchase_plan_to_out(refreshed).model_dump(mode="json"))
 
 
+@search_router.post(
+    "/purchase-plans/{plan_id}/orders",
+    dependencies=[Depends(require_role("member"))],
+)
+def convert_purchase_plan_to_orders(
+    request: Request,
+    plan_id: UUID,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    plan = assert_in_workspace(db, PurchasePlan, plan_id, ws.id, label="purchase plan")
+    try:
+        orders = sourcing_service.convert_plan_to_orders(
+            db,
+            workspace=ws,
+            plan=plan,
+            user_id=user.id,
+        )
+    except sourcing_service.PurchasePlanStaleError as exc:
+        return _error_response(request, 409, "conflict", str(exc))
+    except sourcing_service.PurchasePlanCurrencyError as exc:
+        return _error_response(request, 422, "validation_error", str(exc))
+
+    return ok(
+        sourcing_service.purchase_plan_orders_to_out(
+            db,
+            workspace_id=ws.id,
+            orders=orders,
+        ).model_dump(mode="json")
+    )
+
+
 @parts_router.get(
     "/{part_id}/sourcing",
     dependencies=[Depends(require_role("member"))],
