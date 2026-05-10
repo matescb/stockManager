@@ -220,6 +220,23 @@ Path: `project_id` is a project UUID in the current workspace.
 }
 ```
 
+Risk flags are emitted in this order when their condition is true:
+
+| Flag | Condition |
+|---|---|
+| `single_source` | Exactly one distributor has stock for the BOM row. |
+| `no_authorized_stock` | No distributor has stock for the BOM row. |
+| `moq_overbuy` | The best offer MOQ is more than three times the row shortage. |
+| `lead_time_long` | The best offer lead time is more than 30 days. |
+| `preferred_distributor_unmet` | Preferred distributors are configured, but none has stock. |
+| `lifecycle_risk_present` | TrustedParts populated `lifecycle_risk` with non-whitespace text. |
+| `supply_chain_risk_present` | TrustedParts populated `supply_chain_risk` with non-whitespace text. |
+| `tariff_affected` | TrustedParts returned `is_affected_by_tariff: true`. |
+| `rohs_non_compliant` | No distributor has a compliant RoHS entry for the target region. The target region is hardcoded to `EU` until workspaces have a setting. |
+
+Sources: `backend/app/domain/sourcing/service.py:1322-1386`,
+`backend/app/domain/sourcing/schemas.py:321-340`
+
 **Errors**
 
 - `404 Not Found` — `project_id` is missing or belongs to another workspace.

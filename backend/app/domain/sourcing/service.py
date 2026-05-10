@@ -63,6 +63,7 @@ TRUSTEDPARTS_LINKS = SourcingAttributionLinks(
     primary="https://www.trustedparts.com/",
     attribution="https://www.trustedparts.com/en/about",
 )
+TARGET_ROHS_REGION = "EU"
 _SOURCING_FILTER_ALERT_TYPES = {
     "back_in_stock",
     "out_of_authorized_stock",
@@ -1263,6 +1264,7 @@ def _joined_offers(
                         lifecycle_risk=offer.lifecycle_risk,
                         supply_chain_risk=offer.supply_chain_risk,
                         is_affected_by_tariff=offer.is_affected_by_tariff,
+                        rohs_compliance=distributor.rohs_compliance,
                         manufacturer_id=offer.manufacturer_id,
                         specifications=offer.specifications,
                     )
@@ -1354,7 +1356,34 @@ def _risk_flags(
         preferred = {item.casefold() for item in preferred_distributors}
         if not (preferred & stocked_distributors):
             flags.append("preferred_distributor_unmet")
+    flags.extend(_gap_field_risk_flags(offers))
     return flags
+
+
+def _gap_field_risk_flags(offers: list[SourcingBomOfferOut]) -> list[str]:
+    flags: list[str] = []
+    if any(_has_text(offer.lifecycle_risk) for offer in offers):
+        flags.append("lifecycle_risk_present")
+    if any(_has_text(offer.supply_chain_risk) for offer in offers):
+        flags.append("supply_chain_risk_present")
+    if any(offer.is_affected_by_tariff is True for offer in offers):
+        flags.append("tariff_affected")
+    # Workspace-level RoHS target regions do not exist yet; default to EU for TPS-5.
+    if offers and all(not _has_compliant_rohs_region(offer) for offer in offers):
+        flags.append("rohs_non_compliant")
+    return flags
+
+
+def _has_text(value: str | None) -> bool:
+    return value is not None and value.strip() != ""
+
+
+def _has_compliant_rohs_region(offer: SourcingBomOfferOut) -> bool:
+    target = TARGET_ROHS_REGION.casefold()
+    return any(
+        item.region.casefold() == target and item.is_compliant is True
+        for item in offer.rohs_compliance
+    )
 
 
 def _clean_code(value: str | None) -> str | None:

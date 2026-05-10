@@ -15,6 +15,7 @@ from app.domain.sourcing.schemas import (
     SourcingOffer,
     SourcingPriceBreak,
     SourcingQuery,
+    SourcingRohsCompliance,
     SourcingSearchRaw,
 )
 from app.infra.db import Base
@@ -58,11 +59,18 @@ def _offer(
     moq: int | None = 1,
     lead_time_days: int | None = 3,
     currency: str = "EUR",
+    lifecycle_risk: str | None = None,
+    supply_chain_risk: str | None = None,
+    is_affected_by_tariff: bool | None = None,
+    rohs_compliance: list[SourcingRohsCompliance] | None = None,
 ) -> SourcingOffer:
     return SourcingOffer(
         mpn=mpn,
         manufacturer="TestCo",
         description=f"Offer for {mpn}",
+        lifecycle_risk=lifecycle_risk,
+        supply_chain_risk=supply_chain_risk,
+        is_affected_by_tariff=is_affected_by_tariff,
         distributors=[
             SourcingDistributor(
                 name=distributor,
@@ -74,6 +82,7 @@ def _offer(
                 lead_time_days=lead_time_days,
                 price_breaks=[SourcingPriceBreak(quantity=1, unit_price=unit_price)],
                 product_url=f"https://www.trustedparts.com/{mpn}/{distributor}",
+                rohs_compliance=rohs_compliance or [],
             )
         ],
         links=SourcingLinks(primary=f"https://www.trustedparts.com/search/{mpn}"),
@@ -155,7 +164,7 @@ def test_single_source_flag(authed_client):
 
     row = _report(authed_client)["rows"][0]
 
-    assert row["risk_flags"] == ["single_source"]
+    assert row["risk_flags"] == ["single_source", "rohs_non_compliant"]
     assert row["distributors_with_stock"] == ["DigiKey"]
 
 
@@ -169,7 +178,7 @@ def test_no_authorized_stock_flag(authed_client):
     row = _report(authed_client)["rows"][0]
 
     assert row["on_hand"] == 3
-    assert row["risk_flags"] == ["no_authorized_stock"]
+    assert row["risk_flags"] == ["no_authorized_stock", "rohs_non_compliant"]
 
 
 def test_moq_overbuy_uses_workspace_threshold(authed_client):
@@ -234,7 +243,12 @@ def test_only_with_flags_filters_clean_parts(authed_client):
     _FakeTrustedPartsClient.offers_by_mpn = {
         "RISKY": [_offer("RISKY", distributor="DigiKey", stock=10)],
         "CLEAN": [
-            _offer("CLEAN", distributor="DigiKey", stock=10),
+            _offer(
+                "CLEAN",
+                distributor="DigiKey",
+                stock=10,
+                rohs_compliance=[SourcingRohsCompliance(region="EU", is_compliant=True)],
+            ),
             _offer("CLEAN", distributor="Mouser", stock=10),
         ],
     }
@@ -258,8 +272,46 @@ def test_sort_by_flag_count_then_alpha(authed_client):
     rows = _report(authed_client)["rows"]
 
     assert [row["name"] for row in rows] == ["Bravo", "Alpha"]
-    assert len(rows[0]["risk_flags"]) == 3
-    assert len(rows[1]["risk_flags"]) == 2
+    assert len(rows[0]["risk_flags"]) == 4
+    assert len(rows[1]["risk_flags"]) == 3
+
+
+def test_risk_report_counts_new_flags_in_default_sort(authed_client):
+    _configure_sourcing(authed_client)
+    create_part(authed_client, name="Bravo", mpn="BRAVO")
+    create_part(authed_client, name="Alpha", mpn="ALPHA")
+    _FakeTrustedPartsClient.offers_by_mpn = {
+        "BRAVO": [
+            _offer(
+                "BRAVO",
+                distributor="DigiKey",
+                stock=10,
+                lifecycle_risk="NRND",
+                supply_chain_risk="Limited supply",
+                is_affected_by_tariff=True,
+            ),
+            _offer("BRAVO", distributor="Mouser", stock=10),
+        ],
+        "ALPHA": [
+            _offer(
+                "ALPHA",
+                distributor="DigiKey",
+                stock=10,
+                rohs_compliance=[SourcingRohsCompliance(region="EU", is_compliant=True)],
+            ),
+            _offer("ALPHA", distributor="Mouser", stock=10),
+        ],
+    }
+
+    rows = _report(authed_client)["rows"]
+
+    assert [row["name"] for row in rows] == ["Bravo"]
+    assert rows[0]["risk_flags"] == [
+        "lifecycle_risk_present",
+        "supply_chain_risk_present",
+        "tariff_affected",
+        "rohs_non_compliant",
+    ]
 
 
 def test_workspace_isolation(authed_client):

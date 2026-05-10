@@ -26,6 +26,10 @@ SourcingRiskFlag = Literal[
     "moq_overbuy",
     "lead_time_long",
     "preferred_distributor_unmet",
+    "lifecycle_risk_present",
+    "supply_chain_risk_present",
+    "tariff_affected",
+    "rohs_non_compliant",
     "price_delta",
 ]
 

@@ -670,6 +670,7 @@ def _sourcing_risk_row(
         & {item.casefold() for item in distributors_with_stock}
     ):
         flags.append("preferred_distributor_unmet")
+    flags.extend(sourcing_service._gap_field_risk_flags(offers))  # noqa: SLF001
     if price_delta_pct is not None and price_delta_pct >= PRICE_DELTA_THRESHOLD:
         flags.append("price_delta")
 
