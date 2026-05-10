@@ -152,8 +152,10 @@ jobs:
 
   tp-schema-drift:
     # TPS-1 / issue #448: the bundled TrustedParts OpenAPI document and
-    # generated Pydantic v2 models are committed artifacts. Refresh both and
-    # fail if the checked-in copies are stale.
+    # generated Pydantic v2 models are committed artifacts. Regenerate from
+    # the bundled schema and fail if the checked-in generated models are stale.
+    # Do not fetch the live TrustedParts schema in CI; ADR-0022 keeps refresh
+    # as an explicit operator action via `make refresh-tp-spec`.
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -171,13 +173,11 @@ jobs:
         working-directory: backend
         run: uv sync --frozen --extra dev --dev
 
-      - name: Refresh TrustedParts schema and generated models
-        run: |
-          make refresh-tp-spec
-          make regen-tp-models
+      - name: Regenerate TrustedParts models
+        run: make regen-tp-models
 
       - name: Assert TrustedParts schema artifacts are current
-        run: git diff --exit-code -- docs/schemas/trustedparts-v2.json backend/app/domain/sourcing/_generated
+        run: git diff --exit-code -- backend/app/domain/sourcing/_generated
 
   backend-tests:
     # Make the dependency on lockfile-drift explicit at the job level so the

@@ -27,17 +27,20 @@ Bundle the official TrustedParts Inventory API v2 OpenAPI document at
 `backend/app/domain/sourcing/_generated/trustedparts_v2.py` with
 `datamodel-code-generator` and a fixed AUTO-GENERATED header.
 
-CI runs a `tp-schema-drift` job that refreshes the bundled schema, regenerates
-the models, and fails if the checked-in files change.
+CI runs a deterministic `tp-schema-drift` job that regenerates the models from
+the bundled schema and fails if the checked-in generated files change. CI does
+not fetch the live TrustedParts schema; operators refresh the bundle explicitly
+with `make refresh-tp-spec`.
 
 ## Consequences
 
 - **Good**: Schema changes are explicit in PR diffs, generated code is
   reproducible, and issue #449 can integrate typed TrustedParts DTOs without
   also establishing the schema supply chain.
-- **Trade-offs**: CI now depends on TrustedParts' Swagger endpoint for this
-  drift gate. If the endpoint is unavailable, the gate fails until the upstream
-  outage clears or the job is intentionally adjusted.
+- **Trade-offs**: Refreshing requires an explicit operator action, so upstream
+  schema changes are discovered when someone runs `make refresh-tp-spec` rather
+  than by a live CI fetch. The generated file is intentionally verbose and
+  reviewable as a committed artifact.
 - **What it forbids**: Hand-editing generated TrustedParts models, regenerating
   from an unofficial schema URL, or wiring the generated models into
   `client.py` before the client-integration PR.
@@ -47,6 +50,9 @@ the models, and fails if the checked-in files change.
 - **Generate directly from the remote URL in every developer workflow** —
   rejected because local model regeneration would not show which upstream schema
   was reviewed and committed.
+- **Fetch the live schema in CI** — rejected because CI would depend on
+  TrustedParts availability and stable network access instead of the bundled
+  source-of-truth artifact.
 - **Check in only the schema, not generated models** — rejected because import
   and header drift would not be caught before the integration PR.
 - **Vendor a manually edited schema subset** — rejected because it loses the
