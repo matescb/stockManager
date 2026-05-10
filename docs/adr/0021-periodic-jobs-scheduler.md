@@ -26,6 +26,11 @@ Periodic jobs run through a dedicated `backend-cron` sidecar container that invo
 
 Each job must be registered in the CLI allow-list with a clear owner, cadence, and idempotency expectations. The sidecar owns scheduling; the FastAPI request process does not grow a second scheduler.
 
+Jobs using this scheduler:
+
+- `sourcing-cache-sweep` — hourly TrustedParts cache retention sweep in `backend-cron`.
+- `sourcing-alerts-evaluate` — 15-minute sourcing alert evaluator in `backend-cron-alerts`.
+
 ## Consequences
 
 - **Good**:

@@ -155,6 +155,24 @@ def test_compose_prod_backend_cron_command_shape():
     assert "uvicorn" not in joined
 
 
+def test_compose_prod_backend_cron_alerts_command_shape():
+    """backend-cron-alerts must use the shared CLI scheduler path."""
+    assert _COMPOSE_PROD_PATH.exists(), (
+        f"missing compose file at {_COMPOSE_PROD_PATH}"
+    )
+    data = yaml.safe_load(_COMPOSE_PROD_PATH.read_text())
+    cron = data["services"]["backend-cron-alerts"]
+    cmd = cron.get("command")
+
+    assert isinstance(cmd, list), (
+        "backend-cron-alerts.command must be a YAML list (JSON-array form)"
+    )
+    joined = " ".join(str(part) for part in cmd)
+    assert "python -m app.cli.run_job sourcing-alerts-evaluate" in joined
+    assert "sleep 900" in joined
+    assert "uvicorn" not in joined
+
+
 def test_dockerfile_prod_no_sentry_token_arg():
     """web/Dockerfile.prod must NOT declare ARG SENTRY_AUTH_TOKEN.
 

@@ -238,6 +238,10 @@ them, that's the bug.
 - **Periodic jobs run through one scheduler path.** ADR-0021 chooses a
   `backend-cron` sidecar + CLI entry point; don't add parallel APScheduler,
   FastAPI lifespan, host cron, or systemd-timer jobs for app maintenance.
+- **Two backend-cron sidecars run separate cadences.** `backend-cron` handles
+  the hourly cache sweep and `backend-cron-alerts` handles the 15-minute alert
+  evaluator. They share the same `run_job` registry per ADR-0021; adding a
+  third cadence means a third sidecar, not a parallel scheduler.
 - **Maintenance mode is toggled by the deploy script via
   `a2enconf parts-maintenance`.** Do not bypass the deploy path without
   also disabling it with `a2disconf parts-maintenance`.
