@@ -211,6 +211,9 @@ them, that's the bug.
 - The repo has had transient `review-*` directories and stray venvs
   appear at the root in past sessions. They're gitignored; don't
   unignore them.
+- **Sourcing `est_purchase_cost` still prices the requested build when
+  after-purchase capacity floors to zero.** Do not let integer capacity
+  floors suppress a priced offer at low build quantities.
 - **Sentry auth token must not enter the Docker build context.** Source-map
   upload is handled by the CI `web-build` job (`npx @sentry/cli sourcemaps
   upload`) after `npm run build`, gated on push to `main`. `SENTRY_AUTH_TOKEN`

@@ -6,6 +6,12 @@ follow that model — it's a continuous flow of product work + production
 hardening landing per-commit. Themes are summarised below; `git log` is
 the canonical record.
 
+## 2026-05 — feedback brief fixes
+
+- **FB-003c / #412** Sourcing capacity now prices the requested build
+  quantity when after-purchase capacity floors to zero, fixing missing
+  `est_purchase_cost` values at low build quantities.
+
 ## 2026-05 — security follow-ups
 
 - **SEC2-013 / #72** Invitation accept flow switched to constant-time
