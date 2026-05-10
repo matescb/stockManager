@@ -7,6 +7,11 @@ from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Uni
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from app.core.time import utcnow
+from app.domain.workspaces.master_lists import (
+    DEFAULT_ACTIVE_COUNTRIES,
+    DEFAULT_ACTIVE_CURRENCIES,
+    DEFAULT_ACTIVE_DISTRIBUTORS,
+)
 from app.infra.db import Base
 
 
@@ -56,6 +61,24 @@ class Workspace(Base):
     sourcing_country_code = Column(String(2), nullable=True)
     sourcing_currency_code = Column(String(3), nullable=True)
     sourcing_preferred_distributors = Column(JSONB, nullable=True)
+    active_currencies = Column(
+        JSONB,
+        nullable=False,
+        default=lambda: list(DEFAULT_ACTIVE_CURRENCIES),
+        server_default=sa.text('\'["EUR","USD","CZK","GBP"]\'::jsonb'),
+    )
+    active_countries = Column(
+        JSONB,
+        nullable=False,
+        default=lambda: list(DEFAULT_ACTIVE_COUNTRIES),
+        server_default=sa.text('\'["CZ","DE","US","GB"]\'::jsonb'),
+    )
+    active_distributors = Column(
+        JSONB,
+        nullable=False,
+        default=lambda: list(DEFAULT_ACTIVE_DISTRIBUTORS),
+        server_default=sa.text('\'["DigiKey","Mouser","Farnell","TME","LCSC"]\'::jsonb'),
+    )
     sourcing_use_cached_for_dashboards = Column(
         Boolean,
         nullable=False,

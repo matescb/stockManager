@@ -94,9 +94,22 @@ If you need a separate, isolated set of parts and stock (e.g. for a different te
 
 You're added as the owner. Switch into it from the workspace switcher.
 
+## Choose active sourcing lists
+
+The workspace settings page has an **Active currencies / countries / distributors** card. Admins use it to keep sourcing filters focused on the markets and suppliers the workspace actually uses.
+
+1. Open **Settings → Workspace**.
+2. Find **Active currencies / countries / distributors**.
+3. Search within a list if needed.
+4. Tick the currencies, countries, and distributors to keep active.
+5. Click **Save active lists**.
+
+Each list must keep at least one checked item.
+
 ## What to do if it doesn't work
 
 - **The invitee says the link is expired** — invitations expire after some time; revoke the old one and send a fresh one.
 - **They paste the token but get "invitation is for a different email"** — the invitation was issued for one email and they're signed in as another. Revoke, re-invite the email they actually use.
 - **You can't change a role or invite anyone** — you're a member or viewer, not an admin or owner. Ask an admin to do it.
 - **The workspace switcher doesn't list a workspace you expect** — your invitation hasn't been accepted, or the workspace was deleted.
+- **Active lists won't save** — make sure every list has at least one selected item.

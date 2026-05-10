@@ -10,9 +10,9 @@ would let unknown fields through.
 """
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, StringConstraints
 
 __all__ = [
     "WorkspaceCreateIn",
@@ -21,6 +21,13 @@ __all__ = [
     "MemberPatch",
     "InviteIn",
     "AcceptIn",
+]
+
+CurrencyCode = Annotated[str, StringConstraints(pattern=r"^[A-Z]{3}$")]
+CountryCode = Annotated[str, StringConstraints(pattern=r"^[A-Z]{2}$")]
+DistributorName = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=120),
 ]
 
 
@@ -58,6 +65,9 @@ class WorkspacePatch(BaseModel):
     sourcing_country_code: str | None = Field(default=None, min_length=2, max_length=2)
     sourcing_currency_code: str | None = Field(default=None, min_length=3, max_length=3)
     sourcing_preferred_distributors: list[str] | None = None
+    active_currencies: list[CurrencyCode] | None = Field(default=None, min_length=1)
+    active_countries: list[CountryCode] | None = Field(default=None, min_length=1)
+    active_distributors: list[DistributorName] | None = Field(default=None, min_length=1)
     sourcing_use_cached_for_dashboards: bool | None = None
 
 

@@ -65,6 +65,8 @@ Return the active workspace.
     "lot_control_enabled": true, "serial_tracking_enabled": false,
     "catalog_enabled": true, "catalog_token_set": true,
     "parts_provider": "mouser", "has_parts_provider_api_key": true, "has_parts_provider_api_secret": true,
+    "active_currencies": ["EUR", "USD"], "active_countries": ["CZ", "DE"],
+    "active_distributors": ["DigiKey", "Mouser"],
     "scanner": "zxing", "has_scanner_license_key": false
 }, "status": { … } }
 ```
@@ -73,7 +75,24 @@ Return the active workspace.
 
 - Plaintext catalog token is never echoed; only `catalog_token_set: bool` is returned (`workspaces.py:120-122`). See [SEC2-008].
 - API keys are also never echoed (`workspaces.py:124-129`).
-- Source: `backend/app/api/routes/workspaces.py:137-139`.
+- Active sourcing lists are echoed as JSON arrays (`workspaces.py:157-159`).
+- Source: `backend/app/api/routes/workspaces.py:176-178`.
+
+### `GET /api/workspaces/master-lists`
+
+Return the curated source lists for workspace active currencies, countries, and distributors.
+
+**Response** — `200 OK`
+
+```json
+{ "data": { "currencies": ["EUR", "USD"], "countries": ["CZ", "DE"], "distributors": ["DigiKey", "Mouser"] }, "status": { … } }
+```
+
+**Notes**
+
+- The route returns backend constants so the settings UI does not hardcode the master list (`workspaces.py:181-189`).
+- Source: `backend/app/domain/workspaces/master_lists.py`.
+- Source: `backend/app/api/routes/workspaces.py:181-189`.
 
 ### `GET /api/workspaces/current/scanner-license-key`
 
@@ -107,6 +126,9 @@ Update workspace settings, rotate provider/scanner credentials, and (re)mint the
 | `parts_provider_api_secret` | string | Same encrypt-or-clear (`workspaces.py:179-182`). |
 | `scanner` | string | `"zxing"` / `"scandit"`. |
 | `scanner_license_key` | string | Encrypt-or-clear (`workspaces.py:183-186`). |
+| `active_currencies` | string[] | Non-empty ISO-4217 uppercase codes; each matches `^[A-Z]{3}$` (`schemas.py:26`, `schemas.py:68`). |
+| `active_countries` | string[] | Non-empty ISO-3166 alpha-2 uppercase codes; each matches `^[A-Z]{2}$` (`schemas.py:27`, `schemas.py:69`). |
+| `active_distributors` | string[] | Non-empty distributor names; each is trimmed and limited to 120 chars (`schemas.py:28-30`, `schemas.py:70`). |
 
 **Response** — `200 OK` — same shape as `GET /current`. When a token was minted in the same call, includes `catalog_token_plaintext` exactly once (`workspaces.py:131-133`).
 
@@ -115,6 +137,7 @@ Update workspace settings, rotate provider/scanner credentials, and (re)mint the
 - Gated `require_role("admin")` (`workspaces.py:160`).
 - A new token revokes all prior `label IN ('default', 'default (legacy)')` rows in `workspace_catalog_tokens` and inserts a fresh `label="default"` row (`workspaces.py:213-232`). User-labelled tokens are untouched.
 - Credential rotation emits an audit row `workspace.credentials_rotated` listing only field names (`workspaces.py:234-244`).
+- Active-list updates emit `workspace.active_lists_updated` with changed field names and values (`workspaces.py:308-323`).
 - Source: `backend/app/api/routes/workspaces.py:160-246`.
 
 ## Catalog tokens

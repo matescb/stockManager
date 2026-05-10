@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import secrets
 from datetime import datetime, timezone
 from uuid import UUID
@@ -17,6 +18,11 @@ from app.core.responses import ok
 from app.core.secrets import decrypt, encrypt
 from app.domain.audit.service import log as _audit_log
 from app.domain.users.models import User
+from app.domain.workspaces.master_lists import (
+    ALL_COUNTRIES,
+    ALL_CURRENCIES,
+    ALL_DISTRIBUTORS,
+)
 from app.domain.workspaces.models import Workspace, WorkspaceCatalogToken, WorkspaceMember
 from app.domain.workspaces.schemas import (
     CatalogTokenIn,
@@ -53,7 +59,14 @@ def list_workspaces(user: CurrentUser, db: DbSession):
     for m in memberships:
         ws = db.get(Workspace, m.workspace_id)
         if ws:
-            out.append({"id": str(ws.id), "name": ws.name, "kind": ws.kind, "currency_default": ws.currency_default})
+            out.append(
+                {
+                    "id": str(ws.id),
+                    "name": ws.name,
+                    "kind": ws.kind,
+                    "currency_default": ws.currency_default,
+                }
+            )
     return ok(out)
 
 
@@ -88,7 +101,12 @@ def create_workspace(
             existing_count=existing_count,
             cap=_OWNED_ORG_WORKSPACE_CAP,
         )
-    ws = Workspace(name=payload.name, kind="organization", owner_user_id=user.id, currency_default=payload.currency_default)
+    ws = Workspace(
+        name=payload.name,
+        kind="organization",
+        owner_user_id=user.id,
+        currency_default=payload.currency_default,
+    )
     db.add(ws)
     db.flush()
     db.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="owner", status="active"))
@@ -136,6 +154,9 @@ def _serialize_workspace(ws: Workspace, new_token: str | None = None) -> dict:
         "sourcing_country_code": ws.sourcing_country_code,
         "sourcing_currency_code": ws.sourcing_currency_code,
         "sourcing_preferred_distributors": ws.sourcing_preferred_distributors,
+        "active_currencies": ws.active_currencies,
+        "active_countries": ws.active_countries,
+        "active_distributors": ws.active_distributors,
         "sourcing_use_cached_for_dashboards": bool(
             ws.sourcing_use_cached_for_dashboards
         ),
@@ -155,6 +176,17 @@ def _serialize_workspace(ws: Workspace, new_token: str | None = None) -> dict:
 @router.get("/current")
 def current(ws: CurrentWorkspace):
     return ok(_serialize_workspace(ws))
+
+
+@router.get("/master-lists")
+def master_lists():
+    return ok(
+        {
+            "currencies": ALL_CURRENCIES,
+            "countries": ALL_COUNTRIES,
+            "distributors": ALL_DISTRIBUTORS,
+        }
+    )
 
 
 @router.get(
@@ -180,6 +212,11 @@ def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace, 
     data = payload.model_dump(exclude_unset=True)
     regenerate = bool(data.pop("regenerate_catalog_token", False))
     was_enabled = bool(ws.catalog_enabled)
+    active_list_changes = {
+        key: value
+        for key, value in data.items()
+        if key in {"active_currencies", "active_countries", "active_distributors"}
+    }
 
     # Track which credential fields were changed so we can emit a
     # single audit row.  NEVER store the plaintext values in the audit
@@ -266,6 +303,23 @@ def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace, 
             target_type="workspace",
             target_ids=[ws.id],
             comment=f"fields={','.join(_credential_fields_changed)}",
+        )
+
+    if active_list_changes:
+        _audit_log(
+            db,
+            ws=ws,
+            user=user,
+            action="workspace.active_lists_updated",
+            target_type="workspace",
+            target_ids=[ws.id],
+            comment=json.dumps(
+                {
+                    "fields": sorted(active_list_changes),
+                    "values": active_list_changes,
+                },
+                separators=(",", ":"),
+            ),
         )
 
     return ok(_serialize_workspace(ws, new_token=new_token))
@@ -406,7 +460,13 @@ def _active_owner_count(db, ws_id):
 
 
 @router.patch("/members/{member_id}", dependencies=[Depends(require_role("admin"))])
-def patch_member(member_id: UUID, payload: MemberPatch, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+def patch_member(
+    member_id: UUID,
+    payload: MemberPatch,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     m = db.get(WorkspaceMember, member_id)
     if not m or m.workspace_id != ws.id:
         raise_http(
