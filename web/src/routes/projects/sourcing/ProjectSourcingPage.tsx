@@ -117,13 +117,6 @@ function formatLeadTime(days: number | null | undefined): string {
   return days === 1 ? "1 day" : `${days.toLocaleString()} days`;
 }
 
-function splitDistributors(value: string): string[] {
-  return value
-    .split(",")
-    .map(item => item.trim())
-    .filter(Boolean);
-}
-
 function riskLabel(flag: RiskFlag): string {
   switch (flag) {
     case "single_source":
@@ -141,6 +134,18 @@ function riskLabel(flag: RiskFlag): string {
 
 function errorStatus(error: unknown): number | null {
   return error instanceof ApiError ? error.status : null;
+}
+
+function defaultFromActiveList(saved: string | null | undefined, active: string[]): string {
+  if (saved && active.includes(saved)) return saved;
+  return active[0] ?? "";
+}
+
+function distributorsFromActiveList(saved: string[] | null | undefined, active: string[]): string[] {
+  if (!saved || saved.length === 0) return [];
+  const savedAllActive = saved.every(item => active.includes(item));
+  if (savedAllActive) return saved;
+  return active[0] ? [active[0]] : [];
 }
 
 function SourcingSkeleton() {
@@ -393,7 +398,7 @@ export default function ProjectSourcingPage() {
   const [buildQuantity, setBuildQuantity] = useState(1);
   const [country, setCountry] = useState("");
   const [currency, setCurrency] = useState("");
-  const [distributors, setDistributors] = useState("");
+  const [distributors, setDistributors] = useState<string[]>([]);
   const [defaultsApplied, setDefaultsApplied] = useState(false);
   const [budgetDisabledUntil, setBudgetDisabledUntil] = useState<number | null>(null);
   const [planModalOpen, setPlanModalOpen] = useState(false);
@@ -411,17 +416,57 @@ export default function ProjectSourcingPage() {
 
   useEffect(() => {
     if (!workspace || defaultsApplied) return;
-    setCountry(workspace.sourcing_country_code ?? "");
-    setCurrency(workspace.sourcing_currency_code ?? "");
-    setDistributors((workspace.sourcing_preferred_distributors ?? []).join(", "));
+    setCountry(defaultFromActiveList(workspace.sourcing_country_code, workspace.active_countries));
+    setCurrency(defaultFromActiveList(workspace.sourcing_currency_code, workspace.active_currencies));
+    setDistributors(distributorsFromActiveList(
+      workspace.sourcing_preferred_distributors,
+      workspace.active_distributors,
+    ));
     setDefaultsApplied(true);
   }, [workspace, defaultsApplied]);
+
+  const filterWarnings = useMemo(() => {
+    if (!workspace || !defaultsApplied) return [];
+    const warnings: string[] = [];
+    if (
+      workspace.active_countries.length > 0 &&
+      workspace.sourcing_country_code &&
+      !workspace.active_countries.includes(workspace.sourcing_country_code)
+    ) {
+      warnings.push(`Workspace default country is not active; using ${workspace.active_countries[0]}.`);
+    }
+    if (
+      workspace.active_currencies.length > 0 &&
+      workspace.sourcing_currency_code &&
+      !workspace.active_currencies.includes(workspace.sourcing_currency_code)
+    ) {
+      warnings.push(`Workspace default currency is not active; using ${workspace.active_currencies[0]}.`);
+    }
+    const preferred = workspace.sourcing_preferred_distributors ?? [];
+    if (
+      workspace.active_distributors.length > 0 &&
+      preferred.length > 0 &&
+      preferred.some(item => !workspace.active_distributors.includes(item))
+    ) {
+      warnings.push(`Workspace preferred distributors are not all active; using ${workspace.active_distributors[0]}.`);
+    }
+    return warnings;
+  }, [workspace, defaultsApplied]);
+
+  const activeListErrors = useMemo(() => {
+    if (!workspace) return [];
+    const errors: string[] = [];
+    if (workspace.active_countries.length === 0) errors.push("No active countries configured.");
+    if (workspace.active_currencies.length === 0) errors.push("No active currencies configured.");
+    if (workspace.active_distributors.length === 0) errors.push("No active distributors configured.");
+    return errors;
+  }, [workspace]);
 
   const requestBody = useMemo<SourcingRequest>(() => {
     const body: SourcingRequest = { build_quantity: Math.max(1, Math.floor(buildQuantity || 1)) };
     const cleanCountry = country.trim().toUpperCase();
     const cleanCurrency = currency.trim().toUpperCase();
-    const cleanDistributors = splitDistributors(distributors);
+    const cleanDistributors = distributors.filter(item => item.trim());
     if (cleanCountry) body.country = cleanCountry;
     if (cleanCurrency) body.currency = cleanCurrency;
     if (cleanDistributors.length > 0) body.distributors = cleanDistributors;
@@ -432,7 +477,7 @@ export default function ProjectSourcingPage() {
     queryKey: useWsKey("sourcing", "project", projectId, requestBody),
     queryFn: ({ signal }) =>
       api.post<SourcingBomResponse, SourcingRequest>(`/projects/${projectId}/sourcing`, requestBody, { signal }),
-    enabled: !!projectId && buildQuantity >= 1 && defaultsApplied,
+    enabled: !!projectId && buildQuantity >= 1 && defaultsApplied && activeListErrors.length === 0,
   });
   const queryIsError = query.isError;
   const queryError = query.error;
@@ -457,7 +502,13 @@ export default function ProjectSourcingPage() {
   }, [budgetDisabledUntil]);
 
   const status = errorStatus(query.error);
-  const sourceDisabled = query.isFetching || buildQuantity < 1 || (budgetDisabledUntil != null && Date.now() < budgetDisabledUntil);
+  const sourceDisabled = query.isFetching ||
+    buildQuantity < 1 ||
+    activeListErrors.length > 0 ||
+    (workspace ? !workspace.active_countries.includes(country) : false) ||
+    (workspace ? !workspace.active_currencies.includes(currency) : false) ||
+    distributors.some(distributor => workspace ? !workspace.active_distributors.includes(distributor) : false) ||
+    (budgetDisabledUntil != null && Date.now() < budgetDisabledUntil);
   const hasRows = (query.data?.rows.length ?? 0) > 0;
   const primaryUrl = query.data?.links.primary;
 
@@ -509,37 +560,65 @@ export default function ProjectSourcingPage() {
           </div>
           <div>
             <label className="label" htmlFor="sourcing-country">Country</label>
-            <input
+            <select
               id="sourcing-country"
               className="input uppercase"
-              maxLength={2}
               value={country}
-              onChange={event => setCountry(event.target.value.toUpperCase())}
-              placeholder="US"
-            />
+              onChange={event => setCountry(event.target.value)}
+              disabled={(workspace?.active_countries.length ?? 0) === 0}
+            >
+              {(workspace?.active_countries ?? []).map(item => (
+                <option key={item} value={item}>{item}</option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="label" htmlFor="sourcing-currency">Currency</label>
-            <input
+            <select
               id="sourcing-currency"
               className="input uppercase"
-              maxLength={3}
               value={currency}
-              onChange={event => setCurrency(event.target.value.toUpperCase())}
-              placeholder="USD"
-            />
+              onChange={event => setCurrency(event.target.value)}
+              disabled={(workspace?.active_currencies.length ?? 0) === 0}
+            >
+              {(workspace?.active_currencies ?? []).map(item => (
+                <option key={item} value={item}>{item}</option>
+              ))}
+            </select>
           </div>
-          <div className="md:col-span-2">
-            <label className="label" htmlFor="sourcing-distributors">Distributors</label>
-            <input
-              id="sourcing-distributors"
-              className="input"
-              value={distributors}
-              onChange={event => setDistributors(event.target.value)}
-              placeholder="DigiKey, Mouser"
-            />
-          </div>
+          <fieldset className="md:col-span-2">
+            <legend className="label">Distributors</legend>
+            <div className="max-h-52 overflow-auto rounded border border-border p-2">
+              {(workspace?.active_distributors ?? []).map(item => (
+                <label key={item} className="flex items-center gap-2 py-1 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={distributors.includes(item)}
+                    onChange={event => {
+                      setDistributors(current => event.target.checked
+                        ? [...current, item]
+                        : current.filter(distributor => distributor !== item));
+                    }}
+                  />
+                  <span>{item}</span>
+                </label>
+              ))}
+              {(workspace?.active_distributors.length ?? 0) === 0 && (
+                <div className="text-xs text-muted py-1">No active distributors configured.</div>
+              )}
+            </div>
+          </fieldset>
         </div>
+        {activeListErrors.length > 0 && (
+          <div className="mt-3 text-xs text-muted" role="status">
+            {activeListErrors.join(" ")} Open Settings → Workspace to update active lists.
+          </div>
+        )}
+        {filterWarnings.length > 0 && (
+          <div className="mt-3 text-xs text-warning" role="status">
+            {filterWarnings.join(" ")}
+          </div>
+        )}
         <div className="mt-3 flex justify-end">
           <button
             type="button"

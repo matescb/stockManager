@@ -7,6 +7,9 @@ export type SourcingWorkspaceSettings = {
   sourcing_country_code: string | null;
   sourcing_currency_code: string | null;
   sourcing_preferred_distributors: string[] | null;
+  active_countries: string[];
+  active_currencies: string[];
+  active_distributors: string[];
   has_sourcing_company_id: boolean;
 };
 
