@@ -70,6 +70,10 @@ Columns:
 
 If you don't track lot expiration dates this view is empty. Add expiration dates when adding stock under **Lot name** + (TODO(verify-ui): the Add stock form's Lot section captures name and serial — confirm whether expiration date is a separate per-lot edit on the lot detail page rather than on Add stock).
 
+## Sourcing risk
+
+The **Sourcing risk** report lists parts whose current authorized supply needs attention. Use the filter chips to narrow the table to lifecycle, supply-chain, tariff, RoHS, price, stock, MOQ, lead-time, single-source, or preferred-distributor risks. The **Lifecycle** column shows the exact TrustedParts lifecycle text when available and sorts worst-first so obsolete, end-of-life, and last-time-buy parts rise above NRND, active, and blank rows.
+
 ## Export to CSV
 
 Each table has an **Export CSV** option (in the column-toggle/search bar above the table) — useful for sharing with someone who doesn't have access to the workspace, or pasting into a spreadsheet for further filtering.

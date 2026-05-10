@@ -154,9 +154,10 @@ export function DataTable<T>({
   const [search, setSearch] = useState(initialSearch ?? "");
   const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
   const [hidden, setHidden] = useState<Record<string, boolean>>(
-    () =>
-      persisted.hidden ??
-      Object.fromEntries(columns.filter(c => c.hidden).map(c => [c.key, true]))
+    () => ({
+      ...Object.fromEntries(columns.filter(c => c.hidden).map(c => [c.key, true])),
+      ...(persisted.hidden ?? {}),
+    })
   );
   const [density, setDensity] = useState<Density>(() => persisted.density ?? "comfortable");
   const [selected, setSelected] = useState<Set<string>>(() => new Set());

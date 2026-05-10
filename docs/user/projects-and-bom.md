@@ -104,6 +104,10 @@ When your workspace has a Mouser or DigiKey parts provider configured, the BOM t
 This provider flow does not create stub parts. Failed lookups stay on the BOM so you can retry later or match them by hand.
 Bulk provider import processes up to 200 unmatched rows at a time; run it again if the page reports remaining rows.
 
+## Source BOM coverage
+
+The **Source BOM** page can show TrustedParts risk pills on each BOM line when authorized offers carry lifecycle, supply-chain, tariff, or RoHS warnings. The table also has an optional **Lifecycle** column in the column menu; turn it on when you need to see the exact lifecycle text TrustedParts returned.
+
 ## Use meta-parts for "any 10k 0402 1%"
 
 If a row in your BOM doesn't need a specific manufacturer part — any 10k 0402 1% resistor will do — match it to a **meta-part** rather than a specific MPN. The build flow will then accept any of the meta-part's members at consume time. See [parts](parts.md#pick-a-part-type) for how meta-parts work.

@@ -8,7 +8,12 @@ import { useAuth } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
 import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
-import { bestUnitPriceAtQty, extendedPrice, type SourcingPriceBreak } from "@/lib/sourcing";
+import {
+  bestUnitPriceAtQty,
+  extendedPrice,
+  lifecycleRiskTone,
+  type SourcingPriceBreak,
+} from "@/lib/sourcing";
 import type { Column } from "@/components/DataTable";
 import { DataTable } from "@/components/DataTable";
 import { PoweredByTrustedParts } from "@/components/PoweredByTrustedParts";
@@ -161,24 +166,6 @@ function normalisePositiveInt(value: number | null | undefined): number | null {
   return Math.floor(value);
 }
 
-function riskTone(value: string): string {
-  const normalized = value.trim().toLowerCase();
-  if (normalized.startsWith("active")) return "bg-success/10 text-success";
-  if (normalized.includes("nrnd") || normalized.includes("not recommended")) {
-    return "bg-warning/10 text-warning";
-  }
-  if (
-    normalized.includes("obsolete") ||
-    normalized.includes("eol") ||
-    normalized.includes("end of life") ||
-    normalized.includes("last time buy") ||
-    normalized.includes("ltb")
-  ) {
-    return "bg-danger/10 text-danger";
-  }
-  return "bg-panel2 text-muted";
-}
-
 function sortedRohs(value: SourcingRohsCompliance[]): SourcingRohsCompliance[] {
   return [...value].sort((a, b) => a.region.localeCompare(b.region));
 }
@@ -314,7 +301,10 @@ function RiskBadge({
   const trimmed = value?.trim();
   if (!trimmed) return null;
   return (
-    <span className={`pill inline-flex items-center gap-1 ${riskTone(trimmed)}`} aria-label={`${label}: ${trimmed}`}>
+    <span
+      className={`pill inline-flex items-center gap-1 ${lifecycleRiskTone(trimmed)}`}
+      aria-label={`${label}: ${trimmed}`}
+    >
       {icon}
       {trimmed}
     </span>
