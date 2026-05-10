@@ -80,6 +80,26 @@ function sourcingResponse() {
   };
 }
 
+function gapResponse(overrides: Record<string, unknown> = {}) {
+  const response = sourcingResponse();
+  response.offers[0] = {
+    ...response.offers[0],
+    ...overrides,
+  };
+  return response;
+}
+
+function distributorGapResponse(overrides: Record<string, unknown> = {}) {
+  const response = sourcingResponse();
+  response.offers[0].distributors = [
+    {
+      ...response.offers[0].distributors[0],
+      ...overrides,
+    },
+  ];
+  return response;
+}
+
 function convertedSourcingResponse() {
   const response = sourcingResponse();
   Object.assign(response.offers[0].distributors[0], {
@@ -461,5 +481,142 @@ describe("AuthorizedSupplyTab", () => {
     const rows = within(screen.getByRole("table")).getAllByRole("row").slice(1);
     expect(within(rows[0]).getByText("Mouser")).toBeDefined();
     expect(within(rows[1]).getByText("DigiKey")).toBeDefined();
+  });
+
+  it("lifecycle badge renders with green colour for Active", async () => {
+    mockApiGet(gapResponse({ lifecycle_risk: "Active" }));
+
+    renderTab();
+
+    const badge = await screen.findByLabelText("Lifecycle risk: Active");
+    expect(badge.className).toContain("text-success");
+  });
+
+  it("lifecycle badge renders with red colour for Obsolete", async () => {
+    mockApiGet(gapResponse({ lifecycle_risk: "Obsolete" }));
+
+    renderTab();
+
+    const badge = await screen.findByLabelText("Lifecycle risk: Obsolete");
+    expect(badge.className).toContain("text-danger");
+  });
+
+  it("lifecycle badge hidden when field is null", async () => {
+    mockApiGet(gapResponse({ lifecycle_risk: null }));
+
+    renderTab();
+
+    await screen.findByText("Powered by TrustedParts");
+    expect(screen.queryByLabelText(/Lifecycle risk:/)).toBeNull();
+  });
+
+  it("supply-chain badge follows same colour rules", async () => {
+    mockApiGet(gapResponse({ supply_chain_risk: "Not Recommended for New Designs" }));
+
+    renderTab();
+
+    const badge = await screen.findByLabelText("Supply-chain risk: Not Recommended for New Designs");
+    expect(badge.className).toContain("text-warning");
+  });
+
+  it("tariff badge renders for true and is absent for false or null", async () => {
+    mockApiGet(gapResponse({ is_affected_by_tariff: true }));
+    renderTab();
+
+    expect(await screen.findByLabelText("Tariff-affected (US)")).toBeDefined();
+    cleanup();
+    vi.restoreAllMocks();
+
+    mockApiGet(gapResponse({ is_affected_by_tariff: false }));
+    renderTab();
+    await screen.findByText("Powered by TrustedParts");
+    expect(screen.queryByLabelText("Tariff-affected (US)")).toBeNull();
+    cleanup();
+    vi.restoreAllMocks();
+
+    mockApiGet(gapResponse({ is_affected_by_tariff: null }));
+    renderTab();
+    await screen.findByText("Powered by TrustedParts");
+    expect(screen.queryByLabelText("Tariff-affected (US)")).toBeNull();
+  });
+
+  it("manufacturer id caption renders only when present", async () => {
+    mockApiGet(gapResponse({ manufacturer_id: 12345 }));
+
+    renderTab();
+
+    expect(await screen.findByText("TP mfr id: 12345")).toBeDefined();
+  });
+
+  it("specifications panel hidden when array empty and visible plus collapsible when populated", async () => {
+    const user = userEvent.setup();
+    mockApiGet(gapResponse({ specifications: [] }));
+
+    renderTab();
+
+    await screen.findByText("Powered by TrustedParts");
+    expect(screen.queryByText("Specifications (1)")).toBeNull();
+    cleanup();
+
+    mockApiGet(gapResponse({ specifications: [{ key: "Package", value: "LQFP-48" }] }));
+    renderTab();
+
+    const summary = await screen.findByText("Specifications (1)");
+    const details = summary.closest("details");
+    expect(details?.hasAttribute("open")).toBe(false);
+    await user.click(summary);
+    expect(details?.hasAttribute("open")).toBe(true);
+    expect(screen.getByText("Package")).toBeDefined();
+    expect(screen.getByText("LQFP-48")).toBeDefined();
+  });
+
+  it("RoHS pills render per region with correct colour", async () => {
+    mockApiGet(distributorGapResponse({
+      rohs_compliance: [
+        { region: "EU", is_compliant: true, description: "Compliant in the EU" },
+        { region: "CN", is_compliant: false, description: "Not compliant in China" },
+      ],
+    }));
+
+    renderTab();
+
+    const eu = await screen.findByLabelText("EU: RoHS compliant");
+    const cn = screen.getByLabelText("CN: RoHS non-compliant");
+    expect(eu.className).toContain("text-success");
+    expect(eu.getAttribute("title")).toBe("Compliant in the EU");
+    expect(cn.className).toContain("text-danger");
+    expect(cn.getAttribute("title")).toBe("Not compliant in China");
+  });
+
+  it("availability text appended to QuantityOnHand cell", async () => {
+    mockApiGet(distributorGapResponse({ stock: 1234, availability_text: "In Stock" }));
+
+    renderTab();
+
+    expect(await screen.findByText("1,234 (In Stock)")).toBeDefined();
+  });
+
+  it("availability text renders when quantity is absent", async () => {
+    mockApiGet(distributorGapResponse({ stock: null, availability_text: "Factory stock" }));
+
+    renderTab();
+
+    expect(await screen.findByText("Factory stock")).toBeDefined();
+  });
+
+  it("quantity input rounds to multiple of N on blur", async () => {
+    const user = userEvent.setup();
+    mockApiGet(distributorGapResponse({ quantity_multiple: 5 }));
+
+    renderTab();
+
+    await screen.findByText("Rounded to multiples of 5");
+    const customInput = screen.getByLabelText("Custom:");
+    await user.clear(customInput);
+    await user.type(customInput, "12");
+    await user.tab();
+
+    expect(screen.getByRole("columnheader", { name: "Unit price @ 15" })).toBeDefined();
+    expect((customInput as HTMLInputElement).value).toBe("15");
   });
 });

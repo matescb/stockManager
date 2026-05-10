@@ -235,6 +235,13 @@ with `<PoweredByTrustedParts/>`, labels the table with
 `<SourcingSourceLabel/>`, filters distributors client-side, and refreshes
 with `POST /api/parts/{part_id}/sourcing/refresh`.
 
+The tab also renders TrustedParts gap fields from the same response:
+lifecycle and supply-chain risk pills use existing `pill` plus
+`text-success` / `text-warning` / `text-danger` / `text-muted` token
+classes, tariff and RoHS pills use the same semantic palette, and the
+specifications block is a native collapsed `<details>` panel. No new
+global utility or pill variant is introduced.
+
 ## MpnLookup
 
 `web/src/components/MpnLookup.tsx`. Affordance attached to MPN inputs that

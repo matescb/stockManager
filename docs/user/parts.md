@@ -56,6 +56,8 @@ Open a part. The tabs along the top group what you can do:
 
 Editable text fields use **Settings**. Custom field values use **Specs**. Identity fields (name, MPN, manufacturer, footprint) — TODO(verify-ui): there's no edit form on Part info; check whether identity edits live in a separate "Edit part" route or only via supplier refresh and attachments.
 
+The **Sourcing** tab can show TrustedParts lifecycle, supply-chain, and tariff badges above the distributor table when TrustedParts returns them. Distributor rows can include RoHS region pills, availability text next to stock, and a quantity hint when TrustedParts requires buying in multiples; custom quantities are rounded up to that multiple when you leave the field.
+
 ### Refresh from supplier
 
 Linked parts show a banner with the supplier name and "last refreshed". Click **Refresh** to re-pull data. Provider-sourced fields are re-written; values you marked **Locally edited** are kept.
