@@ -50,6 +50,9 @@ type SourcingBomLine = {
   best_offer?: SourcingBomOffer | null;
   est_extended_cost?: string | number | null;
   lead_time_days?: number | null;
+  cache_hit?: boolean | null;
+  reason?: "ok" | "no_mpn" | "no_offers" | null;
+  fx_status?: "unavailable" | null;
   risk_flags: RiskFlag[];
 };
 
@@ -181,16 +184,73 @@ function EmptyBomState({ projectId }: { projectId: string }) {
   );
 }
 
-function NotConfiguredState() {
-  return (
-    <div className="card p-4 space-y-3" role="status">
-      <div className="font-medium">Sourcing not configured.</div>
-      <div className="text-sm text-muted">
-        Ask a workspace admin to configure TrustedParts in Settings → Sourcing.
+function SourcingDiagnosticsPanel({
+  data,
+  projectId,
+  status,
+  onRefresh,
+}: {
+  data?: SourcingBomResponse;
+  projectId: string;
+  status: number | null;
+  onRefresh: () => void;
+}) {
+  if (status === 409) {
+    return (
+      <div className="card p-4 space-y-3" role="status" aria-label="Sourcing diagnostics">
+        <div>
+          <div className="font-medium">Sourcing not configured.</div>
+          <div className="text-sm text-muted">
+            Sourcing cannot run until TrustedParts credentials and workspace defaults are configured.
+          </div>
+        </div>
+        <Link className="btn" to="/settings/workspace">
+          Open Settings → Sourcing
+        </Link>
       </div>
-      <Link className="btn" to="/settings/workspace">
-        Open Settings → Sourcing
-      </Link>
+    );
+  }
+
+  const rows = data?.rows ?? [];
+  if (rows.length === 0 || rows.some(row => row.best_offer)) {
+    return null;
+  }
+
+  const allNoMpn = rows.every(row => row.reason === "no_mpn" || !row.mpn);
+  const allCacheHit = rows.every(row => row.cache_hit === true);
+  const fxUnavailable = rows.some(row => row.fx_status === "unavailable");
+
+  let title = "No matching offers found.";
+  let description = "TrustedParts returned no authorized offers for the selected country, currency, and distributors.";
+
+  if (allNoMpn) {
+    title = "BOM lines need manufacturer part numbers.";
+    description = "Add MPNs to these parts, then source the BOM again.";
+  } else if (fxUnavailable) {
+    title = "Prices were found, but currency conversion is unavailable.";
+    description = "Retry later or choose the offer currency while exchange rates are unavailable.";
+  } else if (allCacheHit) {
+    title = "Only cached no-offer results were available.";
+    description = "Refresh prices to check TrustedParts again for the current sourcing filters.";
+  }
+
+  return (
+    <div className="card p-4 space-y-3" role="status" aria-label="Sourcing diagnostics">
+      <div>
+        <div className="font-medium">{title}</div>
+        <div className="text-sm text-muted">{description}</div>
+      </div>
+      {allCacheHit && (
+        <button type="button" className="btn" onClick={onRefresh}>
+          <RefreshCw size={14} aria-hidden="true" />
+          Refresh prices
+        </button>
+      )}
+      {allNoMpn && (
+        <Link className="btn" to={`/projects/${projectId}/import`}>
+          Edit BOM
+        </Link>
+      )}
     </div>
   );
 }
@@ -652,7 +712,6 @@ export default function ProjectSourcingPage() {
       </div>
 
       {query.isLoading && <SourcingSkeleton />}
-      {status === 409 && <NotConfiguredState />}
       {status === 503 && <BudgetState disabledUntil={budgetDisabledUntil} onRetry={() => query.refetch()} />}
       {status === 502 && (
         <div className="card p-4" role="status">
@@ -666,6 +725,12 @@ export default function ProjectSourcingPage() {
       )}
 
       {query.data && !hasRows && <EmptyBomState projectId={projectId} />}
+      <SourcingDiagnosticsPanel
+        data={query.data}
+        projectId={projectId}
+        status={status}
+        onRefresh={() => query.refetch()}
+      />
 
       {query.data && hasRows && (
         <>
