@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -168,6 +168,121 @@ class SourcingBomIn(BaseModel):
             return None
         stripped = [item.strip() for item in value if item.strip()]
         return stripped or None
+
+
+SourcingAlertType = Literal[
+    "stock_below",
+    "stock_above",
+    "back_in_stock",
+    "out_of_authorized_stock",
+    "price_changed",
+    "bom_buyable",
+]
+
+
+class StockBelowThreshold(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    qty: int = Field(ge=0)
+
+
+class StockAboveThreshold(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    qty: int = Field(ge=0)
+
+
+class BackInStockThreshold(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class OutOfAuthorizedStockThreshold(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class PriceChangedThreshold(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    delta_pct: Decimal = Field(gt=0, le=100)
+
+
+class BomBuyableThreshold(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    build_quantity: int = Field(ge=1)
+
+
+class SourcingAlertIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    alert_type: SourcingAlertType
+    part_id: UUID | None = None
+    project_id: UUID | None = None
+    threshold: dict[str, Any]
+    country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    currency_code: str | None = Field(default=None, min_length=3, max_length=3)
+    distributor_filter: list[str] | None = None
+    notify_user_ids: list[UUID] | None = None
+    cooldown_seconds: int = Field(default=86400, ge=60)
+    enabled: bool = True
+
+    @field_validator("country_code", "currency_code")
+    @classmethod
+    def _uppercase_codes(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip().upper()
+
+    @field_validator("distributor_filter")
+    @classmethod
+    def _strip_distributor_filter(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        stripped = [item.strip() for item in value if item.strip()]
+        return stripped or None
+
+
+class SourcingAlertPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    alert_type: SourcingAlertType | None = None
+    part_id: UUID | None = None
+    project_id: UUID | None = None
+    threshold: dict[str, Any] | None = None
+    country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    currency_code: str | None = Field(default=None, min_length=3, max_length=3)
+    distributor_filter: list[str] | None = None
+    notify_user_ids: list[UUID] | None = None
+    cooldown_seconds: int | None = Field(default=None, ge=60)
+    enabled: bool | None = None
+
+    @field_validator("country_code", "currency_code")
+    @classmethod
+    def _uppercase_codes(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip().upper()
+
+    @field_validator("distributor_filter")
+    @classmethod
+    def _strip_distributor_filter(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        stripped = [item.strip() for item in value if item.strip()]
+        return stripped or None
+
+
+class SourcingAlertOut(SourcingAlertIn):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    id: UUID
+    workspace_id: UUID
+    last_checked_at: datetime | None = None
+    last_notified_at: datetime | None = None
+    archived_at: datetime | None = None
+    created_by: UUID | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class SourcingBomOfferOut(BaseModel):
