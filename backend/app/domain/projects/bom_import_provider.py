@@ -39,6 +39,7 @@ def import_unmatched_from_provider(
     )
 
     created = 0
+    linked_existing = 0
     pending: list[BomProviderPendingChoice] = []
     failures: list[BomProviderFailure] = []
 
@@ -48,7 +49,7 @@ def import_unmatched_from_provider(
             with db.begin_nested():
                 _link_existing(entry, existing.id, user_id)
                 db.flush()
-            created += 1
+            linked_existing += 1
             continue
 
         outcome = _lookup_entry(provider, entry)
@@ -61,7 +62,7 @@ def import_unmatched_from_provider(
 
         try:
             with db.begin_nested():
-                _create_and_link(
+                linked = _create_or_link(
                     db,
                     workspace_id=workspace.id,
                     user_id=user_id,
@@ -72,10 +73,14 @@ def import_unmatched_from_provider(
         except Exception as exc:
             failures.append(_failure(entry, _entry_mpn(entry), _safe_exception_reason(exc)))
             continue
-        created += 1
+        if linked:
+            linked_existing += 1
+        else:
+            created += 1
 
     return BomProviderImportOut(
         created=created,
+        linked_existing=linked_existing,
         pending_choices=pending,
         failures=failures,
         provider=provider.name,
@@ -101,6 +106,7 @@ def commit_provider_import_choices(
     by_id = {row.id: row for row in rows}
 
     created = 0
+    linked_existing = 0
     failures: list[BomProviderFailure] = []
     for entry_id, manufacturer in choices.items():
         entry = by_id.get(entry_id)
@@ -113,7 +119,7 @@ def commit_provider_import_choices(
             with db.begin_nested():
                 _link_existing(entry, existing.id, user_id)
                 db.flush()
-            created += 1
+            linked_existing += 1
             continue
 
         lookup = _lookup_raw(provider, mpn)
@@ -126,7 +132,7 @@ def commit_provider_import_choices(
 
         try:
             with db.begin_nested():
-                _create_and_link(
+                linked = _create_or_link(
                     db,
                     workspace_id=workspace.id,
                     user_id=user_id,
@@ -137,10 +143,14 @@ def commit_provider_import_choices(
         except Exception as exc:
             failures.append(_failure(entry, mpn, _safe_exception_reason(exc)))
             continue
-        created += 1
+        if linked:
+            linked_existing += 1
+        else:
+            created += 1
 
     return BomProviderImportOut(
         created=created,
+        linked_existing=linked_existing,
         pending_choices=[],
         failures=failures,
         provider=provider.name,
@@ -239,7 +249,7 @@ def _record_for_manufacturer(lookup: dict, manufacturer: str) -> dict | None:
     return None
 
 
-def _create_and_link(
+def _create_or_link(
     db,
     *,
     workspace_id: UUID,
@@ -247,7 +257,14 @@ def _create_and_link(
     provider_name: str,
     entry: ProjectEntry,
     lookup_result: dict,
-) -> None:
+) -> bool:
+    canonical_mpn = _lookup_result_mpn(lookup_result)
+    existing = _active_part_by_mpn(db, workspace_id=workspace_id, mpn=canonical_mpn)
+    if existing is not None:
+        _link_existing(entry, existing.id, user_id)
+        db.flush()
+        return True
+
     mpn = _entry_mpn(entry)
     part = create_from_provider_lookup(
         db,
@@ -261,6 +278,7 @@ def _create_and_link(
     entry.entry_type = "part"
     entry.updated_by = user_id
     db.flush()
+    return False
 
 
 def _active_part_by_mpn(db, *, workspace_id: UUID, mpn: str) -> Part | None:
@@ -301,6 +319,10 @@ def _capture_exception(exc: Exception) -> None:
 
 def _entry_mpn(entry: ProjectEntry) -> str:
     return (entry.name or "").strip()
+
+
+def _lookup_result_mpn(lookup_result: dict) -> str:
+    return str(lookup_result.get("mpn") or "").strip()
 
 
 def _manufacturer(record: dict) -> str | None:

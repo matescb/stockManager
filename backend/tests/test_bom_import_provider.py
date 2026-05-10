@@ -115,6 +115,7 @@ def test_bulk_import_creates_real_parts_with_specs(authed, monkeypatch):
     assert r.status_code == 200, r.text
     body = r.json()["data"]
     assert body["created"] == 1
+    assert body["linked_existing"] == 0
     assert body["pending_choices"] == []
     assert body["failures"] == []
 
@@ -149,6 +150,7 @@ def test_bulk_import_skips_already_matched_rows(authed, monkeypatch):
     )
     assert r.status_code == 200, r.text
     assert r.json()["data"]["created"] == 0
+    assert r.json()["data"]["linked_existing"] == 0
     assert calls == []
 
 
@@ -168,9 +170,43 @@ def test_bulk_import_links_existing_workspace_part_without_provider_lookup(authe
     )
     assert r.status_code == 200, r.text
     body = r.json()["data"]
-    assert body["created"] == 1
+    assert body["created"] == 0
+    assert body["linked_existing"] == 1
     assert body["failures"] == []
     assert calls == []
+
+    entry = authed.get(f"/api/projects/{project_id}/entries").json()["data"][0]
+    assert entry["id"] == entry_id
+    assert entry["entry_type"] == "part"
+    assert entry["part_id"] == part_id
+    assert len(authed.get("/api/parts?limit=200").json()["data"]) == 1
+
+
+def test_bulk_import_links_existing_canonical_provider_mpn_after_lookup(authed, monkeypatch):
+    calls = []
+
+    def canonical_lookup(provider, mpn):
+        calls.append(mpn)
+        return _lookup_result("STM32F103C8T6", "ST")
+
+    monkeypatch.setattr(
+        "app.domain.projects.bom_import_provider.lookup_with_cache",
+        canonical_lookup,
+    )
+    project_id = _project(authed)
+    part_id = _part(authed, "STM32F103C8T6")
+    entry_id = _entry(authed, project_id, "stm32f103")
+
+    r = authed.post(
+        f"/api/projects/{project_id}/bom/import-from-provider",
+        json={"entry_ids": None},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()["data"]
+    assert body["created"] == 0
+    assert body["linked_existing"] == 1
+    assert body["failures"] == []
+    assert calls == ["stm32f103"]
 
     entry = authed.get(f"/api/projects/{project_id}/entries").json()["data"][0]
     assert entry["id"] == entry_id
@@ -196,6 +232,7 @@ def test_bulk_import_null_entry_ids_caps_rows_and_reports_truncated(authed, monk
     assert r.status_code == 200, r.text
     body = r.json()["data"]
     assert body["created"] == 200
+    assert body["linked_existing"] == 0
     assert body["truncated"] is True
     assert len(calls) == 200
     entries = authed.get(f"/api/projects/{project_id}/entries").json()["data"]
@@ -219,6 +256,7 @@ def test_ambiguous_mpn_returns_pending_choices_no_commit(authed, monkeypatch):
     assert r.status_code == 200, r.text
     body = r.json()["data"]
     assert body["created"] == 0
+    assert body["linked_existing"] == 0
     assert body["pending_choices"][0]["entry_id"] == entry_id
     manufacturers = {c["manufacturer"] for c in body["pending_choices"][0]["candidates"]}
     assert manufacturers == {"Alpha", "Beta"}
@@ -244,6 +282,7 @@ def test_commit_choices_creates_parts_from_chosen_manufacturer(authed, monkeypat
     )
     assert r.status_code == 200, r.text
     assert r.json()["data"]["created"] == 1
+    assert r.json()["data"]["linked_existing"] == 0
     entry = authed.get(f"/api/projects/{project_id}/entries").json()["data"][0]
     part = authed.get(f"/api/parts/{entry['part_id']}").json()["data"]
     assert part["manufacturer"] == "Beta"
@@ -264,6 +303,7 @@ def test_failed_lookup_appears_in_failures_not_as_stub(authed, monkeypatch):
     assert r.status_code == 200, r.text
     body = r.json()["data"]
     assert body["created"] == 0
+    assert body["linked_existing"] == 0
     assert body["failures"][0]["mpn"] == "NOPE"
     assert "no match" in body["failures"][0]["reason"]
     assert (
@@ -304,6 +344,7 @@ def test_per_row_savepoint_isolates_failures(authed, monkeypatch):
     assert r.status_code == 200, r.text
     body = r.json()["data"]
     assert body["created"] == 2
+    assert body["linked_existing"] == 0
     assert body["failures"][0]["mpn"] == "BAD"
     rows = authed.get(f"/api/projects/{project_id}/entries").json()["data"]
     assert [row["entry_type"] for row in rows] == ["part", "unmatched", "part"]
@@ -345,6 +386,7 @@ def test_workspace_isolation_two_workspaces_same_mpn(monkeypatch):
     )
     assert rb.status_code == 200, rb.text
     assert rb.json()["data"]["created"] == 1
+    assert rb.json()["data"]["linked_existing"] == 0
 
     assert (
         a.get(f"/api/projects/{project_a}/entries").json()["data"][0]["entry_type"]
