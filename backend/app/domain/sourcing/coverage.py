@@ -5,12 +5,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from itertools import combinations
+from math import ceil
 from uuid import UUID
 
+from app.domain.sourcing.optimizer import optimize
 from app.domain.sourcing.pricing import best_unit_price_at_qty
 from app.domain.sourcing.schemas import SourcingBomLineOut, SourcingBomOfferOut
 
 EXHAUSTIVE_COMBO_DISTRIBUTOR_LIMIT = 30
+FEWEST_DISTRIBUTORS_EXHAUSTIVE_LIMIT = 10
 
 
 @dataclass(frozen=True)
@@ -29,6 +32,11 @@ class DistributorCoverageMatrix:
     total_lines: int
     best_single_distributor: str | None
     best_two_distributor_combo: tuple[str, str] | None
+    lowest_total_price_combo: list[str]
+    lowest_total_price_total: Decimal | None
+    fewest_distributors_combo: list[str]
+    fewest_distributors_total: Decimal | None
+    target_coverage_pct: float
 
 
 @dataclass(frozen=True)
@@ -208,6 +216,7 @@ def compute_coverage(
     bom_rows: list[SourcingBomLineOut],
     *,
     preferred_distributors: list[str] | None = None,
+    target_coverage_pct: float = 1.0,
 ) -> DistributorCoverageMatrix:
     """Compute per-distributor BOM line coverage.
 
@@ -215,6 +224,9 @@ def compute_coverage(
     Above that threshold it uses the documented greedy fallback: pick the
     distributor covering the most lines, then the distributor covering the most
     remaining uncovered lines.
+
+    The fewest-distributors variant uses exhaustive set search up to 10
+    distributors, then a deterministic greedy set-cover fallback.
     """
     total_lines = len(bom_rows)
     if total_lines == 0:
@@ -223,6 +235,11 @@ def compute_coverage(
             total_lines=0,
             best_single_distributor=None,
             best_two_distributor_combo=None,
+            lowest_total_price_combo=[],
+            lowest_total_price_total=None,
+            fewest_distributors_combo=[],
+            fewest_distributors_total=None,
+            target_coverage_pct=target_coverage_pct,
         )
 
     offers_by_distributor: dict[str, list[SourcingBomOfferOut]] = {}
@@ -283,13 +300,171 @@ def compute_coverage(
         preferred_rank=preferred_rank,
         total_lines=total_lines,
     )
+    lowest_price = _lowest_total_price_variant(bom_rows)
+    fewest = _fewest_distributors_variant(
+        rows,
+        bom_rows=bom_rows,
+        covered_by_distributor=covered_by_distributor,
+        target_coverage_pct=target_coverage_pct,
+    )
 
     return DistributorCoverageMatrix(
         rows=rows,
         total_lines=total_lines,
         best_single_distributor=best_single,
         best_two_distributor_combo=best_two,
+        lowest_total_price_combo=lowest_price[0],
+        lowest_total_price_total=lowest_price[1],
+        fewest_distributors_combo=fewest[0],
+        fewest_distributors_total=fewest[1],
+        target_coverage_pct=target_coverage_pct,
     )
+
+
+def _lowest_total_price_variant(
+    bom_rows: list[SourcingBomLineOut],
+) -> tuple[list[str], Decimal | None]:
+    outcome = optimize(bom_rows, strategy="lowest_total_price")
+    return outcome.distributors_used, outcome.est_total_cost
+
+
+def _fewest_distributors_variant(
+    rows: list[DistributorCoverageRow],
+    *,
+    bom_rows: list[SourcingBomLineOut],
+    covered_by_distributor: dict[str, set[UUID]],
+    target_coverage_pct: float,
+) -> tuple[list[str], Decimal | None]:
+    keys = [row.distributor.casefold() for row in rows]
+    if not keys or not bom_rows:
+        return [], None
+
+    coverable_lines = set().union(*covered_by_distributor.values())
+    target_count = min(ceil(len(bom_rows) * target_coverage_pct), len(coverable_lines))
+    if target_count <= 0:
+        return [], None
+
+    rows_by_key = {row.distributor.casefold(): row for row in rows}
+    if len(keys) <= FEWEST_DISTRIBUTORS_EXHAUSTIVE_LIMIT:
+        best = _fewest_exhaustive_combo(
+            keys,
+            bom_rows=bom_rows,
+            covered_by_distributor=covered_by_distributor,
+            rows_by_key=rows_by_key,
+            target_count=target_count,
+        )
+    else:
+        best = _fewest_greedy_combo(
+            keys,
+            bom_rows=bom_rows,
+            covered_by_distributor=covered_by_distributor,
+            rows_by_key=rows_by_key,
+            target_count=target_count,
+        )
+    if not best:
+        return [], None
+
+    names = sorted((rows_by_key[key].distributor for key in best), key=str.casefold)
+    return names, _combo_total_cost(best, bom_rows)
+
+
+def _fewest_exhaustive_combo(
+    keys: list[str],
+    *,
+    bom_rows: list[SourcingBomLineOut],
+    covered_by_distributor: dict[str, set[UUID]],
+    rows_by_key: dict[str, DistributorCoverageRow],
+    target_count: int,
+) -> tuple[str, ...]:
+    for size in range(1, len(keys) + 1):
+        matching = [
+            combo
+            for combo in combinations(keys, size)
+            if len(_combo_covered(combo, covered_by_distributor)) >= target_count
+        ]
+        if matching:
+            return min(
+                matching,
+                key=lambda combo: _combo_sort_key(combo, bom_rows, rows_by_key),
+            )
+    return ()
+
+
+def _fewest_greedy_combo(
+    keys: list[str],
+    *,
+    bom_rows: list[SourcingBomLineOut],
+    covered_by_distributor: dict[str, set[UUID]],
+    rows_by_key: dict[str, DistributorCoverageRow],
+    target_count: int,
+) -> tuple[str, ...]:
+    selected: list[str] = []
+    uncovered = set().union(*covered_by_distributor.values())
+    while len(_combo_covered(tuple(selected), covered_by_distributor)) < target_count:
+        remaining = [key for key in keys if key not in selected]
+        if not remaining:
+            break
+        next_key = min(
+            remaining,
+            key=lambda key: (
+                -len(covered_by_distributor[key] & uncovered),
+                _price_sort_value(_combo_total_cost(tuple([*selected, key]), bom_rows)),
+                rows_by_key[key].distributor.casefold(),
+            ),
+        )
+        if not (covered_by_distributor[next_key] & uncovered):
+            break
+        selected.append(next_key)
+        uncovered -= covered_by_distributor[next_key]
+    return tuple(selected)
+
+
+def _combo_sort_key(
+    combo: tuple[str, ...],
+    bom_rows: list[SourcingBomLineOut],
+    rows_by_key: dict[str, DistributorCoverageRow],
+) -> tuple[Decimal, tuple[str, ...]]:
+    return (
+        _price_sort_value(_combo_total_cost(combo, bom_rows)),
+        tuple(sorted((rows_by_key[key].distributor.casefold() for key in combo))),
+    )
+
+
+def _combo_covered(
+    combo: tuple[str, ...],
+    covered_by_distributor: dict[str, set[UUID]],
+) -> set[UUID]:
+    covered: set[UUID] = set()
+    for key in combo:
+        covered |= covered_by_distributor[key]
+    return covered
+
+
+def _combo_total_cost(
+    combo: tuple[str, ...],
+    bom_rows: list[SourcingBomLineOut],
+) -> Decimal | None:
+    running = Decimal("0")
+    has_priced_line = False
+    combo_keys = set(combo)
+    for line in bom_rows:
+        offers = [
+            offer
+            for key in combo_keys
+            if (offer := _best_covering_offer(key, line)) is not None
+        ]
+        if not offers:
+            continue
+        costs = [
+            _offer_extended_cost(offer, _selected_qty(line.short_by, offer.moq))
+            for offer in offers
+        ]
+        priced_costs = [cost for cost in costs if cost is not None]
+        if not priced_costs:
+            return None
+        running += min(priced_costs)
+        has_priced_line = True
+    return running if has_priced_line else None
 
 
 def _supported_builds(
@@ -310,7 +485,8 @@ def _best_covering_offer(
     candidates = [
         offer
         for offer in line.offers
-        if offer.distributor.casefold() == distributor_key and offer.stock >= line.short_by
+        if offer.distributor.casefold() == distributor_key
+        and offer.stock >= _selected_qty(line.short_by, offer.moq)
     ]
     if not candidates:
         return None
@@ -325,6 +501,8 @@ def _best_covering_offer(
 
 
 def _offer_extended_cost(offer: SourcingBomOfferOut, qty: int) -> Decimal | None:
+    if qty <= 0:
+        return Decimal("0")
     unit_price = _offer_unit_price(offer, qty)
     if unit_price is None:
         return None
@@ -332,10 +510,17 @@ def _offer_extended_cost(offer: SourcingBomOfferOut, qty: int) -> Decimal | None
 
 
 def _offer_unit_price(offer: SourcingBomOfferOut, qty: int) -> Decimal | None:
-    best = best_unit_price_at_qty(offer.price_breaks, qty)
+    price_breaks = offer.price_breaks_converted or offer.price_breaks
+    best = best_unit_price_at_qty(price_breaks, qty)
     if best is not None:
         return best[0]
-    return offer.unit_price
+    return offer.unit_price_converted or offer.unit_price
+
+
+def _selected_qty(short_by: int, moq: int | None) -> int:
+    if short_by <= 0:
+        return 0
+    return max(short_by, int(moq or 1))
 
 
 def _best_two_distributors(

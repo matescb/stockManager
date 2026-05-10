@@ -91,6 +91,11 @@ type SourcingBomResponse = {
     total_lines: number;
     best_single_distributor?: string | null;
     best_two_distributor_combo?: [string, string] | null;
+    lowest_total_price_combo: string[];
+    lowest_total_price_total?: string | number | null;
+    fewest_distributors_combo: string[];
+    fewest_distributors_total?: string | number | null;
+    target_coverage_pct: number;
   };
   capacity: {
     can_build_now: number;
@@ -457,9 +462,103 @@ function CapacityBanner({ data, currency }: { data: SourcingBomResponse; currenc
   );
 }
 
-function CoverageMatrix({ data }: { data: SourcingBomResponse }) {
+type CoverageVariant = {
+  labels: string[];
+  combo: string[];
+  total?: string | number | null;
+};
+
+function normalizedCombo(combo: string[]): string[] {
+  return [...combo].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+}
+
+function sameCombo(left: string[], right: string[]): boolean {
+  const leftSorted = normalizedCombo(left);
+  const rightSorted = normalizedCombo(right);
+  return leftSorted.length === rightSorted.length && leftSorted.every((item, index) => item === rightSorted[index]);
+}
+
+function coverageForCombo(data: SourcingBomResponse, combo: string[]): { pct: number | null; shortLines: number | null } {
+  if (combo.length === 0 || data.coverage.total_lines === 0) return { pct: null, shortLines: null };
+  const comboSet = new Set(combo.map(item => item.toLocaleLowerCase()));
+  const uncovered = new Set<string>();
+  for (const row of data.coverage.rows) {
+    if (!comboSet.has(row.distributor.toLocaleLowerCase())) continue;
+    for (const lineId of row.lines_uncovered) uncovered.add(lineId);
+  }
+  const totalLineIds = new Set(data.rows.map(row => row.project_entry_id));
+  for (const row of data.rows) {
+    if (!uncovered.has(row.project_entry_id)) continue;
+    const coveredByCombo = data.coverage.rows.some(coverageRow =>
+      comboSet.has(coverageRow.distributor.toLocaleLowerCase()) &&
+      !coverageRow.lines_uncovered.includes(row.project_entry_id),
+    );
+    if (coveredByCombo) uncovered.delete(row.project_entry_id);
+  }
+  const shortLines = [...totalLineIds].filter(lineId => uncovered.has(lineId)).length;
+  return {
+    pct: (data.coverage.total_lines - shortLines) / data.coverage.total_lines,
+    shortLines,
+  };
+}
+
+function CoverageVariantCard({
+  data,
+  variant,
+  currency,
+}: {
+  data: SourcingBomResponse;
+  variant: CoverageVariant;
+  currency?: string | null;
+}) {
+  const { pct, shortLines } = coverageForCombo(data, variant.combo);
+  const comboText = variant.combo.length > 0 ? normalizedCombo(variant.combo).join(" + ") : "—";
+  const coverageText = pct == null ? "—" : `${Math.round(pct * 100)}%`;
+  const shortText = shortLines && shortLines > 0
+    ? ` (${shortLines.toLocaleString()} line${shortLines === 1 ? "" : "s"} short)`
+    : "";
+
+  return (
+    <div className="card p-4 space-y-3">
+      <div className="flex flex-wrap gap-2">
+        {variant.labels.map(label => (
+          <span key={label} className="pill bg-accent/15 text-accent">{label}</span>
+        ))}
+      </div>
+      <div className="text-lg font-semibold leading-snug">{comboText}</div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+        <div>
+          <div className="section-title">Price</div>
+          <div className="font-mono tabular-nums">{formatMoney(variant.total, currency)}</div>
+        </div>
+        <div>
+          <div className="section-title">Coverage</div>
+          <div className="font-mono tabular-nums">{coverageText}{shortText}</div>
+        </div>
+      </div>
+      {variant.combo.length === 0 && (
+        <div className="text-xs text-muted">No priced distributor combination is available for these BOM lines.</div>
+      )}
+    </div>
+  );
+}
+
+function CoverageMatrix({ data, currency }: { data: SourcingBomResponse; currency?: string | null }) {
   const bestSingle = data.coverage.best_single_distributor;
   const bestTwo: string[] = data.coverage.best_two_distributor_combo ?? [];
+  const lowestPrice: CoverageVariant = {
+    labels: ["Lowest total price"],
+    combo: data.coverage.lowest_total_price_combo ?? [],
+    total: data.coverage.lowest_total_price_total,
+  };
+  const fewest: CoverageVariant = {
+    labels: ["Fewest distributors"],
+    combo: data.coverage.fewest_distributors_combo ?? [],
+    total: data.coverage.fewest_distributors_total,
+  };
+  const variants = sameCombo(lowestPrice.combo, fewest.combo)
+    ? [{ ...lowestPrice, labels: [...lowestPrice.labels, ...fewest.labels] }]
+    : [lowestPrice, fewest];
   const columns: Column<CoverageRow>[] = [
     {
       key: "distributor",
@@ -485,7 +584,7 @@ function CoverageMatrix({ data }: { data: SourcingBomResponse }) {
       key: "cost",
       header: "Est. total cost",
       accessor: row => numberOrNull(row.est_total_cost),
-      render: row => formatMoney(row.est_total_cost),
+      render: row => formatMoney(row.est_total_cost, currency),
       align: "right",
     },
     {
@@ -500,6 +599,19 @@ function CoverageMatrix({ data }: { data: SourcingBomResponse }) {
   return (
     <section className="space-y-2">
       <h2 className="text-md font-semibold">Coverage matrix</h2>
+      <div className={`grid grid-cols-1 ${variants.length > 1 ? "lg:grid-cols-2" : ""} gap-3`}>
+        {variants.map(variant => (
+          <CoverageVariantCard
+            key={variant.labels.join("-")}
+            data={data}
+            variant={variant}
+            currency={currency}
+          />
+        ))}
+      </div>
+      <div className="text-xs text-muted">
+        Coverage is the primary criterion; the two variants above optimize for cost vs. simplicity within full-coverage solutions.
+      </div>
       <DataTable
         rows={data.coverage.rows}
         columns={columns}
@@ -921,7 +1033,7 @@ export default function ProjectSourcingPage() {
       {query.data && hasRows && (
         <>
           <CapacityBanner data={query.data} currency={requestBody.currency} />
-          <CoverageMatrix data={query.data} />
+          <CoverageMatrix data={query.data} currency={requestBody.currency} />
           <BomRows rows={query.data.rows} />
           <div className="text-xs text-muted">
             {formatCount(query.data.rows.length)} line{query.data.rows.length === 1 ? "" : "s"} fetched from {query.data.powered_by}.
