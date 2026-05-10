@@ -83,11 +83,9 @@ Open the project and click the **BOM** tab.
 
 > _Screenshot: the BOM table with one matched row and one unmatched row showing a Match dropdown._
 
-Each row shows the quantity, the part (linked in green if matched), designators, comments, and a DNP flag. Unmatched rows have a red "unmatched" pill — click **Match…** on the row, pick a part from the dropdown, and click **Match**.
+The BOM tab has **Source BOM**, **Import BOM**, and **Add Part** buttons above the table. **Import BOM** opens the same CSV/TSV import flow as the tab, while **Add Part** lets you search existing library parts by name or MPN and add selected parts as BOM rows. The table shows thumbnails, part details, quantity, designators, and matched/unmatched status. Matched rows open the part's info page when clicked; unmatched rows stay inactive until you match them. Use the row checkboxes to select multiple BOM rows and delete them together.
 
 To remove a line, click **Delete** on its row.
-
-TODO(verify-ui): adding a brand-new BOM line from the BOM tab — there's no "+ Line" button visible in the read-only BOM viewer; manual additions appear to require either editing the imported CSV and re-importing, or another route. Verify before relying on this.
 
 ## Use meta-parts for "any 10k 0402 1%"
 

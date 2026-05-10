@@ -92,6 +92,8 @@ type Props<T> = {
   columns: Column<T>[];
   rowKey: (row: T) => string;
   onRowClick?: (row: T) => void;
+  rowCanClick?: (row: T) => boolean;
+  rowClassName?: (row: T) => string | undefined;
   searchPlaceholder?: string;
   initialSearch?: string;
   empty?: ReactNode;
@@ -137,6 +139,8 @@ export function DataTable<T>({
   columns,
   rowKey,
   onRowClick,
+  rowCanClick,
+  rowClassName,
   searchPlaceholder,
   initialSearch,
   empty,
@@ -387,25 +391,29 @@ export function DataTable<T>({
             {sorted.map((r, i) => {
               const id = rowKey(r);
               const isSel = selected.has(id);
+              const canClick = !!onRowClick && (rowCanClick ? rowCanClick(r) : true);
               return (
               <tr
                 key={id}
-                tabIndex={onRowClick ? 0 : undefined}
-                onClick={() => onRowClick?.(r)}
-                {...(onRowClick ? {
+                tabIndex={canClick ? 0 : undefined}
+                onClick={() => {
+                  if (canClick) onRowClick?.(r);
+                }}
+                {...(canClick ? {
                   "aria-label": rowAriaLabel(r, visibleCols),
                   onKeyDown: (e: React.KeyboardEvent<HTMLTableRowElement>) => {
                     if (e.key === "Enter" || e.key === " ") {
                       if (e.key === " ") e.preventDefault();
-                      onRowClick(r);
+                      onRowClick?.(r);
                     }
                   },
                 } : {})}
                 className={cn(
-                  onRowClick && "cursor-pointer focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none",
+                  canClick && "cursor-pointer focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none",
                   // Subtle zebra striping — only odd rows pick up panel2.
                   i % 2 === 1 && "bg-panel2/40",
                   isSel && "bg-accent/10",
+                  rowClassName?.(r),
                 )}
               >
                 {selectable && (
