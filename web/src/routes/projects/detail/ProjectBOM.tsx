@@ -25,6 +25,7 @@ type BomProviderImportOut = {
   pending_choices: BomProviderPendingChoice[];
   failures: BomProviderFailure[];
   provider: WorkspaceProviderSettings["parts_provider"];
+  truncated: boolean;
 };
 
 type BomProviderImportPayload = {
@@ -89,6 +90,9 @@ export default function ProjectBOM() {
     }
     if (result.failures.length > 0) {
       setFailures(result.failures);
+    }
+    if (result.truncated) {
+      toast.error("Imported first 200 unmatched rows. Run provider import again for remaining rows.");
     }
   }
 

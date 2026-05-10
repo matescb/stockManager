@@ -237,7 +237,7 @@ and rate-limited at 30 calls/minute per workspace.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `entry_ids` | UUID[] \| null | no | `null` imports all unmatched rows in the project. A list imports only those rows. |
+| `entry_ids` | UUID[] \| null | no | `null` imports the next batch of unmatched rows in the project. A list imports only those rows. |
 
 **Response** — `200 OK` — envelope: `{ data, status }`
 
@@ -246,7 +246,8 @@ and rate-limited at 30 calls/minute per workspace.
   "created": 1,
   "pending_choices": [],
   "failures": [{ "entry_id": "…", "mpn": "NOPE", "reason": "no match" }],
-  "provider": "mouser"
+  "provider": "mouser",
+  "truncated": false
 }
 ```
 
@@ -256,6 +257,8 @@ when the workspace has no configured parts provider.
 **Notes**
 
 - Uses per-row savepoints; one failed lookup or write does not roll back rows that already created parts.
+- `entry_ids: null` processes at most 200 unmatched rows per call and sets `truncated: true` when more remain.
+- If an unmatched row's MPN already exists as an active part in the workspace, the row is linked to that part without another provider lookup.
 - This is not the CSV `auto_create_missing_parts` path. It does not create stub parts; failures stay unmatched.
 - Source: `backend/app/api/routes/projects.py:276-294`.
 - Service: `backend/app/domain/projects/bom_import_provider.py:21-72`.

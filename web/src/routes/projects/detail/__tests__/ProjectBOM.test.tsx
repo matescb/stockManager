@@ -96,6 +96,7 @@ type ImportResponse = {
   }>;
   failures: Array<{ entry_id: string; mpn: string; reason: string }>;
   provider: "none" | "mouser" | "digikey";
+  truncated: boolean;
 };
 
 function renderPage() {
@@ -149,6 +150,7 @@ function mockApi(
         pending_choices: [],
         failures: [],
         provider: options.partsProvider ?? "none",
+        truncated: false,
       }) as never;
     }
     if (path === `/projects/${projectId}/bom/import-from-provider/commit-choices`) {
@@ -157,6 +159,7 @@ function mockApi(
         pending_choices: [],
         failures: [],
         provider: options.partsProvider ?? "none",
+        truncated: false,
       }) as never;
     }
     if (String(path).includes("/match")) {
@@ -286,6 +289,7 @@ describe("ProjectBOM", () => {
           pending_choices: [],
           failures: [{ entry_id: "entry-unmatched", mpn: "NOPE", reason: "no match for MPN" }],
           provider: "mouser",
+          truncated: false,
         },
       },
     );
@@ -320,12 +324,14 @@ describe("ProjectBOM", () => {
           }],
           failures: [],
           provider: "mouser",
+          truncated: false,
         },
         commitResponse: {
           created: 1,
           pending_choices: [],
           failures: [],
           provider: "mouser",
+          truncated: false,
         },
       },
     );

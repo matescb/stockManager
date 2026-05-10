@@ -152,6 +152,56 @@ def test_bulk_import_skips_already_matched_rows(authed, monkeypatch):
     assert calls == []
 
 
+def test_bulk_import_links_existing_workspace_part_without_provider_lookup(authed, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "app.domain.projects.bom_import_provider.lookup_with_cache",
+        lambda provider, mpn: calls.append(mpn) or _lookup_result(mpn),
+    )
+    project_id = _project(authed)
+    part_id = _part(authed, "RC0402-10K")
+    entry_id = _entry(authed, project_id, "RC0402-10K")
+
+    r = authed.post(
+        f"/api/projects/{project_id}/bom/import-from-provider",
+        json={"entry_ids": None},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()["data"]
+    assert body["created"] == 1
+    assert body["failures"] == []
+    assert calls == []
+
+    entry = authed.get(f"/api/projects/{project_id}/entries").json()["data"][0]
+    assert entry["id"] == entry_id
+    assert entry["entry_type"] == "part"
+    assert entry["part_id"] == part_id
+    assert len(authed.get("/api/parts?limit=200").json()["data"]) == 1
+
+
+def test_bulk_import_null_entry_ids_caps_rows_and_reports_truncated(authed, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "app.domain.projects.bom_import_provider.lookup_with_cache",
+        lambda provider, mpn: calls.append(mpn) or _lookup_result(mpn),
+    )
+    project_id = _project(authed)
+    for i in range(201):
+        _entry(authed, project_id, f"CAP-{i:03d}")
+
+    r = authed.post(
+        f"/api/projects/{project_id}/bom/import-from-provider",
+        json={"entry_ids": None},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()["data"]
+    assert body["created"] == 200
+    assert body["truncated"] is True
+    assert len(calls) == 200
+    entries = authed.get(f"/api/projects/{project_id}/entries").json()["data"]
+    assert sum(1 for entry in entries if entry["entry_type"] == "unmatched") == 1
+
+
 def test_ambiguous_mpn_returns_pending_choices_no_commit(authed, monkeypatch):
     def ambiguous(_provider, mpn):
         a = _lookup_result(mpn, "Alpha")["result"]

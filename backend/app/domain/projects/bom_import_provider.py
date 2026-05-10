@@ -3,9 +3,11 @@ from __future__ import annotations
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import raise_http
 from app.core.secrets import decrypt
+from app.domain.parts.models import Part
 from app.domain.parts.providers import make_provider
 from app.domain.parts.services.provider_cache import lookup_with_cache
 from app.domain.parts.services.provider_import import create_from_provider_lookup
@@ -17,6 +19,8 @@ from app.domain.projects.schemas import (
     BomProviderPendingChoice,
 )
 
+MAX_PROVIDER_IMPORT_ROWS = 200
+
 
 def import_unmatched_from_provider(
     db,
@@ -27,7 +31,7 @@ def import_unmatched_from_provider(
     entry_ids: list[UUID] | None = None,
 ) -> BomProviderImportOut:
     provider = _provider_or_409(workspace)
-    rows = _load_unmatched_entries(
+    rows, truncated = _load_unmatched_entries(
         db,
         workspace_id=workspace.id,
         project_id=project.id,
@@ -39,6 +43,14 @@ def import_unmatched_from_provider(
     failures: list[BomProviderFailure] = []
 
     for entry in rows:
+        existing = _active_part_by_mpn(db, workspace_id=workspace.id, mpn=_entry_mpn(entry))
+        if existing is not None:
+            with db.begin_nested():
+                _link_existing(entry, existing.id, user_id)
+                db.flush()
+            created += 1
+            continue
+
         outcome = _lookup_entry(provider, entry)
         if isinstance(outcome, BomProviderFailure):
             failures.append(outcome)
@@ -58,9 +70,7 @@ def import_unmatched_from_provider(
                     lookup_result=outcome,
                 )
         except Exception as exc:
-            failures.append(
-                _failure(entry, _entry_mpn(entry), f"{type(exc).__name__}: {exc}")
-            )
+            failures.append(_failure(entry, _entry_mpn(entry), _safe_exception_reason(exc)))
             continue
         created += 1
 
@@ -69,6 +79,7 @@ def import_unmatched_from_provider(
         pending_choices=pending,
         failures=failures,
         provider=provider.name,
+        truncated=truncated,
     )
 
 
@@ -81,7 +92,7 @@ def commit_provider_import_choices(
     choices: dict[UUID, str],
 ) -> BomProviderImportOut:
     provider = _provider_or_409(workspace)
-    rows = _load_unmatched_entries(
+    rows, truncated = _load_unmatched_entries(
         db,
         workspace_id=workspace.id,
         project_id=project.id,
@@ -97,6 +108,14 @@ def commit_provider_import_choices(
             continue
 
         mpn = _entry_mpn(entry)
+        existing = _active_part_by_mpn(db, workspace_id=workspace.id, mpn=mpn)
+        if existing is not None:
+            with db.begin_nested():
+                _link_existing(entry, existing.id, user_id)
+                db.flush()
+            created += 1
+            continue
+
         lookup = _lookup_raw(provider, mpn)
         record = _record_for_manufacturer(lookup, manufacturer)
         if record is None:
@@ -116,9 +135,7 @@ def commit_provider_import_choices(
                     lookup_result=record,
                 )
         except Exception as exc:
-            failures.append(
-                _failure(entry, mpn, f"{type(exc).__name__}: {exc}")
-            )
+            failures.append(_failure(entry, mpn, _safe_exception_reason(exc)))
             continue
         created += 1
 
@@ -127,6 +144,7 @@ def commit_provider_import_choices(
         pending_choices=[],
         failures=failures,
         provider=provider.name,
+        truncated=truncated,
     )
 
 
@@ -151,7 +169,7 @@ def _load_unmatched_entries(
     workspace_id: UUID,
     project_id: UUID,
     entry_ids: list[UUID] | None,
-) -> list[ProjectEntry]:
+) -> tuple[list[ProjectEntry], bool]:
     stmt = (
         select(ProjectEntry)
         .where(ProjectEntry.workspace_id == workspace_id)
@@ -162,7 +180,10 @@ def _load_unmatched_entries(
     )
     if entry_ids is not None:
         stmt = stmt.where(ProjectEntry.id.in_(entry_ids))
-    return list(db.execute(stmt).scalars())
+        return list(db.execute(stmt).scalars()), False
+
+    rows = list(db.execute(stmt.limit(MAX_PROVIDER_IMPORT_ROWS + 1)).scalars())
+    return rows[:MAX_PROVIDER_IMPORT_ROWS], len(rows) > MAX_PROVIDER_IMPORT_ROWS
 
 
 def _lookup_entry(
@@ -193,7 +214,8 @@ def _lookup_raw(provider, mpn: str) -> dict:
     try:
         return lookup_with_cache(provider, mpn)
     except Exception as exc:
-        return {"found": False, "result": None, "message": f"provider raised {type(exc).__name__}"}
+        _capture_exception(exc)
+        return {"found": False, "result": None, "message": "provider lookup failed"}
 
 
 def _candidate_records(lookup: dict) -> list[dict]:
@@ -239,6 +261,42 @@ def _create_and_link(
     entry.entry_type = "part"
     entry.updated_by = user_id
     db.flush()
+
+
+def _active_part_by_mpn(db, *, workspace_id: UUID, mpn: str) -> Part | None:
+    if not mpn:
+        return None
+    return db.execute(
+        select(Part)
+        .where(Part.workspace_id == workspace_id)
+        .where(Part.archived_at.is_(None))
+        .where(Part.mpn == mpn)
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _link_existing(entry: ProjectEntry, part_id: UUID, user_id: UUID | None) -> None:
+    entry.part_id = part_id
+    entry.entry_type = "part"
+    entry.updated_by = user_id
+
+
+def _safe_exception_reason(exc: Exception) -> str:
+    _capture_exception(exc)
+    if isinstance(exc, IntegrityError):
+        return "provider import conflicted with an existing part"
+    if exc.__class__.__module__.startswith("httpx"):
+        return "provider request failed"
+    return "provider import failed"
+
+
+def _capture_exception(exc: Exception) -> None:
+    try:
+        import sentry_sdk
+
+        sentry_sdk.capture_exception(exc)
+    except Exception:
+        pass
 
 
 def _entry_mpn(entry: ProjectEntry) -> str:

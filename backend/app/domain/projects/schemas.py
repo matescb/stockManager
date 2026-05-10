@@ -179,6 +179,7 @@ class BomProviderImportOut(BaseModel):
     pending_choices: list[BomProviderPendingChoice] = []
     failures: list[BomProviderFailure] = []
     provider: str
+    truncated: bool = False
 
 
 # BOM presets (#252 — lifted from app/api/routes/bom_presets.py)
