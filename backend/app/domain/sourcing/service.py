@@ -1151,6 +1151,8 @@ def _source_bom_line(
     offers = _joined_offers(candidate_mpns, search_results, qty=max(short_by, 1))
     best_offer = _best_offer_at_qty(offers, short_by)
     authorized_stock = sum(offer.stock for offer in offers)
+    cache_hit = _bom_line_cache_hit(candidate_mpns, search_results)
+    reason = _bom_line_reason(candidate_mpns, offers)
 
     return SourcingBomLineOut(
         project_entry_id=UUID(str(row["project_entry_id"])),
@@ -1171,6 +1173,8 @@ def _source_bom_line(
             else None
         ),
         lead_time_days=best_offer.lead_time_days if best_offer is not None else None,
+        cache_hit=cache_hit,
+        reason=reason,
         risk_flags=_risk_flags(
             offers,
             best_offer=best_offer,
@@ -1178,6 +1182,33 @@ def _source_bom_line(
             preferred_distributors=preferred_distributors,
         ),
     )
+
+
+def _bom_line_cache_hit(
+    mpns: list[str],
+    search_results: dict[str, SourcingSearchResult],
+) -> bool | None:
+    if not mpns:
+        return None
+    results = [
+        result
+        for mpn in mpns
+        if (result := search_results.get(mpn.casefold())) is not None
+    ]
+    if not results:
+        return None
+    return all(result.cache_hit for result in results)
+
+
+def _bom_line_reason(
+    mpns: list[str],
+    offers: list[SourcingBomOfferOut],
+) -> str:
+    if not mpns:
+        return "no_mpn"
+    if not offers:
+        return "no_offers"
+    return "ok"
 
 
 def _joined_offers(

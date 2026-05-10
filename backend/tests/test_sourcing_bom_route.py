@@ -193,6 +193,48 @@ def test_basic_bom_returns_enriched_lines(authed_client):
     assert row["best_offer"]["distributor"] == "Mouser"
     assert isinstance(row["best_offer"]["unit_price"], str)
     assert isinstance(row["est_extended_cost"], str)
+    assert row["reason"] == "ok"
+    assert row["cache_hit"] is False
+    assert row["fx_status"] is None
+
+
+def test_bom_row_reports_no_mpn_without_provider_call(authed_client):
+    _configure_sourcing(authed_client)
+    part_id = create_part(authed_client, name="Unnumbered", mpn=None)
+    project_id = create_project_with_bom(
+        authed_client,
+        "Missing MPN BOM",
+        [{"part_id": part_id, "quantity": 3}],
+    )
+
+    r = _post_sourcing(authed_client, project_id)
+
+    assert r.status_code == 200, r.text
+    row = r.json()["data"]["rows"][0]
+    assert row["mpn"] is None
+    assert row["offers"] == []
+    assert row["reason"] == "no_mpn"
+    assert row["cache_hit"] is None
+    assert _FakeTrustedPartsClient.calls == []
+
+
+def test_bom_row_reports_no_offers_and_cache_hit(authed_client):
+    _configure_sourcing(authed_client)
+    project_id = _single_line_project(authed_client, mpn="NO-OFFERS")
+    _FakeTrustedPartsClient.offers_by_mpn = {"NO-OFFERS": []}
+
+    first = _post_sourcing(authed_client, project_id)
+    second = _post_sourcing(authed_client, project_id)
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    first_row = first.json()["data"]["rows"][0]
+    second_row = second.json()["data"]["rows"][0]
+    assert first_row["reason"] == "no_offers"
+    assert first_row["cache_hit"] is False
+    assert second_row["reason"] == "no_offers"
+    assert second_row["cache_hit"] is True
+    assert len(_FakeTrustedPartsClient.calls) == 1
 
 
 def test_bom_with_substitutes_dedupes_mpns(authed_client, monkeypatch):

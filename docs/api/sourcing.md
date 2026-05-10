@@ -193,6 +193,9 @@ Path: `project_id` is a project UUID in the current workspace.
         "available": 0,
         "short_by": 20,
         "authorized_stock": 60,
+        "cache_hit": false,
+        "reason": "ok",
+        "fx_status": null,
         "best_offer": {
           "distributor": "Mouser",
           "unit_price": "0.10",
@@ -226,8 +229,9 @@ Path: `project_id` is a project UUID in the current workspace.
 - The route validates `project_id` with `assert_in_workspace()` before calling the sourcing service.
 - The service reuses `shortage_analysis()`, `dedupe_mpns()`, `chunk_mpns()`, and per-MPN `search()` cache rows; BOM chunks use `ttl_seconds=600`.
 - Decimal prices and extended costs serialize as strings.
-- Source: `backend/app/api/routes/sourcing.py:134-194`.
-- Service: `backend/app/domain/sourcing/service.py:71-135`.
+- Each row exposes sourcing diagnostics: `reason` is `ok`, `no_mpn`, or `no_offers`; `cache_hit` is `true`/`false` for searched rows and `null` when no MPN was searched; `fx_status` is reserved for row-level conversion failures and is `null` unless represented.
+- Source: `backend/app/api/routes/sourcing.py:251-309`.
+- Service: `backend/app/domain/sourcing/service.py:820-881`, `backend/app/domain/sourcing/service.py:1143-1212`.
 - Pricing: `backend/app/domain/sourcing/pricing.py:9-40`.
 
 ### `POST /api/projects/{project_id}/purchase-plan`

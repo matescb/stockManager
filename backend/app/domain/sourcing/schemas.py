@@ -518,6 +518,9 @@ class SourcingBomLineOut(BaseModel):
     best_offer: SourcingBomOfferOut | None = None
     est_extended_cost: Decimal | None = None
     lead_time_days: int | None = None
+    cache_hit: bool | None = None
+    reason: Literal["ok", "no_mpn", "no_offers"] = "ok"
+    fx_status: Literal["unavailable"] | None = None
     risk_flags: list[
         Literal[
             "single_source",
