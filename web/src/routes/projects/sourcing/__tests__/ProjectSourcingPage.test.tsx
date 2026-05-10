@@ -150,6 +150,8 @@ function sourcingResponse(overrides: Record<string, unknown> = {}) {
     capacity: {
       can_build_now: 0,
       can_build_after_purchase: 3,
+      total_bom_cost: "30.00",
+      purchase_to_pay_cost: "25.00",
       est_purchase_cost: "25.00",
       blocking_lines_now: ["entry-2"],
       blocking_lines_after_purchase: ["entry-1"],
@@ -292,7 +294,7 @@ describe("ProjectSourcingPage", () => {
     expect(await screen.findByText("Workspace default currency is not active; using EUR.")).toBeDefined();
   });
 
-  it("renders capacity banner with both numbers from server response", async () => {
+  it("CapacityBanner renders Total BOM cost when capacity.total_bom_cost is non-null", async () => {
     mockReads();
     vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
 
@@ -301,8 +303,42 @@ describe("ProjectSourcingPage", () => {
     expect(await screen.findByText("Can build now")).toBeDefined();
     expect(screen.getByText("After purchase")).toBeDefined();
     expect(screen.getByText("3")).toBeDefined();
-    expect(screen.getAllByText("Est. cost").length).toBeGreaterThan(0);
+    expect(screen.getByText("Total BOM cost:")).toBeDefined();
+    expect(screen.getByText("30 USD")).toBeDefined();
+    expect(screen.getByText("if bought every line")).toBeDefined();
+  });
+
+  it("CapacityBanner renders Price to pay when capacity.purchase_to_pay_cost is non-null", async () => {
+    mockReads();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+
+    renderPage();
+
+    expect(await screen.findByText("Price to pay:")).toBeDefined();
     expect(screen.getByText("25 USD")).toBeDefined();
+    expect(screen.getByText("short qty only, excluding blocking lines")).toBeDefined();
+  });
+
+  it("CapacityBanner shows em-dash when both values are null", async () => {
+    mockReads();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({
+      capacity: {
+        can_build_now: 0,
+        can_build_after_purchase: 0,
+        total_bom_cost: null,
+        purchase_to_pay_cost: null,
+        est_purchase_cost: null,
+        blocking_lines_now: ["entry-1"],
+        blocking_lines_after_purchase: ["entry-1"],
+      },
+    }));
+
+    renderPage();
+
+    expect(await screen.findByText("Total BOM cost:")).toBeDefined();
+    expect(screen.getByText("no pricing available on any line")).toBeDefined();
+    expect(screen.getByText("no non-blocking priced shortages")).toBeDefined();
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
   });
 
   it("renders coverage matrix with best-single + best-two highlights", async () => {

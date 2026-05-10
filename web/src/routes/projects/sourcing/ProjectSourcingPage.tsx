@@ -95,6 +95,8 @@ type SourcingBomResponse = {
   capacity: {
     can_build_now: number;
     can_build_after_purchase: number;
+    total_bom_cost?: string | number | null;
+    purchase_to_pay_cost?: string | number | null;
     est_purchase_cost?: string | number | null;
     blocking_lines_now: string[];
     blocking_lines_after_purchase: string[];
@@ -384,16 +386,25 @@ function BudgetState({
   );
 }
 
-function CapacityBanner({ data }: { data: SourcingBomResponse }) {
+function CapacityBanner({ data, currency }: { data: SourcingBomResponse; currency?: string | null }) {
   const blocking = data.capacity.blocking_lines_after_purchase.length > 0
     ? data.capacity.blocking_lines_after_purchase
     : data.capacity.blocking_lines_now;
   const linesById = new Map(data.rows.map(row => [row.project_entry_id, row]));
-  const purchaseCurrency = data.rows.find(row => row.best_offer?.currency)?.best_offer?.currency ?? null;
+  const purchaseCurrency = (
+    currency?.trim().toUpperCase() ||
+    data.rows.map(row => offerDisplayCurrency(row.best_offer)).find(Boolean)
+  ) ?? null;
+  const totalCostNote = data.capacity.total_bom_cost == null
+    ? "no pricing available on any line"
+    : "if bought every line";
+  const purchaseCostNote = data.capacity.purchase_to_pay_cost == null
+    ? "no non-blocking priced shortages"
+    : "short qty only, excluding blocking lines";
 
   return (
     <div className="card p-4">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
         <div>
           <div className="section-title">Can build now</div>
           <div className="text-2xl font-semibold tabular-nums">{data.capacity.can_build_now}</div>
@@ -402,9 +413,22 @@ function CapacityBanner({ data }: { data: SourcingBomResponse }) {
           <div className="section-title">After purchase</div>
           <div className="text-2xl font-semibold tabular-nums">{data.capacity.can_build_after_purchase}</div>
         </div>
-        <div>
-          <div className="section-title">Est. cost</div>
-          <div className="text-2xl font-semibold tabular-nums">{formatMoney(data.capacity.est_purchase_cost, purchaseCurrency)}</div>
+        <div className="sm:col-span-2 lg:col-span-2 min-w-0">
+          <div className="section-title">Costs</div>
+          <div className="mt-1 flex flex-col gap-1 text-sm">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="text-muted">Total BOM cost:</span>
+              <span className="font-mono tabular-nums">{formatMoney(data.capacity.total_bom_cost, purchaseCurrency)}</span>
+              <span className="text-xs text-muted">{totalCostNote}</span>
+            </div>
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="text-muted">Price to pay:</span>
+              <span className="font-mono font-semibold tabular-nums">
+                {formatMoney(data.capacity.purchase_to_pay_cost, purchaseCurrency)}
+              </span>
+              <span className="text-xs text-muted">{purchaseCostNote}</span>
+            </div>
+          </div>
         </div>
         <div>
           <div className="section-title">Blocking lines</div>
@@ -884,7 +908,7 @@ export default function ProjectSourcingPage() {
 
       {query.data && hasRows && (
         <>
-          <CapacityBanner data={query.data} />
+          <CapacityBanner data={query.data} currency={requestBody.currency} />
           <CoverageMatrix data={query.data} />
           <BomRows rows={query.data.rows} />
           <div className="text-xs text-muted">

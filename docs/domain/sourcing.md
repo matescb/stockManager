@@ -70,6 +70,20 @@ Sources: `docs/schemas/trustedparts-v2.json`,
 `backend/app/domain/sourcing/client.py:373`,
 `backend/app/domain/sourcing/optimizer.py:291`
 
+## BOM Cost Totals
+
+Project BOM capacity reports two response-level cost numbers. `total_bom_cost`
+sums required quantity times best-offer unit price for every priced row and ignores
+on-hand stock. `purchase_to_pay_cost` sums short quantity times best-offer unit
+price for priced rows that are not blocking after authorized supply; the deprecated
+`est_purchase_cost` field is the same value for one release. Both totals use Decimal
+math, prefer converted/display prices from BOM FX conversion, and skip rows whose
+display currency does not match the selected total currency.
+
+Sources: `backend/app/domain/sourcing/coverage.py:45-120`,
+`backend/app/domain/sourcing/coverage.py:123-196`,
+`backend/app/domain/sourcing/schemas.py:382-407`
+
 ## BOM Risk Flags
 
 Project sourcing keeps the five original BOM risk flags in order, then appends

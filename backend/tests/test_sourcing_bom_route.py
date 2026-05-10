@@ -205,7 +205,9 @@ def test_basic_bom_returns_enriched_lines(authed_client):
     assert data["coverage"]["best_single_distributor"] == "DigiKey"
     assert data["capacity"]["can_build_now"] == 0
     assert data["capacity"]["can_build_after_purchase"] == 6
-    assert Decimal(data["capacity"]["est_purchase_cost"]) == Decimal("6.00")
+    assert Decimal(data["capacity"]["total_bom_cost"]) == Decimal("2.00")
+    assert Decimal(data["capacity"]["purchase_to_pay_cost"]) == Decimal("2.00")
+    assert data["capacity"]["est_purchase_cost"] == data["capacity"]["purchase_to_pay_cost"]
     row = data["rows"][0]
     assert row["required"] == 20
     assert row["available"] == 0
