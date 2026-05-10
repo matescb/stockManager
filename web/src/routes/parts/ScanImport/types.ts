@@ -56,6 +56,9 @@ export type ImportResultRow = {
   part_id?: string;
   quantity_added?: number;
   stock_error?: string | null;
+  needs_disambiguation?: boolean;
+  candidate_count?: number;
+  selected_manufacturer?: string;
   error?: string;
 };
 
@@ -67,6 +70,7 @@ export type ImportResponse = {
     bag_rescan: number;
     lookup_failed: number;
     invalid: number;
+    needs_disambiguation?: number;
   };
   provider: string;
 };

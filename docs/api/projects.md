@@ -227,6 +227,62 @@ Commit the preview into `project_entries` rows.
 - Source: `backend/app/api/routes/projects.py:262-269`.
 - Service: `backend/app/domain/projects/bom_import.py::commit`.
 
+### `POST /api/projects/{project_id}/bom/import-from-provider`
+
+Create real provider-backed parts for unmatched BOM rows, then bind each
+successful row to the new part. The route is workspace-scoped, member-access,
+and rate-limited at 30 calls/minute per workspace.
+
+**Request** — `BomProviderImportIn`
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `entry_ids` | UUID[] \| null | no | `null` imports the next batch of unmatched rows in the project. A list imports only those rows. |
+
+**Response** — `200 OK` — envelope: `{ data, status }`
+
+```json
+{
+  "created": 1,
+  "pending_choices": [],
+  "failures": [{ "entry_id": "…", "mpn": "NOPE", "reason": "no match" }],
+  "provider": "mouser",
+  "truncated": false
+}
+```
+
+**Errors** — `404` for a foreign/missing project. `409 bom_provider.no_provider`
+when the workspace has no configured parts provider.
+
+**Notes**
+
+- Uses per-row savepoints; one failed lookup or write does not roll back rows that already created parts.
+- `entry_ids: null` processes at most 200 unmatched rows per call and sets `truncated: true` when more remain.
+- If an unmatched row's MPN already exists as an active part in the workspace, the row is linked to that part without another provider lookup.
+- This is not the CSV `auto_create_missing_parts` path. It does not create stub parts; failures stay unmatched.
+- Source: `backend/app/api/routes/projects.py:276-294`.
+- Service: `backend/app/domain/projects/bom_import_provider.py:21-72`.
+
+### `POST /api/projects/{project_id}/bom/import-from-provider/commit-choices`
+
+Commit manufacturer choices returned by `pending_choices`.
+
+**Request** — `BomProviderImportChoiceIn`
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `choices` | object | yes | Map of `entry_id` to chosen manufacturer. |
+
+**Response** — `200 OK` — same shape as `import-from-provider`.
+
+**Errors** — same project/provider errors as `import-from-provider`.
+
+**Notes**
+
+- Re-runs provider lookup for each selected entry and creates the part only when the selected manufacturer is present.
+- Source: `backend/app/api/routes/projects.py:297-315`.
+- Service: `backend/app/domain/projects/bom_import_provider.py:75-130`.
+
 ## BOM import presets (`/api/bom-presets`)
 
 Reusable column-mapping configs for the BOM import wizard.

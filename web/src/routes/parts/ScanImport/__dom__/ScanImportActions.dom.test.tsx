@@ -36,13 +36,40 @@ const STORAGES: StorageLocation[] = [
 
 const SUMMARY_ALL_CREATED: ImportResponse = {
   rows: [],
-  summary: { created: 3, duplicate: 0, bag_rescan: 0, lookup_failed: 0, invalid: 0 },
+  summary: {
+    created: 3,
+    duplicate: 0,
+    bag_rescan: 0,
+    lookup_failed: 0,
+    invalid: 0,
+    needs_disambiguation: 0,
+  },
   provider: "mouser",
 };
 
 const SUMMARY_WITH_DUPES: ImportResponse = {
   rows: [],
-  summary: { created: 1, duplicate: 2, bag_rescan: 0, lookup_failed: 1, invalid: 0 },
+  summary: {
+    created: 1,
+    duplicate: 2,
+    bag_rescan: 0,
+    lookup_failed: 1,
+    invalid: 0,
+    needs_disambiguation: 0,
+  },
+  provider: "mouser",
+};
+
+const SUMMARY_WITH_AMBIGUOUS: ImportResponse = {
+  rows: [],
+  summary: {
+    created: 1,
+    duplicate: 0,
+    bag_rescan: 0,
+    lookup_failed: 0,
+    invalid: 0,
+    needs_disambiguation: 1,
+  },
   provider: "mouser",
 };
 
@@ -140,6 +167,11 @@ describe("ScanImportActions", () => {
     renderActions({ lastSummary: SUMMARY_WITH_DUPES });
     expect(screen.getByText("2 duplicate")).toBeTruthy();
     expect(screen.getByText("1 not found")).toBeTruthy();
+  });
+
+  it("renders ambiguous provider match count in summary", () => {
+    renderActions({ lastSummary: SUMMARY_WITH_AMBIGUOUS });
+    expect(screen.getByText("1 ambiguous match")).toBeTruthy();
   });
 
   it("does not render duplicate count when zero", () => {

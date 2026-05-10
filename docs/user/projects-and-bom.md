@@ -67,6 +67,8 @@ Auto-created parts start with zero stock. They do not create stock entries or lo
 
 Rows with neither an MPN nor a part/name are skipped when auto-create is enabled. They do not create a part or a BOM line.
 
+CSV auto-create is an import-time stub fallback. The provider import on the BOM tab creates real provider-backed parts and is the recommended way to turn unmatched rows into library parts.
+
 ### Save your mapping as a preset
 
 If you import BOMs from the same CAD tool repeatedly, save the column mapping:
@@ -86,6 +88,20 @@ Open the project and click the **BOM** tab.
 The BOM tab has **Source BOM**, **Import BOM**, and **Add Part** buttons above the table. **Import BOM** opens the same CSV/TSV import flow as the tab, while **Add Part** lets you search existing library parts by name or MPN and add selected parts as BOM rows. The table shows thumbnails, part details, quantity, designators, and matched/unmatched status. Matched rows open the part's info page when clicked; unmatched rows stay inactive until you match them. Use the row checkboxes to select multiple BOM rows and delete them together.
 
 To remove a line, click **Delete** on its row.
+
+### Import unmatched rows from provider
+
+When your workspace has a Mouser or DigiKey parts provider configured, the BOM tab shows **Import all unmatched from provider** when there are unmatched rows.
+
+1. Click **Import all unmatched from provider** to import the next batch of unmatched rows, or click **Import from provider** on one row.
+2. The app looks up each row's MPN with the configured provider.
+3. Rows whose MPN already exists in your library are matched to that existing part.
+4. Rows with a single provider match create a linked library part with provider specs and media, then the BOM row becomes matched.
+5. Rows with more than one manufacturer choice open a picker. Select the right manufacturer and click **Import selected**.
+6. Rows the provider cannot resolve remain unmatched. The failure panel lists the MPN and reason.
+
+This provider flow does not create stub parts. Failed lookups stay on the BOM so you can retry later or match them by hand.
+Bulk provider import processes up to 200 unmatched rows at a time; run it again if the page reports remaining rows.
 
 ## Use meta-parts for "any 10k 0402 1%"
 

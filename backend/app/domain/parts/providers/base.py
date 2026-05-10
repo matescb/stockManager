@@ -13,6 +13,7 @@ class MpnLookupResult(TypedDict, total=False):
     """The shape returned by every provider's `lookup_mpn`."""
     found: bool
     result: Optional[dict]  # see schema below
+    candidates: list[dict]
     message: Optional[str]
 
 

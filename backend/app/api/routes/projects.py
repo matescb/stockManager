@@ -3,22 +3,26 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Request, status
 from sqlalchemy import or_, select
 
 from app.api._helpers import assert_child_in_parent, assert_in_workspace, require_resource_access
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.errors import ErrorCodes, raise_http
+from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import ok
 from app.core.time import utcnow
 from app.domain.parts.models import Part
 from app.domain.projects import bom_import as bom
+from app.domain.projects import bom_import_provider
 from app.domain.projects.models import Project, ProjectEntry
 from app.domain.projects.schemas import (
     BomEntryIn,
     BomEntryPatch,
     BomImportCommitIn,
     BomImportPreviewIn,
+    BomProviderImportChoiceIn,
+    BomProviderImportIn,
     MatchEntryIn,
     ProjectCreateIn,
     ProjectPatchIn,
@@ -267,6 +271,48 @@ def commit_bom(project_id: UUID, payload: BomImportCommitIn, db: DbSession, ws: 
     # the dep handle it.
     result = bom.commit(db, workspace_id=ws.id, user_id=user.id, project=project, payload=payload)
     return ok(result.model_dump())
+
+
+@router.post("/{project_id}/bom/import-from-provider")
+@limiter.limit("30/minute", key_func=workspace_key)
+def import_bom_from_provider(
+    request: Request,
+    project_id: UUID,
+    payload: BomProviderImportIn,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
+    project = assert_in_workspace(db, Project, project_id, ws.id, label="project")
+    result = bom_import_provider.import_unmatched_from_provider(
+        db,
+        workspace=ws,
+        user_id=user.id,
+        project=project,
+        entry_ids=payload.entry_ids,
+    )
+    return ok(result.model_dump(mode="json"))
+
+
+@router.post("/{project_id}/bom/import-from-provider/commit-choices")
+@limiter.limit("30/minute", key_func=workspace_key)
+def commit_bom_provider_choices(
+    request: Request,
+    project_id: UUID,
+    payload: BomProviderImportChoiceIn,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
+    project = assert_in_workspace(db, Project, project_id, ws.id, label="project")
+    result = bom_import_provider.commit_provider_import_choices(
+        db,
+        workspace=ws,
+        user_id=user.id,
+        project=project,
+        choices=payload.choices,
+    )
+    return ok(result.model_dump(mode="json"))
 
 
 @router.post("/{project_id}/entries/{entry_id}/match")

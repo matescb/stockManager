@@ -81,6 +81,24 @@ const parts = [
   part({ id: "part-2", name: "Regulator", mpn: "LM1117", manufacturer: "TI" }),
 ];
 
+type ImportResponse = {
+  created: number;
+  pending_choices: Array<{
+    entry_id: string;
+    mpn: string;
+    candidates: Array<{
+      manufacturer: string;
+      mpn: string | null;
+      description: string | null;
+      source_url: string | null;
+      image_url: string | null;
+    }>;
+  }>;
+  failures: Array<{ entry_id: string; mpn: string; reason: string }>;
+  provider: "none" | "mouser" | "digikey";
+  truncated: boolean;
+};
+
 function renderPage() {
   const client = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
@@ -98,12 +116,20 @@ function renderPage() {
   );
 }
 
-function mockApi(entriesRef: { current: ProjectEntry[] }) {
+function mockApi(
+  entriesRef: { current: ProjectEntry[] },
+  options: {
+    partsProvider?: "none" | "mouser" | "digikey";
+    importResponse?: ImportResponse;
+    commitResponse?: ImportResponse;
+  } = {},
+) {
   vi.spyOn(api, "get").mockImplementation(async path => {
     if (path === `/projects/${projectId}/entries`) return entriesRef.current as never;
     if (path === "/parts?limit=200") return parts as never;
     if (path === "/workspaces/current") {
       return {
+        parts_provider: options.partsProvider ?? "none",
         sourcing_country_code: "US",
         sourcing_currency_code: "USD",
         sourcing_preferred_distributors: [],
@@ -116,6 +142,35 @@ function mockApi(entriesRef: { current: ProjectEntry[] }) {
     const id = String(path).split("/").pop();
     entriesRef.current = entriesRef.current.filter(entry => entry.id !== id);
     return null as never;
+  });
+  vi.spyOn(api, "post").mockImplementation(async (path, payload) => {
+    if (path === `/projects/${projectId}/bom/import-from-provider`) {
+      return (options.importResponse ?? {
+        created: 0,
+        pending_choices: [],
+        failures: [],
+        provider: options.partsProvider ?? "none",
+        truncated: false,
+      }) as never;
+    }
+    if (path === `/projects/${projectId}/bom/import-from-provider/commit-choices`) {
+      return (options.commitResponse ?? {
+        created: 0,
+        pending_choices: [],
+        failures: [],
+        provider: options.partsProvider ?? "none",
+        truncated: false,
+      }) as never;
+    }
+    if (String(path).includes("/match")) {
+      const entryId = String(path).split("/entries/")[1]?.split("/")[0];
+      const partId = (payload as { part_id?: string }).part_id;
+      entriesRef.current = entriesRef.current.map(entry =>
+        entry.id === entryId ? { ...entry, entry_type: "part", part_id: partId ?? null } : entry,
+      );
+      return {} as never;
+    }
+    throw new Error(`unexpected POST ${path}`);
   });
 }
 
@@ -195,6 +250,105 @@ describe("ProjectBOM", () => {
     await waitFor(() => {
       expect(screen.queryByText("STM32")).toBeNull();
       expect(screen.queryByText("Regulator")).toBeNull();
+    });
+  });
+
+  it("bulk button hidden when no provider configured", async () => {
+    mockApi({
+      current: [
+        bomEntry({ id: "entry-unmatched", entry_type: "unmatched", part_id: null, name: "RC0402" }),
+      ],
+    });
+
+    renderPage();
+
+    expect(await screen.findByText("RC0402")).toBeDefined();
+    expect(screen.queryByRole("button", { name: /Import all unmatched from/ })).toBeNull();
+  });
+
+  it("bulk button hidden when no unmatched rows", async () => {
+    mockApi({ current: [bomEntry({})] }, { partsProvider: "mouser" });
+
+    renderPage();
+
+    expect(await screen.findByText("STM32")).toBeDefined();
+    expect(screen.queryByRole("button", { name: /Import all unmatched from/ })).toBeNull();
+  });
+
+  it("failures panel renders MPN + reason for each failure", async () => {
+    mockApi(
+      {
+        current: [
+          bomEntry({ id: "entry-unmatched", entry_type: "unmatched", part_id: null, name: "NOPE" }),
+        ],
+      },
+      {
+        partsProvider: "mouser",
+        importResponse: {
+          created: 0,
+          pending_choices: [],
+          failures: [{ entry_id: "entry-unmatched", mpn: "NOPE", reason: "no match for MPN" }],
+          provider: "mouser",
+          truncated: false,
+        },
+      },
+    );
+    const user = userEvent.setup();
+
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Import all unmatched from Mouser" }));
+    expect(await screen.findByText("Provider import failures")).toBeDefined();
+    expect(screen.getAllByText("NOPE").length).toBeGreaterThan(0);
+    expect(screen.getByText("no match for MPN")).toBeDefined();
+  });
+
+  it("ambiguity modal opens with candidates and posts commit-choices on confirm", async () => {
+    mockApi(
+      {
+        current: [
+          bomEntry({ id: "entry-unmatched", entry_type: "unmatched", part_id: null, name: "AMB-1" }),
+        ],
+      },
+      {
+        partsProvider: "mouser",
+        importResponse: {
+          created: 0,
+          pending_choices: [{
+            entry_id: "entry-unmatched",
+            mpn: "AMB-1",
+            candidates: [
+              { manufacturer: "Alpha", mpn: "AMB-1", description: "Alpha part", source_url: null, image_url: null },
+              { manufacturer: "Beta", mpn: "AMB-1", description: "Beta part", source_url: null, image_url: null },
+            ],
+          }],
+          failures: [],
+          provider: "mouser",
+          truncated: false,
+        },
+        commitResponse: {
+          created: 1,
+          pending_choices: [],
+          failures: [],
+          provider: "mouser",
+          truncated: false,
+        },
+      },
+    );
+    const user = userEvent.setup();
+
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Import all unmatched from Mouser" }));
+    expect(await screen.findByRole("dialog", { name: "Choose manufacturers" })).toBeDefined();
+    await user.click(screen.getByLabelText("Beta"));
+    await user.click(screen.getByRole("button", { name: "Import selected" }));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        `/projects/${projectId}/bom/import-from-provider/commit-choices`,
+        { choices: { "entry-unmatched": "Beta" } },
+      );
     });
   });
 });

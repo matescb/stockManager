@@ -25,14 +25,12 @@ from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import ok
 from app.core.secrets import decrypt
-from app.core.time import utcnow
-from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import BulkImportIdempotency, Part
 from app.domain.parts.providers import make_provider
 from app.domain.parts.schemas import QuickRemoveBagIn, ScanImportIn, ScanImportRow
-from app.domain.parts.services.assets import fetch_provider_asset
 from app.domain.parts.services.bag_signature import compute_bag_signature
 from app.domain.parts.services.provider_cache import lookup_with_cache
+from app.domain.parts.services.provider_import import create_from_provider_lookup
 from app.domain.stock.models import StockEntry
 from app.domain.stock.schemas import AddStockIn, LotInput
 from app.domain.stock.service import StockError, add_stock
@@ -333,6 +331,8 @@ def bulk_import_from_scan(
             continue
 
         r = lookup["result"]
+        candidate_count = len(lookup.get("candidates") or [])
+        needs_disambiguation = candidate_count > 1
         # Name: description if we have it, else MPN. Both providers
         # typically return a useful description.
         name = (r.get("description") or "").strip() or mpn
@@ -364,13 +364,19 @@ def bulk_import_from_scan(
             })
             continue
 
-        out_rows.append({
+        created_row = {
             "mpn": mpn,
             "status": "created",
             "part_id": str(p.id),
             "quantity_added": qty_added,
             "stock_error": stock_error,
-        })
+        }
+        if needs_disambiguation:
+            created_row["needs_disambiguation"] = True
+            created_row["candidate_count"] = candidate_count
+            if r.get("manufacturer"):
+                created_row["selected_manufacturer"] = r["manufacturer"]
+        out_rows.append(created_row)
 
     # Tear down the executor without waiting for any hung worker thread.
     # `cancel_futures=True` cancels still-queued futures; running ones
@@ -393,11 +399,14 @@ def bulk_import_from_scan(
         "created":                  sum(1 for r in out_rows if r["status"] == "created"),
         "duplicate":                sum(1 for r in out_rows if r["status"] == "duplicate"),
         "bag_rescan":               sum(1 for r in out_rows if r["status"] == "bag_rescan"),
-        "bag_signature_mismatch":   sum(1 for r in out_rows if r["status"] == "bag_signature_mismatch"),
+        "bag_signature_mismatch":   sum(
+            1 for r in out_rows if r["status"] == "bag_signature_mismatch"
+        ),
         "lookup_failed":            sum(1 for r in out_rows if r["status"] == "lookup_failed"),
         "invalid":                  sum(1 for r in out_rows if r["status"] == "invalid"),
         "row_failed":               sum(1 for r in out_rows if r["status"] == "row_failed"),
         "deadline_exceeded":        sum(1 for r in out_rows if r["status"] == "deadline_exceeded"),
+        "needs_disambiguation":     sum(1 for r in out_rows if r.get("needs_disambiguation")),
     }
     result_payload = {"rows": out_rows, "summary": summary, "provider": provider.name}
 
@@ -446,78 +455,15 @@ def _import_one_scan_row(
     failure — the caller's `with db.begin_nested():` rolls back this
     row only.
     """
-    r = lookup_result
-    name = (r.get("description") or "").strip() or mpn
-    if len(name) > 300:
-        name = name[:300]
-
-    p = Part(
+    p = create_from_provider_lookup(
+        db,
         workspace_id=ws.id,
-        part_type="linked",
-        name=name,
-        manufacturer=(r.get("manufacturer") or None),
-        mpn=(r.get("mpn") or mpn),
-        description=(r.get("description") or None),
-        footprint=(r.get("footprint") or None),
-        attrition_percentage=0,
-        attrition_min_quantity=0,
+        user_id=user.id,
+        provider_name=provider_name,
+        mpn=mpn,
+        lookup_result=lookup_result,
         default_storage_location_id=row.storage_location_id,
-        default_storage_mandatory=False,
-        serialized=False,
-        linked_provider=provider_name,
-        linked_external_id=(r.get("mpn") or mpn),
-        last_refresh_at=utcnow(),
-        description_locally_edited=False,
-        created_by=user.id,
-        updated_by=user.id,
     )
-    db.add(p)
-    db.flush()  # assign p.id for the custom_fields below
-
-    # Materialise spec rows + image/datasheet as `source='provider'`,
-    # mirroring the refresh-from-provider path. Skip empties.
-    for s in (r.get("specs") or []):
-        key = (s.get("key") or "").strip()
-        value = (s.get("value") or "").strip()
-        if not key or not value:
-            continue
-        db.add(CustomField(
-            workspace_id=ws.id,
-            object_type="part",
-            object_id=p.id,
-            key=key,
-            value=value,
-            source="provider",
-            created_by=user.id,
-            updated_by=user.id,
-        ))
-    # Download image + datasheet locally so we don't depend on the
-    # provider's CDN at render time. Failed downloads fall back to
-    # the original URL so the worst case is unchanged from before.
-    if r.get("image_url"):
-        local = fetch_provider_asset(r["image_url"], str(ws.id), "image")
-        db.add(CustomField(
-            workspace_id=ws.id,
-            object_type="part",
-            object_id=p.id,
-            key="image_url",
-            value=local or r["image_url"],
-            source="provider",
-            created_by=user.id,
-            updated_by=user.id,
-        ))
-    if r.get("datasheet_url"):
-        local = fetch_provider_asset(r["datasheet_url"], str(ws.id), "datasheet")
-        db.add(CustomField(
-            workspace_id=ws.id,
-            object_type="part",
-            object_id=p.id,
-            key="datasheet_url",
-            value=local or r["datasheet_url"],
-            source="provider",
-            created_by=user.id,
-            updated_by=user.id,
-        ))
 
     # Initial stock entry — when the bag's Q field carries a count
     # (or the operator entered one), the part lands on-hand right
