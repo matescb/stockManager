@@ -21,6 +21,7 @@ How to handle ops scenarios. Each runbook follows the template in [STYLE.md](../
 | [backup-restore](backup-restore.md) | Routine / SEV-1 | Verify backups, manually trigger, restore from a daily/weekly/monthly snapshot |
 | [prod-rollback](prod-rollback.md) | SEV-1 | Roll back a bad deploy via revert-and-redeploy or emergency `git reset --hard` on the VPS |
 | [migration-recovery](migration-recovery.md) | SEV-1 | Recover from a failed alembic migration; drain mode, point-in-time restore |
+| [maintenance-mode](maintenance-mode.md) | Routine / SEV-1 | Toggle Apache maintenance mode and verify the backend outage fallback |
 | [sentry-triage](sentry-triage.md) | SEV-2/3 | Issue → release → sourcemap workflow for resolving production exceptions |
 | [on-call-quickstart](on-call-quickstart.md) | n/a | Alerts, dashboards, escalation, what to do in the first 5 minutes of a page |
 | [incident-response](incident-response.md) | SEV-1/2 | Severity triage, comms cadence, post-mortem template |

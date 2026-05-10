@@ -418,6 +418,43 @@ jobs:
             -v "$PWD/deploy/nginx-web.conf:/etc/nginx/conf.d/default.conf:ro" \
             nginx:alpine nginx -t
 
+      # FB-005: lint the Apache vhosts and maintenance drop-in before they
+      # reach /etc/apache2 on the VPS. Enable the modules referenced by the
+      # checked-in configs so apache2ctl validates the same directive set.
+      - name: Lint Apache configs
+        run: |
+          docker run --rm \
+            -v "$PWD/deploy:/work/deploy:ro" \
+            debian:bookworm-slim sh -ec '
+              apt-get update >/dev/null
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends apache2 ca-certificates openssl >/dev/null
+              a2enmod headers proxy proxy_http rewrite ssl >/dev/null
+              mkdir -p /etc/letsencrypt/live/parts.matescb.cz
+              openssl req -x509 -nodes -newkey rsa:2048 \
+                -keyout /etc/letsencrypt/live/parts.matescb.cz/privkey.pem \
+                -out /etc/letsencrypt/live/parts.matescb.cz/fullchain.pem \
+                -subj /CN=parts.matescb.cz -days 1 >/dev/null 2>&1
+              touch /etc/letsencrypt/options-ssl-apache.conf
+              cp /work/deploy/parts.matescb.cz.conf /etc/apache2/sites-available/parts.matescb.cz.conf
+              cp /work/deploy/parts.matescb.cz-le-ssl.conf /etc/apache2/sites-available/parts.matescb.cz-le-ssl.conf
+              cp /work/deploy/parts.matescb.cz.maintenance.conf /etc/apache2/conf-available/parts-maintenance.conf
+              a2ensite parts.matescb.cz parts.matescb.cz-le-ssl >/dev/null
+              a2enconf parts-maintenance >/dev/null
+              apache2ctl configtest
+            '
+
+      # FB-005: the outage page is served directly by Apache, outside the SPA
+      # stack, so catch malformed HTML in the deploy validation gate.
+      - name: Lint maintenance HTML
+        run: |
+          docker run --rm \
+            -v "$PWD/deploy/maintenance.html:/work/maintenance.html:ro" \
+            debian:bookworm-slim sh -ec '
+              apt-get update >/dev/null
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tidy >/dev/null
+              tidy -q -e /work/maintenance.html
+            '
+
       # INFRA-005 (issue #46) smoke tests — verify the built images actually
       # start and have the expected entrypoint files. Catches missing modules
       # / wrong WORKDIR / broken bundles that pure `build` doesn't surface.
@@ -646,6 +683,13 @@ jobs:
             # deploys.
             export SENTRY_RELEASE
             SENTRY_RELEASE=$(git rev-parse --short=12 HEAD)
+
+            # FB-005: keep users on the static Apache page during the deploy
+            # window. The trap is deliberately registered before the first
+            # deploy-side effect so failed dumps, builds, migrations, or health
+            # gates do not leave maintenance mode enabled indefinitely.
+            trap 'sudo a2disconf parts-maintenance && sudo systemctl reload apache2 || true' EXIT
+            sudo a2enconf parts-maintenance && sudo systemctl reload apache2
 
             # Pre-deploy DB snapshot (INFRA2-001 / Infra CRIT-1).
             # Runs before `docker compose up` so the pre-migration state
