@@ -238,6 +238,9 @@ them, that's the bug.
 - **Periodic jobs run through one scheduler path.** ADR-0021 chooses a
   `backend-cron` sidecar + CLI entry point; don't add parallel APScheduler,
   FastAPI lifespan, host cron, or systemd-timer jobs for app maintenance.
+- **Active-list migrations must preserve saved workspace defaults.** When a
+  new active list is introduced, backfill it from any existing per-workspace
+  value; FB-003a missed this for sourcing distributors and FB-007 fixed it.
 - **Two backend-cron sidecars run separate cadences.** `backend-cron` handles
   the hourly cache sweep and `backend-cron-alerts` handles the 15-minute alert
   evaluator. They share the same `run_job` registry per ADR-0021; adding a

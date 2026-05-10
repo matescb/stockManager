@@ -248,6 +248,35 @@ describe("ProjectSourcingPage", () => {
     expect((screen.getByRole("checkbox", { name: "DigiKey" }) as HTMLInputElement).checked).toBe(false);
   });
 
+  it("partial-overlap distributors default to saved active intersection", async () => {
+    mockReads({
+      sourcing_preferred_distributors: ["A", "B", "C"],
+      active_distributors: ["A", "B", "X"],
+    });
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+
+    renderPage();
+
+    expect((await screen.findByRole("checkbox", { name: "A" }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("checkbox", { name: "B" }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("checkbox", { name: "X" }) as HTMLInputElement).checked).toBe(false);
+    expect(await screen.findByText("Workspace preferred distributors are not all active; using active distributors only.")).toBeDefined();
+  });
+
+  it("no-overlap distributors fall back to first active distributor", async () => {
+    mockReads({
+      sourcing_preferred_distributors: ["X", "Y"],
+      active_distributors: ["A", "B"],
+    });
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+
+    renderPage();
+
+    expect((await screen.findByRole("checkbox", { name: "A" }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("checkbox", { name: "B" }) as HTMLInputElement).checked).toBe(false);
+    expect(await screen.findByText("Workspace preferred distributors are not all active; using active distributors only.")).toBeDefined();
+  });
+
   it("if default not in active list, falls back to first item with warning visible", async () => {
     mockReads({
       sourcing_currency_code: "GBP",
