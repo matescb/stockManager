@@ -151,6 +151,8 @@ def list_alerts(
     part_id: UUID | None = None,
     project_id: UUID | None = None,
     include_archived: bool = False,
+    limit: int = 100,
+    offset: int = 0,
 ) -> list[SourcingAlert]:
     if part_id is not None:
         assert_in_workspace(db, Part, part_id, workspace.id, label="part")
@@ -169,6 +171,7 @@ def list_alerts(
     if project_id is not None:
         stmt = stmt.where(SourcingAlert.project_id == project_id)
     stmt = stmt.order_by(SourcingAlert.created_at.desc(), SourcingAlert.id)
+    stmt = stmt.limit(limit).offset(offset)
     return list(db.execute(stmt).scalars())
 
 
@@ -182,6 +185,7 @@ def get_alert(
         select(SourcingAlert).where(
             SourcingAlert.id == alert_id,
             SourcingAlert.workspace_id == workspace.id,
+            SourcingAlert.archived_at.is_(None),
         )
     ).scalar_one_or_none()
     if alert is None:

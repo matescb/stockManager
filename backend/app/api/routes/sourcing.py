@@ -164,6 +164,8 @@ def list_sourcing_alerts(
     part_id: UUID | None = None,
     project_id: UUID | None = None,
     include_archived: bool = False,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
     alerts = sourcing_service.list_alerts(
@@ -174,6 +176,8 @@ def list_sourcing_alerts(
         part_id=part_id,
         project_id=project_id,
         include_archived=include_archived,
+        limit=limit,
+        offset=offset,
     )
     return ok([_alert_payload(alert) for alert in alerts])
 

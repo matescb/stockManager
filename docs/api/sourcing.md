@@ -23,6 +23,8 @@ List current workspace sourcing alerts.
 | `part_id` | `uuid` | No | Filters part-scoped alerts. |
 | `project_id` | `uuid` | No | Filters project-scoped alerts. |
 | `include_archived` | `boolean` | No | Defaults to `false`; archived rows are soft-deleted alerts. |
+| `limit` | `integer` | No | Defaults to `100`; min `1`, max `500`. |
+| `offset` | `integer` | No | Defaults to `0`; deterministic order is newest first. |
 
 **Response** — `200 OK` (envelope: `{ data, status }`)
 
@@ -46,6 +48,7 @@ List current workspace sourcing alerts.
 **Notes**
 
 - The service filters every query by `workspace_id`; archived rows are excluded unless requested.
+- `include_archived=true` is list-only. GET-by-id, PATCH, and DELETE treat archived rows as not found.
 - Source: `backend/app/api/routes/sourcing.py:156-178`.
 - Service: `backend/app/domain/sourcing/service.py:145-172`.
 
@@ -76,7 +79,7 @@ Create a workspace-scoped alert definition.
 | `stock_above` | part | `{ "qty": 50 }`, integer `qty >= 0`. |
 | `back_in_stock` | part | `{}`. |
 | `out_of_authorized_stock` | part | `{}`. |
-| `price_changed` | part | `{ "delta_pct": 5 }`, decimal `0 < delta_pct <= 100`. |
+| `price_changed` | part | `{ "delta_pct": 5 }`, decimal `0 < delta_pct <= 100`. V1 is relative-change only; absolute target-price thresholds are out of scope for TP-502. |
 | `bom_buyable` | project | `{ "build_quantity": 10 }`, integer `build_quantity >= 1`. |
 
 **Response** — `200 OK` (envelope: `{ data, status }`)
@@ -91,7 +94,7 @@ Shape matches one item from `GET /api/sourcing/alerts`.
 
 **Notes**
 
-- `bom_buyable` rejects sourcing filters; stock threshold alerts silently drop sourcing filters.
+- `bom_buyable` rejects sourcing filters; stock threshold alerts silently drop sourcing filters because they evaluate internal stock only.
 - Empty threshold objects are intentionally valid for transition alerts, so validation is mapped per type instead of using a nested discriminator.
 - Source: `backend/app/api/routes/sourcing.py:181-199`.
 - Service: `backend/app/domain/sourcing/service.py:114-142`.
@@ -110,7 +113,7 @@ Shape matches one item from `GET /api/sourcing/alerts`.
 
 **Errors**
 
-- `404 Not Found` — `alert_id` is missing or belongs to another workspace.
+- `404 Not Found` — `alert_id` is missing, archived, or belongs to another workspace.
 
 **Notes**
 
@@ -131,7 +134,7 @@ Shape matches one item from `GET /api/sourcing/alerts`.
 
 **Errors**
 
-- `404 Not Found` — `alert_id`, target part/project, or a notify user is missing or foreign to the workspace.
+- `404 Not Found` — `alert_id` is missing, archived, or foreign to the workspace; target part/project or notify user is missing or foreign.
 - `422 Unprocessable Entity` — invalid threshold, invalid target scope, `alert_type` in the patch body, or malformed body.
 
 **Notes**
@@ -153,7 +156,7 @@ Returns the archived alert row.
 
 **Errors**
 
-- `404 Not Found` — `alert_id` is missing or belongs to another workspace.
+- `404 Not Found` — `alert_id` is missing, archived, or belongs to another workspace.
 
 **Notes**
 

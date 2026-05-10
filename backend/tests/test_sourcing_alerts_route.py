@@ -288,6 +288,58 @@ def test_archived_excluded_from_default_list(authed_client):
     assert alert["id"] not in {item["id"] for item in data}
 
 
+def test_get_archived_returns_404(authed_client):
+    part_id = create_part(authed_client, name="Get archived target")
+    alert = _create_stock_alert(authed_client, part_id)
+    authed_client.delete(f"/api/sourcing/alerts/{alert['id']}")
+
+    r = authed_client.get(f"/api/sourcing/alerts/{alert['id']}")
+
+    assert r.status_code == 404, r.text
+    assert r.json()["status"]["category"] == "not_found"
+
+
+def test_patch_archived_returns_404(authed_client):
+    part_id = create_part(authed_client, name="Patch archived target")
+    alert = _create_stock_alert(authed_client, part_id)
+    authed_client.delete(f"/api/sourcing/alerts/{alert['id']}")
+
+    r = authed_client.patch(
+        f"/api/sourcing/alerts/{alert['id']}",
+        json={"enabled": False},
+    )
+
+    assert r.status_code == 404, r.text
+    assert r.json()["status"]["category"] == "not_found"
+
+
+def test_delete_archived_returns_404(authed_client):
+    part_id = create_part(authed_client, name="Delete archived target")
+    alert = _create_stock_alert(authed_client, part_id)
+    authed_client.delete(f"/api/sourcing/alerts/{alert['id']}")
+
+    r = authed_client.delete(f"/api/sourcing/alerts/{alert['id']}")
+
+    assert r.status_code == 404, r.text
+    assert r.json()["status"]["category"] == "not_found"
+
+
+def test_list_alerts_paginates(authed_client):
+    part_id = create_part(authed_client, name="Paged alert target")
+    alerts = [
+        _create_stock_alert(authed_client, part_id, threshold={"qty": qty})
+        for qty in range(3)
+    ]
+
+    first = authed_client.get("/api/sourcing/alerts?limit=1").json()["data"]
+    second = authed_client.get("/api/sourcing/alerts?limit=1&offset=1").json()["data"]
+
+    assert len(first) == 1
+    assert len(second) == 1
+    assert first[0]["id"] != second[0]["id"]
+    assert {first[0]["id"], second[0]["id"]}.issubset({alert["id"] for alert in alerts})
+
+
 def test_rate_limit_30_per_minute(authed_client, limiter_enabled):
     part_id = create_part(authed_client, name="Rate limited alert target")
     for qty in range(30):
