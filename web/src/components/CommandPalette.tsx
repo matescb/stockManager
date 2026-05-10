@@ -4,6 +4,7 @@ import { Command } from "cmdk";
 import { useQuery } from "@tanstack/react-query";
 import {
   BarChart3,
+  Bell,
   Boxes,
   FolderKanban,
   Hammer,
@@ -95,6 +96,9 @@ export default function CommandPalette() {
           </Command.Item>
           <Command.Item value="nav reports" onSelect={() => go("/reports")}>
             <BarChart3 size={14} /> Reports
+          </Command.Item>
+          <Command.Item value="nav sourcing alerts notifications" onSelect={() => go("/sourcing/alerts")}>
+            <Bell size={14} /> Alerts
           </Command.Item>
           <Command.Item
             value="nav settings workspace members"

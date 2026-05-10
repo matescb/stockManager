@@ -181,6 +181,8 @@ function apiError(status: number, message: string) {
 function mockReads(workspaceOverrides: Record<string, unknown> = {}) {
   vi.spyOn(api, "get").mockImplementation(async path => {
     if (path === "/workspaces/current") return workspace(workspaceOverrides) as never;
+    if (path === "/workspaces/members") return [] as never;
+    if (String(path).startsWith("/projects?")) return [project()] as never;
     if (path === `/projects/${projectId}`) return project() as never;
     throw new Error(`unexpected GET ${path}`);
   });
@@ -401,6 +403,23 @@ describe("ProjectSourcingPage", () => {
         }),
       );
     });
+  });
+
+  it("Set BOM-buyable alert opens modal with project and build quantity pre-filled", async () => {
+    const user = userEvent.setup();
+    mockReads();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+
+    renderPage();
+
+    await screen.findByText("BOM rows");
+    await user.clear(screen.getByLabelText("Build quantity"));
+    await user.type(screen.getByLabelText("Build quantity"), "12");
+    await user.click(screen.getByRole("button", { name: "Set BOM-buyable alert" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Set BOM-buyable alert" });
+    expect((within(dialog).getByLabelText("Project") as HTMLSelectElement).value).toBe(projectId);
+    expect((within(dialog).getByLabelText("Build quantity") as HTMLInputElement).value).toBe("12");
   });
 
   it("Source BOM button is disabled when workspace lacks sourcing creds", async () => {

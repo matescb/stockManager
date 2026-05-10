@@ -97,6 +97,7 @@ const ExpiringLotsReport = lazy(() =>
 );
 const SourcingRiskReport = lazy(() => import("@/routes/reports/SourcingRiskReport"));
 const ReplenishmentCostReport = lazy(() => import("@/routes/reports/ReplenishmentCostReport"));
+const AlertsPage = lazy(() => import("@/routes/sourcing/alerts/AlertsPage"));
 
 const ProjectsList = lazy(() => import("@/routes/projects/ProjectsList"));
 const ProjectCreate = lazy(() => import("@/routes/projects/ProjectCreate"));
@@ -278,6 +279,7 @@ export default function App() {
               <Route path="expiring" element={<LazyRoute><ExpiringLotsReport /></LazyRoute>} />
               <Route path="sourcing-risk" element={<LazyRoute><SourcingRiskReport /></LazyRoute>} />
             </Route>
+            <Route path="/sourcing/alerts" element={<LazyRoute><AlertsPage /></LazyRoute>} />
 
             <Route path="/projects" element={<LazyRoute><ProjectsList /></LazyRoute>} />
             <Route path="/projects/archived" element={<LazyRoute><ProjectsList archived /></LazyRoute>} />
