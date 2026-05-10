@@ -1,7 +1,7 @@
 """Pydantic DTOs for TrustedParts sourcing."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
@@ -23,6 +23,13 @@ class SourcingPriceBreak(BaseModel):
     unit_price: float
 
 
+class SourcingConvertedPriceBreak(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    quantity: int
+    unit_price: Decimal
+
+
 class SourcingBomPriceBreakOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -41,7 +48,12 @@ class SourcingDistributor(BaseModel):
     stock: int | None = None
     unit_price: float | None = None
     currency: str | None = None
+    unit_price_converted: Decimal | None = None
+    currency_displayed: str | None = None
+    fx_converted: bool | None = None
+    fx_rate_date: date | None = None
     price_breaks: list[SourcingPriceBreak] = Field(default_factory=list)
+    price_breaks_converted: list[SourcingConvertedPriceBreak] | None = None
     product_url: str | None = None
 
 

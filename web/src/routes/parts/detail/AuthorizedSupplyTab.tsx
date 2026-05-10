@@ -19,6 +19,17 @@ import {
 } from "./CreateOrderLineModal";
 
 type SourcingReason = "ok" | "no_mpn";
+type FxStatus = "unavailable";
+type WirePrice = number | string;
+
+type SourcingWorkspaceSettings = {
+  sourcing_currency_code?: string | null;
+};
+
+type SourcingPriceBreakWire = {
+  quantity: number;
+  unit_price: WirePrice;
+};
 
 type SourcingDistributor = {
   name: string;
@@ -27,9 +38,14 @@ type SourcingDistributor = {
   moq?: number | null;
   lead_time_days?: number | null;
   stock?: number | null;
-  unit_price?: number | null;
+  unit_price?: WirePrice | null;
   currency?: string | null;
-  price_breaks?: SourcingPriceBreak[] | null;
+  unit_price_converted?: WirePrice | null;
+  currency_displayed?: string | null;
+  fx_converted?: boolean | null;
+  fx_rate_date?: string | null;
+  price_breaks?: SourcingPriceBreakWire[] | null;
+  price_breaks_converted?: SourcingPriceBreakWire[] | null;
   product_url?: string | null;
 };
 
@@ -57,6 +73,7 @@ type SourcingResponse = {
     attribution?: string | null;
   };
   reason: SourcingReason;
+  fx_status?: FxStatus | null;
 };
 
 type SupplyRow = {
@@ -70,6 +87,10 @@ type SupplyRow = {
   priceBreaks: SourcingPriceBreak[];
   leadTimeDays: number | null;
   link: string | null;
+  originalUnitPrice: number | null;
+  originalCurrency: string | null;
+  fxConverted: boolean;
+  fxRateDate: string | null;
 };
 
 const QUANTITY_PRESETS = [1, 10, 100, 1000] as const;
@@ -91,6 +112,26 @@ function formatPriceValue(value: number, currency: string | null): string {
   return currency ? `${price} ${currency}` : price;
 }
 
+function toFiniteNumber(value: WirePrice | null | undefined): number | null {
+  if (value == null) return null;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalisePriceBreaks(value: SourcingPriceBreakWire[] | null | undefined): SourcingPriceBreak[] {
+  return (value ?? []).flatMap(priceBreak => {
+    const unitPrice = toFiniteNumber(priceBreak.unit_price);
+    return unitPrice == null ? [] : [{ quantity: priceBreak.quantity, unit_price: unitPrice }];
+  });
+}
+
+function fxTooltip(row: SupplyRow): string {
+  const original = row.originalUnitPrice == null
+    ? row.originalCurrency ?? "native currency"
+    : formatPriceValue(row.originalUnitPrice, row.originalCurrency);
+  return `Converted from ${original} via ECB daily rate (${row.fxRateDate ?? "unknown date"})`;
+}
+
 function formatLeadTime(days: number | null): string {
   if (days == null) return "—";
   return days === 1 ? "1 day" : `${days.toLocaleString()} days`;
@@ -106,24 +147,54 @@ function flattenOffers(data: SourcingResponse | undefined): SupplyRow[] {
   if (!data || data.reason !== "ok") return [];
 
   return data.offers.flatMap((offer, offerIndex) =>
-    offer.distributors.map((distributor, distributorIndex) => ({
-      id: [
-        offer.mpn,
-        distributor.name,
-        distributor.sku ?? "sku",
-        offerIndex,
-        distributorIndex,
-      ].join(":"),
-      distributor: distributor.name,
-      stock: distributor.stock ?? null,
-      moq: distributor.moq ?? null,
-      packaging: distributor.packaging ?? null,
-      unitPrice: distributor.unit_price ?? null,
-      currency: distributor.currency ?? null,
-      priceBreaks: distributor.price_breaks ?? [],
-      leadTimeDays: distributor.lead_time_days ?? null,
-      link: distributor.product_url ?? offer.links?.primary ?? data.links?.primary ?? null,
-    })),
+    offer.distributors.map((distributor, distributorIndex) => {
+      const originalUnitPrice = toFiniteNumber(distributor.unit_price);
+      const convertedUnitPrice = toFiniteNumber(distributor.unit_price_converted);
+      const fxConverted = distributor.fx_converted === true && convertedUnitPrice !== null;
+      return {
+        id: [
+          offer.mpn,
+          distributor.name,
+          distributor.sku ?? "sku",
+          offerIndex,
+          distributorIndex,
+        ].join(":"),
+        distributor: distributor.name,
+        stock: distributor.stock ?? null,
+        moq: distributor.moq ?? null,
+        packaging: distributor.packaging ?? null,
+        unitPrice: fxConverted ? convertedUnitPrice : originalUnitPrice,
+        currency: fxConverted
+          ? distributor.currency_displayed ?? distributor.currency ?? null
+          : distributor.currency ?? null,
+        priceBreaks: fxConverted
+          ? normalisePriceBreaks(distributor.price_breaks_converted)
+          : normalisePriceBreaks(distributor.price_breaks),
+        leadTimeDays: distributor.lead_time_days ?? null,
+        link: distributor.product_url ?? offer.links?.primary ?? data.links?.primary ?? null,
+        originalUnitPrice,
+        originalCurrency: distributor.currency ?? null,
+        fxConverted,
+        fxRateDate: distributor.fx_rate_date ?? null,
+      };
+    }),
+  );
+}
+
+function PriceCell({ row }: { row: SupplyRow }) {
+  return (
+    <span className="inline-flex items-center justify-end gap-1.5">
+      <span>{formatPrice(row)}</span>
+      {row.fxConverted && (
+        <span
+          className="inline-flex h-5 w-5 items-center justify-center rounded border border-accent/40 text-accent"
+          title={fxTooltip(row)}
+          aria-label={fxTooltip(row)}
+        >
+          <RefreshCw size={12} aria-hidden="true" />
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -164,8 +235,16 @@ function rateLimitMessage(seconds: number): string {
 export function AuthorizedSupplyTab({ partId }: { partId: string }) {
   const queryClient = useQueryClient();
   const { workspaceId } = useAuth();
-  const queryKey = useWsKey("part", partId, "sourcing");
-  const invalidateKey = wsKeyOf(workspaceId, "part", partId, "sourcing");
+  const workspaceQuery = useQuery({
+    queryKey: useWsKey("ws", "current"),
+    queryFn: () => api.get<SourcingWorkspaceSettings>("/workspaces/current"),
+  });
+  const workspaceCurrency = workspaceQuery.data?.sourcing_currency_code?.trim().toUpperCase() || null;
+  const sourcingPath = workspaceCurrency
+    ? `/parts/${partId}/sourcing?currency=${encodeURIComponent(workspaceCurrency)}`
+    : `/parts/${partId}/sourcing`;
+  const queryKey = useWsKey("part", partId, "sourcing", workspaceCurrency ?? "native");
+  const invalidateKey = wsKeyOf(workspaceId, "part", partId, "sourcing", workspaceCurrency ?? "native");
   const [selectedDistributors, setSelectedDistributors] = useState<Set<string>>(() => new Set());
   const [quantity, setQuantity] = useState(1);
   const [customQuantity, setCustomQuantity] = useState("1");
@@ -174,7 +253,8 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
   const query = useQuery({
     queryKey,
     queryFn: ({ signal }) =>
-      api.get<SourcingResponse>(`/parts/${partId}/sourcing`, { signal }),
+      api.get<SourcingResponse>(sourcingPath, { signal }),
+    enabled: workspaceQuery.isSuccess,
   });
 
   const refreshMutation = useApiMutation<SourcingResponse, void>({
@@ -285,7 +365,7 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
         key: "price",
         header: "Price",
         accessor: row => row.unitPrice,
-        render: row => formatPrice(row),
+        render: row => <PriceCell row={row} />,
         align: "right",
       },
       ...quantityColumns,
@@ -351,7 +431,11 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
   const retryAfter = retryAfterSeconds(refreshMutation.error) ?? retryAfterSeconds(query.error);
   const primaryUrl = query.data?.links?.primary ?? undefined;
 
-  if (query.isLoading) {
+  if (workspaceQuery.isError) {
+    return <InlineQueryError query={workspaceQuery} label="workspace settings" />;
+  }
+
+  if (workspaceQuery.isLoading || query.isLoading) {
     return (
       <div className="card p-3 text-sm text-muted" role="status">
         Loading authorized supply…
@@ -423,6 +507,12 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
 
       {query.isError && status !== 429 && status !== 502 && status !== 503 && status !== 409 && (
         <InlineQueryError query={query} label="authorized supply" />
+      )}
+
+      {query.data?.fx_status === "unavailable" && (
+        <div className="card p-3 text-sm text-muted" role="status">
+          FX conversion unavailable for some rows — showing native currency.
+        </div>
       )}
 
       {distributors.length > 0 && (

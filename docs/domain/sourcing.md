@@ -144,3 +144,21 @@ limit build count before and after purchase. Source:
 | Sweep expired rows | `app.domain.sourcing.cache::sweep_expired` | Deletes rows with `expires_at < now()`. |
 
 Source: `backend/app/domain/sourcing/cache.py:23`
+
+## FX Conversion
+
+The part-detail Authorized Supply route can request display conversion into the
+workspace sourcing currency. TrustedParts still owns the native offer payload:
+`unit_price`, `currency`, and native price breaks are preserved. Converted display
+fields are added only for rows whose distributor currency differs from the requested
+currency.
+
+ECB daily reference rates are cached in `fx_rate_snapshots` with one JSONB snapshot
+per UTC date. The table is global, not workspace-owned, because ECB rates are public
+reference data and identical for every workspace. The snapshot stores the current daily
+rate set only; it is not a normalized per-currency history table and is not used for
+price-trend reporting.
+
+Sources: `backend/app/domain/fx/models.py:15`,
+`backend/app/domain/fx/rates.py:46`,
+`backend/app/api/routes/sourcing.py:534`
