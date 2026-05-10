@@ -31,6 +31,8 @@ For the one-line domain table (which router serves which tables), see [`ARCHITEC
 
 `User` is *not* workspace-scoped (precedes workspaces). `PendingUser` is intentionally not workspace-scoped (signup precedes workspace creation, see model docstring `backend/app/domain/users/models.py:91-95`). `UserLoginFailure` is also unscoped — login is pre-workspace.
 
+`Workspace` stores sourcing defaults (`sourcing_country_code`, `sourcing_currency_code`, `sourcing_preferred_distributors`) and active sourcing lists (`active_currencies`, `active_countries`, `active_distributors`) directly as columns. The active lists are JSONB arrays with starter defaults added in migration `0042_workspace_active_lists.py`; they do not add relationships to the ER diagram (`backend/app/domain/workspaces/models.py:61-80`, `backend/alembic/versions/0042_workspace_active_lists.py`).
+
 ### parts
 
 | Model | Table | Source |
@@ -224,11 +226,11 @@ See [ADR-0004](../adr/0004-mpn-uniqueness-per-workspace.md) for the MPN-uniquene
 
 ## Migration history
 
-Schema evolves forward-only. The chain runs `0001_initial.py` → `0036_parts_default_storage_ws_trigger.py`. Two migrations in this chain are load-bearing for the invariants on this page:
+Schema evolves forward-only. The chain runs `0001_initial.py` → the current head. Two migrations in this chain are load-bearing for the invariants on this page:
 
 - `0013_stock_nonneg_trigger.py` — ledger non-negative trigger.
 - `0036_parts_default_storage_ws_trigger.py` — workspace-isolation trigger on `parts.default_storage_location_id`.
 
-Other notable ones cross-referenced from this doc set: `0011` (MPN unique index), `0012` + `0020` (`bag_signature` column + partial index), `0018` (cross-domain SET NULL FKs + partial unique on storage/tag names + pg_trgm GIN), `0030` (`audit_log`), `0031` (poly-orphan-cleanup indexes), `0032` (integer-quantity CHECKs), `0034` (`bulk_import_idempotency`), `0035` (`workspace_catalog_tokens`).
+Other notable ones cross-referenced from this doc set: `0011` (MPN unique index), `0012` + `0020` (`bag_signature` column + partial index), `0018` (cross-domain SET NULL FKs + partial unique on storage/tag names + pg_trgm GIN), `0030` (`audit_log`), `0031` (poly-orphan-cleanup indexes), `0032` (integer-quantity CHECKs), `0034` (`bulk_import_idempotency`), `0035` (`workspace_catalog_tokens`), `0042` (`workspaces.active_*` JSONB lists).
 
 Don't edit a merged migration — add a new one. (`CLAUDE.md` Migrations section.)
