@@ -176,6 +176,7 @@ class BomProviderFailure(BaseModel):
 
 class BomProviderImportOut(BaseModel):
     created: int
+    linked_existing: int = 0
     pending_choices: list[BomProviderPendingChoice] = []
     failures: list[BomProviderFailure] = []
     provider: str

@@ -22,6 +22,7 @@ type WorkspaceProviderSettings = {
 
 type BomProviderImportOut = {
   created: number;
+  linked_existing: number;
   pending_choices: BomProviderPendingChoice[];
   failures: BomProviderFailure[];
   provider: WorkspaceProviderSettings["parts_provider"];
@@ -80,10 +81,20 @@ export default function ProjectBOM() {
   });
 
   function handleProviderResult(result: BomProviderImportOut) {
-    if (result.created > 0) {
+    if (result.created > 0 || result.linked_existing > 0) {
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "project", projectId, "entries") });
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
-      toast.success(`Created ${result.created} part${result.created === 1 ? "" : "s"} from ${PROVIDER_LABEL[result.provider] ?? result.provider}.`);
+      const providerName = PROVIDER_LABEL[result.provider] ?? result.provider;
+      const messages: string[] = [];
+      if (result.created > 0) {
+        messages.push(`Created ${result.created} part${result.created === 1 ? "" : "s"}`);
+      }
+      if (result.linked_existing > 0) {
+        messages.push(
+          `${result.created > 0 ? "linked" : "Linked"} ${result.linked_existing} existing part${result.linked_existing === 1 ? "" : "s"}`,
+        );
+      }
+      toast.success(`${messages.join(" and ")} from ${providerName}.`);
     }
     if (result.pending_choices.length > 0) {
       setPendingChoices(result.pending_choices);

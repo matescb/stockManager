@@ -96,9 +96,10 @@ When your workspace has a Mouser or DigiKey parts provider configured, the BOM t
 1. Click **Import all unmatched from provider** to import the next batch of unmatched rows, or click **Import from provider** on one row.
 2. The app looks up each row's MPN with the configured provider.
 3. Rows whose MPN already exists in your library are matched to that existing part.
-4. Rows with a single provider match create a linked library part with provider specs and media, then the BOM row becomes matched.
-5. Rows with more than one manufacturer choice open a picker. Select the right manufacturer and click **Import selected**.
-6. Rows the provider cannot resolve remain unmatched. The failure panel lists the MPN and reason.
+4. Rows whose provider match resolves to an MPN that already exists in your library are matched to that existing part.
+5. Rows with a single new provider match create a linked library part with provider specs and media, then the BOM row becomes matched.
+6. Rows with more than one manufacturer choice open a picker. Select the right manufacturer and click **Import selected**.
+7. Rows the provider cannot resolve remain unmatched. The failure panel lists the MPN and reason.
 
 This provider flow does not create stub parts. Failed lookups stay on the BOM so you can retry later or match them by hand.
 Bulk provider import processes up to 200 unmatched rows at a time; run it again if the page reports remaining rows.

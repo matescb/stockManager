@@ -244,6 +244,7 @@ and rate-limited at 30 calls/minute per workspace.
 ```json
 {
   "created": 1,
+  "linked_existing": 0,
   "pending_choices": [],
   "failures": [{ "entry_id": "…", "mpn": "NOPE", "reason": "no match" }],
   "provider": "mouser",
@@ -258,10 +259,11 @@ when the workspace has no configured parts provider.
 
 - Uses per-row savepoints; one failed lookup or write does not roll back rows that already created parts.
 - `entry_ids: null` processes at most 200 unmatched rows per call and sets `truncated: true` when more remain.
-- If an unmatched row's MPN already exists as an active part in the workspace, the row is linked to that part without another provider lookup.
+- `created` counts new provider-backed parts. `linked_existing` counts rows linked to an active same-workspace part whose MPN matched either before lookup or after provider canonicalisation.
+- If an unmatched row's display name already contains an existing active MPN, the row is linked to that part without another provider lookup.
 - This is not the CSV `auto_create_missing_parts` path. It does not create stub parts; failures stay unmatched.
 - Source: `backend/app/api/routes/projects.py:276-294`.
-- Service: `backend/app/domain/projects/bom_import_provider.py:21-72`.
+- Service: `backend/app/domain/projects/bom_import_provider.py:25-88`, `backend/app/domain/projects/bom_import_provider.py:252-281`.
 
 ### `POST /api/projects/{project_id}/bom/import-from-provider/commit-choices`
 
@@ -281,7 +283,7 @@ Commit manufacturer choices returned by `pending_choices`.
 
 - Re-runs provider lookup for each selected entry and creates the part only when the selected manufacturer is present.
 - Source: `backend/app/api/routes/projects.py:297-315`.
-- Service: `backend/app/domain/projects/bom_import_provider.py:75-130`.
+- Service: `backend/app/domain/projects/bom_import_provider.py:91-155`, `backend/app/domain/projects/bom_import_provider.py:252-281`.
 
 ## BOM import presets (`/api/bom-presets`)
 

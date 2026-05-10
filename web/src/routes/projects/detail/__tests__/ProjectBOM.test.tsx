@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 import type { Part, ProjectEntry } from "@/types";
@@ -83,6 +84,7 @@ const parts = [
 
 type ImportResponse = {
   created: number;
+  linked_existing: number;
   pending_choices: Array<{
     entry_id: string;
     mpn: string;
@@ -147,6 +149,7 @@ function mockApi(
     if (path === `/projects/${projectId}/bom/import-from-provider`) {
       return (options.importResponse ?? {
         created: 0,
+        linked_existing: 0,
         pending_choices: [],
         failures: [],
         provider: options.partsProvider ?? "none",
@@ -156,6 +159,7 @@ function mockApi(
     if (path === `/projects/${projectId}/bom/import-from-provider/commit-choices`) {
       return (options.commitResponse ?? {
         created: 0,
+        linked_existing: 0,
         pending_choices: [],
         failures: [],
         provider: options.partsProvider ?? "none",
@@ -286,6 +290,7 @@ describe("ProjectBOM", () => {
         partsProvider: "mouser",
         importResponse: {
           created: 0,
+          linked_existing: 0,
           pending_choices: [],
           failures: [{ entry_id: "entry-unmatched", mpn: "NOPE", reason: "no match for MPN" }],
           provider: "mouser",
@@ -303,6 +308,36 @@ describe("ProjectBOM", () => {
     expect(screen.getByText("no match for MPN")).toBeDefined();
   });
 
+  it("toasts existing provider links separately from created parts", async () => {
+    mockApi(
+      {
+        current: [
+          bomEntry({ id: "entry-unmatched", entry_type: "unmatched", part_id: null, name: "STM32" }),
+        ],
+      },
+      {
+        partsProvider: "mouser",
+        importResponse: {
+          created: 0,
+          linked_existing: 1,
+          pending_choices: [],
+          failures: [],
+          provider: "mouser",
+          truncated: false,
+        },
+      },
+    );
+    const user = userEvent.setup();
+
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Import all unmatched from Mouser" }));
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith("Linked 1 existing part from Mouser.");
+    });
+  });
+
   it("ambiguity modal opens with candidates and posts commit-choices on confirm", async () => {
     mockApi(
       {
@@ -314,6 +349,7 @@ describe("ProjectBOM", () => {
         partsProvider: "mouser",
         importResponse: {
           created: 0,
+          linked_existing: 0,
           pending_choices: [{
             entry_id: "entry-unmatched",
             mpn: "AMB-1",
@@ -328,6 +364,7 @@ describe("ProjectBOM", () => {
         },
         commitResponse: {
           created: 1,
+          linked_existing: 0,
           pending_choices: [],
           failures: [],
           provider: "mouser",
