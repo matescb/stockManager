@@ -52,7 +52,7 @@ def _enable_mouser(c: TestClient) -> None:
 
 def _project(c: TestClient, name: str = "P") -> str:
     r = c.post("/api/projects", json={"name": name})
-    assert r.status_code == 200, r.text
+    assert r.status_code == 201, r.text
     return r.json()["data"]["id"]
 
 
