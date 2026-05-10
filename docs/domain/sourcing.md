@@ -56,6 +56,42 @@ ephemeral plan rows and are not copied into order comments.
 Sources: `backend/alembic/versions/0039_purchase_plans.py:68`,
 `backend/app/domain/sourcing/cache.py:95`
 
+## Phase 4 Plan-to-Order Flow
+
+Phase 4 keeps TrustedParts data ephemeral until the user converts a freshly refreshed
+purchase plan into draft purchase orders. Conversion creates one draft order per selected
+distributor and one order entry per selected plan line. It does not receive stock, create
+lots, or copy provider URLs into order comments.
+
+```text
+BOM entries
+  -> shortage_analysis
+  -> TrustedParts search/cache
+  -> optimizer
+  -> purchase_plan + purchase_plan_lines
+       status=draft
+       selected_url retained only on plan line
+  -> refresh
+       force_refresh=True
+       status=refreshed
+       last_refreshed_at=now
+  -> convert
+       require status=refreshed
+       require last_refreshed_at within 10 minutes
+       group selected lines by distributor
+       create draft purchase orders
+       create draft order entries
+       status=converted
+```
+
+Order comments carry only the compliance-safe summary needed for auditability:
+TrustedParts purchase plan id, distributor, generation date, and strategy. Entry comments
+carry distributor, packaging, lead-time label, and a short plan id. Raw offer URLs remain
+on `purchase_plan_lines.selected_url` and are not persisted into `orders.comments` or
+`order_entries.comments`.
+
+Source: `backend/app/domain/sourcing/service.py:57`
+
 ## Workspace Isolation
 
 Reads filter by both `workspace_id` and `query_hash`, so identical canonical queries in
