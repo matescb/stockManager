@@ -31,6 +31,12 @@ TrustedParts results must stay visibly distinct from catalog-provider data. Publ
 
 Reports may use TrustedParts prices only as a transient request-time input. The replenishment-cost report recomputes replacement cost from existing on-hand lot costs and the short-lived sourcing cache on each request (`backend/app/domain/reports/service.py:39`); it must not add a report-specific table, column, or long-lived price snapshot because that would turn cached TrustedParts offers into persistent price history.
 
+ECB FX reference rates are separate global public data. `fx_rate_snapshots` stores one
+daily JSONB snapshot per UTC date without `workspace_id`, and the Authorized Supply
+route uses it only to display distributor offers in the requested workspace currency
+(`backend/app/domain/fx/models.py:15`, `backend/app/api/routes/sourcing.py:534`).
+This does not permit persistent TrustedParts price history or historical FX charting.
+
 ## Consequences
 
 - **Good**:

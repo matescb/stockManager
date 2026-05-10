@@ -1,6 +1,7 @@
 """Sourcing provider endpoints."""
 from __future__ import annotations
 
+from decimal import Decimal
 from time import perf_counter
 from uuid import UUID
 
@@ -13,6 +14,7 @@ from app.core.deps import CurrentUser, CurrentWorkspace, require_role
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import err, ok
 from app.core.time import utcnow
+from app.domain.fx import rates as fx_rates
 from app.domain.parts.models import Part
 from app.domain.projects.models import Project
 from app.domain.sourcing import (
@@ -28,6 +30,7 @@ from app.domain.sourcing.schemas import (
     PurchasePlanIn,
     PurchasePlanOrdersIn,
     SourcingBomIn,
+    SourcingConvertedPriceBreak,
     SourcingQuery,
     SourcingSearchIn,
 )
@@ -41,6 +44,13 @@ projects_router = APIRouter()
 
 _TEST_PROBE_TOKEN = "TEST_PROBE_DO_NOT_BUY"
 _PART_SOURCING_TTL_SECONDS = 1800
+
+
+def _clean_currency(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip().upper()
+    return cleaned or None
 
 
 def _elapsed_ms(started_at: float) -> int:
@@ -430,19 +440,7 @@ def get_part_sourcing(
             "TrustedParts sourcing request failed",
         )
 
-    result = out.results[0]
-    return ok(
-        {
-            "mpn": result.mpn,
-            "offers": [offer.model_dump(mode="json") for offer in result.offers],
-            "request_id": result.request_id,
-            "powered_by": out.powered_by,
-            "fetched_at": result.fetched_at.isoformat(),
-            "cache_hit": result.cache_hit,
-            "links": out.links.model_dump(mode="json"),
-            "reason": "ok",
-        }
-    )
+    return ok(_part_sourcing_payload(out, db=db, requested_currency=currency))
 
 
 @parts_router.post(
@@ -508,8 +506,18 @@ def refresh_part_sourcing(
     return ok(_part_sourcing_payload(out))
 
 
-def _part_sourcing_payload(out):
+def _part_sourcing_payload(
+    out,
+    *,
+    db: Session | None = None,
+    requested_currency: str | None = None,
+):
     result = out.results[0]
+    fx_status = _apply_fx_conversion(
+        db,
+        result.offers,
+        requested_currency=_clean_currency(requested_currency),
+    )
     return {
         "mpn": result.mpn,
         "offers": [offer.model_dump(mode="json") for offer in result.offers],
@@ -519,7 +527,91 @@ def _part_sourcing_payload(out):
         "cache_hit": result.cache_hit,
         "links": out.links.model_dump(mode="json"),
         "reason": "ok",
+        "fx_status": fx_status,
     }
+
+
+def _apply_fx_conversion(
+    db: Session | None,
+    offers,
+    *,
+    requested_currency: str | None,
+) -> str | None:
+    if db is None or requested_currency is None:
+        return None
+
+    rates: dict[str, Decimal] | None = None
+    rate_date = utcnow().date()
+    fx_status: str | None = None
+    fetch_failed = False
+
+    for offer in offers:
+        for distributor in offer.distributors:
+            original_currency = _clean_currency(distributor.currency)
+            if original_currency is None:
+                continue
+            distributor.currency_displayed = distributor.currency
+            if original_currency == requested_currency:
+                distributor.currency_displayed = requested_currency
+                continue
+            if distributor.unit_price is None:
+                continue
+            if fetch_failed:
+                fx_status = "unavailable"
+                distributor.fx_converted = None
+                continue
+            if rates is None:
+                try:
+                    rates = fx_rates.get_or_fetch_today(db, on_date=rate_date)
+                except fx_rates.FxRateError:
+                    fetch_failed = True
+                    fx_status = "unavailable"
+                    distributor.fx_converted = None
+                    continue
+
+            converted = fx_rates.convert(
+                Decimal(str(distributor.unit_price)),
+                from_currency=original_currency,
+                to_currency=requested_currency,
+                rates=rates,
+                on_date=rate_date,
+            )
+            if converted is None:
+                fx_status = "unavailable"
+                distributor.fx_converted = None
+                continue
+
+            converted_breaks: list[SourcingConvertedPriceBreak] = []
+            missing_break = False
+            for price_break in distributor.price_breaks:
+                converted_break = fx_rates.convert(
+                    Decimal(str(price_break.unit_price)),
+                    from_currency=original_currency,
+                    to_currency=requested_currency,
+                    rates=rates,
+                    on_date=rate_date,
+                )
+                if converted_break is None:
+                    missing_break = True
+                    break
+                converted_breaks.append(
+                    SourcingConvertedPriceBreak(
+                        quantity=price_break.quantity,
+                        unit_price=converted_break,
+                    )
+                )
+            if missing_break:
+                fx_status = "unavailable"
+                distributor.fx_converted = None
+                continue
+
+            distributor.unit_price_converted = converted
+            distributor.currency_displayed = requested_currency
+            distributor.fx_converted = True
+            distributor.fx_rate_date = rate_date
+            distributor.price_breaks_converted = converted_breaks
+
+    return fx_status
 
 
 def _clean_query_distributors(value: list[str] | None) -> list[str] | None:

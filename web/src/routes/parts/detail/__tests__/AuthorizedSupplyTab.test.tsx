@@ -19,7 +19,11 @@ vi.mock("@/lib/auth", () => ({
 }));
 
 const partId = "part-123";
-const sourcingQueryKey = ["ws", "ws-1", "part", partId, "sourcing"];
+const sourcingQueryKey = ["ws", "ws-1", "part", partId, "sourcing", "EUR"];
+
+function workspaceResponse(currency: string | null = "EUR") {
+  return { sourcing_currency_code: currency };
+}
 
 function sourcingResponse() {
   return {
@@ -76,6 +80,42 @@ function sourcingResponse() {
   };
 }
 
+function convertedSourcingResponse() {
+  const response = sourcingResponse();
+  Object.assign(response.offers[0].distributors[0], {
+    unit_price: 2.5,
+    currency: "USD",
+    unit_price_converted: "1.25",
+    currency_displayed: "EUR",
+    fx_converted: true,
+    fx_rate_date: "2026-05-08",
+    price_breaks_converted: [{ quantity: 1, unit_price: "1.25" }],
+  });
+  return response;
+}
+
+function mockApiGet(response: unknown, workspaceCurrency: string | null = "EUR") {
+  return vi.spyOn(api, "get").mockImplementation((path: string) => {
+    if (path === "/workspaces/current") {
+      return Promise.resolve(workspaceResponse(workspaceCurrency));
+    }
+    return Promise.resolve(response);
+  });
+}
+
+function mockApiGetError(error: ApiError, workspaceCurrency: string | null = "EUR") {
+  return vi.spyOn(api, "get").mockImplementation((path: string) => {
+    if (path === "/workspaces/current") {
+      return Promise.resolve(workspaceResponse(workspaceCurrency));
+    }
+    return Promise.reject(error);
+  });
+}
+
+function sourcingGetCalls(spy: ReturnType<typeof mockApiGet>) {
+  return spy.mock.calls.filter(([path]) => String(path).startsWith(`/parts/${partId}/sourcing`));
+}
+
 function apiError(status: number, message: string, extra: Record<string, unknown> = {}) {
   const category =
     status === 409 ? "conflict" : status === 429 ? "rate_limited" : "server_error";
@@ -113,7 +153,7 @@ beforeEach(() => {
 
 describe("AuthorizedSupplyTab", () => {
   it("renders offers and attribution badge for part with MPN", async () => {
-    vi.spyOn(api, "get").mockResolvedValue(sourcingResponse());
+    mockApiGet(sourcingResponse());
 
     renderTab();
 
@@ -128,7 +168,7 @@ describe("AuthorizedSupplyTab", () => {
   });
 
   it("renders no-mpn empty state and never calls the API path with empty mpn", async () => {
-    const getSpy = vi.spyOn(api, "get").mockResolvedValue({
+    const getSpy = mockApiGet({
       offers: [],
       reason: "no_mpn",
       cache_hit: null,
@@ -138,13 +178,13 @@ describe("AuthorizedSupplyTab", () => {
     renderTab();
 
     expect(await screen.findByText("Add an MPN to this part to see authorized-distributor offers.")).toBeDefined();
-    expect(getSpy).toHaveBeenCalledWith(`/parts/${partId}/sourcing`, expect.any(Object));
+    expect(getSpy).toHaveBeenCalledWith(`/parts/${partId}/sourcing?currency=EUR`, expect.any(Object));
     expect(postSpy).not.toHaveBeenCalled();
   });
 
   it("refresh button invalidates the query", async () => {
     const user = userEvent.setup();
-    vi.spyOn(api, "get").mockResolvedValue(sourcingResponse());
+    mockApiGet(sourcingResponse());
     vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
     const { invalidateSpy } = renderTab();
 
@@ -159,7 +199,7 @@ describe("AuthorizedSupplyTab", () => {
 
   it("distributor filter narrows visible rows", async () => {
     const user = userEvent.setup();
-    const getSpy = vi.spyOn(api, "get").mockResolvedValue(sourcingResponse());
+    const getSpy = mockApiGet(sourcingResponse());
 
     renderTab();
 
@@ -170,11 +210,11 @@ describe("AuthorizedSupplyTab", () => {
     const table = screen.getByRole("table");
     expect(within(table).queryByText("DigiKey")).toBeNull();
     expect(within(table).getByText("Mouser")).toBeDefined();
-    expect(getSpy).toHaveBeenCalledTimes(1);
+    expect(sourcingGetCalls(getSpy)).toHaveLength(1);
   });
 
   it("409 path shows admin-prompt card", async () => {
-    vi.spyOn(api, "get").mockRejectedValue(apiError(409, "sourcing not configured"));
+    mockApiGetError(apiError(409, "sourcing not configured"));
 
     renderTab();
 
@@ -184,7 +224,7 @@ describe("AuthorizedSupplyTab", () => {
   });
 
   it("503 path shows budget banner", async () => {
-    vi.spyOn(api, "get").mockRejectedValue(apiError(503, "sourcing budget exhausted"));
+    mockApiGetError(apiError(503, "sourcing budget exhausted"));
 
     renderTab();
 
@@ -193,7 +233,7 @@ describe("AuthorizedSupplyTab", () => {
 
   it("429 refresh path shows retry-after banner", async () => {
     const user = userEvent.setup();
-    vi.spyOn(api, "get").mockResolvedValue(sourcingResponse());
+    mockApiGet(sourcingResponse());
     vi.spyOn(api, "post").mockRejectedValue(
       apiError(429, "rate limit exceeded", { retry_after_seconds: 17 }),
     );
@@ -210,7 +250,7 @@ describe("AuthorizedSupplyTab", () => {
   });
 
   it("502 path shows unavailable toast with retry action", async () => {
-    vi.spyOn(api, "get").mockRejectedValue(apiError(502, "TrustedParts request timed out"));
+    mockApiGetError(apiError(502, "TrustedParts request timed out"));
 
     renderTab();
 
@@ -226,7 +266,7 @@ describe("AuthorizedSupplyTab", () => {
   });
 
   it("attribution link does not have nofollow", async () => {
-    vi.spyOn(api, "get").mockResolvedValue(sourcingResponse());
+    mockApiGet(sourcingResponse());
 
     renderTab();
 
@@ -239,9 +279,54 @@ describe("AuthorizedSupplyTab", () => {
     expect(offerLink.getAttribute("rel") ?? "").not.toContain("nofollow");
   });
 
+  it("flag rendered on rows with fx_converted=true", async () => {
+    mockApiGet(convertedSourcingResponse());
+
+    renderTab();
+
+    expect(await screen.findByText("1.25 EUR")).toBeDefined();
+    expect(
+      screen.getByLabelText("Converted from 2.5 USD via ECB daily rate (2026-05-08)"),
+    ).toBeDefined();
+  });
+
+  it("tooltip shows original currency and rate date", async () => {
+    mockApiGet(convertedSourcingResponse());
+
+    renderTab();
+
+    const badge = await screen.findByLabelText(
+      "Converted from 2.5 USD via ECB daily rate (2026-05-08)",
+    );
+    expect(badge.getAttribute("title")).toBe(
+      "Converted from 2.5 USD via ECB daily rate (2026-05-08)",
+    );
+  });
+
+  it("fx_status warning rendered at top of table when present", async () => {
+    const response = { ...sourcingResponse(), fx_status: "unavailable" as const };
+    mockApiGet(response);
+
+    renderTab();
+
+    expect(
+      await screen.findByText("FX conversion unavailable for some rows — showing native currency."),
+    ).toBeDefined();
+  });
+
+  it("legacy view when workspace currency is null", async () => {
+    const getSpy = mockApiGet(sourcingResponse(), null);
+
+    renderTab();
+
+    expect(await screen.findByText("1.23 EUR")).toBeDefined();
+    expect(screen.queryByLabelText(/Converted from/)).toBeNull();
+    expect(getSpy).toHaveBeenCalledWith(`/parts/${partId}/sourcing`, expect.any(Object));
+  });
+
   it("quantity preset 100 recomputes unit price across rows", async () => {
     const user = userEvent.setup();
-    vi.spyOn(api, "get").mockResolvedValue(sourcingResponse());
+    mockApiGet(sourcingResponse());
 
     renderTab();
 
@@ -260,7 +345,7 @@ describe("AuthorizedSupplyTab", () => {
 
   it("custom quantity input is applied on blur", async () => {
     const user = userEvent.setup();
-    vi.spyOn(api, "get").mockResolvedValue(sourcingResponse());
+    mockApiGet(sourcingResponse());
 
     renderTab();
 
@@ -280,7 +365,7 @@ describe("AuthorizedSupplyTab", () => {
 
   it("quantity change does not refetch", async () => {
     const user = userEvent.setup();
-    const getSpy = vi.spyOn(api, "get").mockResolvedValue(sourcingResponse());
+    const getSpy = mockApiGet(sourcingResponse());
 
     renderTab();
 
@@ -288,12 +373,12 @@ describe("AuthorizedSupplyTab", () => {
     await user.click(screen.getByRole("button", { name: "1,000" }));
     await user.click(screen.getByRole("button", { name: "10" }));
 
-    expect(getSpy).toHaveBeenCalledTimes(1);
+    expect(sourcingGetCalls(getSpy)).toHaveLength(1);
   });
 
   it("below-MOQ rendering is visible at low quantities", async () => {
     const user = userEvent.setup();
-    vi.spyOn(api, "get").mockResolvedValue(sourcingResponse());
+    mockApiGet(sourcingResponse());
 
     renderTab();
 
@@ -309,7 +394,7 @@ describe("AuthorizedSupplyTab", () => {
 
   it("sorts by unit price at selected quantity", async () => {
     const user = userEvent.setup();
-    vi.spyOn(api, "get").mockResolvedValue(sourcingResponse());
+    mockApiGet(sourcingResponse());
 
     renderTab();
 
