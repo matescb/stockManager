@@ -87,12 +87,17 @@ def compute_build_capacity(
 
     est_purchase_cost = Decimal("0")
     blocking_after = set(blocking_lines_after_purchase)
+    priced_builds = (
+        can_build_after_purchase
+        if can_build_after_purchase > 0
+        else requested_build_quantity
+    )
     for row in effective_rows:
         purchase_qty = max(
             0,
             _required_for_builds(
                 row.required,
-                builds=can_build_after_purchase,
+                builds=priced_builds,
                 requested_build_quantity=requested_build_quantity,
             )
             - (row.available + row.substitute_available),

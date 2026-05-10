@@ -8,6 +8,9 @@ the canonical record.
 
 ## 2026-05 — feedback brief fixes
 
+- **FB-003c / #412** Sourcing capacity now prices the requested build
+  quantity when after-purchase capacity floors to zero, fixing missing
+  `est_purchase_cost` values at low build quantities.
 - **FB-003d / #413** Project Sourcing BOM rows now render the per-row
   lead time returned by the Source-BOM response.
 
