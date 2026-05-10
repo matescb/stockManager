@@ -267,6 +267,37 @@ class PurchasePlanIn(BaseModel):
         return stripped or None
 
 
+class PurchasePlanOrderOverrideIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selected_distributor: str = Field(min_length=1, max_length=120)
+    selected_qty: int = Field(ge=1)
+    selected_unit_price: Decimal
+    selected_currency: str = Field(min_length=3, max_length=3)
+
+    @field_validator("selected_distributor")
+    @classmethod
+    def _strip_distributor(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("selected_distributor must not be empty")
+        return stripped
+
+    @field_validator("selected_currency")
+    @classmethod
+    def _uppercase_currency(cls, value: str) -> str:
+        stripped = value.strip().upper()
+        if len(stripped) != 3:
+            raise ValueError("selected_currency must be a 3-letter code")
+        return stripped
+
+
+class PurchasePlanOrdersIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    overrides: dict[UUID, PurchasePlanOrderOverrideIn] = Field(default_factory=dict)
+
+
 class PurchasePlanLineOut(BaseModel):
     model_config = ConfigDict(extra="forbid", from_attributes=True)
 
@@ -285,6 +316,7 @@ class PurchasePlanLineOut(BaseModel):
     selected_moq: int | None = None
     selected_lead_time_days: int | None = None
     selected_url: str | None = None
+    available_offers: list[SourcingBomOfferOut] = Field(default_factory=list)
     risk_flags: list[str] = Field(default_factory=list)
 
 

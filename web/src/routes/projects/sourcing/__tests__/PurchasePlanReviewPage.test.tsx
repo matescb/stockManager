@@ -49,6 +49,32 @@ function plan(overrides: Partial<PurchasePlan> = {}): PurchasePlan {
         selected_moq: 1,
         selected_lead_time_days: 3,
         selected_url: "https://www.trustedparts.com/stm32",
+        available_offers: [
+          {
+            mpn: "STM32",
+            distributor: "DigiKey",
+            stock: 200,
+            unit_price: "1.25",
+            currency: "USD",
+            packaging: "cut-tape",
+            moq: 1,
+            lead_time_days: 3,
+            price_breaks: [],
+            url: "https://www.trustedparts.com/stm32",
+          },
+          {
+            mpn: "STM32",
+            distributor: "Arrow",
+            stock: 50,
+            unit_price: "2.05",
+            currency: "USD",
+            packaging: "tray",
+            moq: 5,
+            lead_time_days: 2,
+            price_breaks: [],
+            url: "https://www.trustedparts.com/stm32-arrow",
+          },
+        ],
         risk_flags: ["single_source"],
       },
       {
@@ -67,6 +93,7 @@ function plan(overrides: Partial<PurchasePlan> = {}): PurchasePlan {
         selected_moq: 1,
         selected_lead_time_days: 7,
         selected_url: "https://www.trustedparts.com/lm1117",
+        available_offers: [],
         risk_flags: [],
       },
       {
@@ -85,6 +112,7 @@ function plan(overrides: Partial<PurchasePlan> = {}): PurchasePlan {
         selected_moq: null,
         selected_lead_time_days: null,
         selected_url: null,
+        available_offers: [],
         risk_flags: ["no_authorized_stock"],
       },
     ],
@@ -119,6 +147,14 @@ function renderPage(initialPlan: PurchasePlan = plan()) {
       </Routes>
     </MemoryRouter>,
   );
+}
+
+async function selectArrowOffer() {
+  await userEvent.click(screen.getAllByRole("button", { name: "Override" })[0]);
+  const dialog = screen.getByRole("dialog", { name: "Override offer" });
+  const arrowRow = within(dialog).getByText("Arrow").closest("tr");
+  expect(arrowRow).not.toBeNull();
+  await userEvent.click(within(arrowRow as HTMLElement).getByRole("button", { name: "Select" }));
 }
 
 beforeEach(() => {
@@ -204,6 +240,64 @@ describe("PurchasePlanReviewPage", () => {
     await userEvent.click(screen.getByRole("button", { name: /Create draft orders/ }));
 
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/orders"));
+    expect(api.post).toHaveBeenCalledWith("/sourcing/purchase-plans/plan-12345678/orders", { overrides: {} });
     expect(toast.success).toHaveBeenCalledWith("Created 1 draft orders");
+  });
+
+  it("selects an alternate cached offer and sends it as a conversion override", async () => {
+    vi.spyOn(api, "post").mockResolvedValueOnce({
+      orders: [{ id: "order-1", name: "Draft", supplier: "Arrow", status: "draft", entries: [] }],
+    });
+    renderPage();
+
+    await selectArrowOffer();
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByText("Arrow")).toBeDefined();
+    expect(screen.getByText("2.05 USD")).toBeDefined();
+    expect(screen.getByText("2 days")).toBeDefined();
+
+    await userEvent.click(screen.getByRole("button", { name: /Create draft orders/ }));
+
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/orders"));
+    expect(api.post).toHaveBeenCalledWith("/sourcing/purchase-plans/plan-12345678/orders", {
+      overrides: {
+        "line-1": {
+          selected_distributor: "Arrow",
+          selected_qty: 16,
+          selected_unit_price: "2.05",
+          selected_currency: "USD",
+        },
+      },
+    });
+  });
+
+  it("preserves selected overrides after a failed conversion", async () => {
+    const post = vi.spyOn(api, "post")
+      .mockRejectedValueOnce(new Error("conversion failed"))
+      .mockResolvedValueOnce({
+        orders: [{ id: "order-1", name: "Draft", supplier: "Arrow", status: "draft", entries: [] }],
+      });
+    renderPage();
+
+    await selectArrowOffer();
+    await userEvent.click(screen.getByRole("button", { name: /Create draft orders/ }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Could not create draft orders"));
+    expect(screen.getByText("Arrow")).toBeDefined();
+
+    await userEvent.click(screen.getByRole("button", { name: /Create draft orders/ }));
+
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/orders"));
+    expect(post).toHaveBeenLastCalledWith("/sourcing/purchase-plans/plan-12345678/orders", {
+      overrides: {
+        "line-1": {
+          selected_distributor: "Arrow",
+          selected_qty: 16,
+          selected_unit_price: "2.05",
+          selected_currency: "USD",
+        },
+      },
+    });
   });
 });

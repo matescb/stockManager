@@ -26,6 +26,7 @@ from app.domain.sourcing.factory import make_sourcing_provider
 from app.domain.sourcing.models import PurchasePlan
 from app.domain.sourcing.schemas import (
     PurchasePlanIn,
+    PurchasePlanOrdersIn,
     SourcingBomIn,
     SourcingQuery,
     SourcingSearchIn,
@@ -335,6 +336,7 @@ def convert_purchase_plan_to_orders(
     ws: CurrentWorkspace,
     user: CurrentUser,
     db: Session = Depends(get_db),
+    payload: PurchasePlanOrdersIn | None = None,
 ):
     plan = assert_in_workspace(db, PurchasePlan, plan_id, ws.id, label="purchase plan")
     try:
@@ -343,9 +345,12 @@ def convert_purchase_plan_to_orders(
             workspace=ws,
             plan=plan,
             user_id=user.id,
+            overrides=(payload.overrides if payload is not None else None),
         )
     except sourcing_service.PurchasePlanStaleError as exc:
         return _error_response(request, 409, "conflict", str(exc))
+    except sourcing_service.PurchasePlanOverrideError as exc:
+        return _error_response(request, 422, "validation_error", str(exc))
     except sourcing_service.PurchasePlanCurrencyError as exc:
         return _error_response(request, 422, "validation_error", str(exc))
 

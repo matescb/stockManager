@@ -55,8 +55,10 @@ def _refresh(client: TestClient, plan_id: str):
     return r.json()["data"]
 
 
-def _convert(client: TestClient, plan_id: str):
-    return client.post(f"/api/sourcing/purchase-plans/{plan_id}/orders")
+def _convert(client: TestClient, plan_id: str, payload: dict[str, Any] | None = None):
+    if payload is None:
+        return client.post(f"/api/sourcing/purchase-plans/{plan_id}/orders")
+    return client.post(f"/api/sourcing/purchase-plans/{plan_id}/orders", json=payload)
 
 
 def _two_line_project(client: TestClient) -> str:
@@ -102,6 +104,186 @@ def test_basic_conversion_creates_one_order_per_distributor(authed_client):
     assert [len(order["entries"]) for order in orders] == [1, 1]
     assert orders[0]["entries"][0]["quantity_ordered"] == 5
     assert orders[1]["entries"][0]["quantity_ordered"] == 7
+
+
+def test_plan_line_output_includes_cached_offers(authed_client):
+    project_id = _single_line_project(authed_client, mpn="OVERRIDE-OFFERS", quantity=4)
+    plan = _create_refreshed_plan(
+        authed_client,
+        project_id=project_id,
+        offers_by_mpn={
+            "OVERRIDE-OFFERS": [
+                _offer("OVERRIDE-OFFERS", distributor="DigiKey", stock=100, unit_price=1.0),
+                _offer("OVERRIDE-OFFERS", distributor="Mouser", stock=100, unit_price=1.1),
+            ]
+        },
+    )
+
+    offers = plan["lines"][0]["available_offers"]
+    assert [offer["distributor"] for offer in offers] == ["DigiKey", "Mouser"]
+    assert offers[0]["url"] == "https://www.trustedparts.com/OVERRIDE-OFFERS/DigiKey"
+
+
+def test_conversion_override_uses_cached_offer_selection(authed_client, db):
+    project_id = _single_line_project(authed_client, mpn="OVERRIDE-OK", quantity=4)
+    plan = _create_refreshed_plan(
+        authed_client,
+        project_id=project_id,
+        offers_by_mpn={
+            "OVERRIDE-OK": [
+                _offer("OVERRIDE-OK", distributor="DigiKey", stock=100, unit_price=1.0),
+                _offer("OVERRIDE-OK", distributor="Mouser", stock=100, unit_price=1.1),
+            ]
+        },
+    )
+    line = plan["lines"][0]
+    assert line["selected_distributor"] == "DigiKey"
+    override_url = "https://www.trustedparts.com/OVERRIDE-OK/Mouser"
+
+    r = _convert(
+        authed_client,
+        plan["id"],
+        {
+            "overrides": {
+                line["id"]: {
+                    "selected_distributor": "Mouser",
+                    "selected_qty": 4,
+                    "selected_unit_price": "1.1",
+                    "selected_currency": "EUR",
+                }
+            }
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    assert "selected_url" not in r.text
+    assert override_url not in r.text
+    order = r.json()["data"]["orders"][0]
+    assert order["supplier"] == "Mouser"
+    assert order["entries"][0]["quantity_ordered"] == 4
+    assert Decimal(order["entries"][0]["unit_price"]) == Decimal("1.100000")
+    persisted_comments = [
+        *(db.execute(select(Order.comments)).scalars().all()),
+        *(db.execute(select(OrderEntry.comments)).scalars().all()),
+    ]
+    assert all(override_url not in (comment or "") for comment in persisted_comments)
+
+
+def test_invalid_conversion_override_persists_no_orders(authed_client, db):
+    project_id = _single_line_project(authed_client, mpn="OVERRIDE-BAD", quantity=4)
+    plan = _create_refreshed_plan(
+        authed_client,
+        project_id=project_id,
+        offers_by_mpn={
+            "OVERRIDE-BAD": [
+                _offer("OVERRIDE-BAD", distributor="DigiKey", stock=100, unit_price=1.0),
+            ]
+        },
+    )
+    line = plan["lines"][0]
+
+    r = _convert(
+        authed_client,
+        plan["id"],
+        {
+            "overrides": {
+                line["id"]: {
+                    "selected_distributor": "Mouser",
+                    "selected_qty": 4,
+                    "selected_unit_price": "1.1",
+                    "selected_currency": "EUR",
+                }
+            }
+        },
+    )
+
+    assert r.status_code == 422, r.text
+    assert "cached offers" in r.json()["status"]["message"]
+    assert db.execute(select(func.count()).select_from(Order)).scalar_one() == 0
+    assert db.execute(select(func.count()).select_from(OrderEntry)).scalar_one() == 0
+
+
+def test_override_line_from_other_workspace_persists_no_orders(authed_client, db):
+    plan_a = _create_refreshed_plan(
+        authed_client,
+        project_id=_single_line_project(authed_client, mpn="OVERRIDE-WS-A", quantity=4),
+        offers_by_mpn={
+            "OVERRIDE-WS-A": [
+                _offer("OVERRIDE-WS-A", distributor="DigiKey", stock=100, unit_price=1.0)
+            ]
+        },
+    )
+    client_b = TestClient(app)
+    signup_user(client_b)
+    plan_b = _create_refreshed_plan(
+        client_b,
+        project_id=_single_line_project(client_b, mpn="OVERRIDE-WS-B", quantity=4),
+        offers_by_mpn={
+            "OVERRIDE-WS-B": [
+                _offer("OVERRIDE-WS-B", distributor="Mouser", stock=100, unit_price=2.0)
+            ]
+        },
+    )
+
+    r = _convert(
+        client_b,
+        plan_b["id"],
+        {
+            "overrides": {
+                plan_a["lines"][0]["id"]: {
+                    "selected_distributor": "Mouser",
+                    "selected_qty": 4,
+                    "selected_unit_price": "2.0",
+                    "selected_currency": "EUR",
+                }
+            }
+        },
+    )
+
+    assert r.status_code == 422, r.text
+    assert "purchase plan" in r.json()["status"]["message"]
+    assert db.execute(select(func.count()).select_from(Order)).scalar_one() == 0
+    assert db.execute(select(func.count()).select_from(OrderEntry)).scalar_one() == 0
+
+
+def test_override_mixed_currency_guard_persists_no_orders(authed_client, db):
+    plan = _create_refreshed_plan(
+        authed_client,
+        offers_by_mpn={
+            "PLAN-A": [_offer("PLAN-A", distributor="DigiKey", stock=100, unit_price=1.0)],
+            "PLAN-B": [
+                _offer("PLAN-B", distributor="DigiKey", stock=100, unit_price=2.0),
+                _offer(
+                    "PLAN-B",
+                    distributor="DigiKey",
+                    stock=100,
+                    unit_price=3.0,
+                    currency="USD",
+                ),
+            ],
+        },
+    )
+    line_b = next(line for line in plan["lines"] if line["mpn_searched"] == "PLAN-B")
+
+    r = _convert(
+        authed_client,
+        plan["id"],
+        {
+            "overrides": {
+                line_b["id"]: {
+                    "selected_distributor": "DigiKey",
+                    "selected_qty": 7,
+                    "selected_unit_price": "3.0",
+                    "selected_currency": "USD",
+                }
+            }
+        },
+    )
+
+    assert r.status_code == 422, r.text
+    assert "mixed currencies" in r.json()["status"]["message"]
+    assert db.execute(select(func.count()).select_from(Order)).scalar_one() == 0
+    assert db.execute(select(func.count()).select_from(OrderEntry)).scalar_one() == 0
 
 
 def test_orders_status_is_draft(authed_client):

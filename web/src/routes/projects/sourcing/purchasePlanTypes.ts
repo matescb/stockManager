@@ -1,3 +1,20 @@
+export type PurchasePlanOffer = {
+  mpn?: string | null;
+  distributor?: string | null;
+  stock?: number | null;
+  unit_price?: string | number | null;
+  currency?: string | null;
+  packaging?: string | null;
+  moq?: number | null;
+  lead_time_days?: number | null;
+  price_breaks?: {
+    quantity?: number | null;
+    unit_price?: string | number | null;
+    currency?: string | null;
+  }[] | null;
+  url?: string | null;
+};
+
 export type PurchasePlanLine = {
   id: string;
   project_entry_id?: string | null;
@@ -14,6 +31,7 @@ export type PurchasePlanLine = {
   selected_moq?: number | null;
   selected_lead_time_days?: number | null;
   selected_url?: string | null;
+  available_offers?: PurchasePlanOffer[] | null;
   risk_flags: string[];
 };
 
@@ -69,4 +87,15 @@ export type CreatedOrder = {
 
 export type ConvertOrdersResponse = {
   orders: CreatedOrder[];
+};
+
+export type PurchasePlanOrderOverride = {
+  selected_distributor: string;
+  selected_qty: number;
+  selected_unit_price: string | number;
+  selected_currency: string;
+};
+
+export type ConvertOrdersRequest = {
+  overrides: Record<string, PurchasePlanOrderOverride>;
 };

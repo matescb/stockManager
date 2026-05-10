@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -26,6 +27,7 @@ from app.domain.sourcing.pricing import best_unit_price_at_qty
 from app.domain.sourcing.schemas import (
     BuildCapacityOut,
     DistributorCoverageMatrixOut,
+    PurchasePlanOrderOverrideIn,
     PurchasePlanOrdersOut,
     PurchasePlanOut,
     SourcingAttributionLinks,
@@ -49,6 +51,19 @@ TRUSTEDPARTS_LINKS = SourcingAttributionLinks(
 )
 
 
+@dataclass(frozen=True)
+class _LineUpdate:
+    line: PurchasePlanLine
+    selected_distributor: str | None
+    selected_qty: int | None
+    selected_unit_price: Decimal | None
+    selected_currency: str | None
+    selected_packaging: str | None
+    selected_moq: int | None
+    selected_lead_time_days: int | None
+    selected_url: str | None
+
+
 class SourcingNotConfigured(Exception):
     """Workspace has no usable TrustedParts sourcing configuration."""
 
@@ -63,6 +78,10 @@ class PurchasePlanStaleError(Exception):
 
 class PurchasePlanCurrencyError(Exception):
     """Purchase plan has incompatible currencies in one distributor group."""
+
+
+class PurchasePlanOverrideError(Exception):
+    """Purchase plan conversion override is not valid for cached line offers."""
 
 
 def build_purchase_plan(
@@ -122,29 +141,49 @@ def build_purchase_plan(
         expires_at=created_at + PURCHASE_PLAN_TTL,
         created_by=requested_by,
     )
-    plan.lines = [
-        PurchasePlanLine(
-            project_entry_id=selection.project_entry_id,
-            part_id=selection.part_id,
-            mpn_searched=selection.mpn_searched,
-            required_qty=selection.required_qty,
-            internal_available_qty=selection.internal_available_qty,
-            shortage_qty=selection.shortage_qty,
-            selected_distributor=selection.selected_distributor,
-            selected_qty=selection.selected_qty,
-            selected_unit_price=selection.selected_unit_price,
-            selected_currency=selection.selected_currency,
-            selected_packaging=selection.selected_packaging,
-            selected_moq=selection.selected_moq,
-            selected_lead_time_days=selection.selected_lead_time_days,
-            selected_url=selection.selected_url,
-            risk_flags=list(selection.risk_flags),
-        )
-        for selection in outcome.selections
-    ]
+    plan.lines = _purchase_plan_lines_from_selections(outcome.selections, bom.rows)
     db.add(plan)
     db.flush()
     return plan
+
+
+def _purchase_plan_lines_from_selections(
+    selections: Iterable[Any],
+    rows: list[SourcingBomLineOut],
+) -> list[PurchasePlanLine]:
+    rows_by_entry_id = {row.project_entry_id: row for row in rows}
+    lines: list[PurchasePlanLine] = []
+    for selection in selections:
+        source_row = rows_by_entry_id.get(selection.project_entry_id)
+        available_offers = (
+            [
+                offer.model_dump(mode="json")
+                for offer in source_row.offers
+            ]
+            if source_row is not None
+            else []
+        )
+        lines.append(
+            PurchasePlanLine(
+                project_entry_id=selection.project_entry_id,
+                part_id=selection.part_id,
+                mpn_searched=selection.mpn_searched,
+                required_qty=selection.required_qty,
+                internal_available_qty=selection.internal_available_qty,
+                shortage_qty=selection.shortage_qty,
+                selected_distributor=selection.selected_distributor,
+                selected_qty=selection.selected_qty,
+                selected_unit_price=selection.selected_unit_price,
+                selected_currency=selection.selected_currency,
+                selected_packaging=selection.selected_packaging,
+                selected_moq=selection.selected_moq,
+                selected_lead_time_days=selection.selected_lead_time_days,
+                selected_url=selection.selected_url,
+                available_offers=available_offers,
+                risk_flags=list(selection.risk_flags),
+            )
+        )
+    return lines
 
 
 def convert_plan_to_orders(
@@ -153,6 +192,7 @@ def convert_plan_to_orders(
     workspace: Any,
     plan: PurchasePlan,
     user_id: UUID | None,
+    overrides: dict[UUID, PurchasePlanOrderOverrideIn] | None = None,
 ) -> list[Order]:
     if plan.status != "refreshed":
         raise PurchasePlanStaleError(
@@ -164,6 +204,10 @@ def convert_plan_to_orders(
         )
     if plan.last_refreshed_at < utcnow() - timedelta(seconds=MAX_PLAN_STALENESS_SECONDS):
         raise PurchasePlanStaleError("plan refresh is stale; refresh again before conversion")
+
+    line_updates = _validated_line_updates(plan, overrides or {})
+    _validate_line_update_currencies(line_updates)
+    _apply_line_updates(line_updates)
 
     lines_by_distributor: dict[str, list[PurchasePlanLine]] = {}
     display_names: dict[str, str] = {}
@@ -194,6 +238,118 @@ def convert_plan_to_orders(
     plan.status = "converted"
     db.flush()
     return orders
+
+
+def _validated_line_updates(
+    plan: PurchasePlan,
+    overrides: dict[UUID, PurchasePlanOrderOverrideIn],
+) -> list[_LineUpdate]:
+    lines_by_id = {line.id: line for line in plan.lines}
+    unknown_line_ids = sorted(set(overrides) - set(lines_by_id), key=str)
+    if unknown_line_ids:
+        raise PurchasePlanOverrideError(
+            "override line does not belong to this purchase plan"
+        )
+
+    updates: list[_LineUpdate] = []
+    for line in plan.lines:
+        override = overrides.get(line.id)
+        if override is None:
+            updates.append(_line_update_from_current_selection(line))
+            continue
+        offer = _matching_cached_offer(line, override)
+        updates.append(
+            _LineUpdate(
+                line=line,
+                selected_distributor=offer.distributor,
+                selected_qty=override.selected_qty,
+                selected_unit_price=override.selected_unit_price,
+                selected_currency=override.selected_currency,
+                selected_packaging=offer.packaging,
+                selected_moq=offer.moq,
+                selected_lead_time_days=offer.lead_time_days,
+                selected_url=offer.url,
+            )
+        )
+    return updates
+
+
+def _line_update_from_current_selection(line: PurchasePlanLine) -> _LineUpdate:
+    return _LineUpdate(
+        line=line,
+        selected_distributor=line.selected_distributor,
+        selected_qty=line.selected_qty,
+        selected_unit_price=line.selected_unit_price,
+        selected_currency=line.selected_currency,
+        selected_packaging=line.selected_packaging,
+        selected_moq=line.selected_moq,
+        selected_lead_time_days=line.selected_lead_time_days,
+        selected_url=line.selected_url,
+    )
+
+
+def _matching_cached_offer(
+    line: PurchasePlanLine,
+    override: PurchasePlanOrderOverrideIn,
+) -> SourcingBomOfferOut:
+    if not line.available_offers:
+        raise PurchasePlanStaleError(
+            "cached offers are unavailable; refresh again before conversion"
+        )
+    for raw_offer in line.available_offers:
+        offer = SourcingBomOfferOut.model_validate(raw_offer)
+        if offer.distributor.casefold() != override.selected_distributor.casefold():
+            continue
+        if offer.stock < override.selected_qty:
+            continue
+        if offer.moq is not None and override.selected_qty < offer.moq:
+            continue
+        if override.selected_qty < line.shortage_qty:
+            continue
+        if (offer.currency or "").upper() != override.selected_currency:
+            continue
+        unit_price = _unit_price_for_offer(offer, override.selected_qty)
+        if unit_price is None or unit_price != override.selected_unit_price:
+            continue
+        return offer
+    raise PurchasePlanOverrideError(
+        "override does not match cached offers for purchase plan line"
+    )
+
+
+def _unit_price_for_offer(offer: SourcingBomOfferOut, qty: int) -> Decimal | None:
+    best = best_unit_price_at_qty(offer.price_breaks, qty)
+    if best is not None:
+        return best[0]
+    return offer.unit_price
+
+
+def _validate_line_update_currencies(updates: list[_LineUpdate]) -> None:
+    currencies_by_distributor: dict[str, set[str]] = {}
+    display_names: dict[str, str] = {}
+    for update in updates:
+        if update.selected_distributor is None or update.selected_currency is None:
+            continue
+        key = update.selected_distributor.casefold()
+        currencies_by_distributor.setdefault(key, set()).add(update.selected_currency)
+        display_names.setdefault(key, update.selected_distributor)
+    for distributor_key, currencies in currencies_by_distributor.items():
+        if len(currencies) > 1:
+            raise PurchasePlanCurrencyError(
+                f"mixed currencies for distributor {display_names[distributor_key]}"
+            )
+
+
+def _apply_line_updates(updates: list[_LineUpdate]) -> None:
+    for update in updates:
+        update.line.selected_distributor = update.selected_distributor
+        update.line.selected_qty = update.selected_qty
+        update.line.selected_unit_price = update.selected_unit_price
+        update.line.selected_currency = update.selected_currency
+        update.line.selected_packaging = update.selected_packaging
+        update.line.selected_moq = update.selected_moq
+        update.line.selected_lead_time_days = update.selected_lead_time_days
+        update.line.selected_url = update.selected_url
 
 
 def refresh_purchase_plan(
@@ -232,26 +388,7 @@ def refresh_purchase_plan(
         price_tolerance_pct=Decimal(plan.price_tolerance_pct or Decimal("5")),
     )
 
-    plan.lines = [
-        PurchasePlanLine(
-            project_entry_id=selection.project_entry_id,
-            part_id=selection.part_id,
-            mpn_searched=selection.mpn_searched,
-            required_qty=selection.required_qty,
-            internal_available_qty=selection.internal_available_qty,
-            shortage_qty=selection.shortage_qty,
-            selected_distributor=selection.selected_distributor,
-            selected_qty=selection.selected_qty,
-            selected_unit_price=selection.selected_unit_price,
-            selected_currency=selection.selected_currency,
-            selected_packaging=selection.selected_packaging,
-            selected_moq=selection.selected_moq,
-            selected_lead_time_days=selection.selected_lead_time_days,
-            selected_url=selection.selected_url,
-            risk_flags=list(selection.risk_flags),
-        )
-        for selection in outcome.selections
-    ]
+    plan.lines = _purchase_plan_lines_from_selections(outcome.selections, bom.rows)
     plan.status = "refreshed"
     plan.last_refreshed_at = utcnow()
     db.flush()
