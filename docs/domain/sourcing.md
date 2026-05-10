@@ -84,6 +84,19 @@ Sources: `backend/app/domain/sourcing/coverage.py:45-120`,
 `backend/app/domain/sourcing/coverage.py:123-196`,
 `backend/app/domain/sourcing/schemas.py:382-407`
 
+## Coverage Variants
+
+Project BOM coverage returns two combination summaries above the per-distributor
+matrix: `lowest_total_price_combo` reuses the purchase-plan optimizer's
+`lowest_total_price` strategy, while `fewest_distributors_combo` finds the smallest
+distributor set that reaches the target coverage. The fewest-distributors search is
+exhaustive through 10 distributors, then switches to a deterministic greedy set-cover
+heuristic that picks the distributor covering the most remaining lines and breaks ties
+by combo cost and distributor name.
+
+Sources: `backend/app/domain/sourcing/coverage.py:216-464`,
+`backend/app/domain/sourcing/optimizer.py:69-93`
+
 ## BOM Risk Flags
 
 Project sourcing keeps the five original BOM risk flags in order, then appends

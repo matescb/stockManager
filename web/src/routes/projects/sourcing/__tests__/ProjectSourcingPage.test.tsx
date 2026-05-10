@@ -146,6 +146,11 @@ function sourcingResponse(overrides: Record<string, unknown> = {}) {
       total_lines: 2,
       best_single_distributor: "DigiKey",
       best_two_distributor_combo: ["DigiKey", "Mouser"],
+      lowest_total_price_combo: ["DigiKey", "Mouser"],
+      lowest_total_price_total: "25.00",
+      fewest_distributors_combo: ["DigiKey", "Mouser"],
+      fewest_distributors_total: "25.00",
+      target_coverage_pct: 1,
     },
     capacity: {
       can_build_now: 0,
@@ -325,7 +330,7 @@ describe("ProjectSourcingPage", () => {
     renderPage();
 
     expect(await screen.findByText("Price to pay:")).toBeDefined();
-    expect(screen.getByText("25 USD")).toBeDefined();
+    expect(screen.getAllByText("25 USD").length).toBeGreaterThan(0);
     expect(screen.getByText("short qty only, excluding blocking lines")).toBeDefined();
   });
 
@@ -418,6 +423,77 @@ describe("ProjectSourcingPage", () => {
     expect(screen.queryByRole("status", { name: "Loading sourced BOM" })).toBeNull();
 
     filteredLoad.resolve(sourcingResponse());
+  });
+
+  it("Coverage card renders Lowest total price variant with distributor names + total", async () => {
+    mockReads();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({
+      coverage: {
+        ...sourcingResponse().coverage,
+        rows: [
+          ...sourcingResponse().coverage.rows,
+          {
+            distributor: "Arrow",
+            lines_covered: 2,
+            lines_uncovered: [],
+            coverage_pct: 1,
+            est_total_cost: "40.00",
+            worst_lead_time_days: 5,
+          },
+        ],
+        lowest_total_price_combo: ["DigiKey", "Mouser"],
+        lowest_total_price_total: "25.00",
+        fewest_distributors_combo: ["Arrow"],
+        fewest_distributors_total: "40.00",
+      },
+    }));
+
+    renderPage();
+
+    expect(await screen.findByText("Lowest total price")).toBeDefined();
+    expect(screen.getByText("DigiKey + Mouser")).toBeDefined();
+    expect(screen.getAllByText("25 USD").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("100%").length).toBeGreaterThan(0);
+  });
+
+  it("Coverage card renders Fewest distributors variant", async () => {
+    mockReads();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({
+      coverage: {
+        ...sourcingResponse().coverage,
+        rows: [
+          ...sourcingResponse().coverage.rows,
+          {
+            distributor: "Arrow",
+            lines_covered: 2,
+            lines_uncovered: [],
+            coverage_pct: 1,
+            est_total_cost: "40.00",
+            worst_lead_time_days: 5,
+          },
+        ],
+        lowest_total_price_combo: ["DigiKey", "Mouser"],
+        lowest_total_price_total: "25.00",
+        fewest_distributors_combo: ["Arrow"],
+        fewest_distributors_total: "40.00",
+      },
+    }));
+
+    renderPage();
+
+    expect(await screen.findByText("Fewest distributors")).toBeDefined();
+    expect(screen.getAllByText("40 USD").length).toBeGreaterThan(0);
+  });
+
+  it("When both variants are the same set, only one card renders with both labels", async () => {
+    mockReads();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+
+    renderPage();
+
+    expect(await screen.findByText("Lowest total price")).toBeDefined();
+    expect(screen.getByText("Fewest distributors")).toBeDefined();
+    expect(screen.getAllByText("DigiKey + Mouser")).toHaveLength(1);
   });
 
   it("renders risk pills for each flag returned", async () => {

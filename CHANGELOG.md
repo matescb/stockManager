@@ -11,6 +11,8 @@ the canonical record.
 - **SX-6 / #473** Project Sourcing BOM coverage now keeps TanStack Query
   display data warm for instant remounts and shows a non-blocking background
   refresh hint instead of a skeleton during refetches.
+- **SX-5 / #472** Project Sourcing coverage now shows lowest-price and
+  fewest-distributor combination cards above the per-distributor matrix.
 - **SX-4 / #471** Project Sourcing capacity now separates total BOM cost
   from the short-quantity price to pay, with `est_purchase_cost` retained as
   a deprecated alias.

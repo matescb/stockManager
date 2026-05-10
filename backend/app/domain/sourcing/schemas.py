@@ -377,6 +377,11 @@ class DistributorCoverageMatrixOut(BaseModel):
     total_lines: int
     best_single_distributor: str | None
     best_two_distributor_combo: tuple[str, str] | None
+    lowest_total_price_combo: list[str]
+    lowest_total_price_total: Decimal | None
+    fewest_distributors_combo: list[str]
+    fewest_distributors_total: Decimal | None
+    target_coverage_pct: float
 
 
 class BuildCapacityOut(BaseModel):
