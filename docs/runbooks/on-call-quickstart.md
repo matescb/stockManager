@@ -103,9 +103,32 @@ sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
 | Sentry issue spike, app still up | [`sentry-triage.md`](sentry-triage.md) |
 | Backups missing, restore needed | [`backup-restore.md`](backup-restore.md) |
 | Email not sending (signup / invitation) | [`smtp-outage.md`](smtp-outage.md) |
+| User reports a sourcing alert did not fire | Alert checks below, then [`smtp-outage.md`](smtp-outage.md) if email dispatch failed |
 | DigiKey or Mouser lookup failing | [`provider-outage.md`](provider-outage.md) |
 | Workspace is unreachable / disabled / suspected isolation leak | [`workspace-recovery.md`](workspace-recovery.md) |
 | Something I can't categorise | [`incident-response.md`](incident-response.md) — declare an incident |
+
+### User Reports a Sourcing Alert Did Not Fire
+
+Check the row state first:
+
+```bash
+sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
+  exec db psql "$DATABASE_URL" -c \
+  "SELECT id, alert_type, enabled, archived_at, last_checked_at, last_notified_at, last_evaluation_state FROM sourcing_alerts WHERE workspace_id = '<WORKSPACE_ID>' ORDER BY created_at DESC LIMIT 20;"
+```
+
+- `last_checked_at` is null or stale: the alert evaluator job did not run; check the
+  backend-cron-alerts container once TP-503 lands.
+- `last_evaluation_state` is null: first evaluation records state and does not notify.
+- `last_notified_at` is recent: cooldown may be suppressing another email; compare with
+  `cooldown_seconds`.
+- Sourcing alert types use cached TrustedParts data by default; a manual fresh refresh
+  may show newer provider state than the evaluator saw.
+- If the row says it notified but the user has no email, check backend logs for
+  `sourcing_alert.smtp_failed` and continue with [`smtp-outage.md`](smtp-outage.md).
+
+Source: `backend/app/domain/sourcing/alerts_evaluator.py:42-88`
 
 ## Where the dashboards live
 

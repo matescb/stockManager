@@ -120,6 +120,43 @@ lives on `last_checked_at`, `last_notified_at`, and `last_evaluation_state`.
 
 Source: `backend/alembic/versions/0044_sourcing_alerts.py:20`
 
+### Evaluator Behaviour
+
+`evaluate_all_alerts(db)` scans enabled, non-archived rows across workspaces, dispatches
+by `alert_type`, persists `last_checked_at` and `last_evaluation_state`, and commits
+per alert row. Evaluator failures roll back only the current row and are logged so later
+alerts still run. Source: `backend/app/domain/sourcing/alerts_evaluator.py:42-88`
+
+All evaluator queries stay workspace-scoped. Part and project targets are loaded with
+`workspace_id == workspace.id`, recipient lookup joins `workspace_members` on the same
+workspace, and sourcing calls receive the current alert workspace. Sources:
+`backend/app/domain/sourcing/alerts_evaluator.py:331-349`,
+`backend/app/domain/sourcing/alerts_evaluator.py:377-402`
+
+| `alert_type` | Trigger rule | Persisted state |
+|---|---|---|
+| `stock_below` | current stock crosses from `>= threshold.qty` to `< threshold.qty` | `{ "qty": int }` |
+| `stock_above` | current stock crosses from `<= threshold.qty` to `> threshold.qty` | `{ "qty": int }` |
+| `back_in_stock` | authorized stock crosses from zero to positive | `{ "had_stock": bool }` |
+| `out_of_authorized_stock` | authorized stock crosses from positive to zero | `{ "had_stock": bool }` |
+| `price_changed` | same-currency best authorized unit price changes by at least `threshold.delta_pct` percent | `{ "last_price": str, "last_currency": str }` |
+| `bom_buyable` | `can_build_after_purchase >= threshold.build_quantity` after a prior not-buyable state | `{ "is_buyable": bool }` |
+
+First evaluation records state and does not notify because no prior state exists.
+Stock alerts read quantity only through `domain/stock/service.py::current_quantity`.
+Sourcing-typed part alerts call `sourcing.service.search(..., use_cached_data=True)`;
+BOM buyability calls `sourcing.service.source_bom(..., use_cached_data=True)` and uses
+the returned capacity computed by `compute_build_capacity`. Sources:
+`backend/app/domain/sourcing/alerts_evaluator.py:91-279`,
+`backend/app/domain/sourcing/alerts_evaluator.py:405-457`
+
+Cooldown is DB-backed: notification is allowed when `last_notified_at IS NULL` or when
+the elapsed wall time is at least `cooldown_seconds`. `last_notified_at` updates only
+after a successful email send. SMTP failures and missing recipients are logged at
+warning level and do not stop the evaluator loop. Sources:
+`backend/app/domain/sourcing/alerts_evaluator.py:292-328`,
+`backend/app/core/mail.py:70-102`
+
 ## Workspace Isolation
 
 Reads filter by both `workspace_id` and `query_hash`, so identical canonical queries in

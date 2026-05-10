@@ -569,7 +569,6 @@ def test_no_cross_workspace_default_storage_in_existing_rows():
     `default_storage_location_id` references a `storage_locations` row
     in a different workspace. Doubles as the form of the prod audit
     query the issue suggests running once on `main`."""
-    import pytest as _pytest  # local import — module-level pytest is unused
     from sqlalchemy import text
 
     from app.infra.db import SessionLocal
@@ -1098,7 +1097,7 @@ def test_catalog_token_404s_on_wrong_workspace_token():
     # A enables their catalog
     r = a.patch("/api/workspaces/current", json={"catalog_enabled": True})
     assert r.status_code == 200, r.text
-    me = a.get("/api/auth/me").json()["data"]
+    assert a.get("/api/auth/me").status_code == 200
     # Fetching with a fake token must 404 — and we never authenticated
     # the call to /catalog so this is the unauthenticated probe.
     fresh = TestClient(app)
@@ -1162,8 +1161,6 @@ def test_order_entry_foreign_entry_id_is_404():
     Without assert_child_in_parent, db.get(OrderEntry, id) returned the
     cross-workspace row and let it be mutated."""
     a, b = _two_workspaces()
-    part_a = _create_part(a, "A-Part")
-
     # A creates an order + entry.
     order_a = a.post("/api/orders", json={"name": "OA"}).json()["data"]["id"]
     entry_a = a.post(
@@ -1227,3 +1224,95 @@ def test_audit_log_does_not_leak_cross_workspace_rows():
     assert a_part_ids_in_b == [], (
         f"Workspace A's audit rows leaked into workspace B's log: {a_part_ids_in_b}"
     )
+
+
+def test_sourcing_alert_evaluator_isolated_by_workspace(db, monkeypatch):
+    """Alert evaluation must call sourcing with each alert's own workspace."""
+    from app.domain.parts.models import Part
+    from app.domain.sourcing import alerts_evaluator
+    from app.domain.sourcing.models import SourcingAlert
+    from app.domain.users.models import User
+    from app.domain.workspaces.models import Workspace, WorkspaceMember
+
+    def make_workspace() -> tuple[Workspace, User]:
+        user = User(
+            email=f"alert-isolation-{uuid.uuid4().hex[:8]}@example.com",
+            name="Alert Isolation",
+            password_hash="test",
+        )
+        db.add(user)
+        db.flush()
+        workspace = Workspace(
+            name=f"alert-isolation-{uuid.uuid4().hex[:8]}",
+            kind="organization",
+            owner_user_id=user.id,
+        )
+        db.add(workspace)
+        db.flush()
+        db.add(
+            WorkspaceMember(
+                workspace_id=workspace.id,
+                user_id=user.id,
+                role="owner",
+                status="active",
+            )
+        )
+        db.flush()
+        return workspace, user
+
+    def make_part(workspace: Workspace, user: User) -> Part:
+        part = Part(
+            workspace_id=workspace.id,
+            name=f"Shared MPN {uuid.uuid4().hex[:8]}",
+            part_type="local",
+            mpn="ALERT-SHARED-MPN",
+            created_by=user.id,
+            updated_by=user.id,
+        )
+        db.add(part)
+        db.flush()
+        return part
+
+    workspace_a, user_a = make_workspace()
+    workspace_b, user_b = make_workspace()
+    part_a = make_part(workspace_a, user_a)
+    part_b = make_part(workspace_b, user_b)
+    db.add_all(
+        [
+            SourcingAlert(
+                workspace_id=workspace_a.id,
+                part_id=part_a.id,
+                alert_type="back_in_stock",
+                threshold={},
+                notify_user_ids=[str(user_a.id)],
+                last_evaluation_state={"had_stock": False},
+                created_by=user_a.id,
+            ),
+            SourcingAlert(
+                workspace_id=workspace_b.id,
+                part_id=part_b.id,
+                alert_type="back_in_stock",
+                threshold={},
+                notify_user_ids=[str(user_b.id)],
+                last_evaluation_state={"had_stock": False},
+                created_by=user_b.id,
+            ),
+        ]
+    )
+    db.flush()
+
+    seen_workspace_ids = []
+
+    def fake_search(*args, **kwargs):
+        seen_workspace_ids.append(kwargs["workspace"].id)
+        distributor = type("Distributor", (), {"stock": 1})()
+        offer = type("Offer", (), {"distributors": [distributor]})()
+        result = type("Result", (), {"offers": [offer]})()
+        return type("SearchOut", (), {"results": [result]})()
+
+    monkeypatch.setattr(alerts_evaluator.sourcing_service, "search", fake_search)
+    monkeypatch.setattr(alerts_evaluator.mail, "send", lambda **kwargs: None)
+
+    assert alerts_evaluator.evaluate_all_alerts(db) == 2
+
+    assert set(seen_workspace_ids) == {workspace_a.id, workspace_b.id}
