@@ -142,6 +142,45 @@ class BomImportCommitOut(BaseModel):
     skipped: int = 0
 
 
+class BomProviderImportIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    entry_ids: list[UUID] | None = Field(default=None, max_length=50)
+
+
+class BomProviderImportChoiceIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    choices: dict[UUID, str] = Field(min_length=1, max_length=50)
+
+
+class BomProviderCandidate(BaseModel):
+    manufacturer: str
+    mpn: str | None = None
+    description: str | None = None
+    source_url: str | None = None
+    image_url: str | None = None
+
+
+class BomProviderPendingChoice(BaseModel):
+    entry_id: UUID
+    mpn: str
+    candidates: list[BomProviderCandidate]
+
+
+class BomProviderFailure(BaseModel):
+    entry_id: UUID
+    mpn: str
+    reason: str
+
+
+class BomProviderImportOut(BaseModel):
+    created: int
+    pending_choices: list[BomProviderPendingChoice] = []
+    failures: list[BomProviderFailure] = []
+    provider: str
+
+
 # BOM presets (#252 — lifted from app/api/routes/bom_presets.py)
 
 class PresetIn(BaseModel):

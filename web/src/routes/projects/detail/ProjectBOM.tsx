@@ -1,8 +1,8 @@
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { FolderKanban, ImageOff, Trash2 } from "lucide-react";
+import { CloudDownload, FolderKanban, ImageOff, Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
@@ -12,7 +12,30 @@ import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import QueryStateBoundary from "@/components/QueryStateBoundary";
 import AddPartFromLibraryModal from "./AddPartFromLibraryModal";
+import BomProviderAmbiguityModal, { type BomProviderPendingChoice } from "./BomProviderAmbiguityModal";
+import BomProviderFailuresPanel, { type BomProviderFailure } from "./BomProviderFailuresPanel";
 import { SourceBomButton } from "@/routes/projects/sourcing/SourceBomButton";
+
+type WorkspaceProviderSettings = {
+  parts_provider: "none" | "mouser" | "digikey";
+};
+
+type BomProviderImportOut = {
+  created: number;
+  pending_choices: BomProviderPendingChoice[];
+  failures: BomProviderFailure[];
+  provider: WorkspaceProviderSettings["parts_provider"];
+};
+
+type BomProviderImportPayload = {
+  entry_ids: string[] | null;
+};
+
+const PROVIDER_LABEL: Record<string, string> = {
+  none: "provider",
+  mouser: "Mouser",
+  digikey: "DigiKey",
+};
 
 export default function ProjectBOM() {
   const { projectId } = useParams();
@@ -25,10 +48,20 @@ export default function ProjectBOM() {
   });
   const { data: entries } = entriesQuery;
   const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts?limit=200") });
+  const { data: workspace } = useQuery({
+    queryKey: useWsKey("ws", "current"),
+    queryFn: () => api.get<WorkspaceProviderSettings>("/workspaces/current"),
+  });
   const partsById = new Map(parts?.map(p => [p.id, p]) ?? []);
 
   const [matching, setMatching] = useState<{ entryId: string; pick: string } | null>(null);
   const [addPartOpen, setAddPartOpen] = useState(false);
+  const [pendingChoices, setPendingChoices] = useState<BomProviderPendingChoice[]>([]);
+  const [failures, setFailures] = useState<BomProviderFailure[]>([]);
+
+  const provider = workspace?.parts_provider ?? "none";
+  const providerLabel = PROVIDER_LABEL[provider] ?? provider;
+  const unmatchedEntries = (entries ?? []).filter(entry => entry.entry_type === "unmatched" && !entry.part_id);
 
   const bulkDeleteMutation = useApiMutation<null[], string[]>({
     mutationKey: ["project", projectId, "bulk-delete-entries"],
@@ -42,6 +75,41 @@ export default function ProjectBOM() {
     onSuccess: (_res, entryIds) => {
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "project", projectId, "entries") });
       toast.success(`Deleted ${entryIds.length} BOM row${entryIds.length === 1 ? "" : "s"}.`);
+    },
+  });
+
+  function handleProviderResult(result: BomProviderImportOut) {
+    if (result.created > 0) {
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "project", projectId, "entries") });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
+      toast.success(`Created ${result.created} part${result.created === 1 ? "" : "s"} from ${PROVIDER_LABEL[result.provider] ?? result.provider}.`);
+    }
+    if (result.pending_choices.length > 0) {
+      setPendingChoices(result.pending_choices);
+    }
+    if (result.failures.length > 0) {
+      setFailures(result.failures);
+    }
+  }
+
+  const importProviderMutation = useApiMutation<BomProviderImportOut, BomProviderImportPayload>({
+    mutationKey: ["project", projectId, "bom-import-provider"],
+    mutationFn: payload => api.post<BomProviderImportOut, BomProviderImportPayload>(`/projects/${projectId}/bom/import-from-provider`, payload),
+    onSuccess: handleProviderResult,
+    onError: error => {
+      toast.error(error instanceof ApiError ? error.userMessage : "Provider import failed");
+    },
+  });
+
+  const commitChoicesMutation = useApiMutation<BomProviderImportOut, { choices: Record<string, string> }>({
+    mutationKey: ["project", projectId, "bom-import-provider-choices"],
+    mutationFn: payload => api.post<BomProviderImportOut, { choices: Record<string, string> }>(`/projects/${projectId}/bom/import-from-provider/commit-choices`, payload),
+    onSuccess: result => {
+      setPendingChoices([]);
+      handleProviderResult(result);
+    },
+    onError: error => {
+      toast.error(error instanceof ApiError ? error.userMessage : "Provider import failed");
     },
   });
 
@@ -60,6 +128,17 @@ export default function ProjectBOM() {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-end gap-2">
         <SourceBomButton projectId={projectId} className="btn" />
+        {projectId && provider !== "none" && unmatchedEntries.length > 0 && (
+          <button
+            type="button"
+            className="btn inline-flex items-center gap-1.5"
+            disabled={importProviderMutation.isPending}
+            onClick={() => importProviderMutation.mutate({ entry_ids: null })}
+          >
+            {importProviderMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <CloudDownload size={14} />}
+            Import all unmatched from {providerLabel}
+          </button>
+        )}
         {projectId && (
           <Link className="btn" to={`/projects/${projectId}/import`}>
             Import BOM
@@ -151,6 +230,18 @@ export default function ProjectBOM() {
                     <span className="pill bg-danger/20 text-danger mr-2">unmatched</span>
                     <span>{r.name || ""}</span>
                     <button className="btn ml-2 text-xs" onClick={() => setMatching({ entryId: r.id, pick: "" })}>Match…</button>
+                    {provider !== "none" && (
+                      <button
+                        className="btn ml-2 text-xs"
+                        disabled={importProviderMutation.isPending}
+                        onClick={event => {
+                          event.stopPropagation();
+                          importProviderMutation.mutate({ entry_ids: [r.id] });
+                        }}
+                      >
+                        Import from provider
+                      </button>
+                    )}
                   </span>
                 )
               ) : (
@@ -198,6 +289,14 @@ export default function ProjectBOM() {
           onClose={() => setAddPartOpen(false)}
         />
       )}
+      <BomProviderAmbiguityModal
+        open={pendingChoices.length > 0}
+        choices={pendingChoices}
+        busy={commitChoicesMutation.isPending}
+        onClose={() => setPendingChoices([])}
+        onConfirm={choices => commitChoicesMutation.mutate({ choices })}
+      />
+      <BomProviderFailuresPanel failures={failures} onClose={() => setFailures([])} />
     </div>
   );
 }

@@ -936,6 +936,23 @@ def test_bom_presets_isolation():
     assert b.delete(f"/api/bom-presets/{preset}").status_code == 404
 
 
+def test_bom_provider_import_foreign_project_404():
+    """Provider-backed unmatched-row import must resolve project_id inside
+    the caller's workspace before it looks at any BOM entries."""
+    a, b = _two_workspaces()
+    b.patch(
+        "/api/workspaces/current",
+        json={"parts_provider": "mouser", "parts_provider_api_key": "x" * 36},
+    )
+    project_a = a.post("/api/projects", json={"name": "A-provider-import"}).json()["data"]["id"]
+
+    r = b.post(
+        f"/api/projects/{project_a}/bom/import-from-provider",
+        json={"entry_ids": None},
+    )
+    assert r.status_code == 404, r.text
+
+
 def test_reports_low_stock_does_not_leak_other_workspace_parts():
     """Reports run as workspace-scoped aggregations. A foreign threshold-
     flagged part must not appear in B's low-stock report."""

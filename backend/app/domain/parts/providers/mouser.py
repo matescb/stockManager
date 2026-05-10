@@ -161,6 +161,24 @@ class MouserProvider:
         if not parts:
             return {"found": False, "result": None, "message": "no match for MPN"}
 
+        exact_parts = [
+            part for part in parts
+            if (part.get("ManufacturerPartNumber") or "").strip().casefold() == mpn.casefold()
+        ]
+        exact_manufacturers = {
+            (part.get("Manufacturer") or "").strip().casefold()
+            for part in exact_parts
+            if (part.get("Manufacturer") or "").strip()
+        }
+        if len(exact_manufacturers) > 1:
+            candidates = [_candidate_record_from_part(part, mpn) for part in exact_parts]
+            return {
+                "found": True,
+                "result": candidates[0],
+                "candidates": candidates,
+                "message": None,
+            }
+
         # Take the first match — for partial-match search this is the
         # closest stocked variant.
         p = parts[0]
@@ -374,3 +392,43 @@ class MouserProvider:
             },
             "message": None,
         }
+
+
+def _candidate_record_from_part(p: dict, mpn: str) -> dict:
+    raw_attrs = p.get("ProductAttributes") or []
+    specs_by_key: dict[str, list[str]] = {}
+    spec_order: list[str] = []
+    footprint: str | None = None
+    for a in raw_attrs:
+        name = (a.get("AttributeName") or "").strip()
+        value = (a.get("AttributeValue") or "").strip()
+        if not name or not value:
+            continue
+        if name not in specs_by_key:
+            spec_order.append(name)
+            specs_by_key[name] = []
+        if value not in specs_by_key[name]:
+            specs_by_key[name].append(value)
+        if footprint is None and name.lower() in (
+            "package / case",
+            "package",
+            "case",
+            "package/case",
+            "footprint",
+        ):
+            footprint = value
+
+    return {
+        "mpn": p.get("ManufacturerPartNumber") or mpn,
+        "manufacturer": p.get("Manufacturer") or None,
+        "description": p.get("Description") or None,
+        "category": p.get("Category") or None,
+        "footprint": footprint,
+        "datasheet_url": p.get("DataSheetUrl") or None,
+        "image_url": p.get("ImagePath") or None,
+        "source_url": p.get("ProductDetailUrl") or "",
+        "specs": [
+            {"key": key, "value": " / ".join(specs_by_key[key])}
+            for key in spec_order
+        ],
+    }

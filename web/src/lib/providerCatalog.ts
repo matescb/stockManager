@@ -40,7 +40,7 @@ const CATALOG_REGEX_KEYS: RegExp[] = [
   /^Unit price \(\d+\+\)$/,
 ];
 
-const RESERVED_KEYS = new Set<string>(["image_url", "datasheet_url"]);
+const RESERVED_KEYS = new Set<string>(["image_url", "datasheet_url", "source_url"]);
 
 export function isReservedKey(key: string): boolean {
   return RESERVED_KEYS.has(key);
