@@ -97,6 +97,29 @@ on `purchase_plan_lines.selected_url` and are not persisted into `orders.comment
 
 Source: `backend/app/domain/sourcing/service.py:57`
 
+## Alerts
+
+`sourcing_alerts` stores workspace-scoped, soft-deletable alert definitions for the
+Phase 5b evaluator. Each row targets exactly one part or one project and uses
+`threshold` as opaque JSONB; the API validates the per-type shape before insert.
+
+| `alert_type` | Scope | Threshold shape |
+|---|---|---|
+| `stock_below` | part | `{ "qty": int }` |
+| `stock_above` | part | `{ "qty": int }` |
+| `back_in_stock` | part | `{}` |
+| `out_of_authorized_stock` | part | `{}` |
+| `price_changed` | part | `{ "delta_pct": Decimal }` |
+| `bom_buyable` | project | `{ "build_quantity": int }` |
+
+The database pins the six MVP alert types with a CHECK constraint, enforces one active
+target via `(part_id IS NOT NULL) <> (project_id IS NOT NULL)`, and prevents duplicate
+active alerts with a partial unique index over workspace, type, target, and threshold.
+`cooldown_seconds` defaults to 24 hours and has a 60-second minimum. Evaluator state
+lives on `last_checked_at`, `last_notified_at`, and `last_evaluation_state`.
+
+Source: `backend/alembic/versions/0044_sourcing_alerts.py:20`
+
 ## Workspace Isolation
 
 Reads filter by both `workspace_id` and `query_hash`, so identical canonical queries in

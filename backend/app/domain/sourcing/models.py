@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
 from app.core.time import utcnow
+from app.domain._mixins import WorkspaceOwned
 from app.infra.db import Base
 
 
@@ -218,3 +219,110 @@ class PurchasePlanLine(Base):
     )
 
     purchase_plan = relationship("PurchasePlan", back_populates="lines")
+
+
+class SourcingAlert(WorkspaceOwned, Base):
+    """Workspace-scoped alert definition evaluated by the sourcing jobs."""
+
+    __tablename__ = "sourcing_alerts"
+    __table_args__ = (
+        CheckConstraint(
+            "alert_type IN ("
+            "'stock_below', "
+            "'stock_above', "
+            "'back_in_stock', "
+            "'out_of_authorized_stock', "
+            "'price_changed', "
+            "'bom_buyable'"
+            ")",
+            name="sourcing_alerts_alert_type_check",
+        ),
+        CheckConstraint(
+            "cooldown_seconds >= 60",
+            name="sourcing_alerts_cooldown_seconds_min",
+        ),
+        CheckConstraint(
+            "(part_id IS NOT NULL) <> (project_id IS NOT NULL)",
+            name="sourcing_alerts_part_project_xor",
+        ),
+        Index(
+            "uq_sourcing_alerts_active_target_threshold",
+            "workspace_id",
+            "alert_type",
+            sa.text("COALESCE(part_id, project_id)"),
+            "threshold",
+            unique=True,
+            postgresql_where=sa.text("archived_at IS NULL"),
+        ),
+        Index(
+            "ix_sourcing_alerts_ws_enabled_archived",
+            "workspace_id",
+            "enabled",
+            "archived_at",
+        ),
+        Index("ix_sourcing_alerts_last_checked_at", "last_checked_at"),
+    )
+
+    updated_by = None
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=sa.text("gen_random_uuid()"),
+    )
+    workspace_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    part_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("parts.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    project_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    alert_type = Column(sa.String(40), nullable=False)
+    threshold = Column(JSONB, nullable=False)
+    country_code = Column(sa.String(2), nullable=True)
+    currency_code = Column(sa.String(3), nullable=True)
+    distributor_filter = Column(JSONB, nullable=True)
+    notify_user_ids = Column(JSONB, nullable=True)
+    cooldown_seconds = Column(
+        sa.Integer,
+        nullable=False,
+        default=86400,
+        server_default=sa.text("86400"),
+    )
+    enabled = Column(
+        sa.Boolean,
+        nullable=False,
+        default=True,
+        server_default=sa.true(),
+    )
+    last_checked_at = Column(DateTime(timezone=True), nullable=True)
+    last_notified_at = Column(DateTime(timezone=True), nullable=True)
+    last_evaluation_state = Column(JSONB, nullable=True)
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utcnow,
+        server_default=sa.func.now(),
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utcnow,
+        onupdate=utcnow,
+        server_default=sa.func.now(),
+    )
+    archived_at = Column(DateTime(timezone=True), nullable=True)
