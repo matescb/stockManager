@@ -401,6 +401,7 @@ describe("ProjectSourcingPage", () => {
     expect(await screen.findByRole("status", { name: "Sourcing diagnostics" })).toBeDefined();
     expect(screen.getByText("BOM lines need manufacturer part numbers.")).toBeDefined();
     expect(screen.getByText("Add MPNs to these parts, then source the BOM again.")).toBeDefined();
+    expect(screen.getByRole("link", { name: "Edit BOM" }).getAttribute("href")).toBe("/projects/project-123/import");
   });
 
   it("renders cached empty-result guidance with a Refresh prices action", async () => {

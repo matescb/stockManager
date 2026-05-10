@@ -186,10 +186,12 @@ function EmptyBomState({ projectId }: { projectId: string }) {
 
 function SourcingDiagnosticsPanel({
   data,
+  projectId,
   status,
   onRefresh,
 }: {
   data?: SourcingBomResponse;
+  projectId: string;
   status: number | null;
   onRefresh: () => void;
 }) {
@@ -243,6 +245,11 @@ function SourcingDiagnosticsPanel({
           <RefreshCw size={14} aria-hidden="true" />
           Refresh prices
         </button>
+      )}
+      {allNoMpn && (
+        <Link className="btn" to={`/projects/${projectId}/import`}>
+          Edit BOM
+        </Link>
       )}
     </div>
   );
@@ -720,6 +727,7 @@ export default function ProjectSourcingPage() {
       {query.data && !hasRows && <EmptyBomState projectId={projectId} />}
       <SourcingDiagnosticsPanel
         data={query.data}
+        projectId={projectId}
         status={status}
         onRefresh={() => query.refetch()}
       />
