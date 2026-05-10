@@ -7,6 +7,7 @@ import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { InlineQueryError } from "@/components/QueryStateBoundary";
+import { ActiveListsCard } from "./ActiveListsCard";
 import { SourcingCard } from "./SourcingCard";
 
 type Ws = {
@@ -32,6 +33,9 @@ type Ws = {
   sourcing_country_code: string | null;
   sourcing_currency_code: string | null;
   sourcing_preferred_distributors: string[] | null;
+  active_currencies: string[];
+  active_countries: string[];
+  active_distributors: string[];
   sourcing_use_cached_for_dashboards: boolean;
   has_sourcing_company_id: boolean;
   has_sourcing_api_key: boolean;
@@ -656,6 +660,7 @@ export default function WorkspaceSettings() {
       )}
 
       {cur && <SourcingCard workspace={cur} workspaceId={workspaceId} />}
+      {cur && <ActiveListsCard workspace={cur} workspaceId={workspaceId} />}
 
       {cur && (
         <div className="card p-4 mb-4 space-y-3 text-sm">
