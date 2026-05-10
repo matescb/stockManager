@@ -18,6 +18,7 @@ const baseWorkspace: SourcingWorkspace = {
   sourcing_provider: "none",
   sourcing_country_code: null,
   sourcing_currency_code: null,
+  sourcing_language_code: null,
   sourcing_preferred_distributors: null,
   sourcing_use_cached_for_dashboards: true,
   has_sourcing_company_id: false,
@@ -53,6 +54,9 @@ describe("SourcingCard", () => {
     expect(screen.getByLabelText("API Key")).toBeDefined();
     expect(screen.getByLabelText("Country")).toBeDefined();
     expect(screen.getByLabelText("Currency")).toBeDefined();
+    expect(screen.getByLabelText("Language")).toBeDefined();
+    expect(screen.getByRole("option", { name: "Default (en)" })).toBeDefined();
+    expect(screen.getByRole("option", { name: "Chinese, Traditional (zh-hant)" })).toBeDefined();
     expect(screen.getByLabelText("Preferred distributors")).toBeDefined();
     expect(screen.getByLabelText("Use cached data for dashboards")).toBeDefined();
     expect(screen.queryByText("Configured ✓")).toBeNull();
@@ -65,6 +69,7 @@ describe("SourcingCard", () => {
       sourcing_provider: "trustedparts",
       sourcing_country_code: "CZ",
       sourcing_currency_code: "EUR",
+      sourcing_language_code: "de",
       sourcing_preferred_distributors: ["DigiKey", "Mouser"],
       sourcing_use_cached_for_dashboards: false,
       has_sourcing_company_id: true,
@@ -77,6 +82,7 @@ describe("SourcingCard", () => {
     await user.type(screen.getByLabelText("API Key"), "api-456");
     await user.type(screen.getByLabelText("Country"), "cz");
     await user.type(screen.getByLabelText("Currency"), "eur");
+    await user.selectOptions(screen.getByLabelText("Language"), "de");
     await user.type(screen.getByLabelText("Preferred distributors"), "DigiKey, Mouser");
     await user.click(screen.getByLabelText("Use cached data for dashboards"));
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -86,6 +92,7 @@ describe("SourcingCard", () => {
         sourcing_provider: "trustedparts",
         sourcing_country_code: "CZ",
         sourcing_currency_code: "EUR",
+        sourcing_language_code: "de",
         sourcing_preferred_distributors: ["DigiKey", "Mouser"],
         sourcing_use_cached_for_dashboards: false,
         sourcing_company_id: "company-123",
@@ -94,6 +101,22 @@ describe("SourcingCard", () => {
     });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["ws", "ws-1", "ws", "current"] });
     expect(screen.getByText("Configured ✓")).toBeDefined();
+  });
+
+  it("maps the default language option to null on Save", async () => {
+    const user = userEvent.setup();
+    const patchSpy = vi.spyOn(api, "patch").mockResolvedValue(baseWorkspace);
+    renderCard({ ...baseWorkspace, sourcing_language_code: "fr" });
+
+    await user.selectOptions(screen.getByLabelText("Language"), "");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(patchSpy).toHaveBeenCalledWith(
+        "/workspaces/current",
+        expect.objectContaining({ sourcing_language_code: null }),
+      );
+    });
   });
 
   it("surfaces test-connection result on success", async () => {

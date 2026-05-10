@@ -389,6 +389,42 @@ def test_company_id_not_sent_in_request_body(monkeypatch):
     assert captured["body"].get("CompanyId") is None
 
 
+def test_search_request_includes_language_code_when_workspace_has_it_set(monkeypatch):
+    captured: dict[str, dict] = {}
+    client = TrustedPartsClient(
+        company_id="company-1",
+        api_key="api-key-1",
+        country_code="CZ",
+        currency_code="EUR",
+        user_agent="stockManager/test workspace=ws-1",
+        language_code="de",
+    )
+
+    def fake_post(url, json_body, headers):
+        captured["body"] = json_body
+        return 200, {"PartResults": []}
+
+    monkeypatch.setattr(sourcing_client, "_post_tp", fake_post)
+
+    client.search([_query()])
+
+    assert captured["body"]["LanguageCode"] == "de"
+
+
+def test_search_request_omits_language_code_when_workspace_has_none(monkeypatch):
+    captured: dict[str, dict] = {}
+
+    def fake_post(url, json_body, headers):
+        captured["body"] = json_body
+        return 200, {"PartResults": []}
+
+    monkeypatch.setattr(sourcing_client, "_post_tp", fake_post)
+
+    _client().search([_query()])
+
+    assert "LanguageCode" not in captured["body"]
+
+
 def test_api_key_never_logged(monkeypatch, caplog):
     api_key = "super-secret-api-key"
     client = TrustedPartsClient(

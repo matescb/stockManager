@@ -25,6 +25,17 @@ __all__ = [
 
 CurrencyCode = Annotated[str, StringConstraints(pattern=r"^[A-Z]{3}$")]
 CountryCode = Annotated[str, StringConstraints(pattern=r"^[A-Z]{2}$")]
+SourcingLanguageCode = Literal[
+    "de",
+    "en",
+    "es",
+    "fr",
+    "it",
+    "pt",
+    "ja",
+    "zh-hans",
+    "zh-hant",
+]
 DistributorName = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=120),
@@ -64,6 +75,7 @@ class WorkspacePatch(BaseModel):
     sourcing_api_key: str | None = Field(default=None, max_length=256)
     sourcing_country_code: str | None = Field(default=None, min_length=2, max_length=2)
     sourcing_currency_code: str | None = Field(default=None, min_length=3, max_length=3)
+    sourcing_language_code: SourcingLanguageCode | None = None
     sourcing_preferred_distributors: list[str] | None = None
     active_currencies: list[CurrencyCode] | None = Field(default=None, min_length=1)
     active_countries: list[CountryCode] | None = Field(default=None, min_length=1)

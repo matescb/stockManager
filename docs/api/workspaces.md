@@ -66,6 +66,7 @@ Return the active workspace.
     "catalog_enabled": true, "catalog_token_set": true,
     "parts_provider": "mouser", "has_parts_provider_api_key": true, "has_parts_provider_api_secret": true,
     "active_currencies": ["EUR", "USD"], "active_countries": ["CZ", "DE"],
+    "sourcing_language_code": null,
     "active_distributors": ["DigiKey", "Mouser"],
     "scanner": "zxing", "has_scanner_license_key": false
 }, "status": { … } }
@@ -126,6 +127,7 @@ Update workspace settings, rotate provider/scanner credentials, and (re)mint the
 | `parts_provider_api_secret` | string | Same encrypt-or-clear (`workspaces.py:179-182`). |
 | `scanner` | string | `"zxing"` / `"scandit"`. |
 | `scanner_license_key` | string | Encrypt-or-clear (`workspaces.py:183-186`). |
+| `sourcing_language_code` | string \| null | Optional TrustedParts spec translation language. Allowed values: `de`, `en`, `es`, `fr`, `it`, `pt`, `ja`, `zh-hans`, `zh-hant`; `null` omits `LanguageCode` so TP uses its default (`schemas.py:31-41`, `client.py:171-173`). |
 | `active_currencies` | string[] | Non-empty ISO-4217 uppercase codes; each matches `^[A-Z]{3}$` (`schemas.py:26`, `schemas.py:68`). |
 | `active_countries` | string[] | Non-empty ISO-3166 alpha-2 uppercase codes; each matches `^[A-Z]{2}$` (`schemas.py:27`, `schemas.py:69`). |
 | `active_distributors` | string[] | Non-empty distributor names; each is trimmed and limited to 120 chars (`schemas.py:28-30`, `schemas.py:70`). |

@@ -23,5 +23,6 @@ def make_sourcing_provider(workspace: Any) -> TrustedPartsClient | None:
         api_key=api_key,
         country_code=workspace.sourcing_country_code,
         currency_code=workspace.sourcing_currency_code,
+        language_code=workspace.sourcing_language_code,
         user_agent=f"stockManager/{git_sha()} workspace={workspace.id}",
     )

@@ -32,6 +32,7 @@ type Ws = {
   sourcing_provider: "none" | "trustedparts";
   sourcing_country_code: string | null;
   sourcing_currency_code: string | null;
+  sourcing_language_code: "de" | "en" | "es" | "fr" | "it" | "pt" | "ja" | "zh-hans" | "zh-hant" | null;
   sourcing_preferred_distributors: string[] | null;
   active_currencies: string[];
   active_countries: string[];
