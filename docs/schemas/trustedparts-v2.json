@@ -1,0 +1,534 @@
+{
+  "components": {
+    "schemas": {
+      "InventoryApiRequest": {
+        "additionalProperties": false,
+        "description": "Defines the information needed to submit a search query.",
+        "properties": {
+          "ApiKey": {
+            "description": "Enter your assigned API key.\nThe assigned API key can be found on the API Credentials page.\n            \nAlternatively, you may provide the API key in the X-Api-Key header and omit this parameter\nfrom the request.",
+            "example": "enter my api key",
+            "nullable": true,
+            "type": "string"
+          },
+          "CompanyId": {
+            "description": "Company identifier assigned to your account.\nThe assigned company identifier can be found on the API Credentials page.\n            \nThis property is deprecated, no longer required and may be omitted.",
+            "example": "enter my company id (deprecated)",
+            "nullable": true,
+            "type": "string"
+          },
+          "CountryCode": {
+            "description": "Enter a two-character ISO code or leave blank for geolocation.\n\nLeave this field blank if you would like us to geolocate the SourceIp parameter\nand use the country that the IP address is from. If you use the TrustedParts.com API\nto provide results on a website, this allows you to provide regional results to each\nuser without any effort on your part.",
+            "example": "US",
+            "nullable": true,
+            "type": "string"
+          },
+          "CurrencyCode": {
+            "default": "USD",
+            "description": "Enter a three-character ISO currency code. (Optional)",
+            "nullable": true,
+            "type": "string"
+          },
+          "Distributors": {
+            "description": "The distributors that will be included in this search.\nAdd this section to limit the search results to one or more distributors.\nOmit this section to search all authorized distributors.\nOur supported distributors can be found <a href=\"https://www.trustedparts.com/docs/api/distributors-list/\">here</a>.",
+            "example": [
+              "enter a distributor name or remove the optional Distributors parameter"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "ExactMatch": {
+            "default": false,
+            "description": "Set to true to view parts that match the search term exactly.\nSet to false to include partial match results.\nNote: Partial match results are only available for single part number requests.\nMost punctuation and spacing are ignored when determining what is an exact match.\nFor instance, BAT-54C is an exact match for BAT54C.",
+            "example": false,
+            "type": "boolean"
+          },
+          "InStockOnly": {
+            "default": false,
+            "description": "Set to true to view in-stock results only. (Optional)",
+            "example": false,
+            "type": "boolean"
+          },
+          "IsCrawler": {
+            "description": "Set to true if the end user is a crawler or bot (e.g. Google, Bing, Baidu).\nSet to false if the end user is not a crawler or if undetermined.",
+            "example": false,
+            "type": "boolean"
+          },
+          "LanguageCode": {
+            "default": "en",
+            "description": "Enter the ISO language code for part specification translations or leave blank for English.\n\nSupported values: \n\nde, en, es, fr, it, pt, ja, zh-hans, zh-hant",
+            "example": "en",
+            "nullable": true,
+            "type": "string"
+          },
+          "Queries": {
+            "description": "The part number(s) and manufacturer(s) you want to search for.\n\nAdd a separate query for each part number search.\n\nNote: If you enter multiple part numbers, an exact match search will be performed\nfor each part number. Partial match results are only available for single part number requests.",
+            "items": {
+              "$ref": "#/components/schemas/SearchQuery"
+            },
+            "type": "array"
+          },
+          "SourceIp": {
+            "description": "Provide the IP (Internet Protocol) address of the end user who will view the results.\nPlease ensure the accuracy of this value so that TrustedParts.com can verify\nthe identity of users who receive results. \n<b>Geolocation:</b> When the CountryCode parameter is omitted or left blank, the\nSourceIp parameter will be used to geolocate the request and provide regional results.",
+            "example": "enter my IP address",
+            "nullable": true,
+            "type": "string"
+          },
+          "UseCachedData": {
+            "default": false,
+            "description": "If this parameter is not supplied or set to false, the TrustedParts.com API\nwill provide results based on real-time stock and pricing services provided\nby participating distributors. This is the preferred setting since it yields\nthe most accurate results. However, if you need extremely fast responses or\nneed to submit a high volume of requests in a short period of time, you may\nset this parameter to true. This will direct the TrustedParts.com API to use\nan optimized search process that retrieves results from locally-cached data\ninstead of real-time data.",
+            "example": false,
+            "type": "boolean"
+          },
+          "UserAgent": {
+            "description": "Provide the user agent of the requesting application or end user's browser.\nPlease ensure the accuracy of this value so that TrustedParts.com can verify\nthe identity of users who receive results.",
+            "example": "enter my application user agent",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "Queries"
+        ],
+        "type": "object"
+      },
+      "InventoryApiResponse": {
+        "additionalProperties": false,
+        "description": "Search results for a search query.",
+        "properties": {
+          "CurrentDate": {
+            "description": "Date and time that results were returned.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "ErrorMessage": {
+            "description": "A message regarding an error generated by the search.",
+            "nullable": true,
+            "type": "string"
+          },
+          "Messages": {
+            "description": "Messages regarding the search results.",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "OriginalRequest": {
+            "$ref": "#/components/schemas/InventoryApiRequest"
+          },
+          "PartResults": {
+            "description": "The search results grouped by part number searched for.",
+            "items": {
+              "$ref": "#/components/schemas/InventoryPartResult"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "ResponseTime": {
+            "description": "The amount of time it took for the API to respond with results.",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "InventoryDistributorResult": {
+        "additionalProperties": false,
+        "description": "Contains the information for a part that matched a search.",
+        "properties": {
+          "Compliance": {
+            "$ref": "#/components/schemas/ProductCompliance"
+          },
+          "Description": {
+            "description": "The part's description.",
+            "nullable": true,
+            "type": "string"
+          },
+          "DistributorPartNumber": {
+            "description": "The distributor part number.",
+            "nullable": true,
+            "type": "string"
+          },
+          "Links": {
+            "description": "Links. For example, datasheet URL or distributor product URL.",
+            "items": {
+              "$ref": "#/components/schemas/SearchApiLink"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "Packaging": {
+            "description": "Packaging information.",
+            "items": {
+              "$ref": "#/components/schemas/ProductPackageType"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "Pricing": {
+            "$ref": "#/components/schemas/ProductPricing"
+          },
+          "Stock": {
+            "$ref": "#/components/schemas/StockInfo"
+          }
+        },
+        "type": "object"
+      },
+      "InventoryPartResult": {
+        "additionalProperties": false,
+        "description": "Contains search result information for a part number.",
+        "properties": {
+          "Distributors": {
+            "description": "The distributors with matches.",
+            "items": {
+              "$ref": "#/components/schemas/PartDistributor"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "IsAffectedByTariff": {
+            "description": "Have TrustedParts.com distributors indicated that the part is affected by tariffs in the United States?",
+            "type": "boolean"
+          },
+          "LifecycleRisk": {
+            "description": "Lifecycle risk of a matching part.\n            \nPlease email user-requests@trustedparts.com to see if our policies allow this information\nto be provided to you.",
+            "nullable": true,
+            "type": "string"
+          },
+          "Manufacturer": {
+            "description": "The manufacturer name for the result.",
+            "nullable": true,
+            "type": "string"
+          },
+          "ManufacturerId": {
+            "description": "The TrustedParts manufacturer ID for the result.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "PartNumber": {
+            "description": "The manufacturer part number for the result.",
+            "nullable": true,
+            "type": "string"
+          },
+          "ProductUrl": {
+            "description": "The TrustedParts.com product page for the result.",
+            "nullable": true,
+            "type": "string"
+          },
+          "Specifications": {
+            "description": "Specifications of a matching part.\n            \nPlease email user-requests@trustedparts.com to see if our policies allow this information\nto be provided to you.",
+            "items": {
+              "$ref": "#/components/schemas/PartSpecification"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "SupplyChainRisk": {
+            "description": "Supply Chain risk of a matching part.\n            \nPlease email user-requests@trustedparts.com to see if our policies allow this information\nto be provided to you.",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "PartDistributor": {
+        "additionalProperties": false,
+        "description": "Contains the information for a distributor that has search results.",
+        "properties": {
+          "DistributorResults": {
+            "description": "The list of matched manufacturer parts.",
+            "items": {
+              "$ref": "#/components/schemas/InventoryDistributorResult"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "Id": {
+            "description": "Distributor Id",
+            "format": "int32",
+            "type": "integer"
+          },
+          "Name": {
+            "description": "Distributor name.",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "PartSpecification": {
+        "additionalProperties": false,
+        "description": "Contains part specifications for the part result.",
+        "properties": {
+          "Key": {
+            "description": "The specification name",
+            "nullable": true,
+            "type": "string"
+          },
+          "Value": {
+            "description": "The specification value",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "Price": {
+        "additionalProperties": false,
+        "description": "Contains price information for a specific quantity.",
+        "properties": {
+          "Amount": {
+            "description": "Price amount",
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "FormattedAmount": {
+            "description": "Formatted price amount",
+            "nullable": true,
+            "type": "string"
+          },
+          "Quantity": {
+            "description": "Quantity for price",
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "Text": {
+            "description": "Text representation of price",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ProductCompliance": {
+        "additionalProperties": false,
+        "description": "Contains regulatory compliance information for products.",
+        "properties": {
+          "RoHS": {
+            "description": "Contains regional RoHS compliance information for products.",
+            "items": {
+              "$ref": "#/components/schemas/RohsCompliance"
+            },
+            "nullable": true,
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "ProductPackageType": {
+        "additionalProperties": false,
+        "description": "Contains product package type information.",
+        "properties": {
+          "MinimumOrderQuantity": {
+            "description": "Minimum order quantity",
+            "format": "int32",
+            "nullable": true,
+            "type": "integer"
+          },
+          "PackageType": {
+            "description": "Package type",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ProductPricing": {
+        "additionalProperties": false,
+        "description": "Contains pricing information for products.",
+        "properties": {
+          "CurrencyCode": {
+            "description": "Currency code for the pricing amounts (e.g., \"USD\").",
+            "nullable": true,
+            "type": "string"
+          },
+          "MinimumQuantity": {
+            "description": "Minimum order quantity for the price.",
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "Prices": {
+            "description": "List of prices for specific quantities.",
+            "items": {
+              "$ref": "#/components/schemas/Price"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "QuantityMultiple": {
+            "description": "Quanitity multiple",
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "RohsCompliance": {
+        "additionalProperties": false,
+        "description": "Contains RoHS compliance information for products.",
+        "properties": {
+          "Description": {
+            "description": "Description of RoHS compliance",
+            "nullable": true,
+            "type": "string"
+          },
+          "IsCompliant": {
+            "description": "Is the product RoHS compliant?",
+            "nullable": true,
+            "type": "boolean"
+          },
+          "Region": {
+            "description": "Region for the RoHS compliance information",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "SearchApiLink": {
+        "additionalProperties": false,
+        "description": "Contains a link (URL) with a type.",
+        "properties": {
+          "Type": {
+            "description": "Type of link (e.g., \"datasheet\", \"distributor\")",
+            "nullable": true,
+            "type": "string"
+          },
+          "Url": {
+            "description": "URL of the link.",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "SearchQuery": {
+        "additionalProperties": false,
+        "description": "Represents a single search query.",
+        "properties": {
+          "Manufacturers": {
+            "description": "The manufacturers that will be searched.\nAdd this section to limit the search results to one more more manufacturers.\nOmit this section to search all authorized manufacturers.\nOur supported manufacturers can be found <a href=\"https://www.trustedparts.com/docs/api/manufacturers-list/\">here</a>.",
+            "example": [
+              "enter a manufacturer name or remove the optional Manufacturers parameter"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "SearchToken": {
+            "description": "Enter the search term. The search term must be at least two characters and no more than 100 characters.",
+            "example": "bav99",
+            "maxLength": 100,
+            "minLength": 2,
+            "type": "string"
+          }
+        },
+        "required": [
+          "SearchToken"
+        ],
+        "type": "object"
+      },
+      "StockInfo": {
+        "additionalProperties": false,
+        "description": "Contains stock information for an api search result.",
+        "properties": {
+          "Availability": {
+            "description": "Contains a message about stock availability. For instance, \"In Stock\".",
+            "nullable": true,
+            "type": "string"
+          },
+          "QuantityOnHand": {
+            "description": "Indicates number of parts currently on hand. Will be null if we are not going to disclose the exact number.",
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "ApiKey": {
+        "description": "API Key. Use 'X-Api-Key: {apiKey}' header.",
+        "in": "header",
+        "name": "X-Api-Key",
+        "type": "apiKey"
+      }
+    }
+  },
+  "info": {
+    "description": "Pricing and Stock information for available parts.",
+    "title": "TrustedParts.com Inventory API",
+    "version": "2.0"
+  },
+  "openapi": "3.0.4",
+  "paths": {
+    "/v2/search": {
+      "post": {
+        "description": "Submits a search request to the TrustedParts.com API and returns matching inventory results.",
+        "operationId": "InventorySearchV2",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InventoryApiRequest"
+              }
+            },
+            "application/xml": {
+              "schema": {
+                "$ref": "#/components/schemas/InventoryApiRequest"
+              }
+            }
+          },
+          "description": "Your search request."
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventoryApiResponse"
+                }
+              },
+              "application/xml": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventoryApiResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Get TrustedParts.com Inventory API search results",
+        "tags": [
+          "InventoryApiV2"
+        ]
+      }
+    }
+  },
+  "security": [
+    {
+      "ApiKey": []
+    }
+  ],
+  "servers": [
+    {
+      "url": "https://api.trustedparts.com"
+    }
+  ],
+  "tags": [
+    {
+      "name": "InventoryApiV2"
+    }
+  ]
+}

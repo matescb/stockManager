@@ -30,6 +30,11 @@ Phase 5b sourcing alerts use the same domain boundary; see
 
 TrustedParts results must stay visibly distinct from catalog-provider data. Public or UI surfaces that combine distributor data from multiple origins need an explicit future decision before launch.
 
+The official TrustedParts Inventory API v2 OpenAPI document is bundled and used
+to generate Pydantic v2 models per [ADR-0022](0022-trustedparts-schema-version-pinning.md).
+The schema foundation is intentionally separate from wiring those generated
+models into the client.
+
 ## Reports policy: no persistent price history
 
 Reports may use TrustedParts prices only as a transient request-time input. The replenishment-cost report recomputes replacement cost from existing on-hand lot costs and the short-lived sourcing cache on each request (`backend/app/domain/reports/service.py:39`); it must not add a report-specific table, column, or long-lived price snapshot because that would turn cached TrustedParts offers into persistent price history.
@@ -68,5 +73,6 @@ This does not permit persistent TrustedParts price history or historical FX char
 - Source: `backend/app/api/routes/sourcing.py:87`
 - Related ADR: [ADR-0007](0007-provider-catalog-vs-spec-split.md)
 - Related ADR: [ADR-0021](0021-periodic-jobs-scheduler.md)
+- Related ADR: [ADR-0022](0022-trustedparts-schema-version-pinning.md)
 - Issue: `https://github.com/matescb/stockManager/issues/329`
 - Plan: `/home/matyas/.claude/plans/read-all-the-documentation-robust-giraffe.md`
