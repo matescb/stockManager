@@ -55,6 +55,10 @@ export function lifecycleRiskTone(value: string | null | undefined): string {
   ) {
     return "bg-danger/10 text-danger";
   }
+  // SX-1: TPS-7 lifecycle vocabulary takes precedence over generic TrustedParts risk levels.
+  if (normalized.includes("low")) return "bg-success/10 text-success";
+  if (normalized.includes("medium") || normalized.includes("moderate")) return "bg-warning/10 text-warning";
+  if (normalized.includes("high") || normalized.includes("severe")) return "bg-danger/10 text-danger";
   return "bg-panel2 text-muted";
 }
 

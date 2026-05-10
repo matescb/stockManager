@@ -331,13 +331,26 @@ describe("ProjectSourcingPage", () => {
     expect(screen.getAllByLabelText("Source: TrustedParts").length).toBeGreaterThan(0);
   });
 
-  it("renders new risk pills with tooltip text and colours", async () => {
+  it("splits lifecycle, supply-chain, and RoHS out of the legacy risk column", async () => {
     mockReads();
     const base = sourcingResponse();
     vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({
       rows: [
         {
           ...base.rows[0],
+          best_offer: {
+            ...base.rows[0].best_offer,
+            lifecycle_risk: "High",
+            supply_chain_risk: "Medium",
+          },
+          offers: [
+            {
+              ...base.rows[0].offers[0],
+              lifecycle_risk: "High",
+              supply_chain_risk: "Medium",
+              rohs_compliance: [{ region: "EU", is_compliant: false }],
+            },
+          ],
           risk_flags: [
             "lifecycle_risk_present",
             "supply_chain_risk_present",
@@ -350,18 +363,54 @@ describe("ProjectSourcingPage", () => {
 
     renderPage();
 
-    expect(await screen.findByText("lifecycle")).toBeDefined();
-    expect(screen.getByText("supply chain")).toBeDefined();
+    await screen.findByText("BOM rows");
+    const bomRowsTable = screen.getAllByRole("table")[1];
+    expect(within(bomRowsTable).getByRole("columnheader", { name: "Lifecycle" })).toBeDefined();
+    expect(within(bomRowsTable).getByRole("columnheader", { name: "Supply chain" })).toBeDefined();
+    expect(within(bomRowsTable).getByRole("columnheader", { name: "RoHS" })).toBeDefined();
+
+    const lifecycle = screen.getByLabelText("Lifecycle risk: High");
+    const supplyChain = screen.getByLabelText("Supply-chain risk: Medium");
     const tariff = screen.getByText("tariff");
-    const rohs = screen.getByText("RoHS");
+    const rohs = screen.getByText("Non-compliant");
+    expect(lifecycle.className).toContain("text-danger");
+    expect(supplyChain.className).toContain("text-warning");
     expect(tariff.className).toContain("text-warning");
     expect(rohs.className).toContain("text-danger");
-    expect(screen.getByLabelText("TrustedParts returned lifecycle risk text for this BOM line.")).toBeDefined();
+
+    const riskCell = within(bomRowsTable).getByRole("row", { name: /STM32/ }).querySelectorAll("td")[12];
+    expect(within(riskCell as HTMLElement).queryByText("lifecycle")).toBeNull();
+    expect(within(riskCell as HTMLElement).queryByText("supply chain")).toBeNull();
+    expect(within(riskCell as HTMLElement).queryByText("RoHS")).toBeNull();
     expect(screen.getByLabelText("TrustedParts did not find a compliant RoHS region for this BOM line.")).toBeDefined();
   });
 
-  it("lifecycle column is hidden by default and renders Obsolete as red when enabled", async () => {
-    const user = userEvent.setup();
+  it("renders compliant RoHS data as a green pill", async () => {
+    mockReads();
+    const base = sourcingResponse();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({
+      rows: [
+        {
+          ...base.rows[0],
+          offers: [
+            {
+              ...base.rows[0].offers[0],
+              rohs_compliance: [{ region: "EU", is_compliant: true }],
+            },
+          ],
+          risk_flags: [],
+        },
+      ],
+    }));
+
+    renderPage();
+
+    await screen.findByText("BOM rows");
+    const rohs = screen.getByText("Compliant");
+    expect(rohs.className).toContain("text-success");
+  });
+
+  it("lifecycle column is visible by default and renders Obsolete as red", async () => {
     mockReads();
     const base = sourcingResponse();
     vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({
@@ -380,17 +429,35 @@ describe("ProjectSourcingPage", () => {
 
     await screen.findByText("BOM rows");
     const bomRowsTable = screen.getAllByRole("table")[1];
-    expect(within(bomRowsTable).queryByRole("columnheader", { name: "Lifecycle" })).toBeNull();
-
-    await user.click(screen.getAllByText("Columns")[1]);
-    await user.click(screen.getByRole("checkbox", { name: "Lifecycle" }));
-
     expect(within(bomRowsTable).getByRole("columnheader", { name: "Lifecycle" })).toBeDefined();
     const lifecycle = screen.getByLabelText("Lifecycle risk: Obsolete");
     expect(lifecycle.className).toContain("text-danger");
   });
 
-  it("renders per-row lead time values in the BOM rows table", async () => {
+  it("renders Low lifecycle risk as a green pill in the BOM table", async () => {
+    mockReads();
+    const base = sourcingResponse();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({
+      rows: [
+        {
+          ...base.rows[0],
+          best_offer: {
+            ...base.rows[0].best_offer,
+            lifecycle_risk: " Low risk ",
+          },
+        },
+      ],
+    }));
+
+    renderPage();
+
+    await screen.findByText("BOM rows");
+    const lifecycle = screen.getByLabelText("Lifecycle risk: Low risk");
+    expect(lifecycle.className).toContain("text-success");
+  });
+
+  it("hides lead time by default but keeps per-row values available from the column menu", async () => {
+    const user = userEvent.setup();
     mockReads();
     const base = sourcingResponse();
     vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({
@@ -416,6 +483,11 @@ describe("ProjectSourcingPage", () => {
 
     await screen.findByText("BOM rows");
     const bomRowsTable = screen.getAllByRole("table")[1];
+    expect(within(bomRowsTable).queryByRole("columnheader", { name: "Lead time" })).toBeNull();
+
+    await user.click(screen.getAllByText("Columns")[1]);
+    await user.click(screen.getByRole("checkbox", { name: "Lead time" }));
+
     const leadTimeCellText = (rowName: RegExp) =>
       within(within(bomRowsTable).getByRole("row", { name: rowName })).getAllByRole("cell")[9].textContent;
 

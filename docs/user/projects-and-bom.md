@@ -106,7 +106,7 @@ Bulk provider import processes up to 200 unmatched rows at a time; run it again 
 
 ## Source BOM coverage
 
-The **Source BOM** page can show TrustedParts risk pills on each BOM line when authorized offers carry lifecycle, supply-chain, tariff, or RoHS warnings. The table also has an optional **Lifecycle** column in the column menu; turn it on when you need to see the exact lifecycle text TrustedParts returned.
+The **Source BOM** page can show TrustedParts sourcing context on each BOM line. Lifecycle, supply-chain, and RoHS details have their own BOM columns, while the legacy **Risk** column stays focused on operational flags such as single-source, stock, MOQ, lead-time, preferred-distributor, and tariff warnings. Lifecycle and supply-chain pills colour TrustedParts `Low` as green, `Medium` or `Moderate` as amber, and `High` or `Severe` as red. The **Lead time** column is available from the column menu when you need the raw per-row lead-time values.
 
 ## Use meta-parts for "any 10k 0402 1%"
 
