@@ -156,6 +156,17 @@ def test_too_few_or_too_many_mpns_422(authed_client):
     assert r.json()["status"]["category"] == "validation_error"
 
 
+def test_short_search_token_returns_422_without_provider_call(authed_client):
+    _configure_sourcing(authed_client)
+
+    r = authed_client.post("/api/sourcing/search", json={"mpns": ["x"]})
+
+    assert r.status_code == 422, r.text
+    assert r.json()["status"]["category"] == "validation_error"
+    assert "SearchToken" in r.json()["status"]["message"]
+    assert _FakeTrustedPartsClient.calls == []
+
+
 def test_unconfigured_returns_409(authed_client, monkeypatch):
     monkeypatch.setattr(
         "app.domain.sourcing.service.make_sourcing_provider",

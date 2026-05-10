@@ -469,8 +469,8 @@ def test_sourcing_search_uses_caller_workspace_secrets(monkeypatch):
         ws_b = session.get(Workspace, ws_b_id)
         assert ws_a is not None
         assert ws_b is not None
-        a_tokens = {ws_a.sourcing_company_id_enc, ws_a.sourcing_api_key_enc}
-        b_tokens = {ws_b.sourcing_company_id_enc, ws_b.sourcing_api_key_enc}
+        a_tokens = {ws_a.sourcing_api_key_enc}
+        b_tokens = {ws_b.sourcing_api_key_enc}
 
     seen_tokens: list[str | None] = []
 
@@ -497,11 +497,7 @@ def test_sourcing_search_uses_caller_workspace_secrets(monkeypatch):
     assert r.json()["data"]["cache_hit"] is False
     assert set(seen_tokens) == b_tokens
     assert not set(seen_tokens) & a_tokens
-    assert [call["company_id"] for call in RecordingTrustedPartsClient.calls] == [
-        "company-a",
-        "company-b",
-    ]
-    assert RecordingTrustedPartsClient.calls[-1]["company_id"] == "company-b"
+    assert [call["company_id"] for call in RecordingTrustedPartsClient.calls] == ["", ""]
     assert RecordingTrustedPartsClient.calls[-1]["api_key"] == "api-key-b"
 
 

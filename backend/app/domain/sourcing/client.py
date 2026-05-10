@@ -142,13 +142,17 @@ class TrustedPartsClient:
         if not 200 <= status <= 299:
             raise SourcingClientError(f"TrustedParts returned HTTP {status}")
 
-        validated = _validate_inventory_response(body, request_hash)
+        request_id = _legacy_request_id(body)
+        validated = _validate_inventory_response(
+            _body_without_legacy_request_id(body),
+            request_hash,
+        )
         _handle_tp_messages(validated, request_hash)
         error_message = _str_or_none(validated.ErrorMessage)
         if error_message:
             raise SourcingUpstreamError(f"TP error: {error_message}")
 
-        return _parse_search_response(validated)
+        return _parse_search_response(validated, request_id=request_id)
 
     def _payload(
         self,
@@ -223,6 +227,22 @@ def _validate_inventory_response(
         ) from exc
 
 
+def _legacy_request_id(body: dict[str, Any]) -> str | None:
+    for key in ("RequestId", "RequestID", "request_id"):
+        if key not in body:
+            continue
+        value = body[key]
+        return value if isinstance(value, str) else str(value)
+    return None
+
+
+def _body_without_legacy_request_id(body: dict[str, Any]) -> dict[str, Any]:
+    cleaned = dict(body)
+    for key in ("RequestId", "RequestID", "request_id"):
+        cleaned.pop(key, None)
+    return cleaned
+
+
 def _validation_error_summary(exc: PydanticValidationError) -> list[dict[str, str]]:
     return [
         {
@@ -246,7 +266,11 @@ def _handle_tp_messages(response: InventoryApiResponse, request_hash: str) -> No
         )
 
 
-def _parse_search_response(response: InventoryApiResponse) -> SourcingSearchRaw:
+def _parse_search_response(
+    response: InventoryApiResponse,
+    *,
+    request_id: str | None,
+) -> SourcingSearchRaw:
     part_results = response.PartResults
     if part_results is None:
         raise SourcingValidationError("TrustedParts response PartResults is not a list")
@@ -256,7 +280,9 @@ def _parse_search_response(response: InventoryApiResponse) -> SourcingSearchRaw:
         offers.append(_offer_from_part(part))
 
     try:
-        return SourcingSearchRaw.model_validate({"offers": offers, "request_id": None})
+        return SourcingSearchRaw.model_validate(
+            {"offers": offers, "request_id": request_id}
+        )
     except PydanticValidationError as exc:
         raise SourcingValidationError("TrustedParts response did not match sourcing DTOs") from exc
 

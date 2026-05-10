@@ -162,7 +162,7 @@ TrustedParts sourcing is separate from the Mouser/DigiKey catalog providers. It 
 Integration entry points:
 
 - `backend/app/domain/sourcing/client.py` — TrustedParts API v2 client.
-- `backend/app/domain/sourcing/factory.py:12` — decrypts the current workspace's sourcing credentials and builds the client.
+- `backend/app/domain/sourcing/factory.py:12` — decrypts the current workspace's sourcing API key and builds the client.
 - `backend/app/domain/sourcing/service.py:39` — cache, budget, and response attribution facade.
 - `backend/app/api/routes/sourcing.py:87` — member search route and error mapping.
 

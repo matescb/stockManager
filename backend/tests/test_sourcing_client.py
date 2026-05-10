@@ -32,6 +32,7 @@ def _query(token: str = "STM32F103C8T6") -> SourcingQuery:
 
 def _trustedparts_response() -> dict:
     return {
+        "RequestId": "req-1",
         "PartResults": [
             {
                 "PartNumber": "STM32F103C8T6",
@@ -88,7 +89,7 @@ def test_happy_path_returns_offers(monkeypatch):
     result = _client().search([_query()])
 
     assert isinstance(result, SourcingSearchRaw)
-    assert result.request_id is None
+    assert result.request_id == "req-1"
     assert result.offers[0].mpn == "STM32F103C8T6"
     assert result.offers[0].manufacturer == "STMicroelectronics"
     assert result.offers[0].description == "MCU 32-bit ARM Cortex-M3"
