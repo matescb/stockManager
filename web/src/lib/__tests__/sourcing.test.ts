@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bestUnitPriceAtQty, extendedPrice } from "../sourcing";
+import { bestUnitPriceAtQty, extendedPrice, lifecycleRiskTone } from "../sourcing";
 
 describe("bestUnitPriceAtQty", () => {
   it("returns null when qty < smallest break", () => {
@@ -52,5 +52,21 @@ describe("extendedPrice", () => {
         12,
       ),
     ).toBe(27);
+  });
+});
+
+describe("lifecycleRiskTone", () => {
+  it("maps TrustedParts risk levels to semantic colours", () => {
+    expect(lifecycleRiskTone("  LOW risk  ")).toContain("text-success");
+    expect(lifecycleRiskTone("Medium")).toContain("text-warning");
+    expect(lifecycleRiskTone("moderate supply risk")).toContain("text-warning");
+    expect(lifecycleRiskTone("High")).toContain("text-danger");
+    expect(lifecycleRiskTone("Severe")).toContain("text-danger");
+  });
+
+  it("keeps lifecycle vocabulary precedence before generic risk levels", () => {
+    expect(lifecycleRiskTone("Active high volume")).toContain("text-success");
+    expect(lifecycleRiskTone("Obsolete - low supply")).toContain("text-danger");
+    expect(lifecycleRiskTone("NRND low risk")).toContain("text-warning");
   });
 });

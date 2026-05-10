@@ -34,6 +34,13 @@ type SourcingBomOffer = {
   lifecycle_risk?: string | null;
   supply_chain_risk?: string | null;
   is_affected_by_tariff?: boolean | null;
+  rohs_compliance?: SourcingRohsCompliance[];
+};
+
+type SourcingRohsCompliance = {
+  region: string;
+  is_compliant: boolean;
+  description?: string | null;
 };
 
 type RiskFlag =
@@ -190,12 +197,52 @@ function riskTooltip(flag: RiskFlag): string | undefined {
   }
 }
 
-function LifecycleRiskPill({ value }: { value?: string | null }) {
+const legacyRiskFlags: RiskFlag[] = [
+  "single_source",
+  "no_authorized_stock",
+  "moq_overbuy",
+  "lead_time_long",
+  "preferred_distributor_unmet",
+  "tariff_affected",
+];
+
+function LifecycleRiskPill({ label = "Lifecycle risk", value }: { label?: string; value?: string | null }) {
   const trimmed = value?.trim();
   if (!trimmed) return null;
   return (
-    <span className={`pill ${lifecycleRiskTone(trimmed)}`} aria-label={`Lifecycle risk: ${trimmed}`}>
+    <span className={`pill ${lifecycleRiskTone(trimmed)}`} aria-label={`${label}: ${trimmed}`}>
       {trimmed}
+    </span>
+  );
+}
+
+function rohsTone(row: SourcingBomLine): "good" | "danger" | "neutral" {
+  if (row.risk_flags.includes("rohs_non_compliant")) return "danger";
+  const euEntries = row.offers
+    .flatMap(offer => offer.rohs_compliance ?? [])
+    .filter(item => item.region.trim().toLowerCase() === "eu");
+  if (euEntries.length === 0) return "neutral";
+  if (euEntries.some(item => item.is_compliant === false)) return "danger";
+  return "good";
+}
+
+function RohsRiskPill({ tone }: { tone: "good" | "danger" | "neutral" }) {
+  if (tone === "neutral") return <span className="text-muted">—</span>;
+  return tone === "danger" ? (
+    <span
+      className="pill bg-danger/10 text-danger"
+      title={riskTooltip("rohs_non_compliant")}
+      aria-label={riskTooltip("rohs_non_compliant")}
+    >
+      Non-compliant
+    </span>
+  ) : (
+    <span
+      className="pill bg-success/10 text-success"
+      title="TrustedParts found compliant EU RoHS data for this BOM line."
+      aria-label="TrustedParts found compliant EU RoHS data for this BOM line."
+    >
+      Compliant
     </span>
   );
 }
@@ -478,23 +525,40 @@ function BomRows({ rows }: { rows: SourcingBomLine[] }) {
       accessor: row => row.lead_time_days,
       render: row => formatLeadTime(row.lead_time_days),
       align: "right",
+      // SX-1/TPS-9: keep lead-time response data, but hide this crowded BOM column by default.
+      hidden: true,
     },
     {
       key: "lifecycle",
       header: "Lifecycle",
       accessor: row => row.best_offer?.lifecycle_risk?.trim() ?? "",
       render: row => <LifecycleRiskPill value={row.best_offer?.lifecycle_risk} />,
-      hidden: true,
+    },
+    {
+      key: "supply_chain",
+      header: "Supply chain",
+      accessor: row => row.best_offer?.supply_chain_risk?.trim() ?? "",
+      render: row => (
+        <LifecycleRiskPill label="Supply-chain risk" value={row.best_offer?.supply_chain_risk} />
+      ),
+    },
+    {
+      key: "rohs",
+      header: "RoHS",
+      accessor: row => rohsTone(row),
+      render: row => <RohsRiskPill tone={rohsTone(row)} />,
     },
     {
       key: "risk",
       header: "Risk",
       accessor: row => row.risk_flags.join(" "),
-      render: row => (
+      render: row => {
+        const displayFlags = row.risk_flags.filter(flag => legacyRiskFlags.includes(flag));
+        return (
         <span className="flex flex-wrap gap-1">
-          {row.risk_flags.length === 0 ? (
+          {displayFlags.length === 0 ? (
             <span className="text-muted">—</span>
-          ) : row.risk_flags.map(flag => (
+          ) : displayFlags.map(flag => (
             <span
               key={flag}
               className={riskClass(flag)}
@@ -505,7 +569,8 @@ function BomRows({ rows }: { rows: SourcingBomLine[] }) {
             </span>
           ))}
         </span>
-      ),
+        );
+      },
     },
     {
       key: "source",
