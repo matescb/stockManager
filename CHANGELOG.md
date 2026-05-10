@@ -8,6 +8,9 @@ the canonical record.
 
 ## 2026-05 — feedback brief fixes
 
+- **SX-5 / #480** Project Sourcing keeps the legacy distributor coverage matrix
+  shortfall-based while the fewest-distributors variant continues to apply MOQ
+  selected quantities for feasibility and totals.
 - **SX-6 / #473** Project Sourcing BOM coverage now keeps TanStack Query
   display data warm for instant remounts and shows a non-blocking background
   refresh hint instead of a skeleton during refetches.

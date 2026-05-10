@@ -94,6 +94,13 @@ exhaustive through 10 distributors, then switches to a deterministic greedy set-
 heuristic that picks the distributor covering the most remaining lines and breaks ties
 by combo cost and distributor name.
 
+The legacy per-distributor coverage matrix remains shortfall-based: a distributor
+covers a line when its stock can satisfy `short_by`, and `best_single_distributor`
+and `best_two_distributor_combo` use that same definition. Purchase-oriented
+variant totals account for MOQ by using the selected quantity
+`max(short_by, moq)`, and the fewest-distributors variant only treats an offer as
+feasible when stock can satisfy that selected quantity.
+
 Sources: `backend/app/domain/sourcing/coverage.py:216-464`,
 `backend/app/domain/sourcing/optimizer.py:69-93`
 
