@@ -144,8 +144,8 @@ function defaultFromActiveList(saved: string | null | undefined, active: string[
 
 function distributorsFromActiveList(saved: string[] | null | undefined, active: string[]): string[] {
   if (!saved || saved.length === 0) return [];
-  const savedAllActive = saved.every(item => active.includes(item));
-  if (savedAllActive) return saved;
+  const intersection = saved.filter(item => active.includes(item));
+  if (intersection.length > 0) return intersection;
   return active[0] ? [active[0]] : [];
 }
 
@@ -450,7 +450,7 @@ export default function ProjectSourcingPage() {
       preferred.length > 0 &&
       preferred.some(item => !workspace.active_distributors.includes(item))
     ) {
-      warnings.push(`Workspace preferred distributors are not all active; using ${workspace.active_distributors[0]}.`);
+      warnings.push("Workspace preferred distributors are not all active; using active distributors only.");
     }
     return warnings;
   }, [workspace, defaultsApplied]);

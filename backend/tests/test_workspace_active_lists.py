@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
 from uuid import UUID
 
 from fastapi.testclient import TestClient
@@ -14,6 +16,21 @@ from app.domain.workspaces.master_lists import (
 from app.domain.workspaces.models import Workspace
 from app.main import app
 from tests._factories import signup_user
+
+
+def _load_backfill_migration():
+    path = (
+        Path(__file__).resolve().parent.parent
+        / "alembic"
+        / "versions"
+        / "0045_backfill_active_distributors.py"
+    )
+    spec = importlib.util.spec_from_file_location("migration_0045", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _current_workspace(client: TestClient) -> dict:
@@ -126,3 +143,28 @@ def test_workspace_isolation_active_lists(db):
     db_ws_b = db.get(Workspace, UUID(ws_b["id"]))
     assert db_ws_b is not None
     assert db_ws_b.active_currencies == DEFAULT_ACTIVE_CURRENCIES
+
+
+def test_migration_backfills_active_lists_with_saved_sourcing_defaults(authed_client, db):
+    body = _current_workspace(authed_client)
+    ws = db.get(Workspace, UUID(body["id"]))
+    assert ws is not None
+    ws.active_distributors = ["DigiKey", "Mouser"]
+    ws.sourcing_preferred_distributors = ["Arrow", "Newark"]
+    ws.active_countries = ["CZ", "DE"]
+    ws.sourcing_country_code = "US"
+    ws.active_currencies = ["EUR", "CZK"]
+    ws.sourcing_currency_code = "USD"
+    db.flush()
+
+    migration = _load_backfill_migration()
+    migration.backfill_active_lists(db.connection())
+    migration.backfill_active_lists(db.connection())
+    db.expire(ws)
+
+    assert set(ws.active_distributors) == {"DigiKey", "Mouser", "Arrow", "Newark"}
+    assert len(ws.active_distributors) == 4
+    assert set(ws.active_countries) == {"CZ", "DE", "US"}
+    assert len(ws.active_countries) == 3
+    assert set(ws.active_currencies) == {"EUR", "CZK", "USD"}
+    assert len(ws.active_currencies) == 3

@@ -8,6 +8,11 @@ the canonical record.
 
 ## 2026-05 — feedback brief fixes
 
+- **FB-007 / #437** Active sourcing lists now backfill saved workspace
+  sourcing defaults: `active_distributors` is unioned with preferred
+  distributors, and saved country/currency values are appended when missing.
+  Project Sourcing also defaults distributor filters to the saved/active
+  intersection before falling back to the first active distributor.
 - **FB-003c / #412** Sourcing capacity now prices the requested build
   quantity when after-purchase capacity floors to zero, fixing missing
   `est_purchase_cost` values at low build quantities.
