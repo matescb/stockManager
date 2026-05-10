@@ -1,0 +1,1 @@
+"""Generated TrustedParts schema models."""

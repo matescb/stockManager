@@ -245,6 +245,11 @@ them, that's the bug.
   the hourly cache sweep and `backend-cron-alerts` handles the 15-minute alert
   evaluator. They share the same `run_job` registry per ADR-0021; adding a
   third cadence means a third sidecar, not a parallel scheduler.
+- **TrustedParts generated models are schema-pinned.** Refresh
+  `docs/schemas/trustedparts-v2.json` with `make refresh-tp-spec`, regenerate
+  `backend/app/domain/sourcing/_generated/` with `make regen-tp-models`, and
+  keep the AUTO-GENERATED header intact. ADR-0022 owns the pinning and CI drift
+  gate; client integration belongs to the follow-up PR, not the foundation PR.
 - **Maintenance mode is toggled by the deploy script via
   `a2enconf parts-maintenance`.** Do not bypass the deploy path without
   also disabling it with `a2disconf parts-maintenance`.
