@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BellPlus, ExternalLink, Plus, RefreshCw } from "lucide-react";
+import { BellPlus, ExternalLink, Info, Plus, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { InlineQueryError } from "@/components/QueryStateBoundary";
 import { ApiError, api } from "@/lib/api";
@@ -33,6 +33,17 @@ type SourcingPriceBreakWire = {
   unit_price: WirePrice;
 };
 
+type SourcingRohsCompliance = {
+  region: string;
+  is_compliant: boolean;
+  description?: string | null;
+};
+
+type SourcingSpecification = {
+  key: string;
+  value: string;
+};
+
 type SourcingDistributor = {
   name: string;
   sku?: string | null;
@@ -49,6 +60,9 @@ type SourcingDistributor = {
   price_breaks?: SourcingPriceBreakWire[] | null;
   price_breaks_converted?: SourcingPriceBreakWire[] | null;
   product_url?: string | null;
+  rohs_compliance?: SourcingRohsCompliance[] | null;
+  availability_text?: string | null;
+  quantity_multiple?: number | null;
 };
 
 type SourcingOffer = {
@@ -56,6 +70,11 @@ type SourcingOffer = {
   manufacturer?: string | null;
   description?: string | null;
   distributors: SourcingDistributor[];
+  lifecycle_risk?: string | null;
+  supply_chain_risk?: string | null;
+  is_affected_by_tariff?: boolean | null;
+  manufacturer_id?: number | null;
+  specifications?: SourcingSpecification[] | null;
   links?: {
     primary?: string | null;
     manufacturer?: string | null;
@@ -93,12 +112,22 @@ type SupplyRow = {
   originalCurrency: string | null;
   fxConverted: boolean;
   fxRateDate: string | null;
+  rohsCompliance: SourcingRohsCompliance[];
+  availabilityText: string | null;
+  quantityMultiple: number | null;
 };
 
 const QUANTITY_PRESETS = [1, 10, 100, 1000] as const;
+const TARIFF_TOOLTIP = "TrustedParts distributors indicated this part is affected by United States tariffs.";
 
 function formatNumber(value: number | null): string {
   return value == null ? "—" : value.toLocaleString();
+}
+
+function formatStock(row: SupplyRow): string {
+  if (row.stock == null) return row.availabilityText ?? "—";
+  const stock = row.stock.toLocaleString();
+  return row.availabilityText ? `${stock} (${row.availabilityText})` : stock;
 }
 
 function formatPrice(row: SupplyRow): string {
@@ -125,6 +154,61 @@ function normalisePriceBreaks(value: SourcingPriceBreakWire[] | null | undefined
     const unitPrice = toFiniteNumber(priceBreak.unit_price);
     return unitPrice == null ? [] : [{ quantity: priceBreak.quantity, unit_price: unitPrice }];
   });
+}
+
+function normalisePositiveInt(value: number | null | undefined): number | null {
+  if (value == null || !Number.isFinite(value) || value <= 1) return null;
+  return Math.floor(value);
+}
+
+function riskTone(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (normalized.startsWith("active")) return "bg-success/10 text-success";
+  if (normalized.includes("nrnd") || normalized.includes("not recommended")) {
+    return "bg-warning/10 text-warning";
+  }
+  if (
+    normalized.includes("obsolete") ||
+    normalized.includes("eol") ||
+    normalized.includes("end of life") ||
+    normalized.includes("last time buy") ||
+    normalized.includes("ltb")
+  ) {
+    return "bg-danger/10 text-danger";
+  }
+  return "bg-panel2 text-muted";
+}
+
+function sortedRohs(value: SourcingRohsCompliance[]): SourcingRohsCompliance[] {
+  return [...value].sort((a, b) => a.region.localeCompare(b.region));
+}
+
+function roundUpToMultiple(quantityValue: number, multiple: number): number {
+  return Math.ceil(quantityValue / multiple) * multiple;
+}
+
+function greatestCommonDivisor(a: number, b: number): number {
+  let x = Math.abs(a);
+  let y = Math.abs(b);
+  while (y !== 0) {
+    const next = x % y;
+    x = y;
+    y = next;
+  }
+  return x;
+}
+
+function leastCommonMultiple(a: number, b: number): number {
+  return (a / greatestCommonDivisor(a, b)) * b;
+}
+
+function activeQuantityMultiple(rows: SupplyRow[]): number | null {
+  const multiples = Array.from(new Set(
+    rows
+      .map(row => row.quantityMultiple)
+      .filter((value): value is number => value !== null && value > 1),
+  ));
+  return multiples.length === 0 ? null : multiples.reduce(leastCommonMultiple);
 }
 
 function fxTooltip(row: SupplyRow): string {
@@ -178,6 +262,9 @@ function flattenOffers(data: SourcingResponse | undefined): SupplyRow[] {
         originalCurrency: distributor.currency ?? null,
         fxConverted,
         fxRateDate: distributor.fx_rate_date ?? null,
+        rohsCompliance: distributor.rohs_compliance ?? [],
+        availabilityText: distributor.availability_text?.trim() || null,
+        quantityMultiple: normalisePositiveInt(distributor.quantity_multiple),
       };
     }),
   );
@@ -212,6 +299,124 @@ function EmptyState({
       <PoweredByTrustedParts primaryUrl={primaryUrl ?? undefined} />
       <div className="text-sm text-muted">{children}</div>
     </div>
+  );
+}
+
+function RiskBadge({
+  icon,
+  label,
+  value,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value?: string | null;
+}) {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return (
+    <span className={`pill inline-flex items-center gap-1 ${riskTone(trimmed)}`} aria-label={`${label}: ${trimmed}`}>
+      {icon}
+      {trimmed}
+    </span>
+  );
+}
+
+function OfferStatusRows({ offers }: { offers: SourcingOffer[] }) {
+  const visibleOffers = offers.filter(offer =>
+    Boolean(offer.lifecycle_risk?.trim()) ||
+    Boolean(offer.supply_chain_risk?.trim()) ||
+    offer.is_affected_by_tariff === true ||
+    offer.manufacturer_id != null,
+  );
+  if (visibleOffers.length === 0) return null;
+
+  return (
+    <div className="space-y-2" aria-label="Risk and status">
+      {visibleOffers.map((offer, index) => (
+        <div
+          key={`${offer.mpn}:${offer.manufacturer_id ?? index}`}
+          className="flex flex-wrap items-center gap-2 text-sm"
+        >
+          {visibleOffers.length > 1 && (
+            <span className="text-xs font-medium text-muted">{offer.mpn}</span>
+          )}
+          <RiskBadge
+            label="Lifecycle risk"
+            value={offer.lifecycle_risk}
+            icon={<ShieldCheck size={12} aria-hidden="true" />}
+          />
+          <RiskBadge
+            label="Supply-chain risk"
+            value={offer.supply_chain_risk}
+            icon={<ShieldAlert size={12} aria-hidden="true" />}
+          />
+          {offer.is_affected_by_tariff === true && (
+            <span
+              className="pill inline-flex items-center gap-1 bg-danger/10 text-danger"
+              title={TARIFF_TOOLTIP}
+              aria-label="Tariff-affected (US)"
+            >
+              <Info size={12} aria-hidden="true" />
+              Tariff-affected (US)
+            </span>
+          )}
+          {offer.manufacturer_id != null && (
+            <span className="text-xs text-muted">TP mfr id: {offer.manufacturer_id}</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RohsPills({ values }: { values: SourcingRohsCompliance[] }) {
+  if (values.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {sortedRohs(values).map(item => (
+        <span
+          key={item.region}
+          className={`pill ${item.is_compliant ? "bg-success/10 text-success" : "bg-danger/10 text-danger"}`}
+          title={item.description ?? undefined}
+          aria-label={`${item.region}: ${item.is_compliant ? "RoHS compliant" : "RoHS non-compliant"}`}
+        >
+          {item.region}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function SpecificationsPanel({ offers }: { offers: SourcingOffer[] }) {
+  const specs = offers.flatMap((offer, offerIndex) =>
+    (offer.specifications ?? [])
+      .filter(spec => spec.key.trim() !== "" && spec.value.trim() !== "")
+      .map(spec => ({
+        id: `${offer.mpn}:${offerIndex}:${spec.key}`,
+        mpn: offer.mpn,
+        key: spec.key,
+        value: spec.value,
+      })),
+  );
+  if (specs.length === 0) return null;
+
+  return (
+    <details className="card p-3">
+      <summary className="cursor-pointer text-sm font-medium">
+        Specifications ({specs.length})
+      </summary>
+      <dl className="mt-3 grid grid-cols-[minmax(8rem,16rem)_1fr] gap-x-4 gap-y-2 text-sm">
+        {specs.map(spec => (
+          <div key={spec.id} className="contents">
+            <dt className="text-muted">{spec.key}</dt>
+            <dd>
+              {spec.value}
+              {offers.length > 1 && <span className="ml-2 text-xs text-muted">{spec.mpn}</span>}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </details>
   );
 }
 
@@ -284,6 +489,7 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
     if (selectedDistributors.size === 0) return rows;
     return rows.filter(row => selectedDistributors.has(row.distributor));
   }, [rows, selectedDistributors]);
+  const quantityMultiple = useMemo(() => activeQuantityMultiple(filteredRows), [filteredRows]);
 
   useEffect(() => {
     setSelectedDistributors(prev => {
@@ -348,8 +554,14 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
         key: "stock",
         header: "Stock",
         accessor: row => row.stock,
-        render: row => formatNumber(row.stock),
+        render: row => formatStock(row),
         align: "right",
+      },
+      {
+        key: "rohs",
+        header: "RoHS",
+        accessor: row => row.rohsCompliance.map(item => item.region).join(" "),
+        render: row => <RohsPills values={row.rohsCompliance} />,
       },
       {
         key: "moq",
@@ -585,8 +797,11 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
                       setCustomQuantity(String(quantity));
                       return;
                     }
-                    setQuantity(nextQuantity);
-                    setCustomQuantity(String(nextQuantity));
+                    const roundedQuantity = quantityMultiple === null
+                      ? nextQuantity
+                      : roundUpToMultiple(nextQuantity, quantityMultiple);
+                    setQuantity(roundedQuantity);
+                    setCustomQuantity(String(roundedQuantity));
                   }}
                   onKeyDown={event => {
                     if (event.key === "Enter") {
@@ -596,9 +811,16 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
                 />
               </label>
             </div>
+            {quantityMultiple !== null && (
+              <div className="text-xs text-muted">
+                Rounded to multiples of {quantityMultiple.toLocaleString()}
+              </div>
+            )}
           </div>
         </div>
       )}
+
+      <OfferStatusRows offers={query.data?.offers ?? []} />
 
       <DataTable
         tableId={`part-authorized-supply-${partId}`}
@@ -609,6 +831,7 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
         exportFilename="authorized-supply"
         empty="No authorized-distributor offers."
       />
+      <SpecificationsPanel offers={query.data?.offers ?? []} />
       <CreateOrderLineModal
         open={orderLineSource !== null}
         source={orderLineSource}
