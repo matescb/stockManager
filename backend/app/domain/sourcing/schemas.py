@@ -21,6 +21,8 @@ class SourcingPriceBreak(BaseModel):
 
     quantity: int
     unit_price: float
+    formatted_amount: str | None = None
+    text: str | None = None
 
 
 class SourcingConvertedPriceBreak(BaseModel):
@@ -40,6 +42,7 @@ class SourcingBomPriceBreakOut(BaseModel):
 class SourcingDistributor(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    distributor_id: int | None = None
     name: str
     sku: str | None = None
     packaging: str | None = None
@@ -55,6 +58,24 @@ class SourcingDistributor(BaseModel):
     price_breaks: list[SourcingPriceBreak] = Field(default_factory=list)
     price_breaks_converted: list[SourcingConvertedPriceBreak] | None = None
     product_url: str | None = None
+    rohs_compliance: list["SourcingRohsCompliance"] = Field(default_factory=list)
+    availability_text: str | None = None
+    quantity_multiple: int | None = None
+
+
+class SourcingSpecification(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    value: str
+
+
+class SourcingRohsCompliance(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    region: str
+    is_compliant: bool
+    description: str | None = None
 
 
 class SourcingLinks(BaseModel):
@@ -73,6 +94,11 @@ class SourcingOffer(BaseModel):
     description: str | None = None
     distributors: list[SourcingDistributor] = Field(default_factory=list)
     links: SourcingLinks = Field(default_factory=SourcingLinks)
+    lifecycle_risk: str | None = None
+    supply_chain_risk: str | None = None
+    is_affected_by_tariff: bool | None = None
+    manufacturer_id: int | None = None
+    specifications: list[SourcingSpecification] = Field(default_factory=list)
 
 
 class SourcingSearchRaw(BaseModel):
@@ -80,6 +106,8 @@ class SourcingSearchRaw(BaseModel):
 
     offers: list[SourcingOffer]
     request_id: str | None = None
+    tp_current_date: datetime | None = None
+    tp_response_time: str | None = None
 
 
 class SourcingSearchIn(BaseModel):
@@ -129,6 +157,8 @@ class SourcingSearchResult(BaseModel):
     mpn: str
     offers: list[SourcingOffer] = Field(default_factory=list)
     request_id: str | None = None
+    tp_current_date: datetime | None = None
+    tp_response_time: str | None = None
     fetched_at: datetime
     cache_hit: bool
 
@@ -138,6 +168,8 @@ class SourcingSearchOut(BaseModel):
 
     results: list[SourcingSearchResult]
     request_id: str | None = None
+    tp_current_date: datetime | None = None
+    tp_response_time: str | None = None
     powered_by: Literal["TrustedParts"] = "TrustedParts"
     fetched_at: datetime
     cache_hit: bool
@@ -299,6 +331,11 @@ class SourcingBomOfferOut(BaseModel):
     lead_time_days: int | None = None
     price_breaks: list[SourcingBomPriceBreakOut] = Field(default_factory=list)
     url: str | None = None
+    lifecycle_risk: str | None = None
+    supply_chain_risk: str | None = None
+    is_affected_by_tariff: bool | None = None
+    manufacturer_id: int | None = None
+    specifications: list[SourcingSpecification] = Field(default_factory=list)
 
 
 class DistributorCoverageRowOut(BaseModel):

@@ -25,7 +25,9 @@ from app.domain.sourcing.schemas import (
     SourcingOffer,
     SourcingPriceBreak,
     SourcingQuery,
+    SourcingRohsCompliance,
     SourcingSearchRaw,
+    SourcingSpecification,
 )
 
 TP_V2_URL = "https://api.trustedparts.com/v2/search"
@@ -281,7 +283,12 @@ def _parse_search_response(
 
     try:
         return SourcingSearchRaw.model_validate(
-            {"offers": offers, "request_id": request_id}
+            {
+                "offers": offers,
+                "request_id": request_id,
+                "tp_current_date": response.CurrentDate,
+                "tp_response_time": _str_or_none(response.ResponseTime),
+            }
         )
     except PydanticValidationError as exc:
         raise SourcingValidationError("TrustedParts response did not match sourcing DTOs") from exc
@@ -303,7 +310,14 @@ def _offer_from_part(part: InventoryPartResult) -> SourcingOffer:
                 datasheet_url = _first_matching_link(links, "datasheet")
             if manufacturer_url is None:
                 manufacturer_url = _first_matching_link(links, "manufacturer")
-            distributors.append(_distributor_from_result(name, result, links))
+            distributors.append(
+                _distributor_from_result(
+                    name,
+                    distributor.Id,
+                    result,
+                    links,
+                )
+            )
 
     try:
         return SourcingOffer.model_validate(
@@ -317,6 +331,11 @@ def _offer_from_part(part: InventoryPartResult) -> SourcingOffer:
                     manufacturer=manufacturer_url,
                     datasheet=datasheet_url,
                 ),
+                "lifecycle_risk": _str_or_none(part.LifecycleRisk),
+                "supply_chain_risk": _str_or_none(part.SupplyChainRisk),
+                "is_affected_by_tariff": part.IsAffectedByTariff,
+                "manufacturer_id": part.ManufacturerId,
+                "specifications": _specifications(part.Specifications),
             }
         )
     except PydanticValidationError as exc:
@@ -325,6 +344,7 @@ def _offer_from_part(part: InventoryPartResult) -> SourcingOffer:
 
 def _distributor_from_result(
     distributor_name: str,
+    distributor_id: int | None,
     result: InventoryDistributorResult,
     links: dict[str, str],
 ) -> SourcingDistributor:
@@ -341,6 +361,7 @@ def _distributor_from_result(
     try:
         return SourcingDistributor.model_validate(
             {
+                "distributor_id": distributor_id,
                 "name": distributor_name,
                 "sku": _str_or_none(result.DistributorPartNumber),
                 "packaging": _first_package_type(packages),
@@ -351,6 +372,13 @@ def _distributor_from_result(
                 "currency": _str_or_none(pricing.CurrencyCode if pricing is not None else None),
                 "price_breaks": price_breaks,
                 "product_url": product_url,
+                "rohs_compliance": _rohs_compliance(result),
+                "availability_text": _str_or_none(
+                    stock.Availability if stock is not None else None
+                ),
+                "quantity_multiple": _int_count_or_none(
+                    pricing.QuantityMultiple if pricing is not None else None
+                ),
             }
         )
     except PydanticValidationError as exc:
@@ -366,11 +394,47 @@ def _price_breaks(price_rows: list[Price] | None) -> list[SourcingPriceBreak]:
             continue
         try:
             breaks.append(
-                SourcingPriceBreak.model_validate({"quantity": quantity, "unit_price": amount})
+                SourcingPriceBreak.model_validate(
+                    {
+                        "quantity": quantity,
+                        "unit_price": amount,
+                        "formatted_amount": _str_or_none(row.FormattedAmount),
+                        "text": _str_or_none(row.Text),
+                    }
+                )
             )
         except PydanticValidationError as exc:
             raise SourcingValidationError("TrustedParts price break did not match DTOs") from exc
     return breaks
+
+
+def _specifications(raw_specs: Any) -> list[SourcingSpecification]:
+    specs: list[SourcingSpecification] = []
+    for item in raw_specs or []:
+        key = _str_or_none(item.Key)
+        value = _str_or_none(item.Value)
+        if key is None or value is None:
+            continue
+        specs.append(SourcingSpecification(key=key, value=value))
+    return specs
+
+
+def _rohs_compliance(result: InventoryDistributorResult) -> list[SourcingRohsCompliance]:
+    compliance = result.Compliance
+    rows = compliance.RoHS if compliance is not None else None
+    out: list[SourcingRohsCompliance] = []
+    for row in rows or []:
+        region = _str_or_none(row.Region)
+        if region is None or row.IsCompliant is None:
+            continue
+        out.append(
+            SourcingRohsCompliance(
+                region=region,
+                is_compliant=row.IsCompliant,
+                description=_str_or_none(row.Description),
+            )
+        )
+    return out
 
 
 def _links_by_type(raw_links: list[SearchApiLink] | None) -> dict[str, str]:
@@ -433,6 +497,15 @@ def _int_or_none(value: Any) -> int | None:
         return None
     try:
         return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _int_count_or_none(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(round(float(value)))
     except (TypeError, ValueError):
         return None
 

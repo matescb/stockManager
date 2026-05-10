@@ -27,6 +27,27 @@ required for new requests. HTTP 200 responses with `ErrorMessage` become upstrea
 `Messages[]` entries are logged at INFO with a `tp_message` tag and do not fail
 the search.
 
+## TrustedParts Gap Fields (TPS-4)
+
+The adapter maps the Inventory API v2 fields that were previously dropped into public
+DTOs after generated-model validation. Offer DTOs carry `lifecycle_risk`,
+`supply_chain_risk`, `is_affected_by_tariff`, `manufacturer_id`, and `specifications`.
+Distributor DTOs carry `distributor_id`, `rohs_compliance`, `availability_text`, and
+`quantity_multiple`. Price breaks carry `formatted_amount` and `text`. Search outputs
+carry `tp_current_date` and `tp_response_time`; the cache stores those response-level
+fields alongside the offer JSON so part-detail and search reads keep the same metadata
+on cache hits.
+
+TrustedParts marks some fields as ToU-gated. Workspaces without access can receive
+`null` for `lifecycle_risk` and `supply_chain_risk`; `specifications` and
+`rohs_compliance` default to `[]` so callers can iterate without null checks. No enum
+constraints are applied to lifecycle risk, supply chain risk, or availability text.
+Quantity multiple is exposed as an integer count.
+
+Sources: `backend/app/domain/sourcing/client.py:285-418`,
+`backend/app/domain/sourcing/service.py:951-1007`,
+`backend/app/domain/sourcing/schemas.py:19-110`
+
 ## Cache Table
 
 `sourcing_cache` stores one response per `(workspace_id, query_hash)`.

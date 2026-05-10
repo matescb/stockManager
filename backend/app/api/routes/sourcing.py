@@ -633,6 +633,10 @@ def _part_sourcing_payload(
         "mpn": result.mpn,
         "offers": [offer.model_dump(mode="json") for offer in result.offers],
         "request_id": result.request_id,
+        "tp_current_date": (
+            out.tp_current_date.isoformat() if out.tp_current_date is not None else None
+        ),
+        "tp_response_time": out.tp_response_time,
         "powered_by": out.powered_by,
         "fetched_at": result.fetched_at.isoformat(),
         "cache_hit": result.cache_hit,

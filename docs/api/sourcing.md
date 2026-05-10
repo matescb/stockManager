@@ -201,7 +201,12 @@ Path: `project_id` is a project UUID in the current workspace.
           "unit_price": "0.10",
           "currency": "EUR",
           "moq": 1,
-          "lead_time_days": 3
+          "lead_time_days": 3,
+          "lifecycle_risk": "Low",
+          "supply_chain_risk": null,
+          "is_affected_by_tariff": false,
+          "manufacturer_id": 12345,
+          "specifications": []
         },
         "est_extended_cost": "2.00",
         "risk_flags": []
@@ -230,8 +235,9 @@ Path: `project_id` is a project UUID in the current workspace.
 - The service reuses `shortage_analysis()`, `dedupe_mpns()`, `chunk_mpns()`, and per-MPN `search()` cache rows; BOM chunks use `ttl_seconds=600`.
 - Decimal prices and extended costs serialize as strings.
 - Each row exposes sourcing diagnostics: `reason` is `ok`, `no_mpn`, or `no_offers`; `cache_hit` is `true`/`false` for searched rows and `null` when no MPN was searched; `fx_status` is reserved for row-level conversion failures and is `null` unless represented.
-- Source: `backend/app/api/routes/sourcing.py:251-309`.
-- Service: `backend/app/domain/sourcing/service.py:820-881`, `backend/app/domain/sourcing/service.py:1143-1212`.
+- BOM offer projections carry offer-level TrustedParts gap fields for downstream risk/report consumers; distributor-level gap fields remain on part/search offer DTOs.
+- Source: `backend/app/api/routes/sourcing.py:253-315`.
+- Service: `backend/app/domain/sourcing/service.py:820-882`, `backend/app/domain/sourcing/service.py:1236-1270`.
 - Pricing: `backend/app/domain/sourcing/pricing.py:9-40`.
 
 ### `POST /api/projects/{project_id}/purchase-plan`
@@ -418,12 +424,37 @@ Path: `part_id` is a part UUID in the current workspace.
     "offers": [
       {
         "mpn": "STM32F103C8T6",
+        "lifecycle_risk": "Low",
+        "supply_chain_risk": "Elevated",
+        "is_affected_by_tariff": true,
+        "manufacturer_id": 12345,
+        "specifications": [
+          { "key": "Package", "value": "LQFP-48" }
+        ],
         "distributors": [
           {
+            "distributor_id": 9876,
             "name": "DigiKey",
             "stock": 42,
+            "availability_text": "In Stock",
+            "quantity_multiple": 5,
             "unit_price": 1.23,
             "currency": "USD",
+            "rohs_compliance": [
+              {
+                "region": "EU",
+                "is_compliant": true,
+                "description": "RoHS compliant"
+              }
+            ],
+            "price_breaks": [
+              {
+                "quantity": 1,
+                "unit_price": 1.23,
+                "formatted_amount": "$1.23",
+                "text": "1+ $1.23"
+              }
+            ],
             "unit_price_converted": "1.1070",
             "currency_displayed": "EUR",
             "fx_converted": true,
@@ -436,6 +467,8 @@ Path: `part_id` is a part UUID in the current workspace.
       }
     ],
     "request_id": "trustedparts-request-id",
+    "tp_current_date": "2026-05-10T12:00:00+00:00",
+    "tp_response_time": "00:00:01.234",
     "powered_by": "TrustedParts",
     "fetched_at": "2026-05-08T12:00:00+00:00",
     "cache_hit": false,
@@ -473,10 +506,11 @@ Parts without an MPN return a successful no-network response.
 - The route validates `part_id` with `assert_in_workspace()` before reading the part MPN.
 - The local cache is scoped by `workspace_id`; the part-detail route calls sourcing search with `ttl_seconds=1800`.
 - When a `currency` query param is supplied, distributor prices that still arrive in another currency are display-converted through the global ECB daily snapshot. Native `unit_price` / `currency` stay unchanged; converted display values are exposed as `unit_price_converted`, `currency_displayed`, `fx_converted`, `fx_rate_date`, and `price_breaks_converted`.
+- TrustedParts gap fields surface on each offer (`lifecycle_risk`, `supply_chain_risk`, `is_affected_by_tariff`, `manufacturer_id`, `specifications`), each distributor (`distributor_id`, `rohs_compliance`, `availability_text`, `quantity_multiple`), each price break (`formatted_amount`, `text`), and on the response (`tp_current_date`, `tp_response_time`). ToU-gated fields may be `null` or `[]`.
 - `fx_status` is `unavailable` when at least one requested conversion could not be produced; affected rows keep native prices.
 - The route uses member-or-higher role gating and maps the same sourcing exceptions as `POST /api/sourcing/search`.
-- Source: `backend/app/api/routes/sourcing.py:376`.
-- Service: `backend/app/domain/sourcing/service.py:595`.
+- Source: `backend/app/api/routes/sourcing.py:484-552`.
+- Service: `backend/app/domain/sourcing/service.py:930-1007`.
 - FX: `backend/app/domain/fx/rates.py:46`.
 
 ### `POST /api/parts/{part_id}/sourcing/refresh`
@@ -519,8 +553,8 @@ Shape matches `GET /api/parts/{part_id}/sourcing`. `cache_hit` is `false` when t
 - The route validates `part_id` with `assert_in_workspace()` before reading the part MPN.
 - Refresh calls sourcing search with `use_cached_data=false`, `ttl_seconds=1800`, and `force_refresh=true`; the cache helper still upserts on `(workspace_id, query_hash)`.
 - Forced refreshes consume the in-process parts-count budget because they always call TrustedParts unless the hard budget check blocks first.
-- Source: `backend/app/api/routes/sourcing.py:214-274`.
-- Service: `backend/app/domain/sourcing/service.py:62-142`.
+- Source: `backend/app/api/routes/sourcing.py:555-617`.
+- Service: `backend/app/domain/sourcing/service.py:930-1007`.
 - Cache: `backend/app/domain/sourcing/cache.py:28-72`.
 
 ### `POST /api/sourcing/search`
@@ -550,16 +584,42 @@ Search TrustedParts for 1-50 exact MPNs using the current workspace's encrypted 
           {
             "mpn": "STM32F103C8T6",
             "distributors": [
-              { "name": "DigiKey", "stock": 42, "unit_price": 1.23, "currency": "EUR" }
-            ]
+              {
+                "distributor_id": 9876,
+                "name": "DigiKey",
+                "stock": 42,
+                "availability_text": "In Stock",
+                "quantity_multiple": 5,
+                "unit_price": 1.23,
+                "currency": "EUR",
+                "rohs_compliance": [],
+                "price_breaks": [
+                  {
+                    "quantity": 1,
+                    "unit_price": 1.23,
+                    "formatted_amount": "€1.23",
+                    "text": "1+ €1.23"
+                  }
+                ]
+              }
+            ],
+            "lifecycle_risk": null,
+            "supply_chain_risk": null,
+            "is_affected_by_tariff": false,
+            "manufacturer_id": 12345,
+            "specifications": []
           }
         ],
         "request_id": "trustedparts-request-id",
+        "tp_current_date": "2026-05-10T12:00:00+00:00",
+        "tp_response_time": "00:00:01.234",
         "fetched_at": "2026-05-08T12:00:00+00:00",
         "cache_hit": false
       }
     ],
     "request_id": "trustedparts-request-id",
+    "tp_current_date": "2026-05-10T12:00:00+00:00",
+    "tp_response_time": "00:00:01.234",
     "powered_by": "TrustedParts",
     "fetched_at": "2026-05-08T12:00:00+00:00",
     "cache_hit": false,
@@ -584,8 +644,9 @@ Search TrustedParts for 1-50 exact MPNs using the current workspace's encrypted 
 
 - The route uses member-or-higher role gating and never decrypts credentials in the handler; decryption happens in `make_sourcing_provider()`.
 - Local cache rows are scoped by `workspace_id`, and cache hits do not consume the in-process parts-count budget.
-- Source: `backend/app/api/routes/sourcing.py:87`.
-- Service: `backend/app/domain/sourcing/service.py:39`.
+- `tp_current_date` is the TrustedParts response timestamp serialized as ISO-8601 when present; `tp_response_time` preserves the upstream diagnostic string.
+- Source: `backend/app/api/routes/sourcing.py:96-155`.
+- Service: `backend/app/domain/sourcing/service.py:930-1007`.
 - Factory: `backend/app/domain/sourcing/factory.py:12`.
 
 ### `POST /api/workspaces/current/sourcing/test`

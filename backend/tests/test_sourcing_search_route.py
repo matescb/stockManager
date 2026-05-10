@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -97,6 +97,8 @@ class _FakeTrustedPartsClient:
                 )
             ],
             request_id=f"req-{len(self.calls)}",
+            tp_current_date=datetime(2026, 5, 10, 12, tzinfo=timezone.utc),
+            tp_response_time="00:00:01.234",
         )
 
 
@@ -136,8 +138,24 @@ def test_envelope_shape(authed_client):
     datetime.fromisoformat(data["fetched_at"])
     assert data["links"]["primary"]
     assert data["request_id"] == "req-1"
+    assert datetime.fromisoformat(data["tp_current_date"]) == datetime(
+        2026,
+        5,
+        10,
+        12,
+        tzinfo=timezone.utc,
+    )
+    assert data["tp_response_time"] == "00:00:01.234"
     assert data["cache_hit"] is False
     assert data["results"][0]["mpn"] == "STM32F103C8T6"
+    assert datetime.fromisoformat(data["results"][0]["tp_current_date"]) == datetime(
+        2026,
+        5,
+        10,
+        12,
+        tzinfo=timezone.utc,
+    )
+    assert data["results"][0]["tp_response_time"] == "00:00:01.234"
     assert data["results"][0]["cache_hit"] is False
 
 
