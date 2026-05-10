@@ -42,6 +42,11 @@ const DEFAULT_COOLDOWN_SECONDS = 86400;
 const EMPTY_THRESHOLD_TYPES = new Set<SourcingAlertType>([
   "back_in_stock",
   "out_of_authorized_stock",
+  "tariff_status_changed",
+]);
+const STRING_CHANGED_TYPES = new Set<SourcingAlertType>([
+  "lifecycle_risk_changed",
+  "supply_chain_risk_changed",
 ]);
 
 function positiveInt(value: string, fallback: number): number {
@@ -53,6 +58,11 @@ function positiveInt(value: string, fallback: number): number {
 function thresholdFromAlert(alert: SourcingAlert | null | undefined, key: string, fallback: string): string {
   const value = alert?.threshold?.[key as keyof typeof alert.threshold];
   return value == null ? fallback : String(value);
+}
+
+function thresholdBoolFromAlert(alert: SourcingAlert | null | undefined, key: string): boolean {
+  const value = alert?.threshold?.[key as keyof typeof alert.threshold];
+  return value === true;
 }
 
 function defaultFromActiveList(saved: string | null | undefined, active: string[]): string {
@@ -92,6 +102,8 @@ export default function AlertFormModal({
   const [buildQuantity, setBuildQuantity] = useState(
     String(initialValues?.build_quantity ?? thresholdFromAlert(alert, "build_quantity", "1")),
   );
+  const [mustContain, setMustContain] = useState(thresholdFromAlert(alert, "must_contain", ""));
+  const [caseSensitive, setCaseSensitive] = useState(thresholdBoolFromAlert(alert, "case_sensitive"));
   const [countryCode, setCountryCode] = useState(alert?.country_code ?? "");
   const [currencyCode, setCurrencyCode] = useState(alert?.currency_code ?? "");
   const [distributorFilter, setDistributorFilter] = useState<string[]>(alert?.distributor_filter ?? []);
@@ -111,6 +123,8 @@ export default function AlertFormModal({
     setQty(thresholdFromAlert(alert, "qty", "0"));
     setDeltaPct(thresholdFromAlert(alert, "delta_pct", "5"));
     setBuildQuantity(String(initialValues?.build_quantity ?? thresholdFromAlert(alert, "build_quantity", "1")));
+    setMustContain(thresholdFromAlert(alert, "must_contain", ""));
+    setCaseSensitive(thresholdBoolFromAlert(alert, "case_sensitive"));
     setCountryCode(alert?.country_code ?? "");
     setCurrencyCode(alert?.currency_code ?? "");
     setDistributorFilter(alert?.distributor_filter ?? []);
@@ -226,6 +240,11 @@ export default function AlertFormModal({
         return null;
       }
       threshold = { build_quantity: parsedBuild };
+    } else if (STRING_CHANGED_TYPES.has(alertType)) {
+      threshold = {
+        must_contain: mustContain.trim() || null,
+        case_sensitive: caseSensitive,
+      };
     }
 
     const payload: SourcingAlertInput = {
@@ -444,9 +463,33 @@ export default function AlertFormModal({
                 />
               </label>
             )}
+            {STRING_CHANGED_TYPES.has(alertType) && (
+              <div className="space-y-3">
+                <label className="label">
+                  Must contain
+                  <input
+                    className="input"
+                    value={mustContain}
+                    onChange={event => setMustContain(event.currentTarget.value)}
+                    disabled={mutation.isPending}
+                  />
+                </label>
+                <label className="label flex-row items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={caseSensitive}
+                    onChange={event => setCaseSensitive(event.currentTarget.checked)}
+                    disabled={mutation.isPending}
+                  />
+                  Case sensitive
+                </label>
+              </div>
+            )}
             {EMPTY_THRESHOLD_TYPES.has(alertType) && (
               <div className="rounded border border-border p-3 text-sm text-muted">
-                This alert triggers on an availability transition; no numeric threshold is needed.
+                {alertType === "tariff_status_changed"
+                  ? "This alert triggers on any tariff status transition; no threshold is needed."
+                  : "This alert triggers on an availability transition; no numeric threshold is needed."}
               </div>
             )}
             <label className="label">

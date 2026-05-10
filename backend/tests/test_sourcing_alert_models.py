@@ -93,6 +93,27 @@ def test_check_constraint_rejects_invalid_alert_type(db: Session) -> None:
     db.rollback()
 
 
+@pytest.mark.parametrize(
+    "alert_type",
+    [
+        "lifecycle_risk_changed",
+        "supply_chain_risk_changed",
+        "tariff_status_changed",
+    ],
+)
+def test_check_constraint_accepts_gap_field_alert_types(
+    db: Session,
+    alert_type: str,
+) -> None:
+    workspace, user = _workspace_user(db)
+    part = _part(db, workspace, user)
+    db.add(_alert(workspace, user, part=part, alert_type=alert_type, threshold={}))
+
+    db.flush()
+
+    assert db.execute(select(func.count()).select_from(SourcingAlert)).scalar_one() == 1
+
+
 def test_check_constraint_rejects_short_cooldown(db: Session) -> None:
     workspace, user = _workspace_user(db)
     part = _part(db, workspace, user)

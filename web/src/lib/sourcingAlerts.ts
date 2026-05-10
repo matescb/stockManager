@@ -7,6 +7,9 @@ export const ALERT_TYPES = [
   "out_of_authorized_stock",
   "price_changed",
   "bom_buyable",
+  "lifecycle_risk_changed",
+  "supply_chain_risk_changed",
+  "tariff_status_changed",
 ] as const;
 
 export type SourcingAlertType = typeof ALERT_TYPES[number];
@@ -15,6 +18,7 @@ export type SourcingAlertThreshold =
   | { qty: number }
   | { delta_pct: number }
   | { build_quantity: number }
+  | { must_contain?: string | null; case_sensitive?: boolean }
   | Record<string, never>;
 
 export type SourcingAlert = {
@@ -91,6 +95,12 @@ export function alertTypeLabel(type: SourcingAlertType): string {
       return "Price changed";
     case "bom_buyable":
       return "BOM buyable";
+    case "lifecycle_risk_changed":
+      return "Lifecycle risk changed";
+    case "supply_chain_risk_changed":
+      return "Supply-chain risk changed";
+    case "tariff_status_changed":
+      return "Tariff status changed";
   }
 }
 
@@ -99,7 +109,12 @@ export function isProjectAlert(type: SourcingAlertType): boolean {
 }
 
 export function isSourcingFilteredAlert(type: SourcingAlertType): boolean {
-  return type === "back_in_stock" || type === "out_of_authorized_stock" || type === "price_changed";
+  return type === "back_in_stock"
+    || type === "out_of_authorized_stock"
+    || type === "price_changed"
+    || type === "lifecycle_risk_changed"
+    || type === "supply_chain_risk_changed"
+    || type === "tariff_status_changed";
 }
 
 export function listSourcingAlerts(filters: SourcingAlertFilters = {}, opts?: ApiOptions) {

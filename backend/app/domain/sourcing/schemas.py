@@ -210,6 +210,9 @@ SourcingAlertType = Literal[
     "out_of_authorized_stock",
     "price_changed",
     "bom_buyable",
+    "lifecycle_risk_changed",
+    "supply_chain_risk_changed",
+    "tariff_status_changed",
 ]
 
 
@@ -243,6 +246,17 @@ class BomBuyableThreshold(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     build_quantity: int = Field(ge=1)
+
+
+class StringChangedThreshold(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    must_contain: str | None = None
+    case_sensitive: bool = False
+
+
+class TariffStatusChangedThreshold(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 
 class SourcingAlertIn(BaseModel):

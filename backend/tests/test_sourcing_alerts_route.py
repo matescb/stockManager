@@ -101,6 +101,52 @@ def test_create_stock_below_alert(authed_client):
     assert data["archived_at"] is None
 
 
+def test_create_lifecycle_risk_changed_alert_with_must_contain_threshold(
+    authed_client,
+):
+    part_id = create_part(authed_client, name="Lifecycle target")
+
+    r = authed_client.post(
+        "/api/sourcing/alerts",
+        json={
+            "alert_type": "lifecycle_risk_changed",
+            "part_id": part_id,
+            "threshold": {"must_contain": "EOL", "case_sensitive": True},
+            "country_code": "us",
+            "currency_code": "usd",
+            "distributor_filter": ["DigiKey"],
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["alert_type"] == "lifecycle_risk_changed"
+    assert data["part_id"] == part_id
+    assert data["project_id"] is None
+    assert data["threshold"] == {"must_contain": "EOL", "case_sensitive": True}
+    assert data["country_code"] == "US"
+    assert data["currency_code"] == "USD"
+    assert data["distributor_filter"] == ["DigiKey"]
+
+
+def test_create_tariff_status_changed_alert_empty_threshold(authed_client):
+    part_id = create_part(authed_client, name="Tariff target")
+
+    r = authed_client.post(
+        "/api/sourcing/alerts",
+        json={
+            "alert_type": "tariff_status_changed",
+            "part_id": part_id,
+            "threshold": {},
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["alert_type"] == "tariff_status_changed"
+    assert data["threshold"] == {}
+
+
 @pytest.mark.parametrize(
     ("alert_type", "threshold"),
     [
@@ -110,6 +156,9 @@ def test_create_stock_below_alert(authed_client):
         ("out_of_authorized_stock", {"qty": 1}),
         ("price_changed", {"delta_pct": 150}),
         ("bom_buyable", {"build_quantity": 0}),
+        ("lifecycle_risk_changed", {"to_states": ["Obsolete"]}),
+        ("supply_chain_risk_changed", {"must_contain": "NRND", "unexpected": True}),
+        ("tariff_status_changed", {"must_contain": "yes"}),
     ],
 )
 def test_create_with_invalid_threshold_returns_422(
@@ -128,6 +177,33 @@ def test_create_with_invalid_threshold_returns_422(
         payload["part_id"] = part_id
 
     r = authed_client.post("/api/sourcing/alerts", json=payload)
+
+    assert r.status_code == 422, r.text
+    assert r.json()["status"]["category"] == "validation_error"
+
+
+@pytest.mark.parametrize(
+    "alert_type",
+    [
+        "lifecycle_risk_changed",
+        "supply_chain_risk_changed",
+        "tariff_status_changed",
+    ],
+)
+def test_gap_field_alerts_require_part_id_not_project_id(
+    authed_client,
+    alert_type: str,
+):
+    project_id, _part_id = _single_line_project(authed_client)
+
+    r = authed_client.post(
+        "/api/sourcing/alerts",
+        json={
+            "alert_type": alert_type,
+            "project_id": project_id,
+            "threshold": {},
+        },
+    )
 
     assert r.status_code == 422, r.text
     assert r.json()["status"]["category"] == "validation_error"

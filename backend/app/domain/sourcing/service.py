@@ -52,6 +52,8 @@ from app.domain.sourcing.schemas import (
     SourcingSearchResult,
     StockAboveThreshold,
     StockBelowThreshold,
+    StringChangedThreshold,
+    TariffStatusChangedThreshold,
 )
 from app.domain.workspaces.models import WorkspaceMember
 
@@ -68,6 +70,9 @@ _SOURCING_FILTER_ALERT_TYPES = {
     "back_in_stock",
     "out_of_authorized_stock",
     "price_changed",
+    "lifecycle_risk_changed",
+    "supply_chain_risk_changed",
+    "tariff_status_changed",
 }
 _THRESHOLD_SCHEMAS: dict[SourcingAlertType, type[BaseModel]] = {
     "stock_below": StockBelowThreshold,
@@ -76,6 +81,9 @@ _THRESHOLD_SCHEMAS: dict[SourcingAlertType, type[BaseModel]] = {
     "out_of_authorized_stock": OutOfAuthorizedStockThreshold,
     "price_changed": PriceChangedThreshold,
     "bom_buyable": BomBuyableThreshold,
+    "lifecycle_risk_changed": StringChangedThreshold,
+    "supply_chain_risk_changed": StringChangedThreshold,
+    "tariff_status_changed": TariffStatusChangedThreshold,
 }
 
 
