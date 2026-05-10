@@ -1,7 +1,9 @@
-import { useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { FolderKanban } from "lucide-react";
+import { FolderKanban, ImageOff, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import type { Part, ProjectEntry } from "@/types";
@@ -9,9 +11,12 @@ import { useState } from "react";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import QueryStateBoundary from "@/components/QueryStateBoundary";
+import AddPartFromLibraryModal from "./AddPartFromLibraryModal";
+import { SourceBomButton } from "@/routes/projects/sourcing/SourceBomButton";
 
 export default function ProjectBOM() {
   const { projectId } = useParams();
+  const nav = useNavigate();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
   const entriesQuery = useQuery({
@@ -23,6 +28,22 @@ export default function ProjectBOM() {
   const partsById = new Map(parts?.map(p => [p.id, p]) ?? []);
 
   const [matching, setMatching] = useState<{ entryId: string; pick: string } | null>(null);
+  const [addPartOpen, setAddPartOpen] = useState(false);
+
+  const bulkDeleteMutation = useApiMutation<null[], string[]>({
+    mutationKey: ["project", projectId, "bulk-delete-entries"],
+    mutationFn: async entryIds => {
+      const deleted: null[] = [];
+      for (const entryId of entryIds) {
+        deleted.push(await api.delete<null>(`/projects/${projectId}/entries/${entryId}`));
+      }
+      return deleted;
+    },
+    onSuccess: (_res, entryIds) => {
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "project", projectId, "entries") });
+      toast.success(`Deleted ${entryIds.length} BOM row${entryIds.length === 1 ? "" : "s"}.`);
+    },
+  });
 
   async function match(entryId: string, partId: string) {
     await api.post(`/projects/${projectId}/entries/${entryId}/match`, { part_id: partId });
@@ -36,22 +57,78 @@ export default function ProjectBOM() {
   }
 
   return (
-    <div>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <SourceBomButton projectId={projectId} className="btn" />
+        {projectId && (
+          <Link className="btn" to={`/projects/${projectId}/import`}>
+            Import BOM
+          </Link>
+        )}
+        <button
+          type="button"
+          className="btn"
+          onClick={() => setAddPartOpen(true)}
+          disabled={!projectId}
+        >
+          Add Part
+        </button>
+      </div>
       <QueryStateBoundary query={entriesQuery} resourceLabel="BOM entries">
       <DataTable
         rows={entries ?? []}
         rowKey={r => r.id}
         tableId="project-bom"
+        searchPlaceholder="Search BOM..."
+        selectable
+        selectionAccessory={(ids, clear) => (
+          <button
+            type="button"
+            className="btn-danger inline-flex items-center gap-1.5"
+            disabled={bulkDeleteMutation.isPending}
+            onClick={() => {
+              clear();
+              bulkDeleteMutation.mutate(ids);
+            }}
+          >
+            <Trash2 size={14} />
+            Delete ({ids.length})
+          </button>
+        )}
         empty={
           <EmptyState
             icon={FolderKanban}
             title="BOM is empty"
-            description="Use the Import BOM tab to load a CSV/TSV."
+            description="Use Import BOM or Add Part to populate this project."
           />
         }
         exportFilename="bom"
+        onRowClick={r => {
+          if (r.part_id) nav(`/parts/${r.part_id}/info`);
+        }}
+        rowCanClick={r => r.entry_type === "part" && !!r.part_id}
+        rowClassName={r => r.entry_type === "unmatched" || !r.part_id ? "text-muted" : undefined}
         columns={[
-          { key: "qty", header: "Qty", accessor: r => r.quantity, width: "60px" },
+          {
+            key: "image",
+            header: "",
+            width: "44px",
+            render: r => {
+              const part = r.part_id ? partsById.get(r.part_id) : null;
+              return part?.image_url ? (
+                <img
+                  src={part.image_url}
+                  alt=""
+                  loading="lazy"
+                  className="h-8 w-8 rounded bg-panel object-contain"
+                />
+              ) : (
+                <span className="flex h-8 w-8 items-center justify-center rounded bg-panel2/40 text-muted">
+                  <ImageOff size={14} />
+                </span>
+              );
+            },
+          },
           {
             key: "part",
             header: "Part",
@@ -80,18 +157,47 @@ export default function ProjectBOM() {
                 <span>{r.name}</span>
               ),
           },
+          { key: "mpn", header: "MPN", accessor: r => r.part_id ? partsById.get(r.part_id)?.mpn ?? "" : "" },
+          { key: "manufacturer", header: "Manufacturer", accessor: r => r.part_id ? partsById.get(r.part_id)?.manufacturer ?? "" : "" },
+          { key: "qty", header: "Qty", accessor: r => r.quantity, width: "70px" },
           { key: "designators", header: "Designators", accessor: r => (r.designators ?? []).join(", ") },
-          { key: "comments", header: "Comments", accessor: r => r.comments ?? "" },
-          { key: "dnp", header: "DNP", accessor: r => r.dnp ? "yes" : "" },
+          {
+            key: "status",
+            header: "Status",
+            accessor: r => r.entry_type === "part" && r.part_id ? "matched" : "unmatched",
+            render: r => r.entry_type === "part" && r.part_id ? (
+              <span className="pill bg-accent/15 text-accent">matched</span>
+            ) : (
+              <span className="pill bg-danger/20 text-danger">unmatched</span>
+            ),
+            width: "110px",
+          },
           {
             key: "actions",
             header: "",
             accessor: () => "",
-            render: r => <button className="btn-danger text-xs" onClick={() => delEntry(r.id)}>Delete</button>,
+            render: r => (
+              <button
+                className="btn-danger text-xs"
+                onClick={event => {
+                  event.stopPropagation();
+                  delEntry(r.id);
+                }}
+              >
+                Delete
+              </button>
+            ),
           },
         ]}
       />
       </QueryStateBoundary>
+      {projectId && (
+        <AddPartFromLibraryModal
+          open={addPartOpen}
+          projectId={projectId}
+          onClose={() => setAddPartOpen(false)}
+        />
+      )}
     </div>
   );
 }

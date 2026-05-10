@@ -11,6 +11,10 @@ that live under `routes/**` are out of scope — when in doubt, grep.
 component for every page that shows rows. Use it before rolling your own
 table (CLAUDE.md → "Frontend conventions worth preserving").
 
+Current route-level consumers include `/parts` and the project BOM table.
+The BOM table uses `rowCanClick` so matched rows navigate to the part detail
+page while unmatched rows stay visually muted and inert.
+
 ### Feature catalog
 
 | Feature | Source | Test |
@@ -21,6 +25,7 @@ table (CLAUDE.md → "Frontend conventions worth preserving").
 | Persist hidden columns + density to localStorage | `DataTable.tsx:114-126`, key = `dt:${tableId}` | — |
 | CSV export with formula-injection hardening | `DataTable.tsx:20-41`, `:258-274` | `DataTable.test.tsx:14-78` |
 | Multi-select with select-all-visible header checkbox | `DataTable.tsx:160-167`, `:276-291`, `:411-426` | `DataTable.dom.test.tsx:165-211` |
+| Per-row click gating and row class hooks | `DataTable.tsx` `rowCanClick`, `rowClassName` props | `ProjectBOM.test.tsx` matched/unmatched row navigation |
 | Density toggle (comfortable / compact) | `DataTable.tsx:230-231`, `:307-315` | — |
 | Keyboard navigation (Enter / Space activates row) | `DataTable.tsx:391-403` | `DataTable.keyboard.dom.test.tsx:50-86` |
 | Row aria-label built from first textual column | `DataTable.tsx:43-63`, `:395-396` | — |
