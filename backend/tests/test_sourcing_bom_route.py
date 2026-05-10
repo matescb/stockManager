@@ -166,10 +166,19 @@ def _single_line_project(client: TestClient, *, mpn: str = "BOM-MPN", quantity: 
     )
 
 
-def _post_sourcing(client: TestClient, project_id: str, build_quantity: int = 1):
+def _post_sourcing(
+    client: TestClient,
+    project_id: str,
+    build_quantity: int = 1,
+    *,
+    currency: str | None = None,
+):
+    body: dict[str, Any] = {"build_quantity": build_quantity}
+    if currency is not None:
+        body["currency"] = currency
     return client.post(
         f"/api/projects/{project_id}/sourcing",
-        json={"build_quantity": build_quantity},
+        json=body,
     )
 
 
@@ -238,6 +247,109 @@ def test_bom_response_includes_is_affected_by_tariff_per_offer(authed_client):
     row = r.json()["data"]["rows"][0]
     assert row["offers"][0]["is_affected_by_tariff"] is True
     assert row["best_offer"]["is_affected_by_tariff"] is True
+
+
+def test_bom_response_offers_in_workspace_currency_when_currency_passed(
+    authed_client,
+    monkeypatch,
+):
+    _configure_sourcing(authed_client)
+    project_id = _single_line_project(authed_client, mpn="FX-MPN")
+    _FakeTrustedPartsClient.offers_by_mpn = {
+        "FX-MPN": [
+            _offer("FX-MPN", distributor="DigiKey", unit_price=2.0, currency="USD"),
+            _offer("FX-MPN", distributor="Mouser", unit_price=1.5, currency="GBP"),
+        ]
+    }
+    calls = 0
+
+    def fake_rates(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return {
+            "EUR": Decimal("1"),
+            "USD": Decimal("2"),
+            "GBP": Decimal("0.5"),
+        }
+
+    monkeypatch.setattr("app.domain.sourcing.service.fx_rates.get_or_fetch_today", fake_rates)
+
+    r = _post_sourcing(authed_client, project_id, currency="EUR")
+
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["fx_status"] == "ok"
+    row = data["rows"][0]
+    assert row["fx_status"] is None
+    offers = {offer["distributor"]: offer for offer in row["offers"]}
+    assert Decimal(offers["DigiKey"]["unit_price"]) == Decimal("2.0")
+    assert Decimal(offers["DigiKey"]["unit_price_converted"]) == Decimal("1.0000")
+    assert offers["DigiKey"]["currency"] == "USD"
+    assert offers["DigiKey"]["currency_displayed"] == "EUR"
+    assert offers["DigiKey"]["fx_converted"] is True
+    assert Decimal(offers["DigiKey"]["price_breaks_converted"][0]["unit_price"]) == Decimal(
+        "1.0000"
+    )
+    assert Decimal(offers["Mouser"]["unit_price_converted"]) == Decimal("3.0000")
+    assert row["best_offer"]["currency_displayed"] == "EUR"
+    assert calls == 1
+
+
+def test_bom_response_preserves_native_currency_when_fx_unavailable_and_surfaces_partial(
+    authed_client,
+    monkeypatch,
+):
+    _configure_sourcing(authed_client)
+    project_id = _single_line_project(authed_client, mpn="FX-PARTIAL")
+    _FakeTrustedPartsClient.offers_by_mpn = {
+        "FX-PARTIAL": [
+            _offer("FX-PARTIAL", distributor="DigiKey", unit_price=2.0, currency="USD"),
+            _offer("FX-PARTIAL", distributor="Local", unit_price=9.0, currency="AUD"),
+        ]
+    }
+    monkeypatch.setattr(
+        "app.domain.sourcing.service.fx_rates.get_or_fetch_today",
+        lambda *_args, **_kwargs: {"EUR": Decimal("1"), "USD": Decimal("2")},
+    )
+
+    r = _post_sourcing(authed_client, project_id, currency="EUR")
+
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["fx_status"] == "partial"
+    row = data["rows"][0]
+    assert row["fx_status"] == "unavailable"
+    offers = {offer["distributor"]: offer for offer in row["offers"]}
+    assert offers["DigiKey"]["currency_displayed"] == "EUR"
+    assert Decimal(offers["DigiKey"]["unit_price_converted"]) == Decimal("1.0000")
+    assert offers["Local"]["currency"] == "AUD"
+    assert offers["Local"]["currency_displayed"] == "AUD"
+    assert offers["Local"]["unit_price_converted"] is None
+    assert offers["Local"]["fx_converted"] is None
+
+
+def test_bom_response_no_conversion_when_currency_omitted(authed_client, monkeypatch):
+    _configure_sourcing(authed_client)
+    project_id = _single_line_project(authed_client, mpn="FX-NATIVE")
+    _FakeTrustedPartsClient.offers_by_mpn = {
+        "FX-NATIVE": [_offer("FX-NATIVE", unit_price=2.0, currency="USD")]
+    }
+
+    def fail_fetch(*_args, **_kwargs):
+        raise AssertionError("FX rates should not be fetched without a requested currency")
+
+    monkeypatch.setattr("app.domain.sourcing.service.fx_rates.get_or_fetch_today", fail_fetch)
+
+    r = _post_sourcing(authed_client, project_id)
+
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["fx_status"] is None
+    offer = data["rows"][0]["offers"][0]
+    assert offer["currency"] == "USD"
+    assert offer["currency_displayed"] == "USD"
+    assert offer["unit_price_converted"] is None
+    assert offer["price_breaks_converted"] is None
 
 
 def test_bom_row_reports_no_mpn_without_provider_call(authed_client):

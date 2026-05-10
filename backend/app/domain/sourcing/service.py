@@ -18,6 +18,8 @@ from app.api._helpers import assert_in_workspace
 from app.core.errors import ErrorCodes, raise_http
 from app.core.time import utcnow
 from app.domain.builds.service import shortage_analysis
+from app.domain.fx import rates as fx_rates
+from app.domain.fx._apply import apply_fx_to_offer
 from app.domain.orders.models import Order, OrderEntry
 from app.domain.parts.models import Part
 from app.domain.projects.models import Project
@@ -874,6 +876,11 @@ def source_bom(
         )
         for row in shortage
     ]
+    fx_status = _apply_fx_to_bom_rows(
+        db,
+        rows,
+        requested_currency=currency,
+    )
     return SourcingBomOut(
         rows=rows,
         coverage=DistributorCoverageMatrixOut.model_validate(
@@ -888,7 +895,63 @@ def source_bom(
         fetched_at=max(fetched_at_values, default=utcnow()),
         partial=partial,
         links=TRUSTEDPARTS_LINKS,
+        fx_status=fx_status,
     )
+
+
+def _apply_fx_to_bom_rows(
+    db: Session,
+    rows: list[SourcingBomLineOut],
+    *,
+    requested_currency: str | None,
+) -> str | None:
+    requested = _clean_code(requested_currency)
+    rates: dict[str, Decimal] | None = None
+    rate_date = utcnow().date()
+    fetch_error: fx_rates.FxRateError | None = None
+    statuses: list[str] = []
+
+    def fetch_today_rates() -> dict[str, Decimal]:
+        nonlocal rates, fetch_error
+        if fetch_error is not None:
+            raise fetch_error
+        if rates is None:
+            try:
+                rates = fx_rates.get_or_fetch_today(db, on_date=rate_date)
+            except fx_rates.FxRateError as exc:
+                fetch_error = exc
+                raise
+        return rates
+
+    for row in rows:
+        row_unavailable = False
+        for offer in row.offers:
+            _, status = apply_fx_to_offer(
+                offer,
+                requested_currency=requested,
+                fetch_today_rates=fetch_today_rates,
+            )
+            statuses.append(status)
+            row_unavailable = row_unavailable or status == "unavailable"
+        if row.best_offer is not None and all(
+            row.best_offer is not offer for offer in row.offers
+        ):
+            _, status = apply_fx_to_offer(
+                row.best_offer,
+                requested_currency=requested,
+                fetch_today_rates=fetch_today_rates,
+            )
+            statuses.append(status)
+            row_unavailable = row_unavailable or status == "unavailable"
+        row.fx_status = "unavailable" if row_unavailable else None
+
+    if requested is None:
+        return None
+    if not statuses or all(status == "ok" for status in statuses):
+        return "ok"
+    if all(status == "unavailable" for status in statuses):
+        return "unavailable"
+    return "partial"
 
 
 def search(

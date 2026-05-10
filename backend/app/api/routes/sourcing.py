@@ -15,6 +15,7 @@ from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import err, ok
 from app.core.time import utcnow
 from app.domain.fx import rates as fx_rates
+from app.domain.fx._apply import apply_fx_to_offer
 from app.domain.parts.models import Part
 from app.domain.projects.models import Project
 from app.domain.sourcing import (
@@ -34,7 +35,6 @@ from app.domain.sourcing.schemas import (
     SourcingAlertPatch,
     SourcingAlertType,
     SourcingBomIn,
-    SourcingConvertedPriceBreak,
     SourcingQuery,
     SourcingSearchIn,
 )
@@ -652,79 +652,34 @@ def _apply_fx_conversion(
     *,
     requested_currency: str | None,
 ) -> str | None:
-    if db is None or requested_currency is None:
-        return None
-
     rates: dict[str, Decimal] | None = None
     rate_date = utcnow().date()
     fx_status: str | None = None
-    fetch_failed = False
+    fetch_error: fx_rates.FxRateError | None = None
+
+    def fetch_today_rates() -> dict[str, Decimal]:
+        nonlocal rates, fetch_error
+        if db is None:
+            raise fx_rates.FxRateError("database session unavailable")
+        if fetch_error is not None:
+            raise fetch_error
+        if rates is None:
+            try:
+                rates = fx_rates.get_or_fetch_today(db, on_date=rate_date)
+            except fx_rates.FxRateError as exc:
+                fetch_error = exc
+                raise
+        return rates
 
     for offer in offers:
         for distributor in offer.distributors:
-            original_currency = _clean_currency(distributor.currency)
-            if original_currency is None:
-                continue
-            distributor.currency_displayed = distributor.currency
-            if original_currency == requested_currency:
-                distributor.currency_displayed = requested_currency
-                continue
-            if distributor.unit_price is None:
-                continue
-            if fetch_failed:
-                fx_status = "unavailable"
-                distributor.fx_converted = None
-                continue
-            if rates is None:
-                try:
-                    rates = fx_rates.get_or_fetch_today(db, on_date=rate_date)
-                except fx_rates.FxRateError:
-                    fetch_failed = True
-                    fx_status = "unavailable"
-                    distributor.fx_converted = None
-                    continue
-
-            converted = fx_rates.convert(
-                Decimal(str(distributor.unit_price)),
-                from_currency=original_currency,
-                to_currency=requested_currency,
-                rates=rates,
-                on_date=rate_date,
+            _, status = apply_fx_to_offer(
+                distributor,
+                requested_currency=requested_currency,
+                fetch_today_rates=fetch_today_rates,
             )
-            if converted is None:
+            if status == "unavailable":
                 fx_status = "unavailable"
-                distributor.fx_converted = None
-                continue
-
-            converted_breaks: list[SourcingConvertedPriceBreak] = []
-            missing_break = False
-            for price_break in distributor.price_breaks:
-                converted_break = fx_rates.convert(
-                    Decimal(str(price_break.unit_price)),
-                    from_currency=original_currency,
-                    to_currency=requested_currency,
-                    rates=rates,
-                    on_date=rate_date,
-                )
-                if converted_break is None:
-                    missing_break = True
-                    break
-                converted_breaks.append(
-                    SourcingConvertedPriceBreak(
-                        quantity=price_break.quantity,
-                        unit_price=converted_break,
-                    )
-                )
-            if missing_break:
-                fx_status = "unavailable"
-                distributor.fx_converted = None
-                continue
-
-            distributor.unit_price_converted = converted
-            distributor.currency_displayed = requested_currency
-            distributor.fx_converted = True
-            distributor.fx_rate_date = rate_date
-            distributor.price_breaks_converted = converted_breaks
 
     return fx_status
 

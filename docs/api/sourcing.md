@@ -200,8 +200,13 @@ Path: `project_id` is a project UUID in the current workspace.
           "distributor": "Mouser",
           "unit_price": "0.10",
           "currency": "EUR",
+          "unit_price_converted": null,
+          "currency_displayed": "EUR",
+          "fx_converted": null,
+          "fx_rate_date": null,
           "moq": 1,
           "lead_time_days": 3,
+          "price_breaks_converted": null,
           "lifecycle_risk": "Low",
           "supply_chain_risk": null,
           "is_affected_by_tariff": false,
@@ -214,7 +219,8 @@ Path: `project_id` is a project UUID in the current workspace.
     ],
     "powered_by": "TrustedParts",
     "fetched_at": "2026-05-08T12:00:00+00:00",
-    "partial": false
+    "partial": false,
+    "fx_status": "ok"
   },
   "status": { "category": "ok", "message": "OK" }
 }
@@ -251,7 +257,8 @@ Sources: `backend/app/domain/sourcing/service.py:1322-1386`,
 - The route validates `project_id` with `assert_in_workspace()` before calling the sourcing service.
 - The service reuses `shortage_analysis()`, `dedupe_mpns()`, `chunk_mpns()`, and per-MPN `search()` cache rows; BOM chunks use `ttl_seconds=600`.
 - Decimal prices and extended costs serialize as strings.
-- Each row exposes sourcing diagnostics: `reason` is `ok`, `no_mpn`, or `no_offers`; `cache_hit` is `true`/`false` for searched rows and `null` when no MPN was searched; `fx_status` is reserved for row-level conversion failures and is `null` unless represented.
+- When `currency` is supplied, BOM offer prices whose native distributor currency differs are display-converted through the global ECB daily snapshot. Native `unit_price`, `currency`, and existing coverage/capacity calculations stay unchanged; converted display values are exposed as `unit_price_converted`, `currency_displayed`, `fx_converted`, `fx_rate_date`, and `price_breaks_converted`.
+- Each row exposes sourcing diagnostics: `reason` is `ok`, `no_mpn`, or `no_offers`; `cache_hit` is `true`/`false` for searched rows and `null` when no MPN was searched; row `fx_status` is `unavailable` when any offer on the row could not be converted. Top-level `fx_status` is `ok`, `partial`, or `unavailable` when a request currency was supplied and `null` when conversion was not requested.
 - BOM offer projections carry offer-level TrustedParts gap fields for downstream risk/report consumers; distributor-level gap fields remain on part/search offer DTOs.
 - Source: `backend/app/api/routes/sourcing.py:253-315`.
 - Service: `backend/app/domain/sourcing/service.py:820-882`, `backend/app/domain/sourcing/service.py:1236-1270`.

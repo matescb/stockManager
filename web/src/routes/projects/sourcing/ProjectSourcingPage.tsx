@@ -23,6 +23,10 @@ type SourcingBomOffer = {
   stock: number;
   unit_price?: string | number | null;
   currency?: string | null;
+  unit_price_converted?: string | number | null;
+  currency_displayed?: string | null;
+  fx_converted?: boolean | null;
+  fx_rate_date?: string | null;
   packaging?: string | null;
   moq?: number | null;
   lead_time_days?: number | null;
@@ -91,6 +95,7 @@ type SourcingBomResponse = {
   powered_by: "TrustedParts";
   fetched_at: string;
   partial: boolean;
+  fx_status?: "ok" | "partial" | "unavailable" | null;
   links: {
     primary: string;
     attribution: string;
@@ -100,7 +105,7 @@ type SourcingBomResponse = {
 type SourcingRequest = {
   build_quantity: number;
   country?: string;
-  currency?: string;
+  currency?: string | null;
   distributors?: string[];
 };
 
@@ -122,6 +127,18 @@ function formatMoney(value: string | number | null | undefined, currency?: strin
     minimumFractionDigits: numeric % 1 === 0 ? 0 : 2,
   });
   return currency ? `${formatted} ${currency}` : formatted;
+}
+
+function offerDisplayUnitPrice(offer: SourcingBomOffer | null | undefined): string | number | null | undefined {
+  if (!offer) return null;
+  return offer.fx_converted === true && offer.unit_price_converted != null
+    ? offer.unit_price_converted
+    : offer.unit_price;
+}
+
+function offerDisplayCurrency(offer: SourcingBomOffer | null | undefined): string | null | undefined {
+  if (!offer) return null;
+  return offer.currency_displayed ?? offer.currency;
 }
 
 function formatLeadTime(days: number | null | undefined): string {
@@ -432,9 +449,9 @@ function BomRows({ rows }: { rows: SourcingBomLine[] }) {
     {
       key: "offer",
       header: "Best offer",
-      accessor: row => numberOrNull(row.best_offer?.unit_price),
+      accessor: row => numberOrNull(offerDisplayUnitPrice(row.best_offer)),
       render: row => row.best_offer
-        ? formatMoney(row.best_offer.unit_price, row.best_offer.currency)
+        ? formatMoney(offerDisplayUnitPrice(row.best_offer), offerDisplayCurrency(row.best_offer))
         : <span className="text-muted">—</span>,
       align: "right",
     },
@@ -584,15 +601,19 @@ export default function ProjectSourcingPage() {
   }, [workspace]);
 
   const requestBody = useMemo<SourcingRequest>(() => {
-    const body: SourcingRequest = { build_quantity: Math.max(1, Math.floor(buildQuantity || 1)) };
+    const cleanWorkspaceCurrency = workspace?.sourcing_currency_code?.trim().toUpperCase() || null;
+    const body: SourcingRequest = {
+      build_quantity: Math.max(1, Math.floor(buildQuantity || 1)),
+      currency: cleanWorkspaceCurrency,
+    };
     const cleanCountry = country.trim().toUpperCase();
     const cleanCurrency = currency.trim().toUpperCase();
     const cleanDistributors = distributors.filter(item => item.trim());
     if (cleanCountry) body.country = cleanCountry;
-    if (cleanCurrency) body.currency = cleanCurrency;
+    if (cleanWorkspaceCurrency && cleanCurrency) body.currency = cleanCurrency;
     if (cleanDistributors.length > 0) body.distributors = cleanDistributors;
     return body;
-  }, [buildQuantity, country, currency, distributors]);
+  }, [buildQuantity, country, currency, distributors, workspace?.sourcing_currency_code]);
 
   const query = useQuery({
     queryKey: useWsKey("sourcing", "project", projectId, requestBody),
@@ -600,6 +621,11 @@ export default function ProjectSourcingPage() {
       api.post<SourcingBomResponse, SourcingRequest>(`/projects/${projectId}/sourcing`, requestBody, { signal }),
     enabled: !!projectId && buildQuantity >= 1 && defaultsApplied && activeListErrors.length === 0,
   });
+  const purchasePlanBaseRequest = useMemo<Omit<PurchasePlanRequest, "strategy">>(() => {
+    const body = { ...requestBody };
+    if (body.currency == null) delete body.currency;
+    return body as Omit<PurchasePlanRequest, "strategy">;
+  }, [requestBody]);
   const queryIsError = query.isError;
   const queryError = query.error;
   const refetchSourcing = query.refetch;
@@ -804,7 +830,7 @@ export default function ProjectSourcingPage() {
       <PurchasePlanOptionsModal
         open={planModalOpen}
         buildQuantity={buildQuantity}
-        baseRequest={requestBody}
+        baseRequest={purchasePlanBaseRequest}
         pending={planPending}
         onClose={() => setPlanModalOpen(false)}
         onSubmit={generatePurchasePlan}
