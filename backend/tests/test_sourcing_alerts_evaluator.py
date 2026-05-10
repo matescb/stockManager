@@ -140,6 +140,10 @@ def _search_out(
     stock: int,
     price: str | None = None,
     currency: str | None = "USD",
+    mpn: str = "MPN",
+    lifecycle_risk: str | None = None,
+    supply_chain_risk: str | None = None,
+    is_affected_by_tariff: bool | None = None,
 ) -> Any:
     distributor = SimpleNamespace(
         stock=stock,
@@ -153,8 +157,13 @@ def _search_out(
     return SimpleNamespace(
         results=[
             SimpleNamespace(
+                mpn=mpn,
                 offers=[
                     SimpleNamespace(
+                        mpn=mpn,
+                        lifecycle_risk=lifecycle_risk,
+                        supply_chain_risk=supply_chain_risk,
+                        is_affected_by_tariff=is_affected_by_tariff,
                         distributors=[distributor],
                     )
                 ]
@@ -403,6 +412,380 @@ def test_bom_buyable_triggers_on_not_buyable_to_buyable_transition(
     assert len(sent) == 1
 
 
+def test_lifecycle_risk_changed_initial_run_records_state_without_triggering(
+    db: Session,
+    monkeypatch,
+) -> None:
+    workspace, user = _workspace(db)
+    part = _part(db, workspace, user, mpn="RISK-MPN")
+    alert = _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="lifecycle_risk_changed",
+        threshold={},
+        last_state=None,
+    )
+    monkeypatch.setattr(
+        alerts_evaluator.sourcing_service,
+        "search",
+        lambda *args, **kwargs: _search_out(
+            stock=1,
+            mpn="RISK-MPN",
+            lifecycle_risk="Active",
+        ),
+    )
+    sent = _capture_mail(monkeypatch)
+
+    assert evaluate_all_alerts(db) == 1
+
+    db.refresh(alert)
+    assert sent == []
+    assert alert.last_evaluation_state == {"lifecycle_risk": "Active"}
+
+
+def test_lifecycle_risk_changed_triggers_on_value_change(
+    db: Session,
+    monkeypatch,
+) -> None:
+    workspace, user = _workspace(db)
+    part = _part(db, workspace, user, mpn="RISK-MPN")
+    _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="lifecycle_risk_changed",
+        threshold={},
+        last_state={"lifecycle_risk": "Active"},
+    )
+    monkeypatch.setattr(
+        alerts_evaluator.sourcing_service,
+        "search",
+        lambda *args, **kwargs: _search_out(
+            stock=1,
+            mpn="RISK-MPN",
+            lifecycle_risk="Obsolete",
+        ),
+    )
+    sent = _capture_mail(monkeypatch)
+
+    assert evaluate_all_alerts(db) == 1
+
+    assert len(sent) == 1
+    assert "lifecycle risk changed" in sent[0]["subject"]
+    assert "- from: Active" in sent[0]["text_body"]
+    assert "- to: Obsolete" in sent[0]["text_body"]
+
+
+def test_lifecycle_risk_changed_does_not_trigger_when_value_unchanged(
+    db: Session,
+    monkeypatch,
+) -> None:
+    workspace, user = _workspace(db)
+    part = _part(db, workspace, user, mpn="RISK-MPN")
+    alert = _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="lifecycle_risk_changed",
+        threshold={},
+        last_state={"lifecycle_risk": "Active"},
+    )
+    monkeypatch.setattr(
+        alerts_evaluator.sourcing_service,
+        "search",
+        lambda *args, **kwargs: _search_out(
+            stock=1,
+            mpn="RISK-MPN",
+            lifecycle_risk="Active",
+        ),
+    )
+    sent = _capture_mail(monkeypatch)
+
+    assert evaluate_all_alerts(db) == 1
+
+    db.refresh(alert)
+    assert sent == []
+    assert alert.last_evaluation_state == {"lifecycle_risk": "Active"}
+
+
+def test_lifecycle_risk_changed_must_contain_filter_narrows_triggers(
+    db: Session,
+    monkeypatch,
+) -> None:
+    workspace, user = _workspace(db)
+    part = _part(db, workspace, user, mpn="RISK-MPN")
+    alert = _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="lifecycle_risk_changed",
+        threshold={"must_contain": "obsolete", "case_sensitive": False},
+        last_state={"lifecycle_risk": "Active"},
+    )
+    monkeypatch.setattr(
+        alerts_evaluator.sourcing_service,
+        "search",
+        lambda *args, **kwargs: _search_out(
+            stock=1,
+            mpn="RISK-MPN",
+            lifecycle_risk="NRND",
+        ),
+    )
+    sent = _capture_mail(monkeypatch)
+
+    assert evaluate_all_alerts(db) == 1
+
+    db.refresh(alert)
+    assert sent == []
+    assert alert.last_evaluation_state == {"lifecycle_risk": "NRND"}
+
+    alert.last_evaluation_state = {"lifecycle_risk": "NRND"}
+    db.flush()
+    monkeypatch.setattr(
+        alerts_evaluator.sourcing_service,
+        "search",
+        lambda *args, **kwargs: _search_out(
+            stock=1,
+            mpn="RISK-MPN",
+            lifecycle_risk="Obsolete",
+        ),
+    )
+
+    assert evaluate_all_alerts(db) == 1
+
+    assert len(sent) == 1
+
+
+def test_supply_chain_risk_changed_initial_run_records_state_without_triggering(
+    db: Session,
+    monkeypatch,
+) -> None:
+    workspace, user = _workspace(db)
+    part = _part(db, workspace, user, mpn="SUPPLY-MPN")
+    alert = _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="supply_chain_risk_changed",
+        threshold={},
+        last_state=None,
+    )
+    monkeypatch.setattr(
+        alerts_evaluator.sourcing_service,
+        "search",
+        lambda *args, **kwargs: _search_out(
+            stock=1,
+            mpn="SUPPLY-MPN",
+            supply_chain_risk="Stable",
+        ),
+    )
+    sent = _capture_mail(monkeypatch)
+
+    assert evaluate_all_alerts(db) == 1
+
+    db.refresh(alert)
+    assert sent == []
+    assert alert.last_evaluation_state == {"supply_chain_risk": "Stable"}
+
+
+def test_supply_chain_risk_changed_triggers_on_value_change(
+    db: Session,
+    monkeypatch,
+) -> None:
+    workspace, user = _workspace(db)
+    part = _part(db, workspace, user, mpn="SUPPLY-MPN")
+    _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="supply_chain_risk_changed",
+        threshold={},
+        last_state={"supply_chain_risk": "Stable"},
+    )
+    monkeypatch.setattr(
+        alerts_evaluator.sourcing_service,
+        "search",
+        lambda *args, **kwargs: _search_out(
+            stock=1,
+            mpn="SUPPLY-MPN",
+            supply_chain_risk="Allocation",
+        ),
+    )
+    sent = _capture_mail(monkeypatch)
+
+    assert evaluate_all_alerts(db) == 1
+
+    assert len(sent) == 1
+
+
+def test_supply_chain_risk_changed_does_not_trigger_when_value_unchanged(
+    db: Session,
+    monkeypatch,
+) -> None:
+    workspace, user = _workspace(db)
+    part = _part(db, workspace, user, mpn="SUPPLY-MPN")
+    alert = _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="supply_chain_risk_changed",
+        threshold={},
+        last_state={"supply_chain_risk": "Stable"},
+    )
+    monkeypatch.setattr(
+        alerts_evaluator.sourcing_service,
+        "search",
+        lambda *args, **kwargs: _search_out(
+            stock=1,
+            mpn="SUPPLY-MPN",
+            supply_chain_risk="Stable",
+        ),
+    )
+    sent = _capture_mail(monkeypatch)
+
+    assert evaluate_all_alerts(db) == 1
+
+    db.refresh(alert)
+    assert sent == []
+    assert alert.last_evaluation_state == {"supply_chain_risk": "Stable"}
+
+
+def test_tariff_status_changed_initial_run_records_state_without_triggering(
+    db: Session,
+    monkeypatch,
+) -> None:
+    workspace, user = _workspace(db)
+    part = _part(db, workspace, user, mpn="TARIFF-MPN")
+    alert = _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="tariff_status_changed",
+        threshold={},
+        last_state=None,
+    )
+    monkeypatch.setattr(
+        alerts_evaluator.sourcing_service,
+        "search",
+        lambda *args, **kwargs: _search_out(
+            stock=1,
+            mpn="TARIFF-MPN",
+            is_affected_by_tariff=False,
+        ),
+    )
+    sent = _capture_mail(monkeypatch)
+
+    assert evaluate_all_alerts(db) == 1
+
+    db.refresh(alert)
+    assert sent == []
+    assert alert.last_evaluation_state == {"tariff": False}
+
+
+def test_tariff_status_changed_triggers_on_value_change(
+    db: Session,
+    monkeypatch,
+) -> None:
+    workspace, user = _workspace(db)
+    part = _part(db, workspace, user, mpn="TARIFF-MPN")
+    _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="tariff_status_changed",
+        threshold={},
+        last_state={"tariff": True},
+    )
+    monkeypatch.setattr(
+        alerts_evaluator.sourcing_service,
+        "search",
+        lambda *args, **kwargs: _search_out(
+            stock=1,
+            mpn="TARIFF-MPN",
+            is_affected_by_tariff=False,
+        ),
+    )
+    sent = _capture_mail(monkeypatch)
+
+    assert evaluate_all_alerts(db) == 1
+
+    assert len(sent) == 1
+
+
+def test_tariff_status_changed_does_not_trigger_when_value_unchanged(
+    db: Session,
+    monkeypatch,
+) -> None:
+    workspace, user = _workspace(db)
+    part = _part(db, workspace, user, mpn="TARIFF-MPN")
+    alert = _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="tariff_status_changed",
+        threshold={},
+        last_state={"tariff": False},
+    )
+    monkeypatch.setattr(
+        alerts_evaluator.sourcing_service,
+        "search",
+        lambda *args, **kwargs: _search_out(
+            stock=1,
+            mpn="TARIFF-MPN",
+            is_affected_by_tariff=False,
+        ),
+    )
+    sent = _capture_mail(monkeypatch)
+
+    assert evaluate_all_alerts(db) == 1
+
+    db.refresh(alert)
+    assert sent == []
+    assert alert.last_evaluation_state == {"tariff": False}
+
+
+def test_tariff_status_changed_fires_on_none_to_true_transition(
+    db: Session,
+    monkeypatch,
+) -> None:
+    workspace, user = _workspace(db)
+    part = _part(db, workspace, user, mpn="TARIFF-MPN")
+    _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="tariff_status_changed",
+        threshold={},
+        last_state={"tariff": None},
+    )
+    monkeypatch.setattr(
+        alerts_evaluator.sourcing_service,
+        "search",
+        lambda *args, **kwargs: _search_out(
+            stock=1,
+            mpn="TARIFF-MPN",
+            is_affected_by_tariff=True,
+        ),
+    )
+    sent = _capture_mail(monkeypatch)
+
+    assert evaluate_all_alerts(db) == 1
+
+    assert len(sent) == 1
+
+
 def test_cooldown_suppresses_second_notification(db: Session, monkeypatch) -> None:
     workspace, user = _workspace(db)
     part = _part(db, workspace, user)
@@ -558,6 +941,33 @@ def test_evaluator_uses_cache_default_true_for_sourcing_alerts(
         db,
         workspace,
         user,
+        part=part,
+        alert_type="lifecycle_risk_changed",
+        threshold={},
+        last_state={"lifecycle_risk": "Active"},
+    )
+    _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="supply_chain_risk_changed",
+        threshold={},
+        last_state={"supply_chain_risk": "Stable"},
+    )
+    _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="tariff_status_changed",
+        threshold={},
+        last_state={"tariff": False},
+    )
+    _alert(
+        db,
+        workspace,
+        user,
         project=project,
         alert_type="bom_buyable",
         threshold={"build_quantity": 2},
@@ -568,7 +978,13 @@ def test_evaluator_uses_cache_default_true_for_sourcing_alerts(
 
     def fake_search(*args: Any, **kwargs: Any) -> Any:
         search_cached.append(kwargs.get("use_cached_data"))
-        return _search_out(stock=1)
+        return _search_out(
+            stock=1,
+            mpn=part.mpn or "MPN",
+            lifecycle_risk="Obsolete",
+            supply_chain_risk="Allocation",
+            is_affected_by_tariff=True,
+        )
 
     def fake_source_bom(*args: Any, **kwargs: Any) -> Any:
         bom_cached.append(kwargs.get("use_cached_data"))
@@ -580,9 +996,9 @@ def test_evaluator_uses_cache_default_true_for_sourcing_alerts(
     monkeypatch.setattr(alerts_evaluator.sourcing_service, "source_bom", fake_source_bom)
     _capture_mail(monkeypatch)
 
-    assert evaluate_all_alerts(db) == 2
+    assert evaluate_all_alerts(db) == 5
 
-    assert search_cached == [True]
+    assert search_cached == [True, True, True, True]
     assert bom_cached == [True]
 
 

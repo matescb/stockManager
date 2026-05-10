@@ -279,6 +279,62 @@ def _evaluate_bom_buyable(
     )
 
 
+def _evaluate_lifecycle_risk_changed(
+    db: Session,
+    workspace: Workspace,
+    alert: SourcingAlert,
+) -> AlertVerdict:
+    part = _part_for_alert(db, workspace, alert)
+    current = _gap_field_for_part(db, workspace, alert, part, "lifecycle_risk")
+    return _string_changed_verdict(
+        alert=alert,
+        part=part,
+        current=current,
+        state_key="lifecycle_risk",
+        label="lifecycle risk",
+    )
+
+
+def _evaluate_supply_chain_risk_changed(
+    db: Session,
+    workspace: Workspace,
+    alert: SourcingAlert,
+) -> AlertVerdict:
+    part = _part_for_alert(db, workspace, alert)
+    current = _gap_field_for_part(db, workspace, alert, part, "supply_chain_risk")
+    return _string_changed_verdict(
+        alert=alert,
+        part=part,
+        current=current,
+        state_key="supply_chain_risk",
+        label="supply-chain risk",
+    )
+
+
+def _evaluate_tariff_status_changed(
+    db: Session,
+    workspace: Workspace,
+    alert: SourcingAlert,
+) -> AlertVerdict:
+    part = _part_for_alert(db, workspace, alert)
+    current = _gap_field_for_part(db, workspace, alert, part, "is_affected_by_tariff")
+    previous_state = alert.last_evaluation_state
+    previous = previous_state.get("tariff") if previous_state is not None else None
+    triggered = previous_state is not None and current != previous
+    return AlertVerdict(
+        triggered=triggered,
+        summary=f"{part.name} tariff status changed",
+        detail={
+            "part_id": str(part.id),
+            "part_name": part.name,
+            "mpn": part.mpn,
+            "from": previous,
+            "to": current,
+        },
+        new_state={"tariff": current},
+    )
+
+
 EVALUATORS: dict[str, EvaluatorFn] = {
     "stock_below": _evaluate_stock_below,
     "stock_above": _evaluate_stock_above,
@@ -286,6 +342,9 @@ EVALUATORS: dict[str, EvaluatorFn] = {
     "out_of_authorized_stock": _evaluate_out_of_authorized_stock,
     "price_changed": _evaluate_price_changed,
     "bom_buyable": _evaluate_bom_buyable,
+    "lifecycle_risk_changed": _evaluate_lifecycle_risk_changed,
+    "supply_chain_risk_changed": _evaluate_supply_chain_risk_changed,
+    "tariff_status_changed": _evaluate_tariff_status_changed,
 }
 
 
@@ -455,6 +514,89 @@ def _best_price_for_part(
                 if best is None or price < best[0]:
                     best = (price, currency)
     return best
+
+
+def _gap_field_for_part(
+    db: Session,
+    workspace: Workspace,
+    alert: SourcingAlert,
+    part: Part,
+    field_name: str,
+) -> Any:
+    offer = _first_matching_offer(db, workspace, alert, part)
+    if offer is None:
+        return None
+    return getattr(offer, field_name, None)
+
+
+def _first_matching_offer(
+    db: Session,
+    workspace: Workspace,
+    alert: SourcingAlert,
+    part: Part,
+) -> Any | None:
+    if not part.mpn:
+        return None
+    result = sourcing_service.search(
+        db,
+        workspace=workspace,
+        mpns=[part.mpn],
+        country=alert.country_code,
+        currency=alert.currency_code,
+        distributors=_distributor_filter(alert),
+        use_cached_data=True,
+    )
+    expected = part.mpn.casefold()
+    for item in result.results:
+        item_mpn = getattr(item, "mpn", None)
+        if item_mpn is not None and str(item_mpn).casefold() != expected:
+            continue
+        for offer in item.offers:
+            offer_mpn = getattr(offer, "mpn", None)
+            if offer_mpn is None or str(offer_mpn).casefold() == expected:
+                return offer
+    return None
+
+
+def _string_changed_verdict(
+    *,
+    alert: SourcingAlert,
+    part: Part,
+    current: str | None,
+    state_key: str,
+    label: str,
+) -> AlertVerdict:
+    previous_state = alert.last_evaluation_state
+    previous = previous_state.get(state_key) if previous_state is not None else None
+    triggered = previous_state is not None and current != previous
+    if triggered and not _string_threshold_matches(alert, current):
+        triggered = False
+    return AlertVerdict(
+        triggered=triggered,
+        summary=f"{part.name} {label} changed",
+        detail={
+            "part_id": str(part.id),
+            "part_name": part.name,
+            "mpn": part.mpn,
+            "from": previous,
+            "to": current,
+        },
+        new_state={state_key: current},
+    )
+
+
+def _string_threshold_matches(alert: SourcingAlert, current: str | None) -> bool:
+    must_contain = (alert.threshold or {}).get("must_contain")
+    if must_contain in (None, ""):
+        return True
+    if current is None:
+        return False
+    needle = str(must_contain)
+    haystack = str(current)
+    if not bool((alert.threshold or {}).get("case_sensitive", False)):
+        needle = needle.casefold()
+        haystack = haystack.casefold()
+    return needle in haystack
 
 
 def _unit_price_for_distributor(distributor: Any) -> tuple[Decimal, str | None] | None:

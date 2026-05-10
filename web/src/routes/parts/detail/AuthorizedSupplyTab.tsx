@@ -470,6 +470,26 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
   });
 
   const rows = useMemo(() => flattenOffers(query.data), [query.data]);
+  const alertTypes = useMemo(() => {
+    const types: SourcingAlertType[] = [
+      "back_in_stock",
+      "out_of_authorized_stock",
+      "price_changed",
+      "stock_below",
+      "stock_above",
+    ];
+    const offers = query.data?.offers ?? [];
+    if (offers.some(offer => Boolean(offer.lifecycle_risk?.trim()))) {
+      types.push("lifecycle_risk_changed");
+    }
+    if (offers.some(offer => Boolean(offer.supply_chain_risk?.trim()))) {
+      types.push("supply_chain_risk_changed");
+    }
+    if (offers.some(offer => offer.is_affected_by_tariff !== null && offer.is_affected_by_tariff !== undefined)) {
+      types.push("tariff_status_changed");
+    }
+    return types;
+  }, [query.data?.offers]);
   const refetch = query.refetch;
   const distributors = useMemo(
     () => Array.from(new Set(rows.map(row => row.distributor))).sort((a, b) => a.localeCompare(b)),
@@ -831,7 +851,7 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
         open={alertModalOpen}
         title="Set alert on this part"
         initialValues={{ part_id: partId, alert_type: "back_in_stock" }}
-        allowedTypes={["back_in_stock", "out_of_authorized_stock", "price_changed", "stock_below", "stock_above"] satisfies SourcingAlertType[]}
+        allowedTypes={alertTypes}
         onClose={() => setAlertModalOpen(false)}
         onSaved={() => {
           queryClient.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "sourcing-alerts") });

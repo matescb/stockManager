@@ -233,7 +233,10 @@ class SourcingAlert(WorkspaceOwned, Base):
             "'back_in_stock', "
             "'out_of_authorized_stock', "
             "'price_changed', "
-            "'bom_buyable'"
+            "'bom_buyable', "
+            "'lifecycle_risk_changed', "
+            "'supply_chain_risk_changed', "
+            "'tariff_status_changed'"
             ")",
             name="sourcing_alerts_alert_type_check",
         ),

@@ -273,6 +273,43 @@ describe("AuthorizedSupplyTab", () => {
     expect((screen.getByRole("radio", { name: /STM32/ }) as HTMLInputElement).checked).toBe(true);
   });
 
+  it("Set-alert options include gap alerts only when gap data is populated", async () => {
+    const user = userEvent.setup();
+    mockApiGetWithAlertPicker(gapResponse({
+      lifecycle_risk: "Obsolete",
+      supply_chain_risk: "Allocation",
+      is_affected_by_tariff: false,
+    }));
+
+    renderTab();
+
+    await screen.findByText("Powered by TrustedParts");
+    await user.click(screen.getByRole("button", { name: "Set alert" }));
+
+    const alertType = await screen.findByLabelText("Alert type");
+    expect(within(alertType).getByRole("option", { name: "Lifecycle risk changed" })).toBeDefined();
+    expect(within(alertType).getByRole("option", { name: "Supply-chain risk changed" })).toBeDefined();
+    expect(within(alertType).getByRole("option", { name: "Tariff status changed" })).toBeDefined();
+
+    cleanup();
+    vi.restoreAllMocks();
+    mockApiGetWithAlertPicker(gapResponse({
+      lifecycle_risk: null,
+      supply_chain_risk: "",
+      is_affected_by_tariff: null,
+    }));
+
+    renderTab();
+
+    await screen.findByText("Powered by TrustedParts");
+    await user.click(screen.getByRole("button", { name: "Set alert" }));
+
+    const filteredAlertType = await screen.findByLabelText("Alert type");
+    expect(within(filteredAlertType).queryByRole("option", { name: "Lifecycle risk changed" })).toBeNull();
+    expect(within(filteredAlertType).queryByRole("option", { name: "Supply-chain risk changed" })).toBeNull();
+    expect(within(filteredAlertType).queryByRole("option", { name: "Tariff status changed" })).toBeNull();
+  });
+
   it("distributor filter narrows visible rows", async () => {
     const user = userEvent.setup();
     const getSpy = mockApiGet(sourcingResponse());

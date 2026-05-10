@@ -176,14 +176,20 @@ Phase 5b evaluator. Each row targets exactly one part or one project and uses
 | `out_of_authorized_stock` | part | `{}` |
 | `price_changed` | part | `{ "delta_pct": Decimal }` |
 | `bom_buyable` | project | `{ "build_quantity": int }` |
+| `lifecycle_risk_changed` | part | `{ "must_contain": str \| null, "case_sensitive": bool }` |
+| `supply_chain_risk_changed` | part | `{ "must_contain": str \| null, "case_sensitive": bool }` |
+| `tariff_status_changed` | part | `{}` |
 
-The database pins the six MVP alert types with a CHECK constraint, enforces one active
-target via `(part_id IS NOT NULL) <> (project_id IS NOT NULL)`, and prevents duplicate
-active alerts with a partial unique index over workspace, type, target, and threshold.
+The database pins alert types with a CHECK constraint, enforces one active target via
+`(part_id IS NOT NULL) <> (project_id IS NOT NULL)`, and prevents duplicate active
+alerts with a partial unique index over workspace, type, target, and threshold.
 `cooldown_seconds` defaults to 24 hours and has a 60-second minimum. Evaluator state
-lives on `last_checked_at`, `last_notified_at`, and `last_evaluation_state`.
+lives on `last_checked_at`, `last_notified_at`, and `last_evaluation_state`. Gap-field
+alerts were added by migration 0047, whose downgrade refuses while rows of those types
+exist.
 
-Source: `backend/alembic/versions/0044_sourcing_alerts.py:20`
+Sources: `backend/alembic/versions/0044_sourcing_alerts.py:20`,
+`backend/alembic/versions/0047_alerts_add_data_alerts.py:28`
 
 ### Evaluator Behaviour
 
@@ -206,6 +212,9 @@ workspace, and sourcing calls receive the current alert workspace. Sources:
 | `out_of_authorized_stock` | authorized stock crosses from positive to zero | `{ "had_stock": bool }` |
 | `price_changed` | same-currency best authorized unit price changes by at least `threshold.delta_pct` percent | `{ "last_price": str, "last_currency": str }` |
 | `bom_buyable` | `can_build_after_purchase >= threshold.build_quantity` after a prior not-buyable state | `{ "is_buyable": bool }` |
+| `lifecycle_risk_changed` | first matching offer's lifecycle risk string changes; optional `must_contain` filters on the new string | `{ "lifecycle_risk": str \| null }` |
+| `supply_chain_risk_changed` | first matching offer's supply-chain risk string changes; optional `must_contain` filters on the new string | `{ "supply_chain_risk": str \| null }` |
+| `tariff_status_changed` | first matching offer's tariff status flips among `null`, `true`, and `false` | `{ "tariff": bool \| null }` |
 
 First evaluation records state and does not notify because no prior state exists.
 Stock alerts read quantity only through `domain/stock/service.py::current_quantity`.
@@ -214,6 +223,12 @@ BOM buyability calls `sourcing.service.source_bom(..., use_cached_data=True)` an
 the returned capacity computed by `compute_build_capacity`. Sources:
 `backend/app/domain/sourcing/alerts_evaluator.py:91-279`,
 `backend/app/domain/sourcing/alerts_evaluator.py:405-457`
+
+`must_contain` defaults to no filter for lifecycle and supply-chain alerts. Matching is
+case-insensitive unless `case_sensitive` is true. The fields are free strings from
+TrustedParts, so these alerts detect transitions rather than validating against an enum.
+Sources: `backend/app/domain/sourcing/schemas.py:236-244`,
+`backend/app/domain/sourcing/alerts_evaluator.py:280-357`
 
 Cooldown is DB-backed: notification is allowed when `last_notified_at IS NULL` or when
 the elapsed wall time is at least `cooldown_seconds`. `last_notified_at` updates only

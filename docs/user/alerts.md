@@ -16,7 +16,7 @@ Alerts live under **Alerts** in the sidebar. Use them when you want Stock Manage
 6. Choose recipients, or leave recipients empty to notify workspace admins.
 7. Click **Create alert**.
 
-Part alerts can watch internal stock, authorized stock availability, or price movement. Project alerts can watch when a BOM becomes buyable for a build quantity.
+Part alerts can watch internal stock, authorized stock availability, price movement, lifecycle risk, supply-chain risk, or tariff status. Project alerts can watch when a BOM becomes buyable for a build quantity.
 
 > _Screenshot: the Alerts page with the create modal open._
 
@@ -38,6 +38,14 @@ The part is already selected in the form.
 5. Save the alert.
 
 The project and build quantity are already selected in the form.
+
+## Risk and tariff alerts
+
+Lifecycle risk alerts watch the lifecycle text TrustedParts returns for a part. Leave **Must contain** empty to notify on any change, or enter text such as `EOL` or `Obsolete` to notify only when the new value contains that text.
+
+Supply-chain risk alerts work the same way, but watch the TrustedParts supply-chain risk text. Use **Case sensitive** only when exact capitalization matters.
+
+Tariff status alerts notify when TrustedParts changes the tariff flag for the part. There is no threshold field; the alert watches any change between unknown, affected, and not affected.
 
 ## Manage existing alerts
 

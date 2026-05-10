@@ -38,6 +38,15 @@ function formatThreshold(alert: SourcingAlert): string {
       return "Authorized stock returns";
     case "out_of_authorized_stock":
       return "Authorized stock reaches zero";
+    case "lifecycle_risk_changed":
+    case "supply_chain_risk_changed": {
+      const threshold = alert.threshold as { must_contain?: string | null; case_sensitive?: boolean };
+      return threshold.must_contain
+        ? `New value contains ${threshold.must_contain}`
+        : "Any value change";
+    }
+    case "tariff_status_changed":
+      return "Any status change";
   }
 }
 

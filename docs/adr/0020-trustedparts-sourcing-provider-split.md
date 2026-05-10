@@ -27,6 +27,9 @@ expired plan rows alongside cache rows (`backend/alembic/versions/0039_purchase_
 
 Phase 5b sourcing alerts use the same domain boundary; see
 [sourcing alerts](../domain/sourcing.md#alerts).
+TrustedParts gap-field alerts detect lifecycle-risk, supply-chain-risk, and tariff
+transitions from the short-lived sourcing result shape rather than creating a separate
+history table.
 
 TrustedParts results must stay visibly distinct from catalog-provider data. Public or UI surfaces that combine distributor data from multiple origins need an explicit future decision before launch.
 

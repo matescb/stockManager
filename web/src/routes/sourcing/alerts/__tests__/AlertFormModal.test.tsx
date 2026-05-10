@@ -140,6 +140,36 @@ describe("AlertFormModal", () => {
     expect(screen.queryByLabelText("Build quantity")).toBeNull();
   });
 
+  it("lifecycle_risk_changed shows must_contain and case_sensitive fields", async () => {
+    mockApiReads();
+
+    renderModal({
+      initialValues: { alert_type: "lifecycle_risk_changed", part_id: part.id },
+      allowedTypes: ["lifecycle_risk_changed"],
+    });
+
+    expect(await screen.findByLabelText("Must contain")).toBeDefined();
+    expect(screen.getByLabelText("Case sensitive")).toBeDefined();
+    expect(screen.queryByLabelText("Quantity")).toBeNull();
+    expect(screen.queryByLabelText("Delta percent")).toBeNull();
+  });
+
+  it("tariff_status_changed shows no threshold fields", async () => {
+    mockApiReads();
+
+    renderModal({
+      initialValues: { alert_type: "tariff_status_changed", part_id: part.id },
+      allowedTypes: ["tariff_status_changed"],
+    });
+
+    expect(await screen.findByText("This alert triggers on any tariff status transition; no threshold is needed.")).toBeDefined();
+    expect(screen.queryByLabelText("Must contain")).toBeNull();
+    expect(screen.queryByLabelText("Case sensitive")).toBeNull();
+    expect(screen.queryByLabelText("Quantity")).toBeNull();
+    expect(screen.queryByLabelText("Delta percent")).toBeNull();
+    expect(screen.queryByLabelText("Build quantity")).toBeNull();
+  });
+
   it("cooldown < 60 surfaces validation error", async () => {
     const user = userEvent.setup();
     mockApiReads();
@@ -191,6 +221,31 @@ describe("AlertFormModal", () => {
         currency_code: "EUR",
         distributor_filter: ["DigiKey", "Mouser"],
       });
+    });
+  });
+
+  it("submit posts lifecycle string-change threshold", async () => {
+    const user = userEvent.setup();
+    mockApiReads();
+    const post = vi.spyOn(api, "post").mockResolvedValue({ id: "alert-1" } as never);
+
+    renderModal({
+      initialValues: { alert_type: "lifecycle_risk_changed", part_id: part.id },
+      allowedTypes: ["lifecycle_risk_changed"],
+    });
+
+    await screen.findByText("STM32");
+    await user.type(screen.getByLabelText("Must contain"), "EOL");
+    await user.click(screen.getByLabelText("Case sensitive"));
+    await user.click(screen.getByRole("button", { name: "Create alert" }));
+
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith("/sourcing/alerts", expect.objectContaining({
+        alert_type: "lifecycle_risk_changed",
+        part_id: part.id,
+        project_id: null,
+        threshold: { must_contain: "EOL", case_sensitive: true },
+      }));
     });
   });
 
