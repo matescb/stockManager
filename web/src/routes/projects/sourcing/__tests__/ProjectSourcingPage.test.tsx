@@ -508,6 +508,66 @@ describe("ProjectSourcingPage", () => {
     expect(screen.getAllByLabelText("Source: TrustedParts").length).toBeGreaterThan(0);
   });
 
+  it("clicking a BOM row with offers opens the BomDistributorsModal", async () => {
+    const user = userEvent.setup();
+    mockReads();
+    const base = sourcingResponse();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({
+      rows: [
+        {
+          ...base.rows[0],
+          offers: [
+            {
+              ...base.rows[0].offers[0],
+              availability_text: "In Stock",
+              quantity_multiple: 5,
+              price_breaks: [{ quantity: 1, unit_price: "1.25" }],
+              rohs_compliance: [{ region: "EU", is_compliant: true }],
+            },
+          ],
+        },
+      ],
+    }));
+
+    renderPage();
+
+    await screen.findByText("BOM rows");
+    const bomRowsTable = screen.getAllByRole("table")[1];
+    await user.click(within(bomRowsTable).getByRole("row", { name: /Open STM32/ }));
+
+    const dialog = await screen.findByRole("dialog", { name: /STM32 — STM32F103C8T6/ });
+    expect(within(dialog).getByText("In Stock")).toBeDefined();
+    expect(within(dialog).getByText("EU")).toBeDefined();
+  });
+
+  it("clicking an unmatched BOM row does not open the modal", async () => {
+    const user = userEvent.setup();
+    mockReads();
+    const base = sourcingResponse();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({
+      rows: [
+        {
+          ...base.rows[0],
+          offers: [],
+          best_offer: null,
+          authorized_stock: 0,
+          est_extended_cost: null,
+          lead_time_days: null,
+          reason: "no_offers",
+          risk_flags: [],
+        },
+      ],
+    }));
+
+    renderPage();
+
+    await screen.findByText("BOM rows");
+    const bomRowsTable = screen.getAllByRole("table")[1];
+    await user.click(within(bomRowsTable).getByRole("row", { name: /STM32/ }));
+
+    expect(screen.queryByRole("dialog", { name: /STM32 — STM32F103C8T6/ })).toBeNull();
+  });
+
   it("splits lifecycle, supply-chain, and RoHS out of the legacy risk column", async () => {
     mockReads();
     const base = sourcingResponse();

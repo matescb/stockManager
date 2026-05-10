@@ -351,6 +351,8 @@ class SourcingBomOfferOut(BaseModel):
     price_breaks: list[SourcingBomPriceBreakOut] = Field(default_factory=list)
     price_breaks_converted: list[SourcingBomPriceBreakOut] | None = None
     url: str | None = None
+    availability_text: str | None = None
+    quantity_multiple: int | None = None
     lifecycle_risk: str | None = None
     supply_chain_risk: str | None = None
     is_affected_by_tariff: bool | None = None
