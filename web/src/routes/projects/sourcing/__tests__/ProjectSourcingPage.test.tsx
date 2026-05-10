@@ -27,6 +27,9 @@ function workspace(overrides: Record<string, unknown> = {}) {
     sourcing_country_code: "US",
     sourcing_currency_code: "USD",
     sourcing_preferred_distributors: ["DigiKey", "Mouser"],
+    active_countries: ["US", "CZ", "DE"],
+    active_currencies: ["USD", "EUR", "JPY"],
+    active_distributors: ["DigiKey", "Mouser", "Arrow"],
     has_sourcing_company_id: true,
     ...overrides,
   };
@@ -207,6 +210,56 @@ beforeEach(() => {
 });
 
 describe("ProjectSourcingPage", () => {
+  it("currency dropdown options are workspace.active_currencies", async () => {
+    mockReads({ active_currencies: ["EUR", "JPY"] });
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+
+    renderPage();
+
+    const currency = await screen.findByLabelText("Currency") as HTMLSelectElement;
+    await waitFor(() => {
+      expect([...currency.options].map(option => option.value)).toEqual(["EUR", "JPY"]);
+    });
+  });
+
+  it("country dropdown defaults to workspace.sourcing_country_code", async () => {
+    mockReads({ sourcing_country_code: "DE", active_countries: ["US", "DE"] });
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+
+    renderPage();
+
+    const country = await screen.findByLabelText("Country") as HTMLSelectElement;
+    await waitFor(() => expect(country.value).toBe("DE"));
+  });
+
+  it("distributors multi-select defaults to workspace.sourcing_preferred_distributors", async () => {
+    mockReads({
+      sourcing_preferred_distributors: ["Mouser", "Arrow"],
+      active_distributors: ["DigiKey", "Mouser", "Arrow"],
+    });
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+
+    renderPage();
+
+    expect((await screen.findByRole("checkbox", { name: "Mouser" }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("checkbox", { name: "Arrow" }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("checkbox", { name: "DigiKey" }) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("if default not in active list, falls back to first item with warning visible", async () => {
+    mockReads({
+      sourcing_currency_code: "GBP",
+      active_currencies: ["EUR", "JPY"],
+    });
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+
+    renderPage();
+
+    const currency = await screen.findByLabelText("Currency") as HTMLSelectElement;
+    await waitFor(() => expect(currency.value).toBe("EUR"));
+    expect(await screen.findByText("Workspace default currency is not active; using EUR.")).toBeDefined();
+  });
+
   it("renders capacity banner with both numbers from server response", async () => {
     mockReads();
     vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
@@ -244,6 +297,41 @@ describe("ProjectSourcingPage", () => {
     expect(screen.getByText("Long lead time")).toBeDefined();
     expect(screen.getByText("Preferred unmet")).toBeDefined();
     expect(screen.getAllByLabelText("Source: TrustedParts").length).toBeGreaterThan(0);
+  });
+
+  it("renders per-row lead time values in the BOM rows table", async () => {
+    mockReads();
+    const base = sourcingResponse();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({
+      rows: [
+        ...base.rows,
+        {
+          ...base.rows[1],
+          project_entry_id: "entry-3",
+          part_id: "part-3",
+          part_name: "Oscillator",
+          mpn: "XO-1",
+          best_offer: {
+            ...base.rows[1].best_offer,
+            lead_time_days: null,
+          },
+          lead_time_days: null,
+          risk_flags: [],
+        },
+      ],
+    }));
+
+    renderPage();
+
+    await screen.findByText("BOM rows");
+    const bomRowsTable = screen.getAllByRole("table")[1];
+    const leadTimeCellText = (rowName: RegExp) =>
+      within(within(bomRowsTable).getByRole("row", { name: rowName })).getAllByRole("cell")[9].textContent;
+
+    expect(within(bomRowsTable).getByRole("columnheader", { name: "Lead time" })).toBeDefined();
+    expect(leadTimeCellText(/STM32/)).toBe("3 days");
+    expect(leadTimeCellText(/Regulator/)).toBe("7 days");
+    expect(leadTimeCellText(/Oscillator/)).toBe("—");
   });
 
   it("409 path renders not-configured card with settings link", async () => {

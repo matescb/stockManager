@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,6 +13,7 @@ from app.domain.sourcing.schemas import (
     SourcingDistributor,
     SourcingLinks,
     SourcingOffer,
+    SourcingPriceBreak,
     SourcingQuery,
     SourcingSearchRaw,
 )
@@ -19,7 +21,12 @@ from app.main import app
 from tests._factories import create_part, signup_user
 
 
-def _configure_sourcing(client: TestClient, *, use_cached: bool = False) -> None:
+def _configure_sourcing(
+    client: TestClient,
+    *,
+    use_cached: bool = False,
+    currency_code: str | None = "EUR",
+) -> None:
     r = client.patch(
         "/api/workspaces/current",
         json={
@@ -27,7 +34,7 @@ def _configure_sourcing(client: TestClient, *, use_cached: bool = False) -> None
             "sourcing_company_id": "company-123",
             "sourcing_api_key": "api-key-456",
             "sourcing_country_code": "CZ",
-            "sourcing_currency_code": "EUR",
+            "sourcing_currency_code": currency_code,
             "sourcing_preferred_distributors": ["DigiKey"],
             "sourcing_use_cached_for_dashboards": use_cached,
         },
@@ -43,6 +50,9 @@ def _current_workspace_id(client: TestClient) -> str:
 
 class _FakeTrustedPartsClient:
     calls: list[dict] = []
+    returned_currency: str | None = None
+    unit_price: float = 1.23
+    price_breaks: list[SourcingPriceBreak] = []
 
     def __init__(self) -> None:
         self.country_code = "CZ"
@@ -68,6 +78,7 @@ class _FakeTrustedPartsClient:
                 "use_cached_data": use_cached_data,
             }
         )
+        returned_currency = self.returned_currency or self.currency_code
         return SourcingSearchRaw(
             offers=[
                 SourcingOffer(
@@ -79,8 +90,9 @@ class _FakeTrustedPartsClient:
                             name="DigiKey",
                             sku=f"{query.search_token}-DK",
                             stock=42,
-                            unit_price=1.23,
-                            currency=self.currency_code,
+                            unit_price=self.unit_price,
+                            currency=returned_currency,
+                            price_breaks=self.price_breaks,
                             product_url="https://www.trustedparts.com/product",
                         )
                     ],
@@ -98,6 +110,9 @@ def reset_sourcing_state(monkeypatch):
     original_limiter_enabled = _ratelimit_mod.limiter.enabled
     _ratelimit_mod.limiter.enabled = False
     _FakeTrustedPartsClient.calls = []
+    _FakeTrustedPartsClient.returned_currency = None
+    _FakeTrustedPartsClient.unit_price = 1.23
+    _FakeTrustedPartsClient.price_breaks = []
     BUDGET._events.clear()
     try:
         _ratelimit_mod.limiter.reset()
@@ -268,3 +283,76 @@ def test_workspace_isolation_two_parts_same_mpn(authed_client):
     assert first.json()["data"]["cache_hit"] is False
     assert second.json()["data"]["cache_hit"] is False
     assert len(_FakeTrustedPartsClient.calls) == 2
+
+
+def test_sourcing_response_converts_when_distributor_returns_different_currency(
+    authed_client,
+    monkeypatch,
+):
+    _configure_sourcing(authed_client)
+    _FakeTrustedPartsClient.returned_currency = "USD"
+    _FakeTrustedPartsClient.unit_price = 2.5
+    _FakeTrustedPartsClient.price_breaks = [
+        SourcingPriceBreak(quantity=1, unit_price=2.5),
+        SourcingPriceBreak(quantity=10, unit_price=2.0),
+    ]
+    monkeypatch.setattr(
+        "app.domain.fx.rates.get_or_fetch_today",
+        lambda _db, *, on_date: {
+            "EUR": Decimal("1"),
+            "USD": Decimal("2"),
+        },
+    )
+    part_id = create_part(authed_client, name="FX part", mpn="FX-USD")
+
+    r = authed_client.get(f"/api/parts/{part_id}/sourcing", params={"currency": "eur"})
+
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    distributor = data["offers"][0]["distributors"][0]
+    assert data["fx_status"] is None
+    assert distributor["unit_price"] == 2.5
+    assert distributor["currency"] == "USD"
+    assert Decimal(distributor["unit_price_converted"]) == Decimal("1.2500")
+    assert distributor["currency_displayed"] == "EUR"
+    assert distributor["fx_converted"] is True
+    assert distributor["fx_rate_date"] == date.today().isoformat()
+    assert Decimal(distributor["price_breaks_converted"][1]["unit_price"]) == Decimal("1.0000")
+
+
+def test_sourcing_response_skips_conversion_when_workspace_currency_null(authed_client):
+    _configure_sourcing(authed_client, currency_code=None)
+    _FakeTrustedPartsClient.returned_currency = "USD"
+    part_id = create_part(authed_client, name="Native currency", mpn="FX-NATIVE")
+
+    r = authed_client.get(f"/api/parts/{part_id}/sourcing")
+
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    distributor = data["offers"][0]["distributors"][0]
+    assert data["fx_status"] is None
+    assert distributor["currency"] == "USD"
+    assert distributor["unit_price_converted"] is None
+    assert distributor["currency_displayed"] is None
+    assert distributor["fx_converted"] is None
+
+
+def test_sourcing_response_surfaces_fx_status_unavailable(authed_client, monkeypatch):
+    _configure_sourcing(authed_client)
+    _FakeTrustedPartsClient.returned_currency = "USD"
+    monkeypatch.setattr(
+        "app.domain.fx.rates.get_or_fetch_today",
+        lambda _db, *, on_date: {"EUR": Decimal("1")},
+    )
+    part_id = create_part(authed_client, name="Unknown FX", mpn="FX-MISS")
+
+    r = authed_client.get(f"/api/parts/{part_id}/sourcing", params={"currency": "eur"})
+
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    distributor = data["offers"][0]["distributors"][0]
+    assert data["fx_status"] == "unavailable"
+    assert distributor["unit_price"] == 1.23
+    assert distributor["currency"] == "USD"
+    assert distributor["unit_price_converted"] is None
+    assert distributor["fx_converted"] is None

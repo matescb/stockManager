@@ -262,7 +262,19 @@ Path: `part_id` is a part UUID in the current workspace.
       {
         "mpn": "STM32F103C8T6",
         "distributors": [
-          { "name": "DigiKey", "stock": 42, "unit_price": 1.23, "currency": "EUR" }
+          {
+            "name": "DigiKey",
+            "stock": 42,
+            "unit_price": 1.23,
+            "currency": "USD",
+            "unit_price_converted": "1.1070",
+            "currency_displayed": "EUR",
+            "fx_converted": true,
+            "fx_rate_date": "2026-05-08",
+            "price_breaks_converted": [
+              { "quantity": 1, "unit_price": "1.1070" }
+            ]
+          }
         ]
       }
     ],
@@ -274,7 +286,8 @@ Path: `part_id` is a part UUID in the current workspace.
       "primary": "https://www.trustedparts.com/",
       "attribution": "https://www.trustedparts.com/en/about"
     },
-    "reason": "ok"
+    "reason": "ok",
+    "fx_status": null
   },
   "status": { "category": "ok", "message": "OK" }
 }
@@ -302,9 +315,12 @@ Parts without an MPN return a successful no-network response.
 
 - The route validates `part_id` with `assert_in_workspace()` before reading the part MPN.
 - The local cache is scoped by `workspace_id`; the part-detail route calls sourcing search with `ttl_seconds=1800`.
+- When a `currency` query param is supplied, distributor prices that still arrive in another currency are display-converted through the global ECB daily snapshot. Native `unit_price` / `currency` stay unchanged; converted display values are exposed as `unit_price_converted`, `currency_displayed`, `fx_converted`, `fx_rate_date`, and `price_breaks_converted`.
+- `fx_status` is `unavailable` when at least one requested conversion could not be produced; affected rows keep native prices.
 - The route uses member-or-higher role gating and maps the same sourcing exceptions as `POST /api/sourcing/search`.
-- Source: `backend/app/api/routes/sourcing.py:132-220`.
-- Service: `backend/app/domain/sourcing/service.py:62-138`.
+- Source: `backend/app/api/routes/sourcing.py:376`.
+- Service: `backend/app/domain/sourcing/service.py:595`.
+- FX: `backend/app/domain/fx/rates.py:46`.
 
 ### `POST /api/parts/{part_id}/sourcing/refresh`
 

@@ -127,6 +127,27 @@ Trivial set:
 - Remove a dead/unused import or `_unused_var` rename.
 - Add a missing field constraint that was already documented
   elsewhere (e.g. `max_length=200` echoed from CLAUDE.md).
+- **Resolve a merge conflict where every conflicting file is
+  purely-additive prose** (`CHANGELOG.md`, a `docs/**/*.md` table or
+  bullet list, etc.) — i.e. both sides only added new bullets/rows in
+  the same section. Resolution: rebase onto `origin/main` in a
+  worktree, take both halves of each conflict block (drop the conflict
+  markers, keep both entries — order alphabetically by tag if the
+  section is a sorted list; otherwise preserve chronological insertion
+  order with the on-`main` entry first), `git add`, `git rebase
+  --continue`, force-push the rebased branch. **Disqualifiers** —
+  treat as non-trivial and request-changes if **any** of:
+  source-code conflicts (`*.py`, `*.ts`/`*.tsx`, `*.yml`,
+  `alembic/versions/*`, `Dockerfile*`, lockfiles), conflicts that
+  delete or reorder existing prose, conflicts in tables where column
+  alignment matters, conflicts in code-fenced blocks. Probe the
+  conflicting file set first with `git merge-tree --write-tree
+  --name-only --no-messages origin/main origin/<branch>` — bail if it
+  returns anything beyond the additive-prose allowlist. Note: the
+  current `pr-green.sh` filters `mergeable != MERGEABLE` out of the
+  green set, so this rule fires only when the watcher is invoked
+  directly on a CONFLICTING PR (or after the script is extended to
+  surface CHANGELOG-only conflicts).
 
 How to push the fix safely (worktree, no race with the manager
 checkout):
@@ -184,7 +205,7 @@ made yourself.
 |---|---|
 | Any check `pending` | Do nothing this run. Comment **only** if no prior `claude-review` comment exists, with `_Waiting on CI._` |
 | Any check failed | `gh pr review <num> --request-changes --body "<findings + 'CI red'>"` then `gh pr edit <num> --add-label reopened` |
-| `mergeable != "MERGEABLE"` | `gh pr review <num> --request-changes --body "<findings + 'merge conflict — please rebase'>"` then `gh pr edit <num> --add-label reopened` |
+| `mergeable != "MERGEABLE"` | First probe the conflict set with `git merge-tree --write-tree --name-only --no-messages origin/main origin/<branch>`. If every conflicting file is in the additive-prose allowlist (`CHANGELOG.md`, `docs/**/*.md`), apply the trivial-fix-and-merge rebase from §3 instead of request-changes. Otherwise: `gh pr review <num> --request-changes --body "<findings + 'merge conflict — please rebase'>"` then `gh pr edit <num> --add-label reopened` |
 | Any finding `severity = high` | `gh pr review <num> --request-changes --body "<findings>"` then `gh pr edit <num> --add-label reopened`, then **either** `gh issue create --title "[claude-review] PR #<num>: <one-line summary>" --body "<findings>" --label claude-review,reopened` (no prior issue exists — open it with the `reopened` label so it's visible as "PR needs repair"), **or**, if a prior tracking issue for the same bug already exists, `gh issue reopen <num> --comment "<reason>"` (if closed) followed by `gh issue edit <num> --add-label reopened`. The `reopened` label flags any tracking issue whose PR is in a needs-repair state — applies whether the issue was originally closed and reopened, or stayed open the whole time. Never re-create the same issue twice. |
 | Any finding `severity = medium` | `gh pr review <num> --request-changes --body "<findings>"` then `gh pr edit <num> --add-label reopened` (no issue) |
 | All checks pass + only `low` (or zero) findings + not a fork + not draft | `gh pr merge <num> --squash --delete-branch` then `gh pr comment <num> --body "Approved by claude-review (no medium+ findings, CI green)."` then **close any tracking issue this PR completes** (see §3.5 below) |

@@ -211,6 +211,9 @@ them, that's the bug.
 - The repo has had transient `review-*` directories and stray venvs
   appear at the root in past sessions. They're gitignored; don't
   unignore them.
+- **Sourcing `est_purchase_cost` still prices the requested build when
+  after-purchase capacity floors to zero.** Do not let integer capacity
+  floors suppress a priced offer at low build quantities.
 - **Sentry auth token must not enter the Docker build context.** Source-map
   upload is handled by the CI `web-build` job (`npx @sentry/cli sourcemaps
   upload`) after `npm run build`, gated on push to `main`. `SENTRY_AUTH_TOKEN`
@@ -235,6 +238,9 @@ them, that's the bug.
 - **Periodic jobs run through one scheduler path.** ADR-0021 chooses a
   `backend-cron` sidecar + CLI entry point; don't add parallel APScheduler,
   FastAPI lifespan, host cron, or systemd-timer jobs for app maintenance.
+- **Maintenance mode is toggled by the deploy script via
+  `a2enconf parts-maintenance`.** Do not bypass the deploy path without
+  also disabling it with `a2disconf parts-maintenance`.
 
 ## Frontend conventions worth preserving
 

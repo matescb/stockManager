@@ -134,6 +134,61 @@ def test_est_purchase_cost_none_when_blocker_has_no_offer():
     assert capacity.est_purchase_cost is None
 
 
+def test_est_purchase_cost_correct_at_build_quantity_1():
+    capacity = compute_build_capacity(
+        [
+            _line(
+                1,
+                required=1,
+                available=0,
+                best_offer=_offer(stock=100, unit_price="2.50"),
+            )
+        ],
+        requested_build_quantity=1,
+    )
+
+    assert capacity.can_build_now == 0
+    assert capacity.can_build_after_purchase == 0
+    assert capacity.est_purchase_cost == Decimal("2.50")
+
+
+def test_est_purchase_cost_correct_at_build_quantity_2():
+    capacity = compute_build_capacity(
+        [
+            _line(
+                1,
+                required=2,
+                available=0,
+                best_offer=_offer(stock=100, unit_price="2.50"),
+            )
+        ],
+        requested_build_quantity=2,
+    )
+
+    assert capacity.can_build_now == 0
+    assert capacity.can_build_after_purchase == 0
+    assert capacity.est_purchase_cost == Decimal("5.00")
+
+
+def test_est_purchase_cost_unchanged_at_build_quantity_100():
+    capacity = compute_build_capacity(
+        [
+            _line(
+                1,
+                required=100,
+                available=0,
+                authorized_stock=100,
+                best_offer=_offer(stock=100, unit_price="2.50"),
+            )
+        ],
+        requested_build_quantity=100,
+    )
+
+    assert capacity.can_build_now == 0
+    assert capacity.can_build_after_purchase == 100
+    assert capacity.est_purchase_cost == Decimal("250.00")
+
+
 def test_blocking_lines_lists_binding_constraints():
     capacity = compute_build_capacity(
         [
