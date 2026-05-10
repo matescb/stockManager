@@ -469,8 +469,8 @@ def test_sourcing_search_uses_caller_workspace_secrets(monkeypatch):
         ws_b = session.get(Workspace, ws_b_id)
         assert ws_a is not None
         assert ws_b is not None
-        a_tokens = {ws_a.sourcing_company_id_enc, ws_a.sourcing_api_key_enc}
-        b_tokens = {ws_b.sourcing_company_id_enc, ws_b.sourcing_api_key_enc}
+        a_tokens = {ws_a.sourcing_api_key_enc}
+        b_tokens = {ws_b.sourcing_api_key_enc}
 
     seen_tokens: list[str | None] = []
 
@@ -497,11 +497,7 @@ def test_sourcing_search_uses_caller_workspace_secrets(monkeypatch):
     assert r.json()["data"]["cache_hit"] is False
     assert set(seen_tokens) == b_tokens
     assert not set(seen_tokens) & a_tokens
-    assert [call["company_id"] for call in RecordingTrustedPartsClient.calls] == [
-        "company-a",
-        "company-b",
-    ]
-    assert RecordingTrustedPartsClient.calls[-1]["company_id"] == "company-b"
+    assert [call["company_id"] for call in RecordingTrustedPartsClient.calls] == ["", ""]
     assert RecordingTrustedPartsClient.calls[-1]["api_key"] == "api-key-b"
 
 
@@ -1041,14 +1037,16 @@ def test_sourcing_bom_isolated_by_workspace(db, monkeypatch):
     BUDGET._events.clear()
     calls: list[dict] = []
 
-    def fake_post(_url, json):
+    def fake_post(_url, json, headers):
         mpn = json["Queries"][0]["SearchToken"]
-        distributor = "SourceA" if json["CompanyId"] == "company-a" else "SourceB"
-        calls.append({"company_id": json["CompanyId"], "mpn": mpn})
+        company_id = headers["X-Api-Key"].removeprefix("key-")
+        distributor = "SourceA" if company_id == "company-a" else "SourceB"
+        calls.append({"company_id": company_id, "mpn": mpn})
+        assert "CompanyId" not in json
+        assert "ApiKey" not in json
         return (
             200,
             {
-                "RequestId": f"req-{len(calls)}",
                 "PartResults": [
                     {
                         "PartNumber": mpn,

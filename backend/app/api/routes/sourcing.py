@@ -142,6 +142,8 @@ def search_sourcing(
             "server_error",
             "TrustedParts request timed out",
         )
+    except ValueError as exc:
+        return _error_response(request, 422, "validation_error", str(exc))
     except SourcingClientError:
         return _error_response(
             request,
@@ -300,6 +302,8 @@ def source_project_bom(
             "server_error",
             "TrustedParts request timed out",
         )
+    except ValueError as exc:
+        return _error_response(request, 422, "validation_error", str(exc))
     except SourcingClientError:
         return _error_response(
             request,
@@ -365,6 +369,8 @@ def create_project_purchase_plan(
             "server_error",
             "TrustedParts request timed out",
         )
+    except ValueError as exc:
+        return _error_response(request, 422, "validation_error", str(exc))
     except SourcingClientError:
         return _error_response(
             request,
@@ -424,6 +430,8 @@ def refresh_purchase_plan(
             "server_error",
             "TrustedParts request timed out",
         )
+    except ValueError as exc:
+        return _error_response(request, 422, "validation_error", str(exc))
     except SourcingClientError:
         return _error_response(
             request,
@@ -531,6 +539,8 @@ def get_part_sourcing(
             "server_error",
             "TrustedParts request timed out",
         )
+    except ValueError as exc:
+        return _error_response(request, 422, "validation_error", str(exc))
     except SourcingClientError:
         return _error_response(
             request,
@@ -594,6 +604,8 @@ def refresh_part_sourcing(
             "server_error",
             "TrustedParts request timed out",
         )
+    except ValueError as exc:
+        return _error_response(request, 422, "validation_error", str(exc))
     except SourcingClientError:
         return _error_response(
             request,

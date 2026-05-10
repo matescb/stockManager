@@ -27,13 +27,19 @@ class _TrustedPartsPost:
         cls.distributor_by_workspace = {}
 
     @classmethod
-    def post(cls, url: str, json: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    def post(
+        cls,
+        url: str,
+        json: dict[str, Any],
+        headers: dict[str, str],
+    ) -> tuple[int, dict[str, Any]]:
         queries = json["Queries"]
+        credential_id = headers["X-Api-Key"].removeprefix("api-key-")
         cls.calls.append(
             {
                 "url": url,
                 "queries": [query["SearchToken"] for query in queries],
-                "company_id": json["CompanyId"],
+                "company_id": credential_id,
                 "use_cached_data": json["UseCachedData"],
                 "distributors": json.get("Distributors"),
             }
@@ -41,9 +47,8 @@ class _TrustedPartsPost:
         return (
             200,
             {
-                "RequestId": f"tp-{len(cls.calls)}",
                 "PartResults": [
-                    _tp_part_result(query["SearchToken"], json["CompanyId"])
+                    _tp_part_result(query["SearchToken"], credential_id)
                     for query in queries
                     if query["SearchToken"] not in cls.missing_mpns
                 ],

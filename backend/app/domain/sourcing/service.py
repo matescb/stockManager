@@ -899,6 +899,8 @@ def search(
     clean_mpns = [mpn.strip() for mpn in mpns]
     if not 1 <= len(clean_mpns) <= 50 or any(not mpn for mpn in clean_mpns):
         raise ValueError("sourcing search requires 1 to 50 non-empty MPNs")
+    if any(len(mpn) < 2 or len(mpn) > 100 for mpn in clean_mpns):
+        raise ValueError("TrustedParts SearchToken length must be between 2 and 100")
 
     provider = make_sourcing_provider(workspace)
     if provider is None:

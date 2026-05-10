@@ -151,7 +151,7 @@ def test_good_creds_returns_ok_and_latency(authed_client, monkeypatch):
     assert body["data"]["latency_ms"] > 0
     assert _SuccessfulTrustedPartsClient.calls == [
         {
-            "company_id": "company-123",
+            "company_id": "",
             "api_key": "api-key-456",
             "country_code": "CZ",
             "currency_code": "EUR",
@@ -215,8 +215,8 @@ def test_workspace_isolation_uses_own_creds(db, monkeypatch):
     ws_b = db.get(Workspace, ws_b_id)
     assert ws_a is not None
     assert ws_b is not None
-    a_tokens = {ws_a.sourcing_company_id_enc, ws_a.sourcing_api_key_enc}
-    b_tokens = {ws_b.sourcing_company_id_enc, ws_b.sourcing_api_key_enc}
+    a_tokens = {ws_a.sourcing_api_key_enc}
+    b_tokens = {ws_b.sourcing_api_key_enc}
     seen_tokens: list[str | None] = []
 
     def decrypt_spy(token: str | None) -> str | None:
@@ -236,7 +236,7 @@ def test_workspace_isolation_uses_own_creds(db, monkeypatch):
     assert r.json()["data"]["ok"] is True
     assert set(seen_tokens) == b_tokens
     assert not set(seen_tokens) & a_tokens
-    assert _SuccessfulTrustedPartsClient.calls[-1]["company_id"] == "company-b"
+    assert _SuccessfulTrustedPartsClient.calls[-1]["company_id"] == ""
     assert _SuccessfulTrustedPartsClient.calls[-1]["api_key"] == "api-key-b"
 
 

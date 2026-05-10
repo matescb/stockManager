@@ -621,7 +621,7 @@ When TrustedParts is not configured or rejects the probe, the HTTP status remain
 
 **Notes**
 
-- The route decrypts only the current workspace's `sourcing_company_id_enc` and `sourcing_api_key_enc`, then passes plaintext directly to `TrustedPartsClient`; the plaintext credentials are not serialized or logged.
+- The route decrypts the current workspace's `sourcing_api_key_enc`, then passes plaintext directly to `TrustedPartsClient`; the plaintext credential is not serialized or logged. Deprecated `sourcing_company_id_enc` is no longer decrypted for TrustedParts Inventory API v2 calls. TrustedParts requests authenticate with the `X-Api-Key` header and do not send `CompanyId` in the body.
 - Probe token: `TEST_PROBE_DO_NOT_BUY`; called with `use_cached_data=false`.
 - Friendly failure messages: `not configured`, `invalid credentials`, `rate limited by TrustedParts`, `timeout reaching TrustedParts`, `TrustedParts upstream error`.
 - Source: `backend/app/api/routes/sourcing.py:33-78`.

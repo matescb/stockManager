@@ -8,6 +8,10 @@ the canonical record.
 
 ## 2026-05 — feedback brief fixes
 
+- **TPS-2 / #449** TrustedParts responses are now validated through the
+  generated Inventory API v2 models before app DTO mapping; auth moved to the
+  `X-Api-Key` header, deprecated `CompanyId` is no longer sent, and TP
+  `ErrorMessage` bodies now surface as upstream errors instead of empty results.
 - **FB-007 / #437** Active sourcing lists now backfill saved workspace
   sourcing defaults: `active_distributors` is unioned with preferred
   distributors, and saved country/currency values are appended when missing.

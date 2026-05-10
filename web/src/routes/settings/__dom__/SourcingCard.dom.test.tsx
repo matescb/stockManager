@@ -49,7 +49,7 @@ describe("SourcingCard", () => {
 
     expect(screen.getByRole("heading", { name: "Sourcing provider" })).toBeDefined();
     expect(screen.getByLabelText("Provider")).toBeDefined();
-    expect(screen.getByLabelText("CompanyId")).toBeDefined();
+    expect(screen.getByLabelText("CompanyId (deprecated)")).toBeDefined();
     expect(screen.getByLabelText("API Key")).toBeDefined();
     expect(screen.getByLabelText("Country")).toBeDefined();
     expect(screen.getByLabelText("Currency")).toBeDefined();
@@ -73,7 +73,7 @@ describe("SourcingCard", () => {
     const { invalidateSpy } = renderCard();
 
     await user.selectOptions(screen.getByLabelText("Provider"), "trustedparts");
-    await user.type(screen.getByLabelText("CompanyId"), "company-123");
+    await user.type(screen.getByLabelText("CompanyId (deprecated)"), "company-123");
     await user.type(screen.getByLabelText("API Key"), "api-456");
     await user.type(screen.getByLabelText("Country"), "cz");
     await user.type(screen.getByLabelText("Currency"), "eur");
@@ -138,7 +138,7 @@ describe("SourcingCard", () => {
     });
     renderCard();
 
-    await user.type(screen.getByLabelText("CompanyId"), "secret-company-id");
+    await user.type(screen.getByLabelText("CompanyId (deprecated)"), "secret-company-id");
     await user.type(screen.getByLabelText("API Key"), "secret-api-key");
     await user.click(screen.getByRole("button", { name: "Save" }));
 

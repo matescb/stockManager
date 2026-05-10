@@ -10,7 +10,7 @@ export type SourcingWorkspaceSettings = {
   active_countries: string[];
   active_currencies: string[];
   active_distributors: string[];
-  has_sourcing_company_id: boolean;
+  has_sourcing_api_key: boolean;
 };
 
 type Props = {
@@ -23,7 +23,7 @@ export function SourceBomButton({ projectId, className }: Props) {
     queryKey: useWsKey("ws", "current"),
     queryFn: () => api.get<SourcingWorkspaceSettings>("/workspaces/current"),
   });
-  const disabled = workspace?.has_sourcing_company_id === false;
+  const disabled = workspace?.has_sourcing_api_key === false;
   const classes = className ?? "btn-primary";
 
   if (!projectId || disabled) {

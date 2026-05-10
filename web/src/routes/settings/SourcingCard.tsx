@@ -134,7 +134,7 @@ export function SourcingCard({
     saveMutation.mutate(body);
   }
 
-  const configured = hasCompanyId && hasApiKey;
+  const configured = hasApiKey;
 
   return (
     <form className="card p-4 mb-4 space-y-3 text-sm" onSubmit={submit}>
@@ -161,7 +161,13 @@ export function SourcingCard({
           </select>
         </div>
         <div>
-          <label className="label" htmlFor="sourcing-company-id">CompanyId</label>
+          <label
+            className="label"
+            htmlFor="sourcing-company-id"
+            title="TrustedParts no longer requires this; you may safely leave it blank"
+          >
+            CompanyId (deprecated)
+          </label>
           <input
             id="sourcing-company-id"
             className="input font-mono text-xs"
@@ -172,7 +178,8 @@ export function SourcingCard({
               setCompanyIdTouched(true);
               setCompanyId(e.target.value);
             }}
-            placeholder={hasCompanyId ? "•••••••• (CompanyId set)" : "CompanyId"}
+            placeholder={hasCompanyId ? "•••••••• (deprecated CompanyId set)" : "Optional"}
+            title="TrustedParts no longer requires this; you may safely leave it blank"
           />
         </div>
         <div>
