@@ -25,6 +25,9 @@ snapshots while users review optimizer output. `purchase_plans` enforces
 expired plan rows alongside cache rows (`backend/alembic/versions/0039_purchase_plans.py:68`,
 `backend/app/domain/sourcing/cache.py:95`).
 
+Phase 5b sourcing alerts use the same domain boundary; see
+[sourcing alerts](../domain/sourcing.md#alerts).
+
 TrustedParts results must stay visibly distinct from catalog-provider data. Public or UI surfaces that combine distributor data from multiple origins need an explicit future decision before launch.
 
 ## Reports policy: no persistent price history
