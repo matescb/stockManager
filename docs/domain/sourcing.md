@@ -40,7 +40,8 @@ Sources: `backend/alembic/versions/0038_sourcing_cache.py:42`,
 build quantity, strategy, country/currency hints, optional preferred distributors, and
 status. `purchase_plan_lines` stores the per-BOM-line shortage and the selected offer
 snapshot the user is reviewing, including distributor, quantity, unit price, MOQ, lead
-time, and offer URL.
+time, offer URL, and the cached `available_offers` list used to validate user
+overrides during conversion.
 
 Plans inherit the TrustedParts seven-day retention cap:
 
@@ -60,8 +61,11 @@ Sources: `backend/alembic/versions/0039_purchase_plans.py:68`,
 
 Phase 4 keeps TrustedParts data ephemeral until the user converts a freshly refreshed
 purchase plan into draft purchase orders. Conversion creates one draft order per selected
-distributor and one order entry per selected plan line. It does not receive stock, create
-lots, or copy provider URLs into order comments.
+distributor and one order entry per selected plan line. Optional line overrides are
+accepted only when the requested distributor, quantity, unit price, and currency match an
+offer cached on that `purchase_plan_lines` row. Invalid overrides fail before any order
+rows are written. The flow does not receive stock, create lots, or copy provider URLs
+into order comments.
 
 ```text
 BOM entries
@@ -78,6 +82,7 @@ BOM entries
   -> convert
        require status=refreshed
        require last_refreshed_at within 10 minutes
+       validate overrides against cached available_offers
        group selected lines by distributor
        create draft purchase orders
        create draft order entries

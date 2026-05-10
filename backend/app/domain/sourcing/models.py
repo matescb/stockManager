@@ -198,6 +198,12 @@ class PurchasePlanLine(Base):
     selected_moq = Column(sa.Integer, nullable=True)
     selected_lead_time_days = Column(sa.Integer, nullable=True)
     selected_url = Column(sa.Text, nullable=True)
+    available_offers = Column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=sa.text("'[]'::jsonb"),
+    )
     risk_flags = Column(
         JSONB,
         nullable=False,

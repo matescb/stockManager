@@ -8,7 +8,14 @@ import { SourcingSourceLabel } from "@/components/SourcingSourceLabel";
 import { api } from "@/lib/api";
 import type { Project } from "@/types";
 import OverrideOfferModal from "./OverrideOfferModal";
-import type { ConvertOrdersResponse, PurchasePlan, PurchasePlanLine } from "./purchasePlanTypes";
+import type {
+  ConvertOrdersRequest,
+  ConvertOrdersResponse,
+  PurchasePlan,
+  PurchasePlanLine,
+  PurchasePlanOffer,
+  PurchasePlanOrderOverride,
+} from "./purchasePlanTypes";
 
 type LocationState = {
   plan?: PurchasePlan;
@@ -56,6 +63,71 @@ function extendedCost(line: PurchasePlanLine): number | null {
   return unit * line.selected_qty;
 }
 
+function selectedQtyForOffer(line: PurchasePlanLine, offer: PurchasePlanOffer): number {
+  const shortage = Math.max(0, line.shortage_qty);
+  const moq = Math.max(0, numberOrNull(offer.moq) ?? 0);
+  return Math.max(shortage, moq, 1);
+}
+
+function unitPriceForOffer(offer: PurchasePlanOffer, qty: number): string | number | null {
+  const breaks = (offer.price_breaks ?? [])
+    .map(priceBreak => ({
+      quantity: numberOrNull(priceBreak.quantity),
+      unitPrice: priceBreak.unit_price,
+    }))
+    .filter((priceBreak): priceBreak is { quantity: number; unitPrice: string | number } =>
+      priceBreak.quantity != null &&
+      priceBreak.quantity >= 1 &&
+      priceBreak.unitPrice != null &&
+      priceBreak.unitPrice !== "",
+    )
+    .sort((a, b) => a.quantity - b.quantity);
+
+  if (breaks.length === 0) return offer.unit_price ?? null;
+
+  let selected = breaks[0];
+  for (const candidate of breaks) {
+    if (candidate.quantity > qty) break;
+    selected = candidate;
+  }
+  return selected.unitPrice;
+}
+
+function recomputePlanFromLines(plan: PurchasePlan, lines: PurchasePlanLine[]): PurchasePlan {
+  const distributors = new Set<string>();
+  let estTotal = 0;
+  let hasCost = false;
+  let worstLeadTime: number | null = null;
+  let unfilledCount = 0;
+
+  for (const line of lines) {
+    if (line.selected_distributor) {
+      distributors.add(line.selected_distributor);
+    } else {
+      unfilledCount += 1;
+    }
+
+    const cost = extendedCost(line);
+    if (cost != null) {
+      estTotal += cost;
+      hasCost = true;
+    }
+
+    if (line.selected_lead_time_days != null) {
+      worstLeadTime = Math.max(worstLeadTime ?? 0, line.selected_lead_time_days);
+    }
+  }
+
+  return {
+    ...plan,
+    lines,
+    distributors_used: [...distributors].sort((a, b) => a.localeCompare(b)),
+    est_total_cost: hasCost ? estTotal : plan.est_total_cost,
+    worst_lead_time_days: worstLeadTime,
+    unfilled_count: unfilledCount,
+  };
+}
+
 function groupLines(lines: PurchasePlanLine[]) {
   const groups = new Map<string, PurchasePlanLine[]>();
   for (const line of lines) {
@@ -80,11 +152,16 @@ export default function PurchasePlanReviewPage() {
   const [project] = useState<Project | undefined>(locationState.project);
   const [busyAction, setBusyAction] = useState<"refresh" | "convert" | null>(null);
   const [overrideLine, setOverrideLine] = useState<PurchasePlanLine | null>(null);
+  const [overrides, setOverrides] = useState<Record<string, PurchasePlanOrderOverride>>({});
 
   const grouped = useMemo(() => groupLines(plan?.lines ?? []), [plan]);
   const unfilled = useMemo(
     () => (plan?.lines ?? []).filter(line => !line.selected_distributor),
     [plan],
+  );
+  const activeOverrideLine = useMemo(
+    () => overrideLine ? plan?.lines.find(line => line.id === overrideLine.id) ?? overrideLine : null,
+    [overrideLine, plan],
   );
 
   if (!projectId || !planId) return null;
@@ -161,9 +238,7 @@ export default function PurchasePlanReviewPage() {
       render: line => (
         <button
           type="button"
-          className="btn"
-          title="Override will land in TP-406a"
-          disabled
+          className={overrides[line.id] ? "btn-primary" : "btn"}
           onClick={() => setOverrideLine(line)}
         >
           Override
@@ -178,19 +253,62 @@ export default function PurchasePlanReviewPage() {
     try {
       const next = await api.post<PurchasePlan>(`/sourcing/purchase-plans/${plan.id}/refresh`);
       setPlan(next);
+      setOverrides({});
       toast.success("Prices refreshed");
     } finally {
       setBusyAction(null);
     }
   }
 
+  function selectOffer(line: PurchasePlanLine, offer: PurchasePlanOffer) {
+    if (!offer.distributor || offer.unit_price == null || !offer.currency) return;
+
+    const selected_qty = selectedQtyForOffer(line, offer);
+    const selected_unit_price = unitPriceForOffer(offer, selected_qty);
+    if (selected_unit_price == null) return;
+
+    const override: PurchasePlanOrderOverride = {
+      selected_distributor: offer.distributor,
+      selected_qty,
+      selected_unit_price,
+      selected_currency: offer.currency,
+    };
+
+    setPlan(current => {
+      if (!current) return current;
+      const nextLines = current.lines.map(currentLine =>
+        currentLine.id === line.id
+          ? {
+              ...currentLine,
+              selected_distributor: offer.distributor,
+              selected_qty,
+              selected_unit_price,
+              selected_currency: offer.currency,
+              selected_packaging: offer.packaging ?? null,
+              selected_moq: offer.moq ?? null,
+              selected_lead_time_days: offer.lead_time_days ?? null,
+              selected_url: offer.url ?? null,
+            }
+          : currentLine,
+      );
+      return recomputePlanFromLines(current, nextLines);
+    });
+    setOverrides(current => ({ ...current, [line.id]: override }));
+    setOverrideLine(null);
+  }
+
   async function convert() {
     if (!plan) return;
     setBusyAction("convert");
     try {
-      const result = await api.post<ConvertOrdersResponse>(`/sourcing/purchase-plans/${plan.id}/orders`);
+      const result = await api.post<ConvertOrdersResponse, ConvertOrdersRequest>(
+        `/sourcing/purchase-plans/${plan.id}/orders`,
+        { overrides },
+      );
       toast.success(`Created ${result.orders.length} draft orders`);
       navigate("/orders");
+    } catch {
+      toast.error("Could not create draft orders");
     } finally {
       setBusyAction(null);
     }
@@ -264,7 +382,7 @@ export default function PurchasePlanReviewPage() {
           <h2 className="text-md font-semibold text-danger">Unfilled lines</h2>
           <DataTable
             rows={unfilled}
-            columns={columns.filter(column => column.key !== "override")}
+            columns={columns}
             rowKey={line => line.id}
             tableId={`purchase-plan-${plan.id}-unfilled`}
           />
@@ -282,7 +400,7 @@ export default function PurchasePlanReviewPage() {
         </button>
       </div>
 
-      <OverrideOfferModal line={overrideLine} onClose={() => setOverrideLine(null)} />
+      <OverrideOfferModal line={activeOverrideLine} onSelect={selectOffer} onClose={() => setOverrideLine(null)} />
     </div>
   );
 }
