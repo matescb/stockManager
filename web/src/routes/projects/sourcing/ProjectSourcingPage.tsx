@@ -9,6 +9,7 @@ import { PoweredByTrustedParts } from "@/components/PoweredByTrustedParts";
 import { SourcingSourceLabel } from "@/components/SourcingSourceLabel";
 import { ApiError, api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
+import { lifecycleRiskTone } from "@/lib/sourcing";
 import AlertFormModal from "@/routes/sourcing/alerts/AlertFormModal";
 import type { Project } from "@/types";
 import PurchasePlanOptionsModal from "./PurchasePlanOptionsModal";
@@ -26,6 +27,9 @@ type SourcingBomOffer = {
   moq?: number | null;
   lead_time_days?: number | null;
   url?: string | null;
+  lifecycle_risk?: string | null;
+  supply_chain_risk?: string | null;
+  is_affected_by_tariff?: boolean | null;
 };
 
 type RiskFlag =
@@ -33,7 +37,11 @@ type RiskFlag =
   | "no_authorized_stock"
   | "moq_overbuy"
   | "lead_time_long"
-  | "preferred_distributor_unmet";
+  | "preferred_distributor_unmet"
+  | "lifecycle_risk_present"
+  | "supply_chain_risk_present"
+  | "tariff_affected"
+  | "rohs_non_compliant";
 
 type SourcingBomLine = {
   project_entry_id: string;
@@ -133,7 +141,46 @@ function riskLabel(flag: RiskFlag): string {
       return "Long lead time";
     case "preferred_distributor_unmet":
       return "Preferred unmet";
+    case "lifecycle_risk_present":
+      return "lifecycle";
+    case "supply_chain_risk_present":
+      return "supply chain";
+    case "tariff_affected":
+      return "tariff";
+    case "rohs_non_compliant":
+      return "RoHS";
   }
+}
+
+function riskClass(flag: RiskFlag): string {
+  return flag === "rohs_non_compliant"
+    ? "pill bg-danger/10 text-danger"
+    : "pill bg-warning/10 text-warning";
+}
+
+function riskTooltip(flag: RiskFlag): string | undefined {
+  switch (flag) {
+    case "lifecycle_risk_present":
+      return "TrustedParts returned lifecycle risk text for this BOM line.";
+    case "supply_chain_risk_present":
+      return "TrustedParts returned supply-chain risk text for this BOM line.";
+    case "tariff_affected":
+      return "TrustedParts distributors indicated this BOM line may be affected by United States tariffs.";
+    case "rohs_non_compliant":
+      return "TrustedParts did not find a compliant RoHS region for this BOM line.";
+    default:
+      return undefined;
+  }
+}
+
+function LifecycleRiskPill({ value }: { value?: string | null }) {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return (
+    <span className={`pill ${lifecycleRiskTone(trimmed)}`} aria-label={`Lifecycle risk: ${trimmed}`}>
+      {trimmed}
+    </span>
+  );
 }
 
 function errorStatus(error: unknown): number | null {
@@ -416,6 +463,13 @@ function BomRows({ rows }: { rows: SourcingBomLine[] }) {
       align: "right",
     },
     {
+      key: "lifecycle",
+      header: "Lifecycle",
+      accessor: row => row.best_offer?.lifecycle_risk?.trim() ?? "",
+      render: row => <LifecycleRiskPill value={row.best_offer?.lifecycle_risk} />,
+      hidden: true,
+    },
+    {
       key: "risk",
       header: "Risk",
       accessor: row => row.risk_flags.join(" "),
@@ -424,7 +478,12 @@ function BomRows({ rows }: { rows: SourcingBomLine[] }) {
           {row.risk_flags.length === 0 ? (
             <span className="text-muted">—</span>
           ) : row.risk_flags.map(flag => (
-            <span key={flag} className="pill bg-warning/10 text-warning">
+            <span
+              key={flag}
+              className={riskClass(flag)}
+              title={riskTooltip(flag)}
+              aria-label={riskTooltip(flag)}
+            >
               {riskLabel(flag)}
             </span>
           ))}

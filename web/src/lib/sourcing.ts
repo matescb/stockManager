@@ -39,3 +39,38 @@ export function extendedPrice(
   if (best === null) return null;
   return best.unitPrice * Math.floor(qty);
 }
+
+export function lifecycleRiskTone(value: string | null | undefined): string {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  if (normalized.startsWith("active")) return "bg-success/10 text-success";
+  if (normalized.includes("nrnd") || normalized.includes("not recommended")) {
+    return "bg-warning/10 text-warning";
+  }
+  if (
+    normalized.includes("obsolete") ||
+    normalized.includes("eol") ||
+    normalized.includes("end of life") ||
+    normalized.includes("last time buy") ||
+    normalized.includes("ltb")
+  ) {
+    return "bg-danger/10 text-danger";
+  }
+  return "bg-panel2 text-muted";
+}
+
+export function lifecycleRiskRank(value: string | null | undefined): number {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  if (!normalized) return 3;
+  if (
+    normalized.includes("obsolete") ||
+    normalized.includes("eol") ||
+    normalized.includes("end of life") ||
+    normalized.includes("last time buy") ||
+    normalized.includes("ltb")
+  ) {
+    return 0;
+  }
+  if (normalized.includes("nrnd") || normalized.includes("not recommended")) return 1;
+  if (normalized.startsWith("active")) return 2;
+  return 2.5;
+}

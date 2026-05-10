@@ -9,6 +9,7 @@ import { SourcingSourceLabel } from "@/components/SourcingSourceLabel";
 import { api, ApiError } from "@/lib/api";
 import { formatMoney } from "@/lib/format";
 import { useWsKey } from "@/lib/queryKeys";
+import { lifecycleRiskRank, lifecycleRiskTone } from "@/lib/sourcing";
 
 type SourcingRiskFlag =
   | "single_source"
@@ -16,6 +17,10 @@ type SourcingRiskFlag =
   | "moq_overbuy"
   | "lead_time_long"
   | "preferred_distributor_unmet"
+  | "lifecycle_risk_present"
+  | "supply_chain_risk_present"
+  | "tariff_affected"
+  | "rohs_non_compliant"
   | "price_delta";
 
 type SourcingRiskOffer = {
@@ -29,6 +34,9 @@ type SourcingRiskOffer = {
   moq: number | null;
   lead_time_days: number | null;
   url: string | null;
+  lifecycle_risk?: string | null;
+  supply_chain_risk?: string | null;
+  is_affected_by_tariff?: boolean | null;
 };
 
 type SourcingRiskRow = {
@@ -70,13 +78,46 @@ const flagLabels: Record<SourcingRiskFlag, string> = {
   moq_overbuy: "MOQ overbuy",
   lead_time_long: "Long lead time",
   preferred_distributor_unmet: "Preferred unmet",
+  lifecycle_risk_present: "Lifecycle",
+  supply_chain_risk_present: "Supply chain",
+  tariff_affected: "Tariff",
+  rohs_non_compliant: "RoHS",
   price_delta: "Price delta",
 };
+
+const filterFlags: SourcingRiskFlag[] = [
+  "single_source",
+  "no_authorized_stock",
+  "moq_overbuy",
+  "lead_time_long",
+  "preferred_distributor_unmet",
+  "lifecycle_risk_present",
+  "supply_chain_risk_present",
+  "tariff_affected",
+  "rohs_non_compliant",
+  "price_delta",
+];
 
 function bestOfferLabel(offer: SourcingRiskOffer | null): string {
   if (!offer) return "—";
   const price = offer.unit_price ? formatMoney(Number(offer.unit_price), offer.currency) : "—";
   return `${offer.distributor} · ${price}`;
+}
+
+function flagClass(flag: SourcingRiskFlag): string {
+  return flag === "rohs_non_compliant"
+    ? "pill bg-danger/10 text-danger"
+    : "pill bg-warning/15 text-warning";
+}
+
+function LifecycleRiskPill({ value }: { value?: string | null }) {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return (
+    <span className={`pill ${lifecycleRiskTone(trimmed)}`} aria-label={`Lifecycle risk: ${trimmed}`}>
+      {trimmed}
+    </span>
+  );
 }
 
 function statusTone(state: SourcingRiskReportOut["sourcing_status"]["state"]): string {
@@ -92,6 +133,7 @@ function statusTone(state: SourcingRiskReportOut["sourcing_status"]["state"]): s
 
 export default function SourcingRiskReport() {
   const [onlyWithFlags, setOnlyWithFlags] = useState(true);
+  const [selectedFlags, setSelectedFlags] = useState<SourcingRiskFlag[]>([]);
   const { data, isLoading, isError, error } = useQuery({
     queryKey: useWsKey("report", "sourcing-risk", onlyWithFlags),
     queryFn: () =>
@@ -102,13 +144,21 @@ export default function SourcingRiskReport() {
 
   const rows = useMemo(
     () =>
-      [...(data?.rows ?? [])].sort((a, b) => {
+      (data?.rows ?? []).filter(row =>
+        selectedFlags.every(flag => row.risk_flags.includes(flag))
+      ).sort((a, b) => {
         const byFlags = b.risk_flags.length - a.risk_flags.length;
         if (byFlags !== 0) return byFlags;
         return a.name.localeCompare(b.name);
       }),
-    [data?.rows],
+    [data?.rows, selectedFlags],
   );
+
+  function toggleFlag(flag: SourcingRiskFlag) {
+    setSelectedFlags(current =>
+      current.includes(flag) ? current.filter(item => item !== flag) : [...current, flag]
+    );
+  }
 
   if (isError) {
     return (
@@ -130,6 +180,23 @@ export default function SourcingRiskReport() {
           Show only flagged
         </label>
         {data && <PoweredByTrustedParts primaryUrl={data.links.primary} />}
+      </div>
+
+      <div className="flex flex-wrap gap-2" aria-label="Sourcing risk filters">
+        {filterFlags.map(flag => {
+          const active = selectedFlags.includes(flag);
+          return (
+            <button
+              key={flag}
+              type="button"
+              className={active ? "pill bg-accent/15 text-accent" : "pill"}
+              aria-pressed={active}
+              onClick={() => toggleFlag(flag)}
+            >
+              {flagLabels[flag]}
+            </button>
+          );
+        })}
       </div>
 
       {data && (
@@ -199,6 +266,13 @@ export default function SourcingRiskReport() {
               render: r => r.lead_time_days == null ? <span className="text-muted">—</span> : <span>{r.lead_time_days}d</span>,
             },
             {
+              key: "lifecycle",
+              header: "Lifecycle",
+              accessor: r => lifecycleRiskRank(r.best_offer?.lifecycle_risk),
+              render: r => <LifecycleRiskPill value={r.best_offer?.lifecycle_risk} />,
+              width: "110px",
+            },
+            {
               key: "flags",
               header: "Flags",
               accessor: r => r.risk_flags.length,
@@ -206,7 +280,7 @@ export default function SourcingRiskReport() {
                 <div className="flex flex-wrap gap-1">
                   {r.risk_flags.length
                     ? r.risk_flags.map(flag => (
-                      <span key={flag} className="pill bg-warning/15 text-warning">{flagLabels[flag]}</span>
+                      <span key={flag} className={flagClass(flag)}>{flagLabels[flag]}</span>
                     ))
                     : <span className="text-muted">—</span>}
                 </div>
