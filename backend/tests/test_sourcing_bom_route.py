@@ -17,6 +17,7 @@ from app.domain.sourcing.schemas import (
     SourcingPriceBreak,
     SourcingQuery,
     SourcingSearchRaw,
+    SourcingSpecification,
 )
 from app.main import app
 from tests._factories import add_stock, create_part, create_project_with_bom, signup_user
@@ -57,11 +58,19 @@ def _offer(
     moq: int | None = 1,
     lead_time_days: int | None = 3,
     currency: str = "EUR",
+    lifecycle_risk: str | None = None,
+    supply_chain_risk: str | None = None,
+    is_affected_by_tariff: bool | None = None,
 ) -> SourcingOffer:
     return SourcingOffer(
         mpn=mpn,
         manufacturer="TestCo",
         description=f"Offer for {mpn}",
+        lifecycle_risk=lifecycle_risk,
+        supply_chain_risk=supply_chain_risk,
+        is_affected_by_tariff=is_affected_by_tariff,
+        manufacturer_id=12345,
+        specifications=[SourcingSpecification(key="Package", value="SOT-23")],
         distributors=[
             SourcingDistributor(
                 name=distributor,
@@ -196,6 +205,36 @@ def test_basic_bom_returns_enriched_lines(authed_client):
     assert row["reason"] == "ok"
     assert row["cache_hit"] is False
     assert row["fx_status"] is None
+
+
+def test_bom_response_includes_lifecycle_risk_per_offer(authed_client):
+    _configure_sourcing(authed_client)
+    project_id = _single_line_project(authed_client, mpn="RISK-MPN")
+    _FakeTrustedPartsClient.offers_by_mpn = {
+        "RISK-MPN": [_offer("RISK-MPN", lifecycle_risk="Medium")]
+    }
+
+    r = _post_sourcing(authed_client, project_id)
+
+    assert r.status_code == 200, r.text
+    row = r.json()["data"]["rows"][0]
+    assert row["offers"][0]["lifecycle_risk"] == "Medium"
+    assert row["best_offer"]["lifecycle_risk"] == "Medium"
+
+
+def test_bom_response_includes_is_affected_by_tariff_per_offer(authed_client):
+    _configure_sourcing(authed_client)
+    project_id = _single_line_project(authed_client, mpn="TARIFF-MPN")
+    _FakeTrustedPartsClient.offers_by_mpn = {
+        "TARIFF-MPN": [_offer("TARIFF-MPN", is_affected_by_tariff=True)]
+    }
+
+    r = _post_sourcing(authed_client, project_id)
+
+    assert r.status_code == 200, r.text
+    row = r.json()["data"]["rows"][0]
+    assert row["offers"][0]["is_affected_by_tariff"] is True
+    assert row["best_offer"]["is_affected_by_tariff"] is True
 
 
 def test_bom_row_reports_no_mpn_without_provider_call(authed_client):

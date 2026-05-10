@@ -8,6 +8,11 @@ the canonical record.
 
 ## 2026-05 — feedback brief fixes
 
+- **TPS-4 / #451** TrustedParts gap-field parsing now surfaces lifecycle
+  risk, supply-chain risk, tariff status, manufacturer id, specifications,
+  distributor id, RoHS compliance, availability text, quantity multiple,
+  formatted price amount, price text, TP current date, and TP response time
+  in sourcing DTOs and route responses.
 - **TPS-2 / #449** TrustedParts responses are now validated through the
   generated Inventory API v2 models before app DTO mapping; auth moved to the
   `X-Api-Key` header, deprecated `CompanyId` is no longer sent, and TP

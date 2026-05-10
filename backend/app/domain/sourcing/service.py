@@ -951,6 +951,12 @@ def search(
             return {
                 "offers": [offer.model_dump(mode="json") for offer in raw.offers],
                 "request_id": raw.request_id,
+                "tp_current_date": (
+                    raw.tp_current_date.isoformat()
+                    if raw.tp_current_date is not None
+                    else None
+                ),
+                "tp_response_time": raw.tp_response_time,
                 "fetched_at": fetched_at.isoformat(),
             }
 
@@ -973,6 +979,8 @@ def search(
                 mpn=mpn,
                 offers=raw.offers,
                 request_id=raw.request_id,
+                tp_current_date=raw.tp_current_date,
+                tp_response_time=raw.tp_response_time,
                 fetched_at=fetched_at,
                 cache_hit=cache_hit,
             )
@@ -980,9 +988,19 @@ def search(
 
     response_fetched_at = max((result.fetched_at for result in results), default=utcnow())
     request_id = next((result.request_id for result in results if result.request_id), None)
+    tp_current_date = max(
+        (result.tp_current_date for result in results if result.tp_current_date is not None),
+        default=None,
+    )
+    tp_response_time = next(
+        (result.tp_response_time for result in results if result.tp_response_time),
+        None,
+    )
     return SourcingSearchOut(
         results=results,
         request_id=request_id,
+        tp_current_date=tp_current_date,
+        tp_response_time=tp_response_time,
         fetched_at=response_fetched_at,
         cache_hit=all(result.cache_hit for result in results),
         links=TRUSTEDPARTS_LINKS,
@@ -1098,6 +1116,8 @@ def _raw_from_cache_response(response: dict[str, Any]) -> SourcingSearchRaw:
         {
             "offers": response.get("offers", []),
             "request_id": response.get("request_id"),
+            "tp_current_date": response.get("tp_current_date"),
+            "tp_response_time": response.get("tp_response_time"),
         }
     )
 
@@ -1240,6 +1260,11 @@ def _joined_offers(
                         lead_time_days=distributor.lead_time_days,
                         price_breaks=_price_breaks_for_distributor(distributor),
                         url=distributor.product_url or offer.links.primary,
+                        lifecycle_risk=offer.lifecycle_risk,
+                        supply_chain_risk=offer.supply_chain_risk,
+                        is_affected_by_tariff=offer.is_affected_by_tariff,
+                        manufacturer_id=offer.manufacturer_id,
+                        specifications=offer.specifications,
                     )
                 )
     return out

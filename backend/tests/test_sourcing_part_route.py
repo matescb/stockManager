@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -15,7 +15,9 @@ from app.domain.sourcing.schemas import (
     SourcingOffer,
     SourcingPriceBreak,
     SourcingQuery,
+    SourcingRohsCompliance,
     SourcingSearchRaw,
+    SourcingSpecification,
 )
 from app.main import app
 from tests._factories import create_part, signup_user
@@ -53,6 +55,17 @@ class _FakeTrustedPartsClient:
     returned_currency: str | None = None
     unit_price: float = 1.23
     price_breaks: list[SourcingPriceBreak] = []
+    lifecycle_risk: str | None = None
+    supply_chain_risk: str | None = None
+    is_affected_by_tariff: bool | None = None
+    manufacturer_id: int | None = None
+    specifications: list[SourcingSpecification] = []
+    distributor_id: int | None = None
+    rohs_compliance: list[SourcingRohsCompliance] = []
+    availability_text: str | None = None
+    quantity_multiple: int | None = None
+    tp_current_date: datetime | None = None
+    tp_response_time: str | None = None
 
     def __init__(self) -> None:
         self.country_code = "CZ"
@@ -85,8 +98,14 @@ class _FakeTrustedPartsClient:
                     mpn=query.search_token,
                     manufacturer="ST",
                     description="Test offer",
+                    lifecycle_risk=self.lifecycle_risk,
+                    supply_chain_risk=self.supply_chain_risk,
+                    is_affected_by_tariff=self.is_affected_by_tariff,
+                    manufacturer_id=self.manufacturer_id,
+                    specifications=self.specifications,
                     distributors=[
                         SourcingDistributor(
+                            distributor_id=self.distributor_id,
                             name="DigiKey",
                             sku=f"{query.search_token}-DK",
                             stock=42,
@@ -94,6 +113,9 @@ class _FakeTrustedPartsClient:
                             currency=returned_currency,
                             price_breaks=self.price_breaks,
                             product_url="https://www.trustedparts.com/product",
+                            rohs_compliance=self.rohs_compliance,
+                            availability_text=self.availability_text,
+                            quantity_multiple=self.quantity_multiple,
                         )
                     ],
                     links=SourcingLinks(
@@ -102,6 +124,8 @@ class _FakeTrustedPartsClient:
                 )
             ],
             request_id=f"req-{len(self.calls)}",
+            tp_current_date=self.tp_current_date,
+            tp_response_time=self.tp_response_time,
         )
 
 
@@ -113,6 +137,17 @@ def reset_sourcing_state(monkeypatch):
     _FakeTrustedPartsClient.returned_currency = None
     _FakeTrustedPartsClient.unit_price = 1.23
     _FakeTrustedPartsClient.price_breaks = []
+    _FakeTrustedPartsClient.lifecycle_risk = None
+    _FakeTrustedPartsClient.supply_chain_risk = None
+    _FakeTrustedPartsClient.is_affected_by_tariff = None
+    _FakeTrustedPartsClient.manufacturer_id = None
+    _FakeTrustedPartsClient.specifications = []
+    _FakeTrustedPartsClient.distributor_id = None
+    _FakeTrustedPartsClient.rohs_compliance = []
+    _FakeTrustedPartsClient.availability_text = None
+    _FakeTrustedPartsClient.quantity_multiple = None
+    _FakeTrustedPartsClient.tp_current_date = None
+    _FakeTrustedPartsClient.tp_response_time = None
     BUDGET._events.clear()
     try:
         _ratelimit_mod.limiter.reset()
@@ -178,6 +213,76 @@ def test_part_with_mpn_returns_offers(authed_client, monkeypatch):
             "use_cached_data": False,
         }
     ]
+
+
+def test_per_part_response_includes_all_8_new_fields(authed_client):
+    _configure_sourcing(authed_client)
+    _FakeTrustedPartsClient.lifecycle_risk = "Low"
+    _FakeTrustedPartsClient.supply_chain_risk = "Elevated"
+    _FakeTrustedPartsClient.is_affected_by_tariff = True
+    _FakeTrustedPartsClient.manufacturer_id = 12345
+    _FakeTrustedPartsClient.specifications = [
+        SourcingSpecification(key="Package", value="LQFP-48")
+    ]
+    _FakeTrustedPartsClient.distributor_id = 9876
+    _FakeTrustedPartsClient.rohs_compliance = [
+        SourcingRohsCompliance(
+            region="EU",
+            is_compliant=True,
+            description="RoHS compliant",
+        )
+    ]
+    _FakeTrustedPartsClient.availability_text = "In Stock"
+    _FakeTrustedPartsClient.quantity_multiple = 5
+    _FakeTrustedPartsClient.price_breaks = [
+        SourcingPriceBreak(
+            quantity=1,
+            unit_price=1.23,
+            formatted_amount="$1.23",
+            text="1+ $1.23",
+        )
+    ]
+    _FakeTrustedPartsClient.tp_current_date = datetime(
+        2026,
+        5,
+        10,
+        12,
+        tzinfo=timezone.utc,
+    )
+    _FakeTrustedPartsClient.tp_response_time = "00:00:01.234"
+    part_id = create_part(authed_client, name="STM32", mpn="STM32F103C8T6")
+
+    r = authed_client.get(f"/api/parts/{part_id}/sourcing")
+
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert datetime.fromisoformat(data["tp_current_date"]) == datetime(
+        2026,
+        5,
+        10,
+        12,
+        tzinfo=timezone.utc,
+    )
+    assert data["tp_response_time"] == "00:00:01.234"
+    offer = data["offers"][0]
+    assert offer["lifecycle_risk"] == "Low"
+    assert offer["supply_chain_risk"] == "Elevated"
+    assert offer["is_affected_by_tariff"] is True
+    assert offer["manufacturer_id"] == 12345
+    assert offer["specifications"] == [{"key": "Package", "value": "LQFP-48"}]
+    distributor = offer["distributors"][0]
+    assert distributor["distributor_id"] == 9876
+    assert distributor["rohs_compliance"] == [
+        {
+            "region": "EU",
+            "is_compliant": True,
+            "description": "RoHS compliant",
+        }
+    ]
+    assert distributor["availability_text"] == "In Stock"
+    assert distributor["quantity_multiple"] == 5
+    assert distributor["price_breaks"][0]["formatted_amount"] == "$1.23"
+    assert distributor["price_breaks"][0]["text"] == "1+ $1.23"
 
 
 def test_part_without_mpn_returns_no_mpn_reason_and_skips_network(authed_client):
