@@ -31,6 +31,7 @@ function workspace(overrides: Record<string, unknown> = {}) {
     active_currencies: ["USD", "EUR", "JPY"],
     active_distributors: ["DigiKey", "Mouser", "Arrow"],
     has_sourcing_company_id: true,
+    has_sourcing_api_key: true,
     ...overrides,
   };
 }
@@ -552,7 +553,7 @@ describe("ProjectSourcingPage", () => {
   });
 
   it("Source BOM button is disabled when workspace lacks sourcing creds", async () => {
-    mockReads({ has_sourcing_company_id: false });
+    mockReads({ has_sourcing_api_key: false });
     const client = new QueryClient({
       defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
     });

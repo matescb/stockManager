@@ -6,7 +6,7 @@ Project-detail UI flows that span the project tabs, builds, and sourcing routes.
 
 ## Source BOM
 
-Project detail and build detail both render the shared `SourceBomButton`. It reads `GET /api/workspaces/current` through `api.get()` and the workspace-scoped `["ws", wsId, "ws", "current"]` query key; when `has_sourcing_company_id` is false, the button is disabled with the `Sourcing not configured` cue instead of linking to the sourcing route. Sources: `web/src/routes/projects/sourcing/SourceBomButton.tsx:18-48`, `web/src/routes/projects/detail/ProjectLayout.tsx:24-29`, `web/src/routes/builds/BuildDetail.tsx:179-186`.
+Project detail and build detail both render the shared `SourceBomButton`. It reads `GET /api/workspaces/current` through `api.get()` and the workspace-scoped `["ws", wsId, "ws", "current"]` query key; when `has_sourcing_api_key` is false, the button is disabled with the `Sourcing not configured` cue instead of linking to the sourcing route. Sources: `web/src/routes/projects/sourcing/SourceBomButton.tsx:18-48`, `web/src/routes/projects/detail/ProjectLayout.tsx:24-29`, `web/src/routes/builds/BuildDetail.tsx:179-186`.
 
 `/projects/:projectId/sourcing` is a lazy child of the project detail route. The page initializes build quantity plus country, currency, and distributor filters from workspace sourcing settings, then posts to `POST /api/projects/{project_id}/sourcing` through `api.post()` with a workspace-scoped TanStack key. Sources: `web/src/App.tsx:98-106`, `web/src/App.tsx:278-285`, `web/src/routes/projects/sourcing/ProjectSourcingPage.tsx:390-424`.
 

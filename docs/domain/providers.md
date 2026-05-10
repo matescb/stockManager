@@ -25,7 +25,7 @@ TrustedParts sourcing state also lives on the `Workspace` row (`backend/app/doma
 | Column | Notes |
 |---|---|
 | `sourcing_provider` | `none` until a sourcing provider integration is configured. DB default `none`. |
-| `sourcing_company_id_enc` | Encrypted sourcing account/company identifier. Exposed only as `has_sourcing_company_id` on `GET /api/workspaces/current`. |
+| `sourcing_company_id_enc` | Deprecated encrypted sourcing account/company identifier. Exposed only as `has_sourcing_company_id` on `GET /api/workspaces/current`; not sent to TrustedParts Inventory API v2 requests. |
 | `sourcing_api_key_enc` | Encrypted sourcing API key. Exposed only as `has_sourcing_api_key` on `GET /api/workspaces/current`. |
 | `sourcing_country_code` | Optional ISO 3166-1 alpha-2 country code for provider locale. |
 | `sourcing_currency_code` | Optional ISO 4217 currency code for sourcing responses. |

@@ -1041,14 +1041,16 @@ def test_sourcing_bom_isolated_by_workspace(db, monkeypatch):
     BUDGET._events.clear()
     calls: list[dict] = []
 
-    def fake_post(_url, json):
+    def fake_post(_url, json, headers):
         mpn = json["Queries"][0]["SearchToken"]
-        distributor = "SourceA" if json["CompanyId"] == "company-a" else "SourceB"
-        calls.append({"company_id": json["CompanyId"], "mpn": mpn})
+        company_id = headers["X-Api-Key"].removeprefix("key-")
+        distributor = "SourceA" if company_id == "company-a" else "SourceB"
+        calls.append({"company_id": company_id, "mpn": mpn})
+        assert "CompanyId" not in json
+        assert "ApiKey" not in json
         return (
             200,
             {
-                "RequestId": f"req-{len(calls)}",
                 "PartResults": [
                     {
                         "PartNumber": mpn,

@@ -1,11 +1,24 @@
 """TrustedParts API v2 client for live sourcing lookups."""
+
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 from typing import Any
 
 import httpx
 from pydantic import ValidationError as PydanticValidationError
 
+from app.domain.sourcing._generated.trustedparts_v2 import (
+    InventoryApiResponse,
+    InventoryDistributorResult,
+    InventoryPartResult,
+    Price,
+    ProductPackageType,
+    ProductPricing,
+    SearchApiLink,
+)
 from app.domain.sourcing.schemas import (
     SourcingDistributor,
     SourcingLinks,
@@ -18,6 +31,10 @@ from app.domain.sourcing.schemas import (
 TP_V2_URL = "https://api.trustedparts.com/v2/search"
 TP_TIMEOUT_SECONDS = 8.0
 MAX_TP_QUERIES = 50
+MIN_SEARCH_TOKEN_LENGTH = 2
+MAX_SEARCH_TOKEN_LENGTH = 100
+
+logger = logging.getLogger(__name__)
 
 
 class SourcingClientError(Exception):
@@ -44,16 +61,17 @@ class SourcingValidationError(SourcingClientError):
     """TrustedParts returned a response this client cannot parse."""
 
 
-def _post_tp(url: str, json: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+def _post_tp(
+    url: str,
+    json_body: dict[str, Any],
+    headers: dict[str, str],
+) -> tuple[int, dict[str, Any]]:
     """Network seam — monkeypatched in tests. Returns (status_code, body_dict)."""
     with httpx.Client(timeout=TP_TIMEOUT_SECONDS) as client:
         response = client.post(
             url,
-            json=json,
-            headers={
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-            },
+            json=json_body,
+            headers=headers,
         )
     try:
         body = response.json()
@@ -99,6 +117,7 @@ class TrustedPartsClient:
             raise ValueError("TrustedParts search requires at least one query")
         if len(queries) > MAX_TP_QUERIES:
             raise ValueError("TrustedParts search accepts at most 50 queries")
+        _validate_search_tokens(queries)
 
         payload = self._payload(
             queries,
@@ -108,8 +127,9 @@ class TrustedPartsClient:
             use_cached_data=use_cached_data,
             is_crawler=is_crawler,
         )
+        request_hash = _request_hash(payload)
         try:
-            status, body = _post_tp(TP_V2_URL, payload)
+            status, body = _post_tp(TP_V2_URL, payload, _headers(self.api_key))
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             raise SourcingTimeoutError("TrustedParts request timed out") from exc
 
@@ -122,7 +142,13 @@ class TrustedPartsClient:
         if not 200 <= status <= 299:
             raise SourcingClientError(f"TrustedParts returned HTTP {status}")
 
-        return _parse_search_response(body)
+        validated = _validate_inventory_response(body, request_hash)
+        _handle_tp_messages(validated, request_hash)
+        error_message = _str_or_none(validated.ErrorMessage)
+        if error_message:
+            raise SourcingUpstreamError(f"TP error: {error_message}")
+
+        return _parse_search_response(validated)
 
     def _payload(
         self,
@@ -135,8 +161,6 @@ class TrustedPartsClient:
         is_crawler: bool,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
-            "CompanyId": self.company_id,
-            "ApiKey": self.api_key,
             "CountryCode": self.country_code,
             "CurrencyCode": self.currency_code,
             "UserAgent": self.user_agent,
@@ -158,41 +182,97 @@ def _query_payload(query: SourcingQuery) -> dict[str, Any]:
     return item
 
 
-def _parse_search_response(body: dict[str, Any]) -> SourcingSearchRaw:
-    part_results = body.get("PartResults")
-    if not isinstance(part_results, list):
+def _headers(api_key: str) -> dict[str, str]:
+    return {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "X-Api-Key": api_key,
+    }
+
+
+def _validate_search_tokens(queries: list[SourcingQuery]) -> None:
+    for query in queries:
+        token_length = len(query.search_token)
+        if token_length < MIN_SEARCH_TOKEN_LENGTH or token_length > MAX_SEARCH_TOKEN_LENGTH:
+            raise ValueError("TrustedParts SearchToken length must be between 2 and 100")
+
+
+def _request_hash(payload: dict[str, Any]) -> str:
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _validate_inventory_response(
+    body: dict[str, Any],
+    request_hash: str,
+) -> InventoryApiResponse:
+    try:
+        return InventoryApiResponse.model_validate(body)
+    except PydanticValidationError as exc:
+        logger.warning(
+            "TrustedParts response validation failed request_hash=%s errors=%s",
+            request_hash,
+            _validation_error_summary(exc),
+            extra={
+                "request_hash": request_hash,
+                "validation_errors": _validation_error_summary(exc),
+            },
+        )
+        raise SourcingValidationError(
+            "TrustedParts response did not match generated schema"
+        ) from exc
+
+
+def _validation_error_summary(exc: PydanticValidationError) -> list[dict[str, str]]:
+    return [
+        {
+            "type": str(error["type"]),
+            "path": ".".join(str(part) for part in error["loc"]),
+        }
+        for error in exc.errors(
+            include_url=False,
+            include_context=False,
+            include_input=False,
+        )
+    ]
+
+
+def _handle_tp_messages(response: InventoryApiResponse, request_hash: str) -> None:
+    for message in response.Messages or []:
+        logger.info(
+            "TrustedParts tp_message: %s",
+            message,
+            extra={"request_hash": request_hash, "tp_message": message},
+        )
+
+
+def _parse_search_response(response: InventoryApiResponse) -> SourcingSearchRaw:
+    part_results = response.PartResults
+    if part_results is None:
         raise SourcingValidationError("TrustedParts response PartResults is not a list")
 
     offers: list[SourcingOffer] = []
     for part in part_results:
-        if not isinstance(part, dict):
-            raise SourcingValidationError("TrustedParts response contains an invalid part")
         offers.append(_offer_from_part(part))
 
-    request_id = body.get("RequestId") or body.get("RequestID") or body.get("request_id")
-    if request_id is not None and not isinstance(request_id, str):
-        request_id = str(request_id)
-
     try:
-        return SourcingSearchRaw.model_validate(
-            {"offers": offers, "request_id": request_id}
-        )
+        return SourcingSearchRaw.model_validate({"offers": offers, "request_id": None})
     except PydanticValidationError as exc:
         raise SourcingValidationError("TrustedParts response did not match sourcing DTOs") from exc
 
 
-def _offer_from_part(part: dict[str, Any]) -> SourcingOffer:
+def _offer_from_part(part: InventoryPartResult) -> SourcingOffer:
     distributors: list[SourcingDistributor] = []
     description: str | None = None
     datasheet_url: str | None = None
     manufacturer_url: str | None = None
 
-    for distributor in _list_of_dicts(part.get("Distributors"), "Distributors"):
-        name = _str_or_none(distributor.get("Name")) or ""
-        for result in _list_of_dicts(distributor.get("DistributorResults"), "DistributorResults"):
+    for distributor in part.Distributors or []:
+        name = _str_or_none(distributor.Name) or ""
+        for result in distributor.DistributorResults or []:
             if description is None:
-                description = _str_or_none(result.get("Description"))
-            links = _links_by_type(result.get("Links"))
+                description = _str_or_none(result.Description)
+            links = _links_by_type(result.Links)
             if datasheet_url is None:
                 datasheet_url = _first_matching_link(links, "datasheet")
             if manufacturer_url is None:
@@ -202,12 +282,12 @@ def _offer_from_part(part: dict[str, Any]) -> SourcingOffer:
     try:
         return SourcingOffer.model_validate(
             {
-                "mpn": _str_or_none(part.get("PartNumber")) or "",
-                "manufacturer": _str_or_none(part.get("Manufacturer")),
+                "mpn": _str_or_none(part.PartNumber) or "",
+                "manufacturer": _str_or_none(part.Manufacturer),
                 "description": description,
                 "distributors": distributors,
                 "links": SourcingLinks(
-                    primary=_str_or_none(part.get("ProductUrl")),
+                    primary=_str_or_none(part.ProductUrl),
                     manufacturer=manufacturer_url,
                     datasheet=datasheet_url,
                 ),
@@ -219,23 +299,13 @@ def _offer_from_part(part: dict[str, Any]) -> SourcingOffer:
 
 def _distributor_from_result(
     distributor_name: str,
-    result: dict[str, Any],
+    result: InventoryDistributorResult,
     links: dict[str, str],
 ) -> SourcingDistributor:
-    pricing = result.get("Pricing")
-    if pricing is None:
-        pricing = {}
-    if not isinstance(pricing, dict):
-        raise SourcingValidationError("TrustedParts Pricing is not an object")
-
-    stock = result.get("Stock")
-    if stock is None:
-        stock = {}
-    if not isinstance(stock, dict):
-        raise SourcingValidationError("TrustedParts Stock is not an object")
-
-    packages = _list_of_dicts(result.get("Packaging"), "Packaging")
-    price_breaks = _price_breaks(pricing.get("Prices"))
+    pricing = result.Pricing
+    stock = result.Stock
+    packages = result.Packaging or []
+    price_breaks = _price_breaks(pricing.Prices if pricing is not None else None)
     product_url = (
         _first_matching_link(links, "distributor")
         or _first_matching_link(links, "product")
@@ -246,49 +316,42 @@ def _distributor_from_result(
         return SourcingDistributor.model_validate(
             {
                 "name": distributor_name,
-                "sku": _str_or_none(result.get("DistributorPartNumber")),
+                "sku": _str_or_none(result.DistributorPartNumber),
                 "packaging": _first_package_type(packages),
                 "moq": _moq(packages, pricing),
                 "lead_time_days": None,
-                "stock": _int_or_none(stock.get("QuantityOnHand")),
+                "stock": _int_or_none(stock.QuantityOnHand if stock is not None else None),
                 "unit_price": price_breaks[0].unit_price if price_breaks else None,
-                "currency": _str_or_none(pricing.get("CurrencyCode")),
+                "currency": _str_or_none(pricing.CurrencyCode if pricing is not None else None),
                 "price_breaks": price_breaks,
                 "product_url": product_url,
             }
         )
     except PydanticValidationError as exc:
-        raise SourcingValidationError(
-            "TrustedParts distributor result did not match DTOs"
-        ) from exc
+        raise SourcingValidationError("TrustedParts distributor result did not match DTOs") from exc
 
 
-def _price_breaks(raw_prices: Any) -> list[SourcingPriceBreak]:
-    price_rows = _list_of_dicts(raw_prices, "Prices")
+def _price_breaks(price_rows: list[Price] | None) -> list[SourcingPriceBreak]:
     breaks: list[SourcingPriceBreak] = []
-    for row in price_rows:
-        quantity = _int_or_none(row.get("Quantity"))
-        amount = _float_or_none(row.get("Amount"))
+    for row in price_rows or []:
+        quantity = _int_or_none(row.Quantity)
+        amount = _float_or_none(row.Amount)
         if quantity is None or amount is None:
             continue
         try:
             breaks.append(
-                SourcingPriceBreak.model_validate(
-                    {"quantity": quantity, "unit_price": amount}
-                )
+                SourcingPriceBreak.model_validate({"quantity": quantity, "unit_price": amount})
             )
         except PydanticValidationError as exc:
-            raise SourcingValidationError(
-                "TrustedParts price break did not match DTOs"
-            ) from exc
+            raise SourcingValidationError("TrustedParts price break did not match DTOs") from exc
     return breaks
 
 
-def _links_by_type(raw_links: Any) -> dict[str, str]:
+def _links_by_type(raw_links: list[SearchApiLink] | None) -> dict[str, str]:
     links: dict[str, str] = {}
-    for link in _list_of_dicts(raw_links, "Links"):
-        link_type = _str_or_none(link.get("Type"))
-        url = _str_or_none(link.get("Url"))
+    for link in raw_links or []:
+        link_type = _str_or_none(link.Type)
+        url = _str_or_none(link.Url)
         if link_type and url:
             links[link_type.lower()] = url
     return links
@@ -308,36 +371,26 @@ def _first_non_matching_link(links: dict[str, str], needles: set[str]) -> str | 
     return None
 
 
-def _list_of_dicts(raw_items: Any, field_name: str) -> list[dict[str, Any]]:
-    if raw_items is None:
-        return []
-    if not isinstance(raw_items, list):
-        raise SourcingValidationError(f"TrustedParts {field_name} is not a list")
-    items: list[dict[str, Any]] = []
-    for item in raw_items:
-        if not isinstance(item, dict):
-            raise SourcingValidationError(f"TrustedParts {field_name} contains a non-object")
-        items.append(item)
-    return items
-
-
-def _first_package_type(packages: list[dict[str, Any]]) -> str | None:
+def _first_package_type(packages: list[ProductPackageType]) -> str | None:
     for package in packages:
-        value = _str_or_none(package.get("PackageType"))
+        value = _str_or_none(package.PackageType)
         if value:
             return value
     return None
 
 
-def _moq(packages: list[dict[str, Any]], pricing: dict[str, Any]) -> int | None:
+def _moq(
+    packages: list[ProductPackageType],
+    pricing: ProductPricing | None,
+) -> int | None:
     values = [
         value
         for package in packages
-        if (value := _int_or_none(package.get("MinimumOrderQuantity"))) is not None
+        if (value := _int_or_none(package.MinimumOrderQuantity)) is not None
     ]
     if values:
         return min(values)
-    return _int_or_none(pricing.get("MinimumQuantity"))
+    return _int_or_none(pricing.MinimumQuantity if pricing is not None else None)
 
 
 def _str_or_none(value: Any) -> str | None:

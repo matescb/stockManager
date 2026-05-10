@@ -4,6 +4,29 @@ Audience: engineer
 
 TrustedParts sourcing stores short-lived provider responses and keeps cache reads workspace-scoped.
 
+## Schema Validation
+
+Live TrustedParts responses are validated against the generated Inventory API v2
+Pydantic models before the app maps them into public sourcing DTOs. The generated
+`InventoryApiResponse` owns the wire-format contract; `SourcingOffer`,
+`SourcingDistributor`, and `SourcingSearchRaw` remain the stable app-facing
+contract. Malformed HTTP 200 responses raise `SourcingValidationError`, which API
+routes surface as 502 envelopes instead of silently returning partial offers.
+
+The generated models keep the TrustedParts swagger's `additionalProperties: false`
+as `extra="forbid"`. This is strict everywhere: if TrustedParts adds an
+unannounced field, production calls can return 502 until operators refresh
+`docs/schemas/trustedparts-v2.json`, run `make regen-tp-models`, and deploy the
+regenerated models. Validation logs include only the request hash and error
+type/path, never the response body.
+
+TrustedParts authentication is sent via the `X-Api-Key` request header. The
+request body no longer includes `ApiKey` or deprecated `CompanyId`; the encrypted
+workspace CompanyId column remains for compatibility but is not required for new
+requests. HTTP 200 responses with `ErrorMessage` become upstream errors, while
+`Messages[]` entries are logged at INFO with a `tp_message` tag and do not fail
+the search.
+
 ## Cache Table
 
 `sourcing_cache` stores one response per `(workspace_id, query_hash)`.

@@ -170,8 +170,8 @@ Integration entry points:
 
 | Symptom | Likely cause | Action |
 |---|---|---|
-| `409 sourcing not configured` | Workspace has no TrustedParts company ID/API key | Workspace admin configures sourcing credentials in workspace settings. |
-| `502 TrustedParts rejected sourcing credentials` | Company ID or API key is invalid/revoked | Workspace admin re-issues credentials in TrustedParts and saves them again. |
+| `409 sourcing not configured` | Workspace has no TrustedParts API key | Workspace admin configures sourcing credentials in workspace settings. |
+| `502 TrustedParts rejected sourcing credentials` | TrustedParts API key is invalid/revoked | Workspace admin re-issues credentials in TrustedParts and saves them again. |
 | `502 TrustedParts rate limit reached` | TrustedParts throttled the key | Ask the workspace to pause high-volume sourcing; retry after the provider window clears. |
 | `502 TrustedParts request timed out` or upstream failure | TrustedParts or network outage | Use manual entry/fallback below; retry when provider status recovers. |
 | `503 sourcing budget exhausted` | Local hard parts-count budget blocked live calls | Wait for the rolling window to expire; cached hits still avoid additional budget consumption. |
@@ -186,7 +186,7 @@ Integration entry points:
 ### Credential issues
 
 1. Confirm only one workspace is affected.
-2. Ask a workspace admin to update TrustedParts company ID and API key in workspace settings.
+2. Ask a workspace admin to update the TrustedParts API key in workspace settings.
 3. Use `POST /api/workspaces/current/sourcing/test` to confirm the credentials probe returns `{ "ok": true }`.
 4. If the test route succeeds but search still fails, inspect `backend/app/domain/sourcing/service.py:39` and `backend/app/api/routes/sourcing.py:87` for regression in defaults, cache, or error mapping.
 

@@ -136,6 +136,7 @@ function mockApi(
         sourcing_currency_code: "USD",
         sourcing_preferred_distributors: [],
         has_sourcing_company_id: true,
+        has_sourcing_api_key: true,
       } as never;
     }
     throw new Error(`unexpected GET ${path}`);
