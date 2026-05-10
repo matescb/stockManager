@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { FolderKanban, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -10,6 +10,8 @@ import { SourcingSourceLabel } from "@/components/SourcingSourceLabel";
 import { ApiError, api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
 import type { Project } from "@/types";
+import PurchasePlanOptionsModal from "./PurchasePlanOptionsModal";
+import type { PurchasePlan, PurchasePlanRequest } from "./purchasePlanTypes";
 import type { SourcingWorkspaceSettings } from "./SourceBomButton";
 
 type SourcingBomOffer = {
@@ -380,12 +382,15 @@ function BomRows({ rows }: { rows: SourcingBomLine[] }) {
 
 export default function ProjectSourcingPage() {
   const { projectId } = useParams<{ projectId: string }>();
+  const navigate = useNavigate();
   const [buildQuantity, setBuildQuantity] = useState(1);
   const [country, setCountry] = useState("");
   const [currency, setCurrency] = useState("");
   const [distributors, setDistributors] = useState("");
   const [defaultsApplied, setDefaultsApplied] = useState(false);
   const [budgetDisabledUntil, setBudgetDisabledUntil] = useState<number | null>(null);
+  const [planModalOpen, setPlanModalOpen] = useState(false);
+  const [planPending, setPlanPending] = useState(false);
 
   const { data: workspace } = useQuery({
     queryKey: useWsKey("ws", "current"),
@@ -448,6 +453,23 @@ export default function ProjectSourcingPage() {
   const sourceDisabled = query.isFetching || buildQuantity < 1 || (budgetDisabledUntil != null && Date.now() < budgetDisabledUntil);
   const hasRows = (query.data?.rows.length ?? 0) > 0;
   const primaryUrl = query.data?.links.primary;
+
+  async function generatePurchasePlan(planRequest: PurchasePlanRequest) {
+    if (!projectId) return;
+    setPlanPending(true);
+    try {
+      const plan = await api.post<PurchasePlan, PurchasePlanRequest>(
+        `/projects/${projectId}/purchase-plan`,
+        planRequest,
+      );
+      setPlanModalOpen(false);
+      navigate(`/projects/${projectId}/purchase-plans/${plan.id}`, {
+        state: { plan, project },
+      });
+    } finally {
+      setPlanPending(false);
+    }
+  }
 
   if (!projectId) return null;
 
@@ -514,6 +536,14 @@ export default function ProjectSourcingPage() {
         <div className="mt-3 flex justify-end">
           <button
             type="button"
+            className="btn mr-2"
+            disabled={sourceDisabled || !hasRows}
+            onClick={() => setPlanModalOpen(true)}
+          >
+            Generate purchase plan
+          </button>
+          <button
+            type="button"
             className="btn-primary"
             disabled={sourceDisabled}
             onClick={() => query.refetch()}
@@ -550,6 +580,14 @@ export default function ProjectSourcingPage() {
           </div>
         </>
       )}
+      <PurchasePlanOptionsModal
+        open={planModalOpen}
+        buildQuantity={buildQuantity}
+        baseRequest={requestBody}
+        pending={planPending}
+        onClose={() => setPlanModalOpen(false)}
+        onSubmit={generatePurchasePlan}
+      />
     </div>
   );
 }
