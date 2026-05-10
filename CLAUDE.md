@@ -214,6 +214,10 @@ them, that's the bug.
 - **Sourcing `est_purchase_cost` still prices the requested build when
   after-purchase capacity floors to zero.** Do not let integer capacity
   floors suppress a priced offer at low build quantities.
+- **TrustedParts v2 has no structured lead time.** The pinned schema exposes
+  unstructured `Stock.Availability` only; `lead_time_days=None` from the TP
+  adapter is intentional. Do not re-file this as a bug or add availability-text
+  regex heuristics without a new product decision.
 - **Sentry auth token must not enter the Docker build context.** Source-map
   upload is handled by the CI `web-build` job (`npx @sentry/cli sourcemaps
   upload`) after `npm run build`, gated on push to `main`. `SENTRY_AUTH_TOKEN`

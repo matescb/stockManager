@@ -19,6 +19,12 @@ loads `inventory-api-v2/swagger.json` (`Makefile:3`). The generated models live
 under the sourcing domain because ADR-0020 keeps procurement sourcing separate
 from catalog enrichment.
 
+The pinned v2 schema confirms a TrustedParts lead-time limitation: it exposes only
+`/v2/search`, and `StockInfo` contains unstructured `Availability` text plus
+`QuantityOnHand`; it does not expose a structured `LeadTime` field or a separate
+lead-time endpoint. The sourcing adapter therefore keeps `lead_time_days=None` for
+TrustedParts offers unless a future schema refresh introduces a real field.
+
 ## Decision
 
 Bundle the official TrustedParts Inventory API v2 OpenAPI document at

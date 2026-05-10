@@ -48,6 +48,28 @@ Sources: `backend/app/domain/sourcing/client.py:285-418`,
 `backend/app/domain/sourcing/service.py:951-1007`,
 `backend/app/domain/sourcing/schemas.py:19-110`
 
+## Lead Time
+
+TrustedParts Inventory API v2 does not expose lead time as a structured field. The
+bundled schema contains only `/v2/search`; distributor stock includes
+`Stock.Availability`, which the app maps to `availability_text`, but there is no
+`LeadTime` or equivalent numeric field to populate `lead_time_days`.
+
+`availability_text` is operator-readable free text such as `In Stock` or vendor-specific
+shipping language. It is not machine-comparable, so the adapter intentionally leaves
+`SourcingDistributor.lead_time_days` as `None` instead of deriving values with regex
+heuristics. If structured lead time becomes important, file a TrustedParts feature
+request or integrate a provider that exposes it explicitly.
+
+When every candidate has unknown lead time, the optimizer's `fastest_availability`
+strategy treats all candidates as tied on lead time and falls through to its existing
+deterministic secondary keys: unit price, then the alphabetical candidate key. That
+fallback is documented behaviour for TP v2 data, not a sourcing bug.
+
+Sources: `docs/schemas/trustedparts-v2.json`,
+`backend/app/domain/sourcing/client.py:373`,
+`backend/app/domain/sourcing/optimizer.py:291`
+
 ## BOM Risk Flags
 
 Project sourcing keeps the five original BOM risk flags in order, then appends

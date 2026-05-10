@@ -258,6 +258,20 @@ def test_availability_text_parsed_when_present(monkeypatch):
     assert result.offers[0].distributors[0].availability_text == "In Stock"
 
 
+def test_lead_time_days_remains_none_when_tp_omits_field(monkeypatch):
+    response = deepcopy(_trustedparts_response())
+    stock = response["PartResults"][0]["Distributors"][0]["DistributorResults"][0][
+        "Stock"
+    ]
+    stock["Availability"] = "Ships in 12 weeks"
+
+    result = _search_response(monkeypatch, response)
+    distributor = result.offers[0].distributors[0]
+
+    assert distributor.availability_text == "Ships in 12 weeks"
+    assert distributor.lead_time_days is None
+
+
 def test_quantity_multiple_rounded_to_int(monkeypatch):
     result = _search_response(monkeypatch, _trustedparts_response())
 
