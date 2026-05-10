@@ -343,6 +343,13 @@ function BomRows({ rows }: { rows: SourcingBomLine[] }) {
       align: "right",
     },
     {
+      key: "lead_time",
+      header: "Lead time",
+      accessor: row => row.lead_time_days,
+      render: row => formatLeadTime(row.lead_time_days),
+      align: "right",
+    },
+    {
       key: "risk",
       header: "Risk",
       accessor: row => row.risk_flags.join(" "),

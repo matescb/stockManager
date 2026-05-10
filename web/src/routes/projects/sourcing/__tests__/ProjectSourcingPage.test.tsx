@@ -246,6 +246,41 @@ describe("ProjectSourcingPage", () => {
     expect(screen.getAllByLabelText("Source: TrustedParts").length).toBeGreaterThan(0);
   });
 
+  it("renders per-row lead time values in the BOM rows table", async () => {
+    mockReads();
+    const base = sourcingResponse();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({
+      rows: [
+        ...base.rows,
+        {
+          ...base.rows[1],
+          project_entry_id: "entry-3",
+          part_id: "part-3",
+          part_name: "Oscillator",
+          mpn: "XO-1",
+          best_offer: {
+            ...base.rows[1].best_offer,
+            lead_time_days: null,
+          },
+          lead_time_days: null,
+          risk_flags: [],
+        },
+      ],
+    }));
+
+    renderPage();
+
+    await screen.findByText("BOM rows");
+    const bomRowsTable = screen.getAllByRole("table")[1];
+    const leadTimeCellText = (rowName: RegExp) =>
+      within(within(bomRowsTable).getByRole("row", { name: rowName })).getAllByRole("cell")[9].textContent;
+
+    expect(within(bomRowsTable).getByRole("columnheader", { name: "Lead time" })).toBeDefined();
+    expect(leadTimeCellText(/STM32/)).toBe("3 days");
+    expect(leadTimeCellText(/Regulator/)).toBe("7 days");
+    expect(leadTimeCellText(/Oscillator/)).toBe("—");
+  });
+
   it("409 path renders not-configured card with settings link", async () => {
     mockReads();
     vi.spyOn(api, "post").mockRejectedValue(apiError(409, "sourcing not configured"));
