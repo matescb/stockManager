@@ -63,6 +63,8 @@ def _offer(
     supply_chain_risk: str | None = None,
     is_affected_by_tariff: bool | None = None,
     rohs_compliance: list[SourcingRohsCompliance] | None = None,
+    availability_text: str | None = None,
+    quantity_multiple: int | None = None,
 ) -> SourcingOffer:
     return SourcingOffer(
         mpn=mpn,
@@ -85,6 +87,8 @@ def _offer(
                 price_breaks=[SourcingPriceBreak(quantity=1, unit_price=unit_price)],
                 product_url=f"https://www.trustedparts.com/{mpn}/{distributor}",
                 rohs_compliance=rohs_compliance or [],
+                availability_text=availability_text,
+                quantity_multiple=quantity_multiple,
             )
         ],
         links=SourcingLinks(primary=f"https://www.trustedparts.com/search/{mpn}"),
@@ -249,6 +253,29 @@ def test_bom_response_includes_is_affected_by_tariff_per_offer(authed_client):
     row = r.json()["data"]["rows"][0]
     assert row["offers"][0]["is_affected_by_tariff"] is True
     assert row["best_offer"]["is_affected_by_tariff"] is True
+
+
+def test_bom_response_includes_distributor_availability_and_quantity_multiple(authed_client):
+    _configure_sourcing(authed_client)
+    project_id = _single_line_project(authed_client, mpn="AVAIL-MPN")
+    _FakeTrustedPartsClient.offers_by_mpn = {
+        "AVAIL-MPN": [
+            _offer(
+                "AVAIL-MPN",
+                availability_text="Ships in 12 weeks",
+                quantity_multiple=5,
+            )
+        ]
+    }
+
+    r = _post_sourcing(authed_client, project_id)
+
+    assert r.status_code == 200, r.text
+    row = r.json()["data"]["rows"][0]
+    assert row["offers"][0]["availability_text"] == "Ships in 12 weeks"
+    assert row["offers"][0]["quantity_multiple"] == 5
+    assert row["best_offer"]["availability_text"] == "Ships in 12 weeks"
+    assert row["best_offer"]["quantity_multiple"] == 5
 
 
 def test_bom_response_offers_in_workspace_currency_when_currency_passed(

@@ -12,11 +12,18 @@ import { useWsKey } from "@/lib/queryKeys";
 import { lifecycleRiskTone } from "@/lib/sourcing";
 import AlertFormModal from "@/routes/sourcing/alerts/AlertFormModal";
 import type { Project } from "@/types";
+import { BomDistributorsModal } from "./BomDistributorsModal";
 import PurchasePlanOptionsModal from "./PurchasePlanOptionsModal";
 import type { PurchasePlan, PurchasePlanRequest } from "./purchasePlanTypes";
 import type { SourcingWorkspaceSettings } from "./SourceBomButton";
 
-type SourcingBomOffer = {
+export type SourcingBomPriceBreak = {
+  quantity: number;
+  unit_price: string | number;
+  currency?: string | null;
+};
+
+export type SourcingBomOffer = {
   mpn: string;
   distributor: string;
   sku?: string | null;
@@ -30,14 +37,18 @@ type SourcingBomOffer = {
   packaging?: string | null;
   moq?: number | null;
   lead_time_days?: number | null;
+  price_breaks?: SourcingBomPriceBreak[] | null;
+  price_breaks_converted?: SourcingBomPriceBreak[] | null;
   url?: string | null;
+  availability_text?: string | null;
+  quantity_multiple?: number | null;
   lifecycle_risk?: string | null;
   supply_chain_risk?: string | null;
   is_affected_by_tariff?: boolean | null;
   rohs_compliance?: SourcingRohsCompliance[];
 };
 
-type SourcingRohsCompliance = {
+export type SourcingRohsCompliance = {
   region: string;
   is_compliant: boolean;
   description?: string | null;
@@ -54,7 +65,7 @@ type RiskFlag =
   | "tariff_affected"
   | "rohs_non_compliant";
 
-type SourcingBomLine = {
+export type SourcingBomLine = {
   project_entry_id: string;
   part_id: string;
   part_name: string;
@@ -624,7 +635,8 @@ function CoverageMatrix({ data, currency }: { data: SourcingBomResponse; currenc
   );
 }
 
-function BomRows({ rows }: { rows: SourcingBomLine[] }) {
+function BomRows({ rows, workspaceCurrency }: { rows: SourcingBomLine[]; workspaceCurrency: string | null }) {
+  const [selectedLine, setSelectedLine] = useState<SourcingBomLine | null>(null);
   const columns: Column<SourcingBomLine>[] = [
     { key: "part", header: "Part", accessor: row => row.part_name },
     { key: "mpn", header: "MPN", accessor: row => row.mpn ?? "", render: row => row.mpn ?? "—" },
@@ -646,7 +658,13 @@ function BomRows({ rows }: { rows: SourcingBomLine[] }) {
       header: "Distributor",
       accessor: row => row.best_offer?.distributor ?? "",
       render: row => row.best_offer?.url ? (
-        <a className="text-accent hover:underline" href={row.best_offer.url} target="_blank" rel="noopener noreferrer">
+        <a
+          className="text-accent hover:underline"
+          href={row.best_offer.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={event => event.stopPropagation()}
+        >
           {row.best_offer.distributor}
         </a>
       ) : row.best_offer?.distributor ?? "—",
@@ -726,8 +744,16 @@ function BomRows({ rows }: { rows: SourcingBomLine[] }) {
         rows={rows}
         columns={columns}
         rowKey={row => row.project_entry_id}
+        onRowClick={setSelectedLine}
+        rowCanClick={row => row.offers.length > 0}
         tableId="project-sourcing-bom"
         exportFilename="sourced-bom"
+      />
+      <BomDistributorsModal
+        open={selectedLine !== null}
+        onClose={() => setSelectedLine(null)}
+        line={selectedLine}
+        workspaceCurrency={workspaceCurrency}
       />
     </section>
   );
@@ -1034,7 +1060,7 @@ export default function ProjectSourcingPage() {
         <>
           <CapacityBanner data={query.data} currency={requestBody.currency} />
           <CoverageMatrix data={query.data} currency={requestBody.currency} />
-          <BomRows rows={query.data.rows} />
+          <BomRows rows={query.data.rows} workspaceCurrency={requestBody.currency ?? workspace?.sourcing_currency_code ?? null} />
           <div className="text-xs text-muted">
             {formatCount(query.data.rows.length)} line{query.data.rows.length === 1 ? "" : "s"} fetched from {query.data.powered_by}.
           </div>

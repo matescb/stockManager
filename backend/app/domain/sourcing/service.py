@@ -1332,6 +1332,8 @@ def _joined_offers(
                         lead_time_days=distributor.lead_time_days,
                         price_breaks=_price_breaks_for_distributor(distributor),
                         url=distributor.product_url or offer.links.primary,
+                        availability_text=distributor.availability_text,
+                        quantity_multiple=distributor.quantity_multiple,
                         lifecycle_risk=offer.lifecycle_risk,
                         supply_chain_risk=offer.supply_chain_risk,
                         is_affected_by_tariff=offer.is_affected_by_tariff,
