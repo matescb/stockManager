@@ -118,8 +118,8 @@ sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
   "SELECT id, alert_type, enabled, archived_at, last_checked_at, last_notified_at, last_evaluation_state FROM sourcing_alerts WHERE workspace_id = '<WORKSPACE_ID>' ORDER BY created_at DESC LIMIT 20;"
 ```
 
-- `last_checked_at` is null or stale: the alert evaluator job did not run; check the
-  backend-cron-alerts container once TP-503 lands.
+- `last_checked_at` is null or stale: the alert evaluator job did not run; check
+  `backend-cron-alerts`, which runs `sourcing-alerts-evaluate` every 15 minutes.
 - `last_evaluation_state` is null: first evaluation records state and does not notify.
 - `last_notified_at` is recent: cooldown may be suppressing another email; compare with
   `cooldown_seconds`.

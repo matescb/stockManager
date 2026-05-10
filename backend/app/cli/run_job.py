@@ -43,6 +43,12 @@ def _run_sourcing_cache_sweep(db: Session) -> int:
     return sweep_expired_all_workspaces(db)
 
 
+def _run_sourcing_alerts_evaluate(db: Session) -> int:
+    from app.domain.sourcing.alerts_evaluator import evaluate_all_alerts
+
+    return evaluate_all_alerts(db)
+
+
 JOBS: dict[str, JobSpec] = {
     "sourcing-cache-sweep": JobSpec(
         name="sourcing-cache-sweep",
@@ -50,7 +56,19 @@ JOBS: dict[str, JobSpec] = {
         cadence="hourly",
         idempotency="Deletes only rows whose expires_at is already in the past.",
         run=_run_sourcing_cache_sweep,
-    )
+    ),
+    "sourcing-alerts-evaluate": JobSpec(
+        name="sourcing-alerts-evaluate",
+        owner="backend/sourcing",
+        cadence="every 15 minutes",
+        idempotency=(
+            "Reads enabled, non-archived sourcing_alerts; for each, compares "
+            "current state to threshold; sends one notification per transition "
+            "with cooldown enforced via last_notified_at. Re-running within "
+            "cooldown is a no-op."
+        ),
+        run=_run_sourcing_alerts_evaluate,
+    ),
 }
 
 
