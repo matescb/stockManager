@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 from app.core.time import utcnow
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part
 from app.domain.parts.services.assets import fetch_provider_asset
+
+logger = logging.getLogger(__name__)
+
+_CUSTOM_FIELD_VALUE_MAX = 1024
+_TRUNCATION_SENTINEL = "\n[truncated by provider import]"
 
 
 def create_from_provider_lookup(
@@ -52,48 +58,61 @@ def create_from_provider_lookup(
     db.add(p)
     db.flush()
 
+    truncated_fields: list[str] = []
     for s in (r.get("specs") or []):
         key = (s.get("key") or "").strip()
         value = (s.get("value") or "").strip()
         if not key or not value:
             continue
-        _add_provider_field(
+        if _add_provider_field(
             db,
             workspace_id=workspace_id,
             user_id=user_id,
             part_id=p.id,
             key=key,
             value=value,
-        )
+        ):
+            truncated_fields.append(key)
 
     if r.get("image_url"):
         local = fetch_provider_asset(r["image_url"], str(workspace_id), "image")
-        _add_provider_field(
+        if _add_provider_field(
             db,
             workspace_id=workspace_id,
             user_id=user_id,
             part_id=p.id,
             key="image_url",
             value=local or r["image_url"],
-        )
+        ):
+            truncated_fields.append("image_url")
     if r.get("datasheet_url"):
         local = fetch_provider_asset(r["datasheet_url"], str(workspace_id), "datasheet")
-        _add_provider_field(
+        if _add_provider_field(
             db,
             workspace_id=workspace_id,
             user_id=user_id,
             part_id=p.id,
             key="datasheet_url",
             value=local or r["datasheet_url"],
-        )
+        ):
+            truncated_fields.append("datasheet_url")
     if r.get("source_url"):
-        _add_provider_field(
+        if _add_provider_field(
             db,
             workspace_id=workspace_id,
             user_id=user_id,
             part_id=p.id,
             key="source_url",
-            value=str(r["source_url"])[:1024],
+            value=str(r["source_url"]),
+        ):
+            truncated_fields.append("source_url")
+
+    if truncated_fields:
+        logger.warning(
+            "Truncated provider custom field values for part %s from %s: %s",
+            p.id,
+            provider_name,
+            ", ".join(truncated_fields),
         )
 
     return p
@@ -107,16 +126,25 @@ def _add_provider_field(
     part_id: UUID,
     key: str,
     value: str,
-) -> None:
+) -> bool:
+    stored_value = _provider_field_value(value)
     db.add(
         CustomField(
             workspace_id=workspace_id,
             object_type="part",
             object_id=part_id,
             key=key,
-            value=value[:1024],
+            value=stored_value,
             source="provider",
             created_by=user_id,
             updated_by=user_id,
         )
     )
+    return stored_value != value
+
+
+def _provider_field_value(value: str) -> str:
+    if len(value) <= _CUSTOM_FIELD_VALUE_MAX:
+        return value
+    keep = _CUSTOM_FIELD_VALUE_MAX - len(_TRUNCATION_SENTINEL)
+    return value[:keep] + _TRUNCATION_SENTINEL

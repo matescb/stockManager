@@ -11,7 +11,11 @@ from app.main import app
 def _signup(c: TestClient) -> str:
     r = c.post(
         "/api/auth/signup",
-        json={"email": f"u-{uuid.uuid4().hex[:8]}@x.com", "name": "u", "password": "TestPass-2026-Stronk"},
+        json={
+            "email": f"u-{uuid.uuid4().hex[:8]}@x.com",
+            "name": "u",
+            "password": "TestPass-2026-Stronk",
+        },
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]["workspace_id"]
@@ -101,6 +105,74 @@ def test_bulk_import_creates_part_with_provider_specs(authed, monkeypatch):
     # image_url and datasheet_url stored too (consumed by PartInfo's media card).
     assert by_key["image_url"]["value"] == "https://example.com/img.jpg"
     assert by_key["datasheet_url"]["value"] == "https://example.com/ds.pdf"
+
+
+def test_bulk_import_marks_truncated_provider_specs(authed, monkeypatch):
+    long_value = "x" * 1200
+    mouser_response = _stub_mouser_response()
+    mouser_response["SearchResults"]["Parts"][0]["ProductAttributes"] = [
+        {"AttributeName": "Long Spec", "AttributeValue": long_value}
+    ]
+    monkeypatch.setattr(
+        "app.domain.parts.providers.mouser._post_mouser",
+        lambda url, payload: mouser_response,
+    )
+
+    r = authed.post(
+        "/api/parts/bulk-import-from-scan",
+        json={"rows": [{"mpn": "RC0402JR-070R"}]},
+    )
+    assert r.status_code == 200, r.text
+    part_id = r.json()["data"]["rows"][0]["part_id"]
+
+    cfs = authed.get(f"/api/custom-fields/by-object/part/{part_id}").json()["data"]
+    by_key = {row["key"]: row for row in cfs}
+    stored = by_key["Long Spec"]["value"]
+    assert len(stored) == 1024
+    assert stored.endswith("[truncated by provider import]")
+
+
+def test_bulk_import_surfaces_ambiguous_provider_match(authed, monkeypatch):
+    mpn = "AMB-100"
+    monkeypatch.setattr(
+        "app.domain.parts.providers.mouser._post_mouser",
+        lambda url, payload: {
+            "Errors": [],
+            "SearchResults": {
+                "NumberOfResult": 2,
+                "Parts": [
+                    {
+                        "Manufacturer": "Alpha",
+                        "ManufacturerPartNumber": mpn,
+                        "Description": "Alpha variant",
+                        "ProductDetailUrl": "https://www.mouser.com/alpha",
+                        "ProductAttributes": [],
+                    },
+                    {
+                        "Manufacturer": "Beta",
+                        "ManufacturerPartNumber": mpn,
+                        "Description": "Beta variant",
+                        "ProductDetailUrl": "https://www.mouser.com/beta",
+                        "ProductAttributes": [],
+                    },
+                ],
+            },
+        },
+    )
+
+    r = authed.post(
+        "/api/parts/bulk-import-from-scan",
+        json={"rows": [{"mpn": mpn}]},
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()["data"]
+    row = body["rows"][0]
+    assert row["status"] == "created"
+    assert row["needs_disambiguation"] is True
+    assert row["candidate_count"] == 2
+    assert row["selected_manufacturer"] == "Alpha"
+    assert body["summary"]["needs_disambiguation"] == 1
 
 
 def test_bulk_import_with_quantity_creates_initial_stock(authed, monkeypatch):
@@ -338,6 +410,7 @@ def test_bulk_import_mixed_batch_returns_per_row_status(authed, monkeypatch):
         "invalid": 0,
         "row_failed": 0,
         "deadline_exceeded": 0,
+        "needs_disambiguation": 0,
     }
 
 

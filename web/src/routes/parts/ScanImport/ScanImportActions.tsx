@@ -95,6 +95,14 @@ export default function ScanImportActions({
               </span>
             </>
           )}
+          {(lastSummary.summary.needs_disambiguation ?? 0) > 0 && (
+            <>
+              ,{" "}
+              <span className="text-warning">
+                {lastSummary.summary.needs_disambiguation} ambiguous match
+              </span>
+            </>
+          )}
           .
         </div>
       )}

@@ -331,6 +331,8 @@ def bulk_import_from_scan(
             continue
 
         r = lookup["result"]
+        candidate_count = len(lookup.get("candidates") or [])
+        needs_disambiguation = candidate_count > 1
         # Name: description if we have it, else MPN. Both providers
         # typically return a useful description.
         name = (r.get("description") or "").strip() or mpn
@@ -362,13 +364,19 @@ def bulk_import_from_scan(
             })
             continue
 
-        out_rows.append({
+        created_row = {
             "mpn": mpn,
             "status": "created",
             "part_id": str(p.id),
             "quantity_added": qty_added,
             "stock_error": stock_error,
-        })
+        }
+        if needs_disambiguation:
+            created_row["needs_disambiguation"] = True
+            created_row["candidate_count"] = candidate_count
+            if r.get("manufacturer"):
+                created_row["selected_manufacturer"] = r["manufacturer"]
+        out_rows.append(created_row)
 
     # Tear down the executor without waiting for any hung worker thread.
     # `cancel_futures=True` cancels still-queued futures; running ones
@@ -391,11 +399,14 @@ def bulk_import_from_scan(
         "created":                  sum(1 for r in out_rows if r["status"] == "created"),
         "duplicate":                sum(1 for r in out_rows if r["status"] == "duplicate"),
         "bag_rescan":               sum(1 for r in out_rows if r["status"] == "bag_rescan"),
-        "bag_signature_mismatch":   sum(1 for r in out_rows if r["status"] == "bag_signature_mismatch"),
+        "bag_signature_mismatch":   sum(
+            1 for r in out_rows if r["status"] == "bag_signature_mismatch"
+        ),
         "lookup_failed":            sum(1 for r in out_rows if r["status"] == "lookup_failed"),
         "invalid":                  sum(1 for r in out_rows if r["status"] == "invalid"),
         "row_failed":               sum(1 for r in out_rows if r["status"] == "row_failed"),
         "deadline_exceeded":        sum(1 for r in out_rows if r["status"] == "deadline_exceeded"),
+        "needs_disambiguation":     sum(1 for r in out_rows if r.get("needs_disambiguation")),
     }
     result_payload = {"rows": out_rows, "summary": summary, "provider": provider.name}
 
