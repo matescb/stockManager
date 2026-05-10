@@ -1,4 +1,5 @@
 """Pydantic DTOs for TrustedParts sourcing."""
+
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -334,6 +335,7 @@ class SourcingBomOfferOut(BaseModel):
     lifecycle_risk: str | None = None
     supply_chain_risk: str | None = None
     is_affected_by_tariff: bool | None = None
+    rohs_compliance: list[SourcingRohsCompliance] = Field(default_factory=list)
     manufacturer_id: int | None = None
     specifications: list[SourcingSpecification] = Field(default_factory=list)
 
@@ -565,6 +567,10 @@ class SourcingBomLineOut(BaseModel):
             "moq_overbuy",
             "lead_time_long",
             "preferred_distributor_unmet",
+            "lifecycle_risk_present",
+            "supply_chain_risk_present",
+            "tariff_affected",
+            "rohs_non_compliant",
         ]
     ] = Field(default_factory=list)
 

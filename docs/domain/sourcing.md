@@ -48,6 +48,27 @@ Sources: `backend/app/domain/sourcing/client.py:285-418`,
 `backend/app/domain/sourcing/service.py:951-1007`,
 `backend/app/domain/sourcing/schemas.py:19-110`
 
+## BOM Risk Flags
+
+Project sourcing keeps the five original BOM risk flags in order, then appends
+TrustedParts gap-field flags. `lifecycle_risk_present` and
+`supply_chain_risk_present` fire when TrustedParts sends non-whitespace text for
+the corresponding offer field. `tariff_affected` fires only when
+`is_affected_by_tariff is True`.
+
+`rohs_non_compliant` evaluates distributor RoHS entries against the target region.
+There is no workspace `target_rohs_region` setting yet, so the service hardcodes
+`EU`. The flag fires when every distributor either lacks an `EU` entry or has an
+`EU` entry whose `is_compliant` value is false. At least one compliant `EU` entry
+suppresses the flag.
+
+The Sourcing Risk report reuses the same gap-field flag helper and counts those
+flags in its default flag-count sort before applying the existing alphabetical
+tie-breaker.
+
+Sources: `backend/app/domain/sourcing/service.py:1322-1386`,
+`backend/app/domain/reports/service.py:651-675`
+
 ## Cache Table
 
 `sourcing_cache` stores one response per `(workspace_id, query_hash)`.

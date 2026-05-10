@@ -8,6 +8,9 @@ the canonical record.
 
 ## 2026-05 — feedback brief fixes
 
+- **TPS-5 / #452** Project Sourcing BOM rows and the Sourcing Risk report now
+  flag TrustedParts lifecycle-risk text, supply-chain-risk text, tariff
+  exposure, and EU RoHS non-compliance from the TPS-4 gap fields.
 - **TPS-4 / #451** TrustedParts gap-field parsing now surfaces lifecycle
   risk, supply-chain risk, tariff status, manufacturer id, specifications,
   distributor id, RoHS compliance, availability text, quantity multiple,

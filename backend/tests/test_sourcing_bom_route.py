@@ -16,6 +16,7 @@ from app.domain.sourcing.schemas import (
     SourcingOffer,
     SourcingPriceBreak,
     SourcingQuery,
+    SourcingRohsCompliance,
     SourcingSearchRaw,
     SourcingSpecification,
 )
@@ -61,6 +62,7 @@ def _offer(
     lifecycle_risk: str | None = None,
     supply_chain_risk: str | None = None,
     is_affected_by_tariff: bool | None = None,
+    rohs_compliance: list[SourcingRohsCompliance] | None = None,
 ) -> SourcingOffer:
     return SourcingOffer(
         mpn=mpn,
@@ -82,6 +84,7 @@ def _offer(
                 lead_time_days=lead_time_days,
                 price_breaks=[SourcingPriceBreak(quantity=1, unit_price=unit_price)],
                 product_url=f"https://www.trustedparts.com/{mpn}/{distributor}",
+                rohs_compliance=rohs_compliance or [],
             )
         ],
         links=SourcingLinks(primary=f"https://www.trustedparts.com/search/{mpn}"),
@@ -419,9 +422,7 @@ def test_risk_flag_no_authorized_stock(authed_client):
         "No authorized stock",
         [{"part_id": part_id, "quantity": 10}],
     )
-    _FakeTrustedPartsClient.offers_by_mpn = {
-        "NO-STOCK": [_offer("NO-STOCK", stock=0)]
-    }
+    _FakeTrustedPartsClient.offers_by_mpn = {"NO-STOCK": [_offer("NO-STOCK", stock=0)]}
 
     r = _post_sourcing(authed_client, project_id)
 
@@ -432,9 +433,7 @@ def test_risk_flag_no_authorized_stock(authed_client):
 def test_risk_flag_moq_overbuy(authed_client):
     _configure_sourcing(authed_client)
     project_id = _single_line_project(authed_client, mpn="MOQ", quantity=5)
-    _FakeTrustedPartsClient.offers_by_mpn = {
-        "MOQ": [_offer("MOQ", stock=100, moq=100)]
-    }
+    _FakeTrustedPartsClient.offers_by_mpn = {"MOQ": [_offer("MOQ", stock=100, moq=100)]}
 
     r = _post_sourcing(authed_client, project_id)
 
@@ -445,9 +444,7 @@ def test_risk_flag_moq_overbuy(authed_client):
 def test_risk_flag_lead_time_long(authed_client):
     _configure_sourcing(authed_client)
     project_id = _single_line_project(authed_client, mpn="SLOW")
-    _FakeTrustedPartsClient.offers_by_mpn = {
-        "SLOW": [_offer("SLOW", stock=100, lead_time_days=45)]
-    }
+    _FakeTrustedPartsClient.offers_by_mpn = {"SLOW": [_offer("SLOW", stock=100, lead_time_days=45)]}
 
     r = _post_sourcing(authed_client, project_id)
 
@@ -466,6 +463,161 @@ def test_risk_flag_preferred_distributor_unmet(authed_client):
 
     assert r.status_code == 200, r.text
     assert "preferred_distributor_unmet" in r.json()["data"]["rows"][0]["risk_flags"]
+
+
+def test_risk_flag_lifecycle_risk_present_fires_when_field_populated(authed_client):
+    _configure_sourcing(authed_client)
+    project_id = _single_line_project(authed_client, mpn="LIFE-RISK")
+    _FakeTrustedPartsClient.offers_by_mpn = {
+        "LIFE-RISK": [_offer("LIFE-RISK", lifecycle_risk="NRND")]
+    }
+
+    r = _post_sourcing(authed_client, project_id)
+
+    assert r.status_code == 200, r.text
+    assert "lifecycle_risk_present" in r.json()["data"]["rows"][0]["risk_flags"]
+
+
+def test_risk_flag_lifecycle_risk_present_does_not_fire_when_field_null(authed_client):
+    _configure_sourcing(authed_client)
+    project_id = _single_line_project(authed_client, mpn="NO-LIFE-RISK")
+    _FakeTrustedPartsClient.offers_by_mpn = {
+        "NO-LIFE-RISK": [_offer("NO-LIFE-RISK", lifecycle_risk=None)]
+    }
+
+    r = _post_sourcing(authed_client, project_id)
+
+    assert r.status_code == 200, r.text
+    assert "lifecycle_risk_present" not in r.json()["data"]["rows"][0]["risk_flags"]
+
+
+def test_risk_flag_supply_chain_risk_present_fires_when_field_populated(authed_client):
+    _configure_sourcing(authed_client)
+    project_id = _single_line_project(authed_client, mpn="SUPPLY-RISK")
+    _FakeTrustedPartsClient.offers_by_mpn = {
+        "SUPPLY-RISK": [_offer("SUPPLY-RISK", supply_chain_risk="Limited supply")]
+    }
+
+    r = _post_sourcing(authed_client, project_id)
+
+    assert r.status_code == 200, r.text
+    assert "supply_chain_risk_present" in r.json()["data"]["rows"][0]["risk_flags"]
+
+
+def test_risk_flag_supply_chain_risk_present_does_not_fire_when_field_null(authed_client):
+    _configure_sourcing(authed_client)
+    project_id = _single_line_project(authed_client, mpn="NO-SUPPLY-RISK")
+    _FakeTrustedPartsClient.offers_by_mpn = {
+        "NO-SUPPLY-RISK": [_offer("NO-SUPPLY-RISK", supply_chain_risk=None)]
+    }
+
+    r = _post_sourcing(authed_client, project_id)
+
+    assert r.status_code == 200, r.text
+    assert "supply_chain_risk_present" not in r.json()["data"]["rows"][0]["risk_flags"]
+
+
+def test_risk_flag_tariff_affected_fires_for_true(authed_client):
+    _configure_sourcing(authed_client)
+    project_id = _single_line_project(authed_client, mpn="TARIFF-TRUE")
+    _FakeTrustedPartsClient.offers_by_mpn = {
+        "TARIFF-TRUE": [_offer("TARIFF-TRUE", is_affected_by_tariff=True)]
+    }
+
+    r = _post_sourcing(authed_client, project_id)
+
+    assert r.status_code == 200, r.text
+    assert "tariff_affected" in r.json()["data"]["rows"][0]["risk_flags"]
+
+
+def test_risk_flag_tariff_affected_does_not_fire_for_false_or_none(authed_client):
+    _configure_sourcing(authed_client)
+    project_id = create_project_with_bom(
+        authed_client,
+        "Tariff false or none",
+        [
+            {
+                "part_id": create_part(authed_client, name="False tariff", mpn="TARIFF-FALSE"),
+                "quantity": 1,
+            },
+            {
+                "part_id": create_part(authed_client, name="None tariff", mpn="TARIFF-NONE"),
+                "quantity": 1,
+            },
+        ],
+    )
+    _FakeTrustedPartsClient.offers_by_mpn = {
+        "TARIFF-FALSE": [_offer("TARIFF-FALSE", is_affected_by_tariff=False)],
+        "TARIFF-NONE": [_offer("TARIFF-NONE", is_affected_by_tariff=None)],
+    }
+
+    r = _post_sourcing(authed_client, project_id)
+
+    assert r.status_code == 200, r.text
+    rows = r.json()["data"]["rows"]
+    assert all("tariff_affected" not in row["risk_flags"] for row in rows)
+
+
+def test_risk_flag_rohs_non_compliant_fires_when_no_distributor_has_eu_compliant_entry(
+    authed_client,
+):
+    _configure_sourcing(authed_client)
+    project_id = _single_line_project(authed_client, mpn="ROHS-BAD")
+    _FakeTrustedPartsClient.offers_by_mpn = {
+        "ROHS-BAD": [
+            _offer(
+                "ROHS-BAD",
+                distributor="DigiKey",
+                rohs_compliance=[SourcingRohsCompliance(region="EU", is_compliant=False)],
+            ),
+            _offer("ROHS-BAD", distributor="Mouser"),
+        ]
+    }
+
+    r = _post_sourcing(authed_client, project_id)
+
+    assert r.status_code == 200, r.text
+    assert "rohs_non_compliant" in r.json()["data"]["rows"][0]["risk_flags"]
+
+
+def test_risk_flag_rohs_non_compliant_does_not_fire_when_at_least_one_distributor_is_compliant(
+    authed_client,
+):
+    _configure_sourcing(authed_client)
+    project_id = _single_line_project(authed_client, mpn="ROHS-GOOD")
+    _FakeTrustedPartsClient.offers_by_mpn = {
+        "ROHS-GOOD": [
+            _offer("ROHS-GOOD", distributor="DigiKey"),
+            _offer(
+                "ROHS-GOOD",
+                distributor="Mouser",
+                rohs_compliance=[SourcingRohsCompliance(region="EU", is_compliant=True)],
+            ),
+        ]
+    }
+
+    r = _post_sourcing(authed_client, project_id)
+
+    assert r.status_code == 200, r.text
+    assert "rohs_non_compliant" not in r.json()["data"]["rows"][0]["risk_flags"]
+
+
+def test_risk_flag_rohs_non_compliant_uses_eu_default_when_no_workspace_setting(authed_client):
+    _configure_sourcing(authed_client)
+    project_id = _single_line_project(authed_client, mpn="ROHS-EU-DEFAULT")
+    _FakeTrustedPartsClient.offers_by_mpn = {
+        "ROHS-EU-DEFAULT": [
+            _offer(
+                "ROHS-EU-DEFAULT",
+                rohs_compliance=[SourcingRohsCompliance(region="US", is_compliant=True)],
+            )
+        ]
+    }
+
+    r = _post_sourcing(authed_client, project_id)
+
+    assert r.status_code == 200, r.text
+    assert "rohs_non_compliant" in r.json()["data"]["rows"][0]["risk_flags"]
 
 
 def test_workspace_isolation_two_projects_same_mpns(authed_client):
