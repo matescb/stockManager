@@ -1,6 +1,7 @@
 """Distributor coverage matrix computation for sourced BOM rows."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from itertools import combinations
@@ -34,6 +35,8 @@ class DistributorCoverageMatrix:
 class BuildCapacity:
     can_build_now: int
     can_build_after_purchase: int
+    total_bom_cost: Decimal | None
+    purchase_to_pay_cost: Decimal | None
     est_purchase_cost: Decimal | None
     blocking_lines_now: list[UUID]
     blocking_lines_after_purchase: list[UUID]
@@ -50,6 +53,8 @@ def compute_build_capacity(
         return BuildCapacity(
             can_build_now=0,
             can_build_after_purchase=0,
+            total_bom_cost=None,
+            purchase_to_pay_cost=None,
             est_purchase_cost=None,
             blocking_lines_now=[],
             blocking_lines_after_purchase=[],
@@ -85,44 +90,118 @@ def compute_build_capacity(
         if ratios_after_purchase[row.project_entry_id] == can_build_after_purchase
     ]
 
-    est_purchase_cost = Decimal("0")
     blocking_after = set(blocking_lines_after_purchase)
-    priced_builds = (
-        can_build_after_purchase
-        if can_build_after_purchase > 0
-        else requested_build_quantity
+    total_bom_cost = _sum_best_offer_cost(
+        effective_rows,
+        quantity_for_row=lambda row: row.required,
     )
-    for row in effective_rows:
-        purchase_qty = max(
-            0,
-            _required_for_builds(
-                row.required,
-                builds=priced_builds,
-                requested_build_quantity=requested_build_quantity,
-            )
-            - (row.available + row.substitute_available),
+    payable_rows = [
+        row for row in effective_rows if row.project_entry_id not in blocking_after
+    ]
+    if not payable_rows and any(row.short_by > 0 for row in effective_rows):
+        payable_rows = effective_rows
+    purchase_to_pay_cost = (
+        Decimal("0")
+        if all(row.short_by == 0 for row in effective_rows)
+        else _sum_best_offer_cost(
+            payable_rows,
+            quantity_for_row=lambda row: row.short_by,
         )
-        if purchase_qty == 0:
-            if (
-                row.project_entry_id in blocking_after
-                and ratios_after_purchase[row.project_entry_id] < requested_build_quantity
-                and row.best_offer is None
-            ):
-                est_purchase_cost = None
-            continue
-        if row.best_offer is None or row.best_offer.unit_price is None:
-            est_purchase_cost = None
-            continue
-        if est_purchase_cost is not None:
-            est_purchase_cost += row.best_offer.unit_price * Decimal(purchase_qty)
+    )
 
     return BuildCapacity(
         can_build_now=can_build_now,
         can_build_after_purchase=can_build_after_purchase,
-        est_purchase_cost=est_purchase_cost,
+        total_bom_cost=total_bom_cost,
+        purchase_to_pay_cost=purchase_to_pay_cost,
+        est_purchase_cost=purchase_to_pay_cost,
         blocking_lines_now=blocking_lines_now,
         blocking_lines_after_purchase=blocking_lines_after_purchase,
     )
+
+
+def _sum_best_offer_cost(
+    rows: list[SourcingBomLineOut],
+    *,
+    quantity_for_row: Callable[[SourcingBomLineOut], int],
+) -> Decimal | None:
+    running = Decimal("0")
+    priced = False
+    total_currency = _total_currency(rows)
+    for row in rows:
+        qty = quantity_for_row(row)
+        if not isinstance(qty, int) or qty <= 0:
+            continue
+        priced_offer = _best_offer_priced_for_total(row.best_offer, total_currency)
+        if priced_offer is None:
+            continue
+        unit_price, _currency = priced_offer
+        running += unit_price * Decimal(qty)
+        priced = True
+    return running if priced else None
+
+
+def _total_currency(rows: list[SourcingBomLineOut]) -> str | None:
+    converted = [
+        _clean_currency(row.best_offer.currency_displayed)
+        for row in rows
+        if row.best_offer is not None
+        and row.best_offer.unit_price_converted is not None
+        and row.best_offer.currency_displayed is not None
+    ]
+    if converted:
+        return converted[0]
+
+    currencies = [
+        currency
+        for row in rows
+        if row.best_offer is not None
+        and (currency := _offer_display_currency(row.best_offer)) is not None
+    ]
+    if not currencies:
+        return None
+    first = currencies[0]
+    return first if all(currency == first for currency in currencies) else first
+
+
+def _best_offer_priced_for_total(
+    offer: SourcingBomOfferOut | None,
+    total_currency: str | None,
+) -> tuple[Decimal, str | None] | None:
+    if offer is None:
+        return None
+
+    offer_currency = _offer_display_currency(offer)
+    if total_currency is not None and offer_currency is not None:
+        if offer_currency != total_currency:
+            return None
+
+    if offer.unit_price_converted is not None and offer.currency_displayed is not None:
+        return offer.unit_price_converted, _clean_currency(offer.currency_displayed)
+
+    native_currency = _clean_currency(offer.currency)
+    displayed_currency = _clean_currency(offer.currency_displayed)
+    if (
+        native_currency is not None
+        and displayed_currency is not None
+        and native_currency != displayed_currency
+    ):
+        return None
+
+    if offer.unit_price is None:
+        return None
+    return offer.unit_price, offer_currency
+
+
+def _offer_display_currency(offer: SourcingBomOfferOut) -> str | None:
+    return _clean_currency(offer.currency_displayed) or _clean_currency(offer.currency)
+
+
+def _clean_currency(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip().upper()
+    return cleaned or None
 
 
 def compute_coverage(
@@ -222,17 +301,6 @@ def _supported_builds(
     if available <= 0 or requested_build_quantity <= 0:
         return 0
     return available * requested_build_quantity // required
-
-
-def _required_for_builds(
-    required: int,
-    *,
-    builds: int,
-    requested_build_quantity: int,
-) -> int:
-    if builds <= 0 or requested_build_quantity <= 0:
-        return 0
-    return (required * builds + requested_build_quantity - 1) // requested_build_quantity
 
 
 def _best_covering_offer(

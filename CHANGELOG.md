@@ -8,6 +8,9 @@ the canonical record.
 
 ## 2026-05 — feedback brief fixes
 
+- **SX-4 / #471** Project Sourcing capacity now separates total BOM cost
+  from the short-quantity price to pay, with `est_purchase_cost` retained as
+  a deprecated alias.
 - **SX-1 / #468** Project Sourcing now splits BOM lifecycle,
   supply-chain, and RoHS details into dedicated columns, hides the crowded
   lead-time column by default, and colours TrustedParts Low/Medium/High

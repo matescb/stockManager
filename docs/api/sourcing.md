@@ -217,6 +217,21 @@ Path: `project_id` is a project UUID in the current workspace.
         "risk_flags": []
       }
     ],
+    "coverage": {
+      "rows": [],
+      "total_lines": 1,
+      "best_single_distributor": null,
+      "best_two_distributor_combo": null
+    },
+    "capacity": {
+      "can_build_now": 0,
+      "can_build_after_purchase": 3,
+      "total_bom_cost": "2.00",
+      "purchase_to_pay_cost": "2.00",
+      "est_purchase_cost": "2.00",
+      "blocking_lines_now": [],
+      "blocking_lines_after_purchase": []
+    },
     "powered_by": "TrustedParts",
     "fetched_at": "2026-05-08T12:00:00+00:00",
     "partial": false,
@@ -257,11 +272,14 @@ Sources: `backend/app/domain/sourcing/service.py:1322-1386`,
 - The route validates `project_id` with `assert_in_workspace()` before calling the sourcing service.
 - The service reuses `shortage_analysis()`, `dedupe_mpns()`, `chunk_mpns()`, and per-MPN `search()` cache rows; BOM chunks use `ttl_seconds=600`.
 - Decimal prices and extended costs serialize as strings.
-- When `currency` is supplied, BOM offer prices whose native distributor currency differs are display-converted through the global ECB daily snapshot. Native `unit_price`, `currency`, and existing coverage/capacity calculations stay unchanged; converted display values are exposed as `unit_price_converted`, `currency_displayed`, `fx_converted`, `fx_rate_date`, and `price_breaks_converted`.
+- `capacity.total_bom_cost` sums `required * best_offer.unit_price` for priced rows and ignores on-hand stock. `capacity.purchase_to_pay_cost` sums `short_by * best_offer.unit_price` for priced rows that are not blocking after authorized supply. `capacity.est_purchase_cost` is a deprecated alias of `purchase_to_pay_cost` for one release.
+- Capacity totals use converted/display prices when available and skip rows whose displayed currency does not match the selected total currency, so mixed native currencies are not added together.
+- When `currency` is supplied, BOM offer prices whose native distributor currency differs are display-converted through the global ECB daily snapshot. Native `unit_price` and `currency` stay unchanged; converted display values are exposed as `unit_price_converted`, `currency_displayed`, `fx_converted`, `fx_rate_date`, and `price_breaks_converted`.
 - Each row exposes sourcing diagnostics: `reason` is `ok`, `no_mpn`, or `no_offers`; `cache_hit` is `true`/`false` for searched rows and `null` when no MPN was searched; row `fx_status` is `unavailable` when any offer on the row could not be converted. Top-level `fx_status` is `ok`, `partial`, or `unavailable` when a request currency was supplied and `null` when conversion was not requested.
 - BOM offer projections carry offer-level TrustedParts gap fields for downstream risk/report consumers; distributor-level gap fields remain on part/search offer DTOs.
 - Source: `backend/app/api/routes/sourcing.py:253-315`.
-- Service: `backend/app/domain/sourcing/service.py:820-882`, `backend/app/domain/sourcing/service.py:1236-1270`.
+- Service: `backend/app/domain/sourcing/service.py:820-898`, `backend/app/domain/sourcing/service.py:1236-1270`.
+- Capacity: `backend/app/domain/sourcing/coverage.py:45-120`, `backend/app/domain/sourcing/schemas.py:382-407`.
 - Pricing: `backend/app/domain/sourcing/pricing.py:9-40`.
 
 ### `POST /api/projects/{project_id}/purchase-plan`

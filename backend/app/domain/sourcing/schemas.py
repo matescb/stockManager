@@ -384,7 +384,25 @@ class BuildCapacityOut(BaseModel):
 
     can_build_now: int
     can_build_after_purchase: int
-    est_purchase_cost: Decimal | None
+    total_bom_cost: Decimal | None = Field(
+        default=None,
+        description=(
+            "Sum of required quantity times best-offer unit price across priced "
+            "BOM lines, independent of on-hand stock."
+        ),
+    )
+    purchase_to_pay_cost: Decimal | None = Field(
+        default=None,
+        description=(
+            "Sum of short quantity times best-offer unit price across priced "
+            "lines that are not blocking after authorized supply."
+        ),
+    )
+    est_purchase_cost: Decimal | None = Field(
+        default=None,
+        deprecated=True,
+        description="Deprecated alias for purchase_to_pay_cost; remove after SX-8.",
+    )
     blocking_lines_now: list[UUID]
     blocking_lines_after_purchase: list[UUID]
 
