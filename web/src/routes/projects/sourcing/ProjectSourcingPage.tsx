@@ -118,6 +118,9 @@ type SourcingRequest = {
   distributors?: string[];
 };
 
+const SOURCING_BOM_STALE_TIME_MS = 5 * 60 * 1000;
+const SOURCING_BOM_GC_TIME_MS = 30 * 60 * 1000;
+
 function numberOrNull(value: string | number | null | undefined): number | null {
   if (value == null || value === "") return null;
   const parsed = typeof value === "number" ? value : Number(value);
@@ -709,6 +712,10 @@ export default function ProjectSourcingPage() {
     queryFn: ({ signal }) =>
       api.post<SourcingBomResponse, SourcingRequest>(`/projects/${projectId}/sourcing`, requestBody, { signal }),
     enabled: !!projectId && buildQuantity >= 1 && defaultsApplied && activeListErrors.length === 0,
+    staleTime: SOURCING_BOM_STALE_TIME_MS,
+    gcTime: SOURCING_BOM_GC_TIME_MS,
+    placeholderData: previousData => previousData,
+    refetchOnWindowFocus: false,
   });
   const purchasePlanBaseRequest = useMemo<Omit<PurchasePlanRequest, "strategy">>(() => {
     const body = { ...requestBody };
@@ -886,6 +893,11 @@ export default function ProjectSourcingPage() {
       </div>
 
       {query.isLoading && <SourcingSkeleton />}
+      {query.isFetching && !query.isLoading && (
+        <div className="text-xs text-muted" role="status">
+          Refreshing prices in the background...
+        </div>
+      )}
       {status === 503 && <BudgetState disabledUntil={budgetDisabledUntil} onRetry={() => query.refetch()} />}
       {status === 502 && (
         <div className="card p-4" role="status">
