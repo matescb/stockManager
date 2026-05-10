@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Plus, RefreshCw } from "lucide-react";
+import { BellPlus, ExternalLink, Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { InlineQueryError } from "@/components/QueryStateBoundary";
 import { ApiError, api } from "@/lib/api";
@@ -13,6 +13,8 @@ import type { Column } from "@/components/DataTable";
 import { DataTable } from "@/components/DataTable";
 import { PoweredByTrustedParts } from "@/components/PoweredByTrustedParts";
 import { SourcingSourceLabel } from "@/components/SourcingSourceLabel";
+import type { SourcingAlertType } from "@/lib/sourcingAlerts";
+import AlertFormModal from "@/routes/sourcing/alerts/AlertFormModal";
 import {
   CreateOrderLineModal,
   type CreateOrderLineSource,
@@ -249,6 +251,7 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
   const [quantity, setQuantity] = useState(1);
   const [customQuantity, setCustomQuantity] = useState("1");
   const [orderLineSource, setOrderLineSource] = useState<CreateOrderLineSource | null>(null);
+  const [alertModalOpen, setAlertModalOpen] = useState(false);
 
   const query = useQuery({
     queryKey,
@@ -471,18 +474,28 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
             </span>
           )}
         </div>
-        <button
-          type="button"
-          className="btn-primary inline-flex items-center gap-1.5"
-          disabled={refreshMutation.isPending}
-          onClick={() => {
-            refreshMutation.reset();
-            refreshMutation.mutate();
-          }}
-        >
-          <RefreshCw size={14} className={refreshMutation.isPending ? "animate-spin" : ""} />
-          {refreshMutation.isPending ? "Refreshing…" : "Refresh live"}
-        </button>
+        <div className="flex flex-wrap justify-end gap-2">
+          <button
+            type="button"
+            className="btn inline-flex items-center gap-1.5"
+            onClick={() => setAlertModalOpen(true)}
+          >
+            <BellPlus size={14} aria-hidden="true" />
+            Set alert
+          </button>
+          <button
+            type="button"
+            className="btn-primary inline-flex items-center gap-1.5"
+            disabled={refreshMutation.isPending}
+            onClick={() => {
+              refreshMutation.reset();
+              refreshMutation.mutate();
+            }}
+          >
+            <RefreshCw size={14} className={refreshMutation.isPending ? "animate-spin" : ""} />
+            {refreshMutation.isPending ? "Refreshing…" : "Refresh live"}
+          </button>
+        </div>
       </div>
 
       {status === 503 && (
@@ -600,6 +613,17 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
         open={orderLineSource !== null}
         source={orderLineSource}
         onClose={() => setOrderLineSource(null)}
+      />
+      <AlertFormModal
+        open={alertModalOpen}
+        title="Set alert on this part"
+        initialValues={{ part_id: partId, alert_type: "back_in_stock" }}
+        allowedTypes={["back_in_stock", "out_of_authorized_stock", "price_changed", "stock_below", "stock_above"] satisfies SourcingAlertType[]}
+        onClose={() => setAlertModalOpen(false)}
+        onSaved={() => {
+          queryClient.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "sourcing-alerts") });
+          toast.success("Alert created.");
+        }}
       />
     </div>
   );

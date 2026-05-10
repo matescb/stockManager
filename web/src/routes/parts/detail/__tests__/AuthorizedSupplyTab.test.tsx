@@ -103,6 +103,48 @@ function mockApiGet(response: unknown, workspaceCurrency: string | null = "EUR")
   });
 }
 
+function mockApiGetWithAlertPicker(response: unknown, workspaceCurrency: string | null = "EUR") {
+  return vi.spyOn(api, "get").mockImplementation((path: string) => {
+    if (path === "/workspaces/current") {
+      return Promise.resolve(workspaceResponse(workspaceCurrency));
+    }
+    if (path === "/workspaces/members") {
+      return Promise.resolve([]);
+    }
+    if (path.startsWith("/parts?")) {
+      return Promise.resolve([
+        {
+          id: partId,
+          part_type: "linked",
+          name: "STM32",
+          manufacturer: "STMicroelectronics",
+          mpn: "STM32F103C8T6",
+          internal_part_number: null,
+          description: null,
+          footprint: null,
+          notes_markdown: null,
+          low_stock_report_quantity: null,
+          attrition_percentage: 0,
+          attrition_min_quantity: 0,
+          default_storage_location_id: null,
+          default_storage_mandatory: false,
+          serialized: false,
+          linked_provider: null,
+          linked_external_id: null,
+          last_refresh_at: null,
+          description_locally_edited: false,
+          archived_at: null,
+          on_hand: 0,
+          reserved: 0,
+          available: 0,
+          image_url: null,
+        },
+      ]);
+    }
+    return Promise.resolve(response);
+  });
+}
+
 function mockApiGetError(error: ApiError, workspaceCurrency: string | null = "EUR") {
   return vi.spyOn(api, "get").mockImplementation((path: string) => {
     if (path === "/workspaces/current") {
@@ -195,6 +237,20 @@ describe("AuthorizedSupplyTab", () => {
       expect(api.post).toHaveBeenCalledWith(`/parts/${partId}/sourcing/refresh`, {});
     });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: sourcingQueryKey });
+  });
+
+  it("Set-alert button opens modal with part_id pre-filled", async () => {
+    const user = userEvent.setup();
+    mockApiGetWithAlertPicker(sourcingResponse());
+    vi.spyOn(api, "post").mockResolvedValue({ id: "alert-1" });
+
+    renderTab();
+
+    await screen.findByText("Powered by TrustedParts");
+    await user.click(screen.getByRole("button", { name: "Set alert" }));
+
+    expect(await screen.findByRole("dialog", { name: "Set alert on this part" })).toBeDefined();
+    expect((screen.getByRole("radio", { name: /STM32/ }) as HTMLInputElement).checked).toBe(true);
   });
 
   it("distributor filter narrows visible rows", async () => {

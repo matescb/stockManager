@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import {
   BarChart3,
+  Bell,
   Boxes,
   Check,
   ChevronDown,
@@ -33,6 +34,7 @@ const NAV: NavItem[] = [
   { to: "/orders",   label: "Orders",   icon: ShoppingCart },
   { to: "/builds",   label: "Builds",   icon: Hammer },
   { to: "/reports",  label: "Reports",  icon: BarChart3 },
+  { to: "/sourcing/alerts", label: "Alerts", icon: Bell },
 ];
 
 function pageTitleFor(pathname: string): string {

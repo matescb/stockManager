@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { FolderKanban, RefreshCw } from "lucide-react";
+import { BellPlus, FolderKanban, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import EmptyState from "@/components/EmptyState";
 import { DataTable, type Column } from "@/components/DataTable";
@@ -9,6 +9,7 @@ import { PoweredByTrustedParts } from "@/components/PoweredByTrustedParts";
 import { SourcingSourceLabel } from "@/components/SourcingSourceLabel";
 import { ApiError, api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
+import AlertFormModal from "@/routes/sourcing/alerts/AlertFormModal";
 import type { Project } from "@/types";
 import PurchasePlanOptionsModal from "./PurchasePlanOptionsModal";
 import type { PurchasePlan, PurchasePlanRequest } from "./purchasePlanTypes";
@@ -402,6 +403,7 @@ export default function ProjectSourcingPage() {
   const [defaultsApplied, setDefaultsApplied] = useState(false);
   const [budgetDisabledUntil, setBudgetDisabledUntil] = useState<number | null>(null);
   const [planModalOpen, setPlanModalOpen] = useState(false);
+  const [alertModalOpen, setAlertModalOpen] = useState(false);
   const [planPending, setPlanPending] = useState(false);
 
   const { data: workspace } = useQuery({
@@ -619,10 +621,19 @@ export default function ProjectSourcingPage() {
             {filterWarnings.join(" ")}
           </div>
         )}
-        <div className="mt-3 flex justify-end">
+        <div className="mt-3 flex flex-wrap justify-end gap-2">
           <button
             type="button"
-            className="btn mr-2"
+            className="btn"
+            disabled={!projectId}
+            onClick={() => setAlertModalOpen(true)}
+          >
+            <BellPlus size={14} aria-hidden="true" />
+            Set BOM-buyable alert
+          </button>
+          <button
+            type="button"
+            className="btn"
             disabled={sourceDisabled || !hasRows}
             onClick={() => setPlanModalOpen(true)}
           >
@@ -673,6 +684,14 @@ export default function ProjectSourcingPage() {
         pending={planPending}
         onClose={() => setPlanModalOpen(false)}
         onSubmit={generatePurchasePlan}
+      />
+      <AlertFormModal
+        open={alertModalOpen}
+        title="Set BOM-buyable alert"
+        initialValues={{ alert_type: "bom_buyable", project_id: projectId, build_quantity: Math.max(1, Math.floor(buildQuantity || 1)) }}
+        allowedTypes={["bom_buyable"]}
+        onClose={() => setAlertModalOpen(false)}
+        onSaved={() => toast.success("Alert created.")}
       />
     </div>
   );

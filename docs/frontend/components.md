@@ -218,6 +218,16 @@ TrustedParts source pill with `aria-label="Source: TrustedParts"`
 (`:20-23`) so TrustedParts-derived distributor data stays visually and
 accessibly labelled.
 
+## Alerts Modal
+
+`web/src/routes/sourcing/alerts/AlertFormModal.tsx` is the shared create/edit
+surface for `/sourcing/alerts`, the part Authorized supply shortcut, and the
+project Source BOM shortcut. The modal builds the discriminated threshold
+payload before calling `web/src/lib/sourcingAlerts.ts`, keeps empty recipients
+as `null` so the backend can target workspace admins, and only renders
+TrustedParts country/currency/distributor filters for alert types accepted by
+the backend sourcing-alert validator.
+
 `web/src/routes/parts/detail/AuthorizedSupplyTab.tsx` mounts the part
 detail **Authorized supply** tab. It reads
 `GET /api/parts/{part_id}/sourcing`, displays TrustedParts attribution

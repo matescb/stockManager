@@ -28,6 +28,7 @@ Each **workspace** is isolated. Members of one workspace cannot see another work
 - [Projects and bill of materials](projects-and-bom.md)
 - [Builds — consume stock against a BOM](builds.md)
 - [Reports](reports.md)
+- [Alerts](alerts.md)
 
 ### Settings
 

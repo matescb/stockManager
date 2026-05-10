@@ -54,6 +54,7 @@ The single most load-bearing file is `ARCHITECTURE.md`. Don't restate things fro
 | Projects and BOM | [`user/projects-and-bom.md`](user/projects-and-bom.md) |
 | Builds — consume stock against a BOM | [`user/builds.md`](user/builds.md) |
 | Reports | [`user/reports.md`](user/reports.md) |
+| Alerts | [`user/alerts.md`](user/alerts.md) |
 | Workspace members and roles | [`user/workspace-management.md`](user/workspace-management.md) |
 | Account, password, theme | [`user/account.md`](user/account.md) |
 
