@@ -15,7 +15,9 @@ Two backends are available:
   are populated.
 
 Call :func:`send_verification_email` from route code — it picks the
-right backend automatically based on the current settings.
+right backend automatically based on the current settings. Background
+jobs that need transactional mail call :func:`send` so they stay on the
+same stdout/dev and SMTP/prod path.
 
 Design notes:
 - All functions are synchronous; FastAPI routes calling them must use
@@ -65,6 +67,54 @@ def _build_verification_email(to: str, verification_link: str) -> MIMEMultipart:
     msg.attach(MIMEText(plain, "plain"))
     msg.attach(MIMEText(html, "html"))
     return msg
+
+
+def _build_email(
+    *,
+    to: str,
+    subject: str,
+    text_body: str,
+    html_body: str | None = None,
+) -> MIMEMultipart:
+    """Build a generic MIME multipart message."""
+    cfg = settings()
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = cfg.MAIL_FROM
+    msg["To"] = to
+    msg.attach(MIMEText(text_body, "plain"))
+    if html_body is not None:
+        msg.attach(MIMEText(html_body, "html"))
+    return msg
+
+
+def send(
+    *,
+    to: str,
+    subject: str,
+    text_body: str,
+    html_body: str | None = None,
+) -> None:
+    """Send a transactional email on the configured mail backend.
+
+    Dev logs only recipient + subject, never the body. Prod uses the same
+    STARTTLS SMTP path as verification mail and raises on failure so
+    callers can decide whether to fail closed or continue.
+    """
+    cfg = settings()
+    if cfg.APP_ENV == "prod":
+        _send_smtp_message(
+            to=to,
+            subject=subject,
+            text_body=text_body,
+            html_body=html_body,
+        )
+        return
+    _log.warning(
+        "dev mail backend (SMTP not configured): message to %s subject=%s",
+        to,
+        subject,
+    )
 
 
 def send_verification_email(*, to: str, verification_link: str) -> None:
@@ -127,3 +177,27 @@ def _send_smtp(*, to: str, verification_link: str) -> None:
     except Exception as exc:
         _log.error("SMTP send failed to %s: %s", to, exc)
         raise
+
+
+def _send_smtp_message(
+    *,
+    to: str,
+    subject: str,
+    text_body: str,
+    html_body: str | None = None,
+) -> None:
+    """Prod backend: send a generic message via SMTP with STARTTLS."""
+    cfg = settings()
+    msg = _build_email(
+        to=to,
+        subject=subject,
+        text_body=text_body,
+        html_body=html_body,
+    )
+    with smtplib.SMTP(cfg.SMTP_HOST, cfg.SMTP_PORT, timeout=10) as smtp:
+        smtp.ehlo()
+        smtp.starttls()
+        smtp.ehlo()
+        if cfg.SMTP_USER:
+            smtp.login(cfg.SMTP_USER, cfg.SMTP_PASSWORD)
+        smtp.sendmail(cfg.MAIL_FROM, [to], msg.as_string())
