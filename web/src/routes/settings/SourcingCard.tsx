@@ -4,11 +4,27 @@ import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { wsKeyOf } from "@/lib/queryKeys";
 
+const LANGUAGE_OPTIONS = [
+  { value: "", label: "Default (en)" },
+  { value: "de", label: "German (de)" },
+  { value: "en", label: "English (en)" },
+  { value: "es", label: "Spanish (es)" },
+  { value: "fr", label: "French (fr)" },
+  { value: "it", label: "Italian (it)" },
+  { value: "pt", label: "Portuguese (pt)" },
+  { value: "ja", label: "Japanese (ja)" },
+  { value: "zh-hans", label: "Chinese, Simplified (zh-hans)" },
+  { value: "zh-hant", label: "Chinese, Traditional (zh-hant)" },
+] as const;
+
+type SourcingLanguageCode = typeof LANGUAGE_OPTIONS[number]["value"];
+
 export type SourcingWorkspace = {
   id: string;
   sourcing_provider: "none" | "trustedparts";
   sourcing_country_code: string | null;
   sourcing_currency_code: string | null;
+  sourcing_language_code: Exclude<SourcingLanguageCode, ""> | null;
   sourcing_preferred_distributors: string[] | null;
   sourcing_use_cached_for_dashboards: boolean;
   has_sourcing_company_id: boolean;
@@ -19,6 +35,7 @@ type SourcingPatch = {
   sourcing_provider: SourcingWorkspace["sourcing_provider"];
   sourcing_country_code: string | null;
   sourcing_currency_code: string | null;
+  sourcing_language_code: SourcingWorkspace["sourcing_language_code"];
   sourcing_preferred_distributors: string[];
   sourcing_use_cached_for_dashboards: boolean;
   sourcing_company_id?: string;
@@ -59,6 +76,7 @@ export function SourcingCard({
   const [apiKeyTouched, setApiKeyTouched] = useState(false);
   const [country, setCountry] = useState(workspace.sourcing_country_code ?? "");
   const [currency, setCurrency] = useState(workspace.sourcing_currency_code ?? "");
+  const [language, setLanguage] = useState<SourcingLanguageCode>(workspace.sourcing_language_code ?? "");
   const [distributors, setDistributors] = useState(
     (workspace.sourcing_preferred_distributors ?? []).join(", "),
   );
@@ -75,6 +93,7 @@ export function SourcingCard({
     setApiKeyTouched(false);
     setCountry(workspace.sourcing_country_code ?? "");
     setCurrency(workspace.sourcing_currency_code ?? "");
+    setLanguage(workspace.sourcing_language_code ?? "");
     setDistributors((workspace.sourcing_preferred_distributors ?? []).join(", "));
     setUseCache(workspace.sourcing_use_cached_for_dashboards);
     setHasCompanyId(workspace.has_sourcing_company_id);
@@ -126,6 +145,7 @@ export function SourcingCard({
       sourcing_provider: provider,
       sourcing_country_code: country.trim() ? country.trim().toUpperCase() : null,
       sourcing_currency_code: currency.trim() ? currency.trim().toUpperCase() : null,
+      sourcing_language_code: language || null,
       sourcing_preferred_distributors: splitDistributors(distributors),
       sourcing_use_cached_for_dashboards: useCache,
     };
@@ -218,6 +238,21 @@ export function SourcingCard({
             onChange={(e) => setCurrency(e.target.value.toUpperCase())}
             placeholder="USD"
           />
+        </div>
+        <div>
+          <label className="label" htmlFor="sourcing-language">Language</label>
+          <select
+            id="sourcing-language"
+            className="input"
+            value={language}
+            onChange={(e) => setLanguage(e.target.value as SourcingLanguageCode)}
+          >
+            {LANGUAGE_OPTIONS.map((option) => (
+              <option key={option.value || "default"} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="label" htmlFor="sourcing-distributors">Preferred distributors</label>

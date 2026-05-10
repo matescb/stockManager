@@ -153,6 +153,7 @@ def _serialize_workspace(ws: Workspace, new_token: str | None = None) -> dict:
         "sourcing_provider": ws.sourcing_provider or "none",
         "sourcing_country_code": ws.sourcing_country_code,
         "sourcing_currency_code": ws.sourcing_currency_code,
+        "sourcing_language_code": ws.sourcing_language_code,
         "sourcing_preferred_distributors": ws.sourcing_preferred_distributors,
         "active_currencies": ws.active_currencies,
         "active_countries": ws.active_countries,

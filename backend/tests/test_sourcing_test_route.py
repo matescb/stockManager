@@ -57,11 +57,13 @@ class _SuccessfulTrustedPartsClient:
         country_code: str | None,
         currency_code: str | None,
         user_agent: str,
+        language_code: str | None = None,
     ) -> None:
         self.company_id = company_id
         self.api_key = api_key
         self.country_code = country_code
         self.currency_code = currency_code
+        self.language_code = language_code
         self.user_agent = user_agent
 
     def search(

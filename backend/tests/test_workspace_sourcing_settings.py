@@ -2,11 +2,24 @@ from __future__ import annotations
 
 from uuid import UUID
 
+import pytest
 from sqlalchemy import select
 
 from app.core.secrets import decrypt
 from app.domain.audit.models import AuditLog
 from app.domain.workspaces.models import Workspace
+
+VALID_LANGUAGE_CODES = (
+    "de",
+    "en",
+    "es",
+    "fr",
+    "it",
+    "pt",
+    "ja",
+    "zh-hans",
+    "zh-hant",
+)
 
 
 def _current_workspace_id(authed_client) -> UUID:
@@ -46,6 +59,46 @@ def test_set_sourcing_credentials_persists_ciphertext(authed_client, db):
     assert ws.sourcing_api_key_enc is not None
     assert ws.sourcing_api_key_enc != api_key
     assert decrypt(ws.sourcing_api_key_enc) == api_key
+
+
+def test_default_language_code_is_null(authed_client, db):
+    r = authed_client.get("/api/workspaces/current")
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["sourcing_language_code"] is None
+
+    ws = db.get(Workspace, _current_workspace_id(authed_client))
+    assert ws is not None
+    assert ws.sourcing_language_code is None
+
+
+@pytest.mark.parametrize("language_code", VALID_LANGUAGE_CODES)
+def test_patch_valid_language_code_persists(authed_client, db, language_code):
+    r = authed_client.patch(
+        "/api/workspaces/current",
+        json={"sourcing_language_code": language_code},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["sourcing_language_code"] == language_code
+
+    ws = db.get(Workspace, _current_workspace_id(authed_client))
+    assert ws is not None
+    assert ws.sourcing_language_code == language_code
+
+
+def test_patch_invalid_language_code_returns_422(authed_client):
+    r = authed_client.patch(
+        "/api/workspaces/current",
+        json={"sourcing_language_code": "klingon"},
+    )
+
+    assert r.status_code == 422
+    body = r.json()
+    assert body["data"] is None
+    assert body["status"]["category"] == "validation_error"
+    assert any(
+        error["field"] == "body.sourcing_language_code"
+        for error in body.get("errors", [])
+    )
 
 
 def test_clear_sourcing_credential_with_empty_string(authed_client, db):

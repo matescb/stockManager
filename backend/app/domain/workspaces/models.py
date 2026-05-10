@@ -3,7 +3,17 @@ from __future__ import annotations
 import uuid
 
 import sqlalchemy as sa
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, UniqueConstraint, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from app.core.time import utcnow
@@ -18,6 +28,11 @@ from app.infra.db import Base
 class Workspace(Base):
     __tablename__ = "workspaces"
     __table_args__ = (
+        CheckConstraint(
+            "sourcing_language_code IS NULL OR sourcing_language_code IN "
+            "('de','en','es','fr','it','pt','ja','zh-hans','zh-hant')",
+            name="ck_workspaces_sourcing_language_code",
+        ),
         # Partial unique index: only non-NULL hashes must be distinct.
         # Mirrors the index created by migration 0025.
         Index(
@@ -31,7 +46,11 @@ class Workspace(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(200), nullable=False)
     kind = Column(String(20), nullable=False, default="organization")  # personal | organization
-    owner_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    owner_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
     currency_default = Column(String(3), nullable=False, default="USD")
     lot_control_enabled = Column(Boolean, nullable=False, default=True)
     serial_tracking_enabled = Column(Boolean, nullable=False, default=False)
@@ -60,6 +79,7 @@ class Workspace(Base):
     sourcing_api_key_enc = Column(String(1024), nullable=True)
     sourcing_country_code = Column(String(2), nullable=True)
     sourcing_currency_code = Column(String(3), nullable=True)
+    sourcing_language_code = Column(String(10), nullable=True)
     sourcing_preferred_distributors = Column(JSONB, nullable=True)
     active_currencies = Column(
         JSONB,
@@ -99,8 +119,18 @@ class WorkspaceMember(Base):
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    workspace_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     role = Column(String(40), nullable=False, default="member")  # owner | admin | member | viewer
     status = Column(String(20), nullable=False, default="active")  # invited | active | disabled
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
@@ -124,7 +154,12 @@ class WorkspaceInvitation(Base):
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    workspace_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     email = Column(String(320), nullable=False, index=True)
     role = Column(String(40), nullable=False, default="member")
     # SHA-256 hex digest of the plaintext token. Kept for backward
@@ -138,10 +173,18 @@ class WorkspaceInvitation(Base):
     # are invalidated on deploy — see migration docstring).
     token_hmac = Column(String(64), nullable=True)
     status = Column(String(20), nullable=False, default="pending")  # pending | accepted | revoked
-    invited_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    invited_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     accepted_at = Column(DateTime(timezone=True), nullable=True)
-    accepted_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    accepted_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
 
 class WorkspaceCatalogToken(Base):
