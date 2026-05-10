@@ -288,9 +288,38 @@ def test_fewest_distributors_respects_moq_stock_and_totals_selected_qty():
         ]
     )
 
-    assert "BulkOnly" not in [row.distributor for row in matrix.rows if row.lines_covered]
+    legacy_rows = {row.distributor: row for row in matrix.rows}
+    assert legacy_rows["BulkOnly"].lines_covered == 1
     assert matrix.fewest_distributors_combo == ["EnoughBulk"]
     assert matrix.fewest_distributors_total == Decimal("100.00")
+
+
+def test_legacy_coverage_matrix_uses_shortfall_not_moq_for_coverage():
+    matrix = compute_coverage(
+        [
+            _line(
+                1,
+                short_by=10,
+                offers=[
+                    _offer("BulkOnly", stock=50, unit_price="1.00", moq=100),
+                    _offer("EnoughBulk", stock=100, unit_price="1.00", moq=100),
+                ],
+            ),
+            _line(
+                2,
+                short_by=10,
+                offers=[_offer("Partner", stock=10, unit_price="2.00")],
+            ),
+        ]
+    )
+
+    legacy_rows = {row.distributor: row for row in matrix.rows}
+    assert matrix.best_single_distributor == "BulkOnly"
+    assert matrix.best_two_distributor_combo == ("BulkOnly", "Partner")
+    assert legacy_rows["BulkOnly"].lines_covered == 1
+    assert legacy_rows["BulkOnly"].lines_uncovered == [_uuid(2)]
+    assert matrix.fewest_distributors_combo == ["EnoughBulk", "Partner"]
+    assert matrix.fewest_distributors_total == Decimal("120.00")
 
 
 def test_greedy_threshold_30_distributors_near_optimal():

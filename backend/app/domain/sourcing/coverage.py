@@ -280,6 +280,15 @@ def compute_coverage(
         row_costs[key] = total_cost
         row_lead_times[key] = worst_lead_time
 
+    purchaseable_by_distributor = {
+        key: {
+            line.project_entry_id
+            for line in bom_rows
+            if _best_purchaseable_offer(key, line) is not None
+        }
+        for key in offers_by_distributor
+    }
+
     rows = [
         DistributorCoverageRow(
             distributor=display_names[key],
@@ -304,7 +313,7 @@ def compute_coverage(
     fewest = _fewest_distributors_variant(
         rows,
         bom_rows=bom_rows,
-        covered_by_distributor=covered_by_distributor,
+        covered_by_distributor=purchaseable_by_distributor,
         target_coverage_pct=target_coverage_pct,
     )
 
@@ -451,7 +460,7 @@ def _combo_total_cost(
         offers = [
             offer
             for key in combo_keys
-            if (offer := _best_covering_offer(key, line)) is not None
+            if (offer := _best_purchaseable_offer(key, line)) is not None
         ]
         if not offers:
             continue
@@ -482,18 +491,42 @@ def _best_covering_offer(
     distributor_key: str,
     line: SourcingBomLineOut,
 ) -> SourcingBomOfferOut | None:
+    return _best_offer_for_quantity(
+        distributor_key,
+        line,
+        quantity_for_offer=lambda _offer: line.short_by,
+    )
+
+
+def _best_purchaseable_offer(
+    distributor_key: str,
+    line: SourcingBomLineOut,
+) -> SourcingBomOfferOut | None:
+    return _best_offer_for_quantity(
+        distributor_key,
+        line,
+        quantity_for_offer=lambda offer: _selected_qty(line.short_by, offer.moq),
+    )
+
+
+def _best_offer_for_quantity(
+    distributor_key: str,
+    line: SourcingBomLineOut,
+    *,
+    quantity_for_offer: Callable[[SourcingBomOfferOut], int],
+) -> SourcingBomOfferOut | None:
     candidates = [
         offer
         for offer in line.offers
         if offer.distributor.casefold() == distributor_key
-        and offer.stock >= _selected_qty(line.short_by, offer.moq)
+        and offer.stock >= quantity_for_offer(offer)
     ]
     if not candidates:
         return None
     return min(
         candidates,
         key=lambda offer: (
-            _price_sort_value(_offer_unit_price(offer, line.short_by)),
+            _price_sort_value(_offer_unit_price(offer, quantity_for_offer(offer))),
             offer.lead_time_days if offer.lead_time_days is not None else 10**9,
             offer.mpn.casefold(),
         ),
