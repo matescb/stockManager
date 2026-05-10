@@ -556,6 +556,73 @@ describe("ProjectSourcingPage", () => {
     expect(await screen.findByText("Partial — some chunks served from cache")).toBeDefined();
   });
 
+  it("BOM request body includes currency from workspace settings", async () => {
+    mockReads({ sourcing_currency_code: "EUR", active_currencies: ["USD", "EUR"] });
+    const post = vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+
+    renderPage();
+
+    await screen.findByText("BOM rows");
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith(
+        `/projects/${projectId}/sourcing`,
+        expect.objectContaining({
+          build_quantity: 1,
+          country: "US",
+          currency: "EUR",
+          distributors: ["DigiKey", "Mouser"],
+        }),
+        expect.anything(),
+      );
+    });
+  });
+
+  it("BOM request body sends null currency when workspace has no currency set", async () => {
+    mockReads({ sourcing_currency_code: null });
+    const post = vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+
+    renderPage();
+
+    await screen.findByText("BOM rows");
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith(
+        `/projects/${projectId}/sourcing`,
+        expect.objectContaining({
+          build_quantity: 1,
+          currency: null,
+        }),
+        expect.anything(),
+      );
+    });
+  });
+
+  it("renders BOM offer prices from converted display fields when present", async () => {
+    mockReads({ sourcing_currency_code: "EUR", active_currencies: ["EUR", "USD"] });
+    const base = sourcingResponse();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({
+      rows: [
+        {
+          ...base.rows[0],
+          best_offer: {
+            ...(base.rows[0].best_offer as Record<string, unknown>),
+            unit_price: "2.00",
+            currency: "USD",
+            unit_price_converted: "1.00",
+            currency_displayed: "EUR",
+            fx_converted: true,
+          },
+          est_extended_cost: "20.00",
+        },
+      ],
+    }));
+
+    renderPage();
+
+    expect(await screen.findByText("1 EUR")).toBeDefined();
+    expect(screen.queryByText("2 USD")).toBeNull();
+    expect(screen.getByText("20 USD")).toBeDefined();
+  });
+
   it("Generate purchase plan posts default strategy from current sourcing filters", async () => {
     mockReads();
     const post = vi.spyOn(api, "post");

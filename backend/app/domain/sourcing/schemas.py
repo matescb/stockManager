@@ -341,10 +341,15 @@ class SourcingBomOfferOut(BaseModel):
     stock: int
     unit_price: Decimal | None = None
     currency: str | None = None
+    unit_price_converted: Decimal | None = None
+    currency_displayed: str | None = None
+    fx_converted: bool | None = None
+    fx_rate_date: date | None = None
     packaging: str | None = None
     moq: int | None = None
     lead_time_days: int | None = None
     price_breaks: list[SourcingBomPriceBreakOut] = Field(default_factory=list)
+    price_breaks_converted: list[SourcingBomPriceBreakOut] | None = None
     url: str | None = None
     lifecycle_risk: str | None = None
     supply_chain_risk: str | None = None
@@ -612,3 +617,4 @@ class SourcingBomOut(BaseModel):
     fetched_at: datetime
     partial: bool
     links: SourcingAttributionLinks
+    fx_status: Literal["ok", "partial", "unavailable"] | None = None

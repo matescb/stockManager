@@ -8,6 +8,8 @@ the canonical record.
 
 ## 2026-05 — feedback brief fixes
 
+- **SX-2 / #469** Project Sourcing now requests the workspace currency for BOM
+  coverage and exposes converted BOM offer display prices with top-level FX status.
 - **TPS-5 / #452** Project Sourcing BOM rows and the Sourcing Risk report now
   flag TrustedParts lifecycle-risk text, supply-chain-risk text, tariff
   exposure, and EU RoHS non-compliance from the TPS-4 gap fields.

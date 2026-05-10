@@ -438,7 +438,7 @@ def test_sourcing_response_skips_conversion_when_workspace_currency_null(authed_
     assert data["fx_status"] is None
     assert distributor["currency"] == "USD"
     assert distributor["unit_price_converted"] is None
-    assert distributor["currency_displayed"] is None
+    assert distributor["currency_displayed"] == "USD"
     assert distributor["fx_converted"] is None
 
 

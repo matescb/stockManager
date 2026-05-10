@@ -309,11 +309,13 @@ Source: `backend/app/domain/sourcing/cache.py:23`
 
 ## FX Conversion
 
-The part-detail Authorized Supply route can request display conversion into the
-workspace sourcing currency. TrustedParts still owns the native offer payload:
-`unit_price`, `currency`, and native price breaks are preserved. Converted display
-fields are added only for rows whose distributor currency differs from the requested
-currency.
+The part-detail Authorized Supply route and Project Sourcing BOM coverage route can
+request display conversion into the workspace sourcing currency. TrustedParts still owns
+the native offer payload: `unit_price`, `currency`, and native price breaks are
+preserved. Converted display fields are added only for offers whose distributor currency
+differs from the requested currency. BOM coverage and capacity summaries keep their
+existing calculations; SX-2 only adds converted offer display fields and response-level
+FX status.
 
 ECB daily reference rates are cached in `fx_rate_snapshots` with one JSONB snapshot
 per UTC date. The table is global, not workspace-owned, because ECB rates are public
@@ -323,4 +325,5 @@ price-trend reporting.
 
 Sources: `backend/app/domain/fx/models.py:15`,
 `backend/app/domain/fx/rates.py:46`,
-`backend/app/api/routes/sourcing.py:534`
+`backend/app/domain/fx/_apply.py:20`,
+`backend/app/domain/sourcing/service.py:889`
