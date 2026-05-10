@@ -29,6 +29,10 @@ from app.domain.sourcing.models import PurchasePlan
 from app.domain.sourcing.schemas import (
     PurchasePlanIn,
     PurchasePlanOrdersIn,
+    SourcingAlertIn,
+    SourcingAlertOut,
+    SourcingAlertPatch,
+    SourcingAlertType,
     SourcingBomIn,
     SourcingConvertedPriceBreak,
     SourcingQuery,
@@ -147,6 +151,101 @@ def search_sourcing(
         )
 
     return ok(out.model_dump(mode="json"))
+
+
+@search_router.get(
+    "/alerts",
+    dependencies=[Depends(require_role("member"))],
+)
+def list_sourcing_alerts(
+    ws: CurrentWorkspace,
+    enabled: bool | None = None,
+    alert_type: SourcingAlertType | None = None,
+    part_id: UUID | None = None,
+    project_id: UUID | None = None,
+    include_archived: bool = False,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    alerts = sourcing_service.list_alerts(
+        db,
+        workspace=ws,
+        enabled=enabled,
+        alert_type=alert_type,
+        part_id=part_id,
+        project_id=project_id,
+        include_archived=include_archived,
+        limit=limit,
+        offset=offset,
+    )
+    return ok([_alert_payload(alert) for alert in alerts])
+
+
+@search_router.post(
+    "/alerts",
+    dependencies=[Depends(require_role("member"))],
+)
+@limiter.limit("30/minute", key_func=workspace_key)
+def create_sourcing_alert(
+    request: Request,
+    payload: SourcingAlertIn,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    alert = sourcing_service.create_alert(
+        db,
+        workspace=ws,
+        user_id=user.id,
+        payload=payload,
+    )
+    return ok(_alert_payload(alert))
+
+
+@search_router.get(
+    "/alerts/{alert_id}",
+    dependencies=[Depends(require_role("member"))],
+)
+def get_sourcing_alert(
+    alert_id: UUID,
+    ws: CurrentWorkspace,
+    db: Session = Depends(get_db),
+):
+    alert = sourcing_service.get_alert(db, workspace=ws, alert_id=alert_id)
+    return ok(_alert_payload(alert))
+
+
+@search_router.patch(
+    "/alerts/{alert_id}",
+    dependencies=[Depends(require_role("member"))],
+)
+def update_sourcing_alert(
+    alert_id: UUID,
+    payload: SourcingAlertPatch,
+    ws: CurrentWorkspace,
+    db: Session = Depends(get_db),
+):
+    alert = sourcing_service.update_alert(
+        db,
+        workspace=ws,
+        alert_id=alert_id,
+        payload=payload,
+    )
+    return ok(_alert_payload(alert))
+
+
+@search_router.delete(
+    "/alerts/{alert_id}",
+    dependencies=[Depends(require_role("member"))],
+)
+def delete_sourcing_alert(
+    alert_id: UUID,
+    ws: CurrentWorkspace,
+    db: Session = Depends(get_db),
+):
+    alert = sourcing_service.archive_alert(db, workspace=ws, alert_id=alert_id)
+    return ok(_alert_payload(alert))
 
 
 @projects_router.post(
@@ -621,6 +720,10 @@ def _clean_query_distributors(value: list[str] | None) -> list[str] | None:
     for item in value:
         cleaned.extend(part.strip() for part in item.split(",") if part.strip())
     return cleaned or None
+
+
+def _alert_payload(alert) -> dict:
+    return SourcingAlertOut.model_validate(alert).model_dump(mode="json")
 
 
 def _error_response(

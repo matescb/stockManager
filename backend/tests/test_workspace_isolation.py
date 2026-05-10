@@ -531,6 +531,33 @@ def test_purchase_plan_isolated_by_workspace(monkeypatch):
     assert r.json()["status"]["category"] == "not_found"
 
 
+def test_sourcing_alerts_isolated_by_workspace():
+    a, b = _two_workspaces()
+    part_a = _create_part(a, "A-alert-part")
+    part_b = _create_part(b, "B-alert-part")
+    alert_a = a.post(
+        "/api/sourcing/alerts",
+        json={
+            "alert_type": "stock_below",
+            "part_id": part_a,
+            "threshold": {"qty": 1},
+        },
+    ).json()["data"]
+    alert_b = b.post(
+        "/api/sourcing/alerts",
+        json={
+            "alert_type": "stock_below",
+            "part_id": part_b,
+            "threshold": {"qty": 1},
+        },
+    ).json()["data"]
+
+    listed_b = b.get("/api/sourcing/alerts").json()["data"]
+
+    assert alert_b["id"] in {alert["id"] for alert in listed_b}
+    assert alert_a["id"] not in {alert["id"] for alert in listed_b}
+
+
 # ---------------------------------------------------------------------------
 # parts.default_storage_location_id on create / patch / bulk-import-from-scan
 # ---------------------------------------------------------------------------

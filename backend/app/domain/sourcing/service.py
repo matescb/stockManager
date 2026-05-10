@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -9,9 +10,12 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api._helpers import assert_in_workspace
+from app.core.errors import ErrorCodes, raise_http
 from app.core.time import utcnow
 from app.domain.builds.service import shortage_analysis
 from app.domain.orders.models import Order, OrderEntry
@@ -21,15 +25,22 @@ from app.domain.sourcing import cache
 from app.domain.sourcing.budget import BUDGET
 from app.domain.sourcing.coverage import compute_build_capacity, compute_coverage
 from app.domain.sourcing.factory import make_sourcing_provider
-from app.domain.sourcing.models import PurchasePlan, PurchasePlanLine
+from app.domain.sourcing.models import PurchasePlan, PurchasePlanLine, SourcingAlert
 from app.domain.sourcing.optimizer import Strategy, optimize
 from app.domain.sourcing.pricing import best_unit_price_at_qty
 from app.domain.sourcing.schemas import (
+    BackInStockThreshold,
+    BomBuyableThreshold,
     BuildCapacityOut,
     DistributorCoverageMatrixOut,
+    OutOfAuthorizedStockThreshold,
+    PriceChangedThreshold,
     PurchasePlanOrderOverrideIn,
     PurchasePlanOrdersOut,
     PurchasePlanOut,
+    SourcingAlertIn,
+    SourcingAlertPatch,
+    SourcingAlertType,
     SourcingAttributionLinks,
     SourcingBomLineOut,
     SourcingBomOfferOut,
@@ -39,7 +50,10 @@ from app.domain.sourcing.schemas import (
     SourcingSearchOut,
     SourcingSearchRaw,
     SourcingSearchResult,
+    StockAboveThreshold,
+    StockBelowThreshold,
 )
+from app.domain.workspaces.models import WorkspaceMember
 
 TTL_SECONDS = 30 * 60
 BOM_TTL_SECONDS = 10 * 60
@@ -49,6 +63,19 @@ TRUSTEDPARTS_LINKS = SourcingAttributionLinks(
     primary="https://www.trustedparts.com/",
     attribution="https://www.trustedparts.com/en/about",
 )
+_SOURCING_FILTER_ALERT_TYPES = {
+    "back_in_stock",
+    "out_of_authorized_stock",
+    "price_changed",
+}
+_THRESHOLD_SCHEMAS: dict[SourcingAlertType, type[BaseModel]] = {
+    "stock_below": StockBelowThreshold,
+    "stock_above": StockAboveThreshold,
+    "back_in_stock": BackInStockThreshold,
+    "out_of_authorized_stock": OutOfAuthorizedStockThreshold,
+    "price_changed": PriceChangedThreshold,
+    "bom_buyable": BomBuyableThreshold,
+}
 
 
 @dataclass(frozen=True)
@@ -82,6 +109,269 @@ class PurchasePlanCurrencyError(Exception):
 
 class PurchasePlanOverrideError(Exception):
     """Purchase plan conversion override is not valid for cached line offers."""
+
+
+def create_alert(
+    db: Session,
+    *,
+    workspace: Any,
+    user_id: UUID | None,
+    payload: SourcingAlertIn,
+) -> SourcingAlert:
+    values = _validated_alert_values(
+        db,
+        workspace=workspace,
+        alert_type=payload.alert_type,
+        part_id=payload.part_id,
+        project_id=payload.project_id,
+        threshold=payload.threshold,
+        country_code=payload.country_code,
+        currency_code=payload.currency_code,
+        distributor_filter=payload.distributor_filter,
+        notify_user_ids=payload.notify_user_ids,
+        cooldown_seconds=payload.cooldown_seconds,
+        enabled=payload.enabled,
+    )
+    alert = SourcingAlert(
+        workspace_id=workspace.id,
+        created_by=user_id,
+        **values,
+    )
+    db.add(alert)
+    db.flush()
+    return alert
+
+
+def list_alerts(
+    db: Session,
+    *,
+    workspace: Any,
+    enabled: bool | None = None,
+    alert_type: str | None = None,
+    part_id: UUID | None = None,
+    project_id: UUID | None = None,
+    include_archived: bool = False,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[SourcingAlert]:
+    if part_id is not None:
+        assert_in_workspace(db, Part, part_id, workspace.id, label="part")
+    if project_id is not None:
+        assert_in_workspace(db, Project, project_id, workspace.id, label="project")
+
+    stmt = select(SourcingAlert).where(SourcingAlert.workspace_id == workspace.id)
+    if not include_archived:
+        stmt = stmt.where(SourcingAlert.archived_at.is_(None))
+    if enabled is not None:
+        stmt = stmt.where(SourcingAlert.enabled.is_(enabled))
+    if alert_type is not None:
+        stmt = stmt.where(SourcingAlert.alert_type == alert_type)
+    if part_id is not None:
+        stmt = stmt.where(SourcingAlert.part_id == part_id)
+    if project_id is not None:
+        stmt = stmt.where(SourcingAlert.project_id == project_id)
+    stmt = stmt.order_by(SourcingAlert.created_at.desc(), SourcingAlert.id)
+    stmt = stmt.limit(limit).offset(offset)
+    return list(db.execute(stmt).scalars())
+
+
+def get_alert(
+    db: Session,
+    *,
+    workspace: Any,
+    alert_id: UUID,
+) -> SourcingAlert:
+    alert = db.execute(
+        select(SourcingAlert).where(
+            SourcingAlert.id == alert_id,
+            SourcingAlert.workspace_id == workspace.id,
+            SourcingAlert.archived_at.is_(None),
+        )
+    ).scalar_one_or_none()
+    if alert is None:
+        raise_http(
+            404,
+            ErrorCodes.RESOURCE_NOT_FOUND,
+            "sourcing alert not found",
+            resource="sourcing_alert",
+        )
+    return alert
+
+
+def update_alert(
+    db: Session,
+    *,
+    workspace: Any,
+    alert_id: UUID,
+    payload: SourcingAlertPatch,
+) -> SourcingAlert:
+    if "alert_type" in payload.model_fields_set:
+        raise_http(
+            422,
+            "sourcing_alert.alert_type_immutable",
+            "alert_type is immutable",
+        )
+
+    alert = get_alert(db, workspace=workspace, alert_id=alert_id)
+    data = payload.model_dump(exclude_unset=True)
+    values = _validated_alert_values(
+        db,
+        workspace=workspace,
+        alert_type=alert.alert_type,
+        part_id=data.get("part_id", alert.part_id),
+        project_id=data.get("project_id", alert.project_id),
+        threshold=data.get("threshold", alert.threshold),
+        country_code=data.get("country_code", alert.country_code),
+        currency_code=data.get("currency_code", alert.currency_code),
+        distributor_filter=data.get("distributor_filter", alert.distributor_filter),
+        notify_user_ids=data.get("notify_user_ids", alert.notify_user_ids),
+        cooldown_seconds=data.get("cooldown_seconds", alert.cooldown_seconds),
+        enabled=data.get("enabled", alert.enabled),
+    )
+    for key, value in values.items():
+        setattr(alert, key, value)
+    db.flush()
+    return alert
+
+
+def archive_alert(
+    db: Session,
+    *,
+    workspace: Any,
+    alert_id: UUID,
+) -> SourcingAlert:
+    alert = get_alert(db, workspace=workspace, alert_id=alert_id)
+    if alert.archived_at is None:
+        alert.archived_at = utcnow()
+        db.flush()
+    return alert
+
+
+def _validated_alert_values(
+    db: Session,
+    *,
+    workspace: Any,
+    alert_type: SourcingAlertType | str,
+    part_id: UUID | None,
+    project_id: UUID | None,
+    threshold: dict[str, Any],
+    country_code: str | None,
+    currency_code: str | None,
+    distributor_filter: list[str] | None,
+    notify_user_ids: list[UUID] | list[str] | None,
+    cooldown_seconds: int,
+    enabled: bool,
+) -> dict[str, Any]:
+    if threshold is None:
+        raise_http(422, "sourcing_alert.invalid_threshold", "threshold is required")
+    if cooldown_seconds is None:
+        raise_http(422, "sourcing_alert.invalid_cooldown", "cooldown_seconds is required")
+    if enabled is None:
+        raise_http(422, "sourcing_alert.invalid_enabled", "enabled is required")
+    if alert_type not in _THRESHOLD_SCHEMAS:
+        raise_http(422, "sourcing_alert.invalid_type", "invalid alert_type")
+    if (part_id is None) == (project_id is None):
+        raise_http(
+            422,
+            "sourcing_alert.invalid_target",
+            "exactly one of part_id or project_id is required",
+        )
+    if alert_type == "bom_buyable":
+        if project_id is None or part_id is not None:
+            raise_http(
+                422,
+                "sourcing_alert.invalid_target",
+                "bom_buyable alerts require project_id",
+            )
+        if country_code is not None or currency_code is not None or distributor_filter:
+            raise_http(
+                422,
+                "sourcing_alert.invalid_scope_filter",
+                "bom_buyable alerts cannot use sourcing filters",
+            )
+    elif part_id is None or project_id is not None:
+        raise_http(
+            422,
+            "sourcing_alert.invalid_target",
+            "this alert type requires part_id",
+        )
+
+    if part_id is not None:
+        assert_in_workspace(db, Part, part_id, workspace.id, label="part")
+    if project_id is not None:
+        assert_in_workspace(db, Project, project_id, workspace.id, label="project")
+
+    validated_threshold = _validated_threshold(alert_type, threshold)
+    validated_notify_user_ids = _validated_notify_user_ids(
+        db,
+        workspace_id=workspace.id,
+        notify_user_ids=notify_user_ids,
+    )
+    if alert_type not in _SOURCING_FILTER_ALERT_TYPES:
+        country_code = None
+        currency_code = None
+        distributor_filter = None
+
+    return {
+        "alert_type": alert_type,
+        "part_id": part_id,
+        "project_id": project_id,
+        "threshold": validated_threshold,
+        "country_code": country_code,
+        "currency_code": currency_code,
+        "distributor_filter": distributor_filter,
+        "notify_user_ids": validated_notify_user_ids,
+        "cooldown_seconds": cooldown_seconds,
+        "enabled": enabled,
+    }
+
+
+def _validated_threshold(
+    alert_type: SourcingAlertType | str,
+    threshold: dict[str, Any],
+) -> dict[str, Any]:
+    schema = _THRESHOLD_SCHEMAS[alert_type]
+    try:
+        parsed = schema.model_validate(threshold)
+    except ValidationError as exc:
+        raise_http(
+            422,
+            "sourcing_alert.invalid_threshold",
+            "invalid threshold for alert_type",
+            errors=json.loads(exc.json()),
+        )
+    return parsed.model_dump(mode="json")
+
+
+def _validated_notify_user_ids(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    notify_user_ids: list[UUID] | list[str] | None,
+) -> list[str] | None:
+    if notify_user_ids is None:
+        return None
+    requested = [UUID(str(user_id)) for user_id in notify_user_ids]
+    if not requested:
+        return []
+    active_members = set(
+        db.execute(
+            select(WorkspaceMember.user_id).where(
+                WorkspaceMember.workspace_id == workspace_id,
+                WorkspaceMember.status == "active",
+                WorkspaceMember.user_id.in_(requested),
+            )
+        ).scalars()
+    )
+    missing = [user_id for user_id in requested if user_id not in active_members]
+    if missing:
+        raise_http(
+            404,
+            ErrorCodes.WORKSPACE_MEMBER_NOT_FOUND,
+            "workspace member not found",
+            resource="workspace_member",
+        )
+    return [str(user_id) for user_id in requested]
 
 
 def build_purchase_plan(
