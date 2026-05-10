@@ -181,6 +181,16 @@ function apiError(status: number, message: string) {
   );
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 function mockReads(workspaceOverrides: Record<string, unknown> = {}) {
   vi.spyOn(api, "get").mockImplementation(async path => {
     if (path === "/workspaces/current") return workspace(workspaceOverrides) as never;
@@ -353,6 +363,61 @@ describe("ProjectSourcingPage", () => {
     expect(within(table).getByText("DigiKey")).toBeDefined();
     expect(within(table).getByText("Best single distributor")).toBeDefined();
     expect(within(table).getAllByText("Best two-distributor combo")).toHaveLength(2);
+  });
+
+  it("cold load shows the sourced BOM skeleton without the background refresh hint", async () => {
+    mockReads();
+    const firstLoad = deferred<ReturnType<typeof sourcingResponse>>();
+    vi.spyOn(api, "post").mockReturnValue(firstLoad.promise as never);
+
+    renderPage();
+
+    expect(await screen.findByRole("status", { name: "Loading sourced BOM" })).toBeDefined();
+    expect(screen.queryByText("Refreshing prices in the background...")).toBeNull();
+
+    firstLoad.resolve(sourcingResponse());
+  });
+
+  it("refetching state shows a muted refresh hint while keeping loaded rows visible", async () => {
+    const user = userEvent.setup();
+    mockReads();
+    const refetch = deferred<ReturnType<typeof sourcingResponse>>();
+    const post = vi.spyOn(api, "post");
+    post.mockResolvedValueOnce(sourcingResponse());
+    post.mockReturnValueOnce(refetch.promise as never);
+
+    renderPage();
+
+    expect(await screen.findByText("BOM rows")).toBeDefined();
+    await user.click(screen.getByRole("button", { name: "Source" }));
+
+    expect(await screen.findByText("Refreshing prices in the background...")).toBeDefined();
+    expect(screen.getAllByText("STM32").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("status", { name: "Loading sourced BOM" })).toBeNull();
+
+    refetch.resolve(sourcingResponse());
+  });
+
+  it("placeholderData renders previous result during a filter refetch", async () => {
+    const user = userEvent.setup();
+    mockReads();
+    const filteredLoad = deferred<ReturnType<typeof sourcingResponse>>();
+    const post = vi.spyOn(api, "post");
+    post.mockResolvedValueOnce(sourcingResponse());
+    post.mockReturnValueOnce(filteredLoad.promise as never);
+
+    renderPage();
+
+    expect(await screen.findByText("BOM rows")).toBeDefined();
+    await user.click(screen.getByRole("checkbox", { name: "Mouser" }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Refreshing prices in the background...")).toBeDefined();
+    expect(screen.getAllByText("STM32").length).toBeGreaterThan(0);
+    expect(screen.getByText("Regulator")).toBeDefined();
+    expect(screen.queryByRole("status", { name: "Loading sourced BOM" })).toBeNull();
+
+    filteredLoad.resolve(sourcingResponse());
   });
 
   it("renders risk pills for each flag returned", async () => {

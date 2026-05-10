@@ -127,6 +127,38 @@ The same key shape is reused across mounts so the cache stays shared
 (e.g. the scanner's `useWsKey("ws", "current")` matches the Settings →
 Workspace page's read of the same shape — `web/src/components/scanner/Scanner.tsx:43-46`).
 
+## Display-cache reads
+
+Use per-query display-cache options when a read is expensive enough that
+showing a full skeleton on every remount harms the workflow, and the key
+already contains every filter that changes the response. Project Sourcing's
+BOM coverage query is the reference case (`web/src/routes/projects/sourcing/ProjectSourcingPage.tsx:710-719`).
+
+```tsx
+// web/src/routes/projects/sourcing/ProjectSourcingPage.tsx
+const query = useQuery({
+  queryKey: useWsKey("sourcing", "project", projectId, requestBody),
+  queryFn: ({ signal }) => api.post(path, requestBody, { signal }),
+  staleTime: 5 * 60 * 1000,
+  gcTime: 30 * 60 * 1000,
+  placeholderData: previousData => previousData,
+  refetchOnWindowFocus: false,
+});
+```
+
+- `staleTime` is the trust window. Within it, remounts render from memory
+  without a network request.
+- `gcTime` is the retention window after the last component unmounts.
+- `placeholderData: previousData => previousData` is the TanStack Query 5
+  replacement for v4 `keepPreviousData`; use it when filter changes should
+  keep the previous table visible while the new key loads.
+- `refetchOnWindowFocus: false` belongs on expensive reads even though the
+  global default already disables focus refetches (`web/src/main.tsx:45-49`).
+
+Initial loads still render their skeleton. Background refetches render the
+existing data plus a small `isFetching && !isLoading` status hint
+(`web/src/routes/projects/sourcing/ProjectSourcingPage.tsx:895-900`).
+
 ## QueryClient defaults
 
 `web/src/main.tsx:45-49`:
