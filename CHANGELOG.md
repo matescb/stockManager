@@ -8,6 +8,7 @@ the canonical record.
 
 ## 2026-05 — feedback brief fixes
 
+- **SA-8 / #499** Decompose ProjectSourcingPage into a feature folder.
 - **SA-6 / #497** Project Sourcing now runs the audited BOM sourcing POST only
   from an explicit Source click, preserving the display cache without
   remount/focus/filter-change refetches.

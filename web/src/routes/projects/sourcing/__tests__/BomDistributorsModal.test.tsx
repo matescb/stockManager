@@ -5,7 +5,7 @@ import type { ComponentProps } from "react";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BomDistributorsModal } from "../BomDistributorsModal";
-import type { SourcingBomLine } from "../ProjectSourcingPage";
+import type { SourcingBomLine } from "../sourcingTypes";
 
 function line(overrides: Partial<SourcingBomLine> = {}): SourcingBomLine {
   return {

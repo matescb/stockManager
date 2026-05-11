@@ -18,20 +18,13 @@ import type {
   PurchasePlanOffer,
   PurchasePlanOrderOverride,
 } from "./purchasePlanTypes";
-
-type LocationState = {
-  plan?: PurchasePlan;
-  project?: Project;
-};
-
+type LocationState = { plan?: PurchasePlan; project?: Project };
 const STALE_MS = 10 * 60 * 1000;
-
 function numberOrNull(value: string | number | null | undefined): number | null {
   if (value == null || value === "") return null;
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
-
 function formatMoney(value: string | number | null | undefined, currency?: string | null): string {
   const numeric = numberOrNull(value);
   if (numeric == null) return "-";
@@ -41,36 +34,26 @@ function formatMoney(value: string | number | null | undefined, currency?: strin
   });
   return currency ? `${formatted} ${currency}` : formatted;
 }
-
 function formatLeadTime(days: number | null | undefined): string {
-  if (days == null) return "-";
-  return days === 1 ? "1 day" : `${days.toLocaleString()} days`;
+  return days == null ? "-" : days === 1 ? "1 day" : `${days.toLocaleString()} days`;
 }
-
 function refreshedLabel(plan: PurchasePlan): string {
   if (!plan.last_refreshed_at) return "Not refreshed yet";
   const ageMs = Date.now() - new Date(plan.last_refreshed_at).getTime();
   const minutes = Math.max(0, Math.floor(ageMs / 60000));
   return `Refreshed ${minutes} min ago`;
 }
-
 function isRefreshFresh(plan: PurchasePlan): boolean {
-  if (!plan.last_refreshed_at) return false;
-  return Date.now() - new Date(plan.last_refreshed_at).getTime() <= STALE_MS;
+  return !!plan.last_refreshed_at && Date.now() - new Date(plan.last_refreshed_at).getTime() <= STALE_MS;
 }
-
 function extendedCost(line: PurchasePlanLine): number | null {
   const unit = numberOrNull(line.selected_unit_price);
   if (unit == null || line.selected_qty == null) return null;
   return unit * line.selected_qty;
 }
-
 function selectedQtyForOffer(line: PurchasePlanLine, offer: PurchasePlanOffer): number {
-  const shortage = Math.max(0, line.shortage_qty);
-  const moq = Math.max(0, numberOrNull(offer.moq) ?? 0);
-  return Math.max(shortage, moq, 1);
+  return Math.max(Math.max(0, line.shortage_qty), Math.max(0, numberOrNull(offer.moq) ?? 0), 1);
 }
-
 function unitPriceForOffer(offer: PurchasePlanOffer, qty: number): string | number | null {
   const breaks = (offer.price_breaks ?? [])
     .map(priceBreak => ({
@@ -84,9 +67,7 @@ function unitPriceForOffer(offer: PurchasePlanOffer, qty: number): string | numb
       priceBreak.unitPrice !== "",
     )
     .sort((a, b) => a.quantity - b.quantity);
-
   if (breaks.length === 0) return offer.unit_price ?? null;
-
   let selected = breaks[0];
   for (const candidate of breaks) {
     if (candidate.quantity > qty) break;
@@ -94,32 +75,27 @@ function unitPriceForOffer(offer: PurchasePlanOffer, qty: number): string | numb
   }
   return selected.unitPrice;
 }
-
 function recomputePlanFromLines(plan: PurchasePlan, lines: PurchasePlanLine[]): PurchasePlan {
   const distributors = new Set<string>();
   let estTotal = 0;
   let hasCost = false;
   let worstLeadTime: number | null = null;
   let unfilledCount = 0;
-
   for (const line of lines) {
     if (line.selected_distributor) {
       distributors.add(line.selected_distributor);
     } else {
       unfilledCount += 1;
     }
-
     const cost = extendedCost(line);
     if (cost != null) {
       estTotal += cost;
       hasCost = true;
     }
-
     if (line.selected_lead_time_days != null) {
       worstLeadTime = Math.max(worstLeadTime ?? 0, line.selected_lead_time_days);
     }
   }
-
   return {
     ...plan,
     lines,
@@ -129,7 +105,6 @@ function recomputePlanFromLines(plan: PurchasePlan, lines: PurchasePlanLine[]): 
     unfilled_count: unfilledCount,
   };
 }
-
 function groupLines(lines: PurchasePlanLine[]) {
   const groups = new Map<string, PurchasePlanLine[]>();
   for (const line of lines) {
@@ -140,11 +115,9 @@ function groupLines(lines: PurchasePlanLine[]) {
   }
   return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
 }
-
 function summaryCurrency(plan: PurchasePlan): string | null {
   return plan.lines.find(line => line.selected_currency)?.selected_currency ?? plan.currency_code ?? null;
 }
-
 export default function PurchasePlanReviewPage() {
   const { projectId, planId } = useParams<{ projectId: string; planId: string }>();
   const navigate = useNavigate();
@@ -165,7 +138,6 @@ export default function PurchasePlanReviewPage() {
   const [busyAction, setBusyAction] = useState<"refresh" | "convert" | null>(null);
   const [overrideLine, setOverrideLine] = useState<PurchasePlanLine | null>(null);
   const [overrides, setOverrides] = useState<Record<string, PurchasePlanOrderOverride>>({});
-
   const grouped = useMemo(() => groupLines(plan?.lines ?? []), [plan]);
   const unfilled = useMemo(
     () => (plan?.lines ?? []).filter(line => !line.selected_distributor),
@@ -175,7 +147,6 @@ export default function PurchasePlanReviewPage() {
     () => overrideLine ? plan?.lines.find(line => line.id === overrideLine.id) ?? overrideLine : null,
     [overrideLine, plan],
   );
-
   if (!projectId || !planId) return null;
   if (planQuery.isLoading) {
     return (
@@ -208,7 +179,6 @@ export default function PurchasePlanReviewPage() {
       </div>
     );
   }
-
   const fresh = isRefreshFresh(plan);
   const currency = summaryCurrency(plan);
   const columns: Column<PurchasePlanLine>[] = [
@@ -279,7 +249,6 @@ export default function PurchasePlanReviewPage() {
       ),
     },
   ];
-
   async function refresh() {
     if (!plan) return;
     setBusyAction("refresh");
@@ -294,21 +263,17 @@ export default function PurchasePlanReviewPage() {
       setBusyAction(null);
     }
   }
-
   function selectOffer(line: PurchasePlanLine, offer: PurchasePlanOffer) {
     if (!offer.distributor || offer.unit_price == null || !offer.currency) return;
-
     const selected_qty = selectedQtyForOffer(line, offer);
     const selected_unit_price = unitPriceForOffer(offer, selected_qty);
     if (selected_unit_price == null) return;
-
     const override: PurchasePlanOrderOverride = {
       selected_distributor: offer.distributor,
       selected_qty,
       selected_unit_price,
       selected_currency: offer.currency,
     };
-
     queryClient.setQueryData<PurchasePlan>(purchasePlanKey, current => {
       if (!current) return current;
       const nextLines = current.lines.map(currentLine =>
@@ -331,7 +296,6 @@ export default function PurchasePlanReviewPage() {
     setOverrides(current => ({ ...current, [line.id]: override }));
     setOverrideLine(null);
   }
-
   async function convert() {
     if (!plan) return;
     setBusyAction("convert");
@@ -349,7 +313,6 @@ export default function PurchasePlanReviewPage() {
       setBusyAction(null);
     }
   }
-
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -371,7 +334,6 @@ export default function PurchasePlanReviewPage() {
         </div>
         <PoweredByTrustedParts />
       </div>
-
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
         <div className="card p-4">
           <div className="section-title">Distributors</div>
@@ -390,7 +352,6 @@ export default function PurchasePlanReviewPage() {
           <div className="text-2xl font-semibold">{plan.unfilled_count}</div>
         </div>
       </div>
-
       {grouped.map(([distributor, lines]) => {
         const subtotal = lines.reduce((sum, line) => sum + (extendedCost(line) ?? 0), 0);
         return (
@@ -412,7 +373,6 @@ export default function PurchasePlanReviewPage() {
           </details>
         );
       })}
-
       {unfilled.length > 0 && (
         <section className="rounded-md border border-danger/40 bg-panel p-4">
           <h2 className="text-md font-semibold text-danger">Unfilled lines</h2>
@@ -424,7 +384,6 @@ export default function PurchasePlanReviewPage() {
           />
         </section>
       )}
-
       <div className="sticky bottom-0 bg-panel border border-border rounded-md p-3 flex flex-wrap justify-end gap-2">
         <button type="button" className="btn" onClick={refresh} disabled={busyAction !== null}>
           <RefreshCw size={14} className={busyAction === "refresh" ? "animate-spin" : ""} />
@@ -435,7 +394,6 @@ export default function PurchasePlanReviewPage() {
           Create draft orders
         </button>
       </div>
-
       <OverrideOfferModal line={activeOverrideLine} onSelect={selectOffer} onClose={() => setOverrideLine(null)} />
     </div>
   );

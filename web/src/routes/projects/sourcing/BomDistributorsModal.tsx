@@ -10,7 +10,7 @@ import type {
   SourcingBomOffer,
   SourcingBomPriceBreak,
   SourcingRohsCompliance,
-} from "./ProjectSourcingPage";
+} from "./sourcingTypes";
 
 type Props = {
   open: boolean;
