@@ -1254,7 +1254,8 @@ def test_sourcing_bom_isolated_by_workspace(db, monkeypatch):
     ).scalars().all()
     assert {str(row.workspace_id) for row in rows} == {ws_a, ws_b}
     assert len(rows) == 2
-    assert len({row.query_hash for row in rows}) == 1
+    assert len({row.query_hash for row in rows}) == 2
+    assert {row.query_json["workspace_id"] for row in rows} == {ws_a, ws_b}
 
     BUDGET._events.clear()
 
