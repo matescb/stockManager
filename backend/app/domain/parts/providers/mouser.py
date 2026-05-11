@@ -4,9 +4,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-import httpx
-
 from app.domain.parts.providers.base import MpnLookupResult
+from app.domain.sourcing.providers import make_retrying_client
 
 _ENDPOINT = "https://api.mouser.com/api/v1/search/partnumber"
 _TIMEOUT_SEC = 8.0  # Cap upstream wall-clock to prevent worker stall (BE2-011).
@@ -14,7 +13,7 @@ _TIMEOUT_SEC = 8.0  # Cap upstream wall-clock to prevent worker stall (BE2-011).
 
 def _post_mouser(url: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Network seam — tests monkeypatch this single function."""
-    with httpx.Client(timeout=_TIMEOUT_SEC) as client:
+    with make_retrying_client(provider_name="mouser", timeout=_TIMEOUT_SEC) as client:
         resp = client.post(url, json=payload, headers={"Accept": "application/json"})
         resp.raise_for_status()
         return resp.json()

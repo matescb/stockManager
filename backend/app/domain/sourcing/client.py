@@ -19,6 +19,7 @@ from app.domain.sourcing._generated.trustedparts_v2 import (
     ProductPricing,
     SearchApiLink,
 )
+from app.domain.sourcing.providers import make_retrying_client
 from app.domain.sourcing.schemas import (
     SourcingDistributor,
     SourcingLinks,
@@ -69,7 +70,10 @@ def _post_tp(
     headers: dict[str, str],
 ) -> tuple[int, dict[str, Any]]:
     """Network seam — monkeypatched in tests. Returns (status_code, body_dict)."""
-    with httpx.Client(timeout=TP_TIMEOUT_SECONDS) as client:
+    with make_retrying_client(
+        provider_name="trustedparts",
+        timeout=TP_TIMEOUT_SECONDS,
+    ) as client:
         response = client.post(
             url,
             json=json_body,
