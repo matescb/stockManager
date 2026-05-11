@@ -15,6 +15,9 @@ the canonical record.
 - **SA-18 / #510** Project Sourcing Lifecycle, Supply chain, and RoHS risk
   pills now include hidden Lucide icon prefixes so severity is not conveyed by
   colour alone.
+- **SA-11 / #503** Sourcing alert create requests now validate threshold shape
+  from the parent `alert_type`, returning 422 field errors for malformed
+  thresholds before an alert can be persisted.
 - **SA-8 / #499** Decompose ProjectSourcingPage into a feature folder.
 - **SA-6 / #497** Project Sourcing now runs the audited BOM sourcing POST only
   from an explicit Source click, preserving the display cache without

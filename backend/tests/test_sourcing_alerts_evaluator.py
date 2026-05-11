@@ -196,6 +196,28 @@ def test_stock_below_triggers_when_qty_drops(db: Session, monkeypatch) -> None:
     assert alert.last_evaluation_state == {"qty": 4}
 
 
+def test_evaluator_consumes_typed_threshold(db: Session, monkeypatch) -> None:
+    workspace, user = _workspace(db)
+    part = _part(db, workspace, user)
+    _stock(db, workspace, part, 4, user)
+    alert = _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="stock_below",
+        threshold={"qty": 5},
+        last_state={"qty": 5},
+    )
+    sent = _capture_mail(monkeypatch)
+
+    assert evaluate_all_alerts(db) == 1
+
+    db.refresh(alert)
+    assert alert.last_evaluation_state == {"qty": 4}
+    assert "threshold_qty: 5" in sent[0]["text_body"]
+
+
 def test_stock_above_triggers_when_qty_rises(db: Session, monkeypatch) -> None:
     workspace, user = _workspace(db)
     part = _part(db, workspace, user)

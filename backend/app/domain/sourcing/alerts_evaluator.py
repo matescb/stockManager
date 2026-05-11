@@ -9,6 +9,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID
 
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -19,6 +20,13 @@ from app.domain.parts.models import Part
 from app.domain.projects.models import Project
 from app.domain.sourcing import service as sourcing_service
 from app.domain.sourcing.pricing import best_unit_price_at_qty
+from app.domain.sourcing.schemas import (
+    BomBuyableThreshold,
+    PriceChangedThreshold,
+    StockAboveThreshold,
+    StockBelowThreshold,
+    StringChangedThreshold,
+)
 from app.domain.stock import service as stock_service
 from app.domain.users.models import User
 from app.domain.workspaces.models import Workspace, WorkspaceMember
@@ -119,7 +127,7 @@ def _evaluate_stock_below(
         workspace_id=workspace.id,
         part_id=part.id,
     )
-    threshold = _threshold_int(alert, "qty")
+    threshold = _threshold_model(alert, StockBelowThreshold).qty
     previous_qty = _previous_int(alert.last_evaluation_state, "qty")
     triggered = previous_qty is not None and previous_qty >= threshold and qty < threshold
     return AlertVerdict(
@@ -147,7 +155,7 @@ def _evaluate_stock_above(
         workspace_id=workspace.id,
         part_id=part.id,
     )
-    threshold = _threshold_int(alert, "qty")
+    threshold = _threshold_model(alert, StockAboveThreshold).qty
     previous_qty = _previous_int(alert.last_evaluation_state, "qty")
     triggered = previous_qty is not None and previous_qty <= threshold and qty > threshold
     return AlertVerdict(
@@ -235,7 +243,7 @@ def _evaluate_price_changed(
     previous = alert.last_evaluation_state or {}
     previous_price = _decimal_or_none(previous.get("last_price"))
     previous_currency = previous.get("last_currency")
-    delta_pct = _threshold_decimal(alert, "delta_pct")
+    delta_pct = _threshold_model(alert, PriceChangedThreshold).delta_pct
     triggered = False
     observed_delta: Decimal | None = None
     if (
@@ -272,7 +280,7 @@ def _evaluate_bom_buyable(
     alert: SourcingAlert,
 ) -> AlertVerdict:
     project = _project_for_alert(db, workspace, alert)
-    build_quantity = _threshold_int(alert, "build_quantity")
+    build_quantity = _threshold_model(alert, BomBuyableThreshold).build_quantity
     bom = sourcing_service.source_bom(
         db,
         workspace=workspace,
@@ -624,14 +632,15 @@ def _string_changed_verdict(
 
 
 def _string_threshold_matches(alert: SourcingAlert, current: str | None) -> bool:
-    must_contain = (alert.threshold or {}).get("must_contain")
+    threshold = _threshold_model(alert, StringChangedThreshold)
+    must_contain = threshold.must_contain
     if must_contain in (None, ""):
         return True
     if current is None:
         return False
     needle = str(must_contain)
     haystack = str(current)
-    if not bool((alert.threshold or {}).get("case_sensitive", False)):
+    if not threshold.case_sensitive:
         needle = needle.casefold()
         haystack = haystack.casefold()
     return needle in haystack
@@ -658,18 +667,11 @@ def _distributor_filter(alert: SourcingAlert) -> list[str] | None:
     return [str(item).strip() for item in alert.distributor_filter if str(item).strip()]
 
 
-def _threshold_int(alert: SourcingAlert, key: str) -> int:
+def _threshold_model[T: BaseModel](alert: SourcingAlert, schema: type[T]) -> T:
     try:
-        return int(alert.threshold[key])
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError(f"alert {alert.id} threshold.{key} must be an integer") from exc
-
-
-def _threshold_decimal(alert: SourcingAlert, key: str) -> Decimal:
-    try:
-        return Decimal(str(alert.threshold[key]))
-    except (KeyError, InvalidOperation) as exc:
-        raise ValueError(f"alert {alert.id} threshold.{key} must be numeric") from exc
+        return schema.model_validate(alert.threshold or {})
+    except ValidationError as exc:
+        raise ValueError(f"alert {alert.id} has invalid {schema.__name__}") from exc
 
 
 def _previous_int(state: dict[str, Any] | None, key: str) -> int | None:
