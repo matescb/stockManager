@@ -6,10 +6,12 @@ import { toast } from "sonner";
 import EmptyState from "@/components/EmptyState";
 import { DataTable, type Column } from "@/components/DataTable";
 import { PoweredByTrustedParts } from "@/components/PoweredByTrustedParts";
+import { RiskLegendPopover } from "@/components/RiskLegendPopover";
 import { SourcingSourceLabel } from "@/components/SourcingSourceLabel";
 import { ApiError, api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
-import { lifecycleRiskTone } from "@/lib/sourcing";
+import { LIFECYCLE_LEGEND, SUPPLY_CHAIN_LEGEND } from "@/lib/riskLegends";
+import { lifecycleRiskTone, riskToneClass } from "@/lib/sourcing";
 import AlertFormModal from "@/routes/sourcing/alerts/AlertFormModal";
 import type { Project } from "@/types";
 import { BomDistributorsModal } from "./BomDistributorsModal";
@@ -233,7 +235,7 @@ function LifecycleRiskPill({ label = "Lifecycle risk", value }: { label?: string
   const trimmed = value?.trim();
   if (!trimmed) return null;
   return (
-    <span className={`pill ${lifecycleRiskTone(trimmed)}`} aria-label={`${label}: ${trimmed}`}>
+    <span className={`pill ${riskToneClass(lifecycleRiskTone(trimmed))}`} title={trimmed} aria-label={`${label}: ${trimmed}`}>
       {trimmed}
     </span>
   );
@@ -697,13 +699,25 @@ function BomRows({ rows, workspaceCurrency }: { rows: SourcingBomLine[]; workspa
     },
     {
       key: "lifecycle",
-      header: "Lifecycle",
+      header: (
+        <span className="inline-flex items-center gap-1">
+          Lifecycle
+          <RiskLegendPopover legend={LIFECYCLE_LEGEND} title="Lifecycle Risk Statuses" />
+        </span>
+      ),
+      headerLabel: "Lifecycle",
       accessor: row => row.best_offer?.lifecycle_risk?.trim() ?? "",
       render: row => <LifecycleRiskPill value={row.best_offer?.lifecycle_risk} />,
     },
     {
       key: "supply_chain",
-      header: "Supply chain",
+      header: (
+        <span className="inline-flex items-center gap-1">
+          Supply chain
+          <RiskLegendPopover legend={SUPPLY_CHAIN_LEGEND} title="Supply Chain Risk Statuses" />
+        </span>
+      ),
+      headerLabel: "Supply chain",
       accessor: row => row.best_offer?.supply_chain_risk?.trim() ?? "",
       render: row => (
         <LifecycleRiskPill label="Supply-chain risk" value={row.best_offer?.supply_chain_risk} />

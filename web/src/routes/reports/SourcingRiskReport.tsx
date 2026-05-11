@@ -9,7 +9,7 @@ import { SourcingSourceLabel } from "@/components/SourcingSourceLabel";
 import { api, ApiError } from "@/lib/api";
 import { formatMoney } from "@/lib/format";
 import { useWsKey } from "@/lib/queryKeys";
-import { lifecycleRiskRank, lifecycleRiskTone } from "@/lib/sourcing";
+import { lifecycleRiskRank, lifecycleRiskTone, riskToneClass } from "@/lib/sourcing";
 
 type SourcingRiskFlag =
   | "single_source"
@@ -114,7 +114,7 @@ function LifecycleRiskPill({ value }: { value?: string | null }) {
   const trimmed = value?.trim();
   if (!trimmed) return null;
   return (
-    <span className={`pill ${lifecycleRiskTone(trimmed)}`} aria-label={`Lifecycle risk: ${trimmed}`}>
+    <span className={`pill ${riskToneClass(lifecycleRiskTone(trimmed))}`} title={trimmed} aria-label={`Lifecycle risk: ${trimmed}`}>
       {trimmed}
     </span>
   );

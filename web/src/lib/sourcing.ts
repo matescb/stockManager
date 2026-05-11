@@ -40,11 +40,27 @@ export function extendedPrice(
   return best.unitPrice * Math.floor(qty);
 }
 
-export function lifecycleRiskTone(value: string | null | undefined): string {
+export type RiskTone = "good" | "low-warning" | "warning" | "danger" | "neutral";
+
+export const RISK_TONE_CLASSES: Record<RiskTone, string> = {
+  good: "bg-success/10 text-success",
+  "low-warning": "bg-success/30 text-success",
+  warning: "bg-warning/10 text-warning",
+  danger: "bg-danger/10 text-danger",
+  neutral: "bg-panel2 text-muted",
+};
+
+export function riskToneClass(tone: RiskTone): string {
+  return RISK_TONE_CLASSES[tone];
+}
+
+export function lifecycleRiskTone(value: string | null | undefined): RiskTone {
   const normalized = value?.trim().toLowerCase() ?? "";
-  if (normalized.startsWith("active")) return "bg-success/10 text-success";
+  // First match wins: TPS-7 lifecycle keywords outrank generic TrustedParts risk levels,
+  // then Low-Med canonical labels, Low/Med/High labels, and finally descriptive fallbacks.
+  if (normalized.startsWith("active")) return "good";
   if (normalized.includes("nrnd") || normalized.includes("not recommended")) {
-    return "bg-warning/10 text-warning";
+    return "warning";
   }
   if (
     normalized.includes("obsolete") ||
@@ -53,13 +69,20 @@ export function lifecycleRiskTone(value: string | null | undefined): string {
     normalized.includes("last time buy") ||
     normalized.includes("ltb")
   ) {
-    return "bg-danger/10 text-danger";
+    return "danger";
   }
-  // SX-1: TPS-7 lifecycle vocabulary takes precedence over generic TrustedParts risk levels.
-  if (normalized.includes("low")) return "bg-success/10 text-success";
-  if (normalized.includes("medium") || normalized.includes("moderate")) return "bg-warning/10 text-warning";
-  if (normalized.includes("high") || normalized.includes("severe")) return "bg-danger/10 text-danger";
-  return "bg-panel2 text-muted";
+  if (normalized.includes("low-med") || normalized.includes("low/med")) return "low-warning";
+  if (normalized.includes("low")) return "good";
+  if (normalized.includes("medium") || /\bmed\b/.test(normalized) || normalized.includes("moderate")) return "warning";
+  if (normalized.includes("high") || normalized.includes("severe")) return "danger";
+  if (
+    normalized.includes("may be special order") ||
+    normalized.includes("limited stock") ||
+    normalized.includes("long lead times")
+  ) {
+    return "low-warning";
+  }
+  return "neutral";
 }
 
 export function lifecycleRiskRank(value: string | null | undefined): number {

@@ -77,7 +77,8 @@ export type Align = "left" | "right" | "center";
 
 export type Column<T> = {
   key: string;
-  header: string;
+  header: ReactNode;
+  headerLabel?: string;
   render?: (row: T) => ReactNode;
   accessor?: (row: T) => string | number | boolean | null | undefined;
   width?: string;
@@ -132,6 +133,11 @@ function defaultAlignFor<T>(col: Column<T>, sample: T | undefined): Align {
   if (!sample || !col.accessor) return "left";
   const v = col.accessor(sample);
   return typeof v === "number" ? "right" : "left";
+}
+
+function columnHeaderLabel<T>(col: Column<T>): string {
+  if (col.headerLabel) return col.headerLabel;
+  return typeof col.header === "string" ? col.header : col.key;
 }
 
 export function DataTable<T>({
@@ -261,7 +267,7 @@ export function DataTable<T>({
   }
 
   function exportCsv() {
-    const head = visibleCols.map(c => c.header);
+    const head = visibleCols.map(c => columnHeaderLabel(c));
     const body = sorted.map(r => visibleCols.map(c => cellText(c, r)));
     const csv = buildCsv(head, body);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
@@ -328,7 +334,7 @@ export function DataTable<T>({
                   checked={!hidden[c.key]}
                   onChange={() => setHidden(h => ({ ...h, [c.key]: !h[c.key] }))}
                 />
-                {c.header}
+                {columnHeaderLabel(c)}
               </label>
             ))}
           </div>

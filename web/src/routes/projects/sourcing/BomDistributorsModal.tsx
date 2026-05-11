@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { ExternalLink, Info, ShieldAlert, ShieldCheck, X } from "lucide-react";
 import { DataTable, type Column } from "@/components/DataTable";
 import { PoweredByTrustedParts } from "@/components/PoweredByTrustedParts";
-import { lifecycleRiskTone } from "@/lib/sourcing";
+import { lifecycleRiskTone, riskToneClass } from "@/lib/sourcing";
 import type {
   SourcingBomLine,
   SourcingBomOffer,
@@ -132,7 +132,7 @@ function RiskPill({
   const trimmed = value?.trim();
   if (!trimmed) return null;
   return (
-    <span className={`pill inline-flex items-center gap-1 ${lifecycleRiskTone(trimmed)}`} aria-label={`${label}: ${trimmed}`}>
+    <span className={`pill inline-flex items-center gap-1 ${riskToneClass(lifecycleRiskTone(trimmed))}`} title={trimmed} aria-label={`${label}: ${trimmed}`}>
       {icon}
       {trimmed}
     </span>
