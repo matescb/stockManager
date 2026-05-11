@@ -127,6 +127,8 @@ Update workspace settings, rotate provider/scanner credentials, and (re)mint the
 | `parts_provider_api_secret` | string | Same encrypt-or-clear (`workspaces.py:179-182`). |
 | `scanner` | string | `"zxing"` / `"scandit"`. |
 | `scanner_license_key` | string | Encrypt-or-clear (`workspaces.py:183-186`). |
+| `sourcing_country_code` | string \| null | Optional TrustedParts country default. Non-null values are uppercased and must be present in `active_countries`; otherwise the route returns `422` with `code: "invalid_country_code"` (`workspaces.py:52-111`, `workspaces.py:284`). |
+| `sourcing_currency_code` | string \| null | Optional TrustedParts currency default. Non-null values are uppercased and must be present in `active_currencies`; otherwise the route returns `422` with `code: "invalid_currency_code"` (`workspaces.py:52-111`, `workspaces.py:284`). |
 | `sourcing_language_code` | string \| null | Optional TrustedParts spec translation language. Allowed values: `de`, `en`, `es`, `fr`, `it`, `pt`, `ja`, `zh-hans`, `zh-hant`; `null` omits `LanguageCode` so TP uses its default (`schemas.py:31-41`, `client.py:171-173`). |
 | `active_currencies` | string[] | Non-empty ISO-4217 uppercase codes; each matches `^[A-Z]{3}$` (`schemas.py:26`, `schemas.py:68`). |
 | `active_countries` | string[] | Non-empty ISO-3166 alpha-2 uppercase codes; each matches `^[A-Z]{2}$` (`schemas.py:27`, `schemas.py:69`). |

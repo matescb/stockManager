@@ -26,6 +26,8 @@ export type SourcingWorkspace = {
   sourcing_currency_code: string | null;
   sourcing_language_code: Exclude<SourcingLanguageCode, ""> | null;
   sourcing_preferred_distributors: string[] | null;
+  active_countries: string[];
+  active_currencies: string[];
   sourcing_use_cached_for_dashboards: boolean;
   has_sourcing_company_id: boolean;
   has_sourcing_api_key: boolean;
@@ -139,12 +141,18 @@ export function SourcingCard({
     },
   });
 
+  const configured = hasApiKey;
+  const activeCountrySelected = Boolean(country && workspace.active_countries.includes(country));
+  const activeCurrencySelected = Boolean(currency && workspace.active_currencies.includes(currency));
+  const canSave = activeCountrySelected && activeCurrencySelected && !saveMutation.isPending;
+
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (!activeCountrySelected || !activeCurrencySelected) return;
     const body: SourcingPatch = {
       sourcing_provider: provider,
-      sourcing_country_code: country.trim() ? country.trim().toUpperCase() : null,
-      sourcing_currency_code: currency.trim() ? currency.trim().toUpperCase() : null,
+      sourcing_country_code: country || null,
+      sourcing_currency_code: currency || null,
       sourcing_language_code: language || null,
       sourcing_preferred_distributors: splitDistributors(distributors),
       sourcing_use_cached_for_dashboards: useCache,
@@ -153,8 +161,6 @@ export function SourcingCard({
     if (apiKeyTouched) body.sourcing_api_key = apiKey;
     saveMutation.mutate(body);
   }
-
-  const configured = hasApiKey;
 
   return (
     <form className="card p-4 mb-4 space-y-3 text-sm" onSubmit={submit}>
@@ -219,25 +225,35 @@ export function SourcingCard({
         </div>
         <div>
           <label className="label" htmlFor="sourcing-country">Country</label>
-          <input
+          <select
             id="sourcing-country"
             className="input uppercase"
-            maxLength={2}
             value={country}
-            onChange={(e) => setCountry(e.target.value.toUpperCase())}
-            placeholder="US"
-          />
+            onChange={(e) => setCountry(e.target.value)}
+          >
+            <option value="">Select country</option>
+            {workspace.active_countries.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="label" htmlFor="sourcing-currency">Currency</label>
-          <input
+          <select
             id="sourcing-currency"
             className="input uppercase"
-            maxLength={3}
             value={currency}
-            onChange={(e) => setCurrency(e.target.value.toUpperCase())}
-            placeholder="USD"
-          />
+            onChange={(e) => setCurrency(e.target.value)}
+          >
+            <option value="">Select currency</option>
+            {workspace.active_currencies.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="label" htmlFor="sourcing-language">Language</label>
@@ -285,7 +301,7 @@ export function SourcingCard({
       )}
 
       <div className="flex flex-wrap gap-2">
-        <button className="btn-primary" type="submit" disabled={saveMutation.isPending}>
+        <button className="btn-primary" type="submit" disabled={!canSave}>
           Save
         </button>
         <button

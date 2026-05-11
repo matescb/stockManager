@@ -15,6 +15,8 @@ the canonical record.
   requests with more than 25 values before provider fanout.
 - **SA-14 / #506** Sourcing alert evaluation now batches identical
   workspace-scoped TrustedParts queries by canonical query hash.
+- **SA-19 / #511** Workspace sourcing country and currency defaults now use
+  active-list selects, with backend validation for non-active codes.
 - **SA-17 / #509** Production cron sidecar jobs now have a 600-second
   per-run timeout that logs exit 124 on timeout while preserving cadence.
 - **SA-15 / #507** TrustedParts, Mouser, and DigiKey outbound calls now share

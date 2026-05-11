@@ -49,6 +49,72 @@ def _encrypt_patch_credential(value: str | None) -> str | None:
     return encrypt(value)
 
 
+def _normalize_sourcing_code(data: dict, key: str, current: str | None) -> str | None:
+    value = data.get(key, current)
+    if isinstance(value, str):
+        normalized = value.upper()
+        if key in data:
+            data[key] = normalized
+        return normalized
+    return value
+
+
+def _validate_sourcing_code(
+    code: str | None,
+    active_values: list[str] | None,
+    *,
+    error_code: str,
+    field: str,
+    active_field: str,
+) -> None:
+    if not code:
+        return
+    if code not in (active_values or []):
+        raise_http(
+            422,
+            error_code,
+            f"{field} must be active for this workspace",
+            field=field,
+            active_field=active_field,
+            value=code,
+        )
+
+
+def _validate_sourcing_defaults_against_active_lists(data: dict, ws: Workspace) -> None:
+    watched_fields = {
+        "sourcing_country_code",
+        "sourcing_currency_code",
+        "active_countries",
+        "active_currencies",
+    }
+    if not watched_fields.intersection(data):
+        return
+
+    country_code = _normalize_sourcing_code(data, "sourcing_country_code", ws.sourcing_country_code)
+    currency_code = _normalize_sourcing_code(
+        data,
+        "sourcing_currency_code",
+        ws.sourcing_currency_code,
+    )
+    active_countries = data.get("active_countries", ws.active_countries)
+    active_currencies = data.get("active_currencies", ws.active_currencies)
+
+    _validate_sourcing_code(
+        country_code,
+        active_countries,
+        error_code=ErrorCodes.SOURCING_INVALID_COUNTRY_CODE,
+        field="sourcing_country_code",
+        active_field="active_countries",
+    )
+    _validate_sourcing_code(
+        currency_code,
+        active_currencies,
+        error_code=ErrorCodes.SOURCING_INVALID_CURRENCY_CODE,
+        field="sourcing_currency_code",
+        active_field="active_currencies",
+    )
+
+
 @router.get("")
 def list_workspaces(user: CurrentUser, db: DbSession):
     memberships = (
@@ -215,6 +281,7 @@ def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace, 
     regenerate = bool(data.pop("regenerate_catalog_token", False))
     was_enabled = bool(ws.catalog_enabled)
     previous_sourcing_provider = ws.sourcing_provider or "none"
+    _validate_sourcing_defaults_against_active_lists(data, ws)
     active_list_changes = {
         key: value
         for key, value in data.items()
