@@ -56,24 +56,29 @@ List current workspace sourcing alerts.
 | `part_id` | `uuid` | No | Filters part-scoped alerts. |
 | `project_id` | `uuid` | No | Filters project-scoped alerts. |
 | `include_archived` | `boolean` | No | Defaults to `false`; archived rows are soft-deleted alerts. |
-| `limit` | `integer` | No | Defaults to `100`; min `1`, max `500`. |
+| `limit` | `integer` | No | Defaults to `50`; min `1`, max `200`. |
 | `offset` | `integer` | No | Defaults to `0`; deterministic order is newest first. |
 
 **Response** — `200 OK` (envelope: `{ data, status }`)
 
 ```json
 {
-  "data": [
-    {
-      "id": "9b7f7d43-6b5c-4f7d-bc0e-44c6d73f0992",
-      "alert_type": "stock_below",
-      "part_id": "012f2f63-3b2c-45c4-a841-682ec681f508",
-      "project_id": null,
-      "threshold": { "qty": 10 },
-      "enabled": true,
-      "archived_at": null
-    }
-  ],
+  "data": {
+    "items": [
+      {
+        "id": "9b7f7d43-6b5c-4f7d-bc0e-44c6d73f0992",
+        "alert_type": "stock_below",
+        "part_id": "012f2f63-3b2c-45c4-a841-682ec681f508",
+        "project_id": null,
+        "threshold": { "qty": 10 },
+        "enabled": true,
+        "archived_at": null
+      }
+    ],
+    "total": 42,
+    "limit": 50,
+    "offset": 0
+  },
   "status": { "category": "ok", "message": "OK" }
 }
 ```
@@ -81,9 +86,10 @@ List current workspace sourcing alerts.
 **Notes**
 
 - The service filters every query by `workspace_id`; archived rows are excluded unless requested.
+- `total` is counted after filters and before `limit`/`offset`.
 - `include_archived=true` is list-only. GET-by-id, PATCH, and DELETE treat archived rows as not found.
-- Source: `backend/app/api/routes/sourcing.py:156-178`.
-- Service: `backend/app/domain/sourcing/service.py:145-172`.
+- Source: `backend/app/api/routes/sourcing.py:156-193`.
+- Service: `backend/app/domain/sourcing/service.py:138-195`.
 
 ### `POST /api/sourcing/alerts`
 
@@ -120,7 +126,7 @@ Create a workspace-scoped alert definition.
 
 **Response** — `200 OK` (envelope: `{ data, status }`)
 
-Shape matches one item from `GET /api/sourcing/alerts`.
+Shape matches one item from `GET /api/sourcing/alerts` `data.items`.
 
 **Errors**
 
@@ -160,7 +166,7 @@ Path: `alert_id` is a sourcing alert UUID in the current workspace.
 
 **Response** — `200 OK` (envelope: `{ data, status }`)
 
-Shape matches one item from `GET /api/sourcing/alerts`.
+Shape matches one item from `GET /api/sourcing/alerts` `data.items`.
 
 **Errors**
 
@@ -181,7 +187,7 @@ Path: `alert_id` is a sourcing alert UUID in the current workspace. Body accepts
 
 **Response** — `200 OK` (envelope: `{ data, status }`)
 
-Shape matches one item from `GET /api/sourcing/alerts`.
+Shape matches one item from `GET /api/sourcing/alerts` `data.items`.
 
 **Errors**
 

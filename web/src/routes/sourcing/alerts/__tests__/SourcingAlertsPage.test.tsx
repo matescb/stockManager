@@ -93,24 +93,37 @@ function mockReads() {
     if (String(path).startsWith("/projects?")) return projects() as never;
     if (String(path).startsWith("/sourcing/alerts")) {
       if (String(path).includes("alert_type=bom_buyable")) {
-        return [alert({
-          id: "alert-2",
-          alert_type: "bom_buyable",
-          part_id: null,
-          project_id: projectId,
-          threshold: { build_quantity: 5 },
-        })] as never;
+        return {
+          items: [alert({
+            id: "alert-2",
+            alert_type: "bom_buyable",
+            part_id: null,
+            project_id: projectId,
+            threshold: { build_quantity: 5 },
+          })],
+          total: 1,
+          limit: 50,
+          offset: 0,
+        } as never;
       }
-      return [
-        alert(),
-        alert({
-          id: "alert-2",
-          alert_type: "bom_buyable",
-          part_id: null,
-          project_id: projectId,
-          threshold: { build_quantity: 5 },
-        }),
-      ] as never;
+      const offset = String(path).includes("offset=50") ? 50 : 0;
+      return {
+        items: offset === 50
+          ? [alert({ id: "alert-51", threshold: { qty: 51 } })]
+          : [
+            alert(),
+            alert({
+              id: "alert-2",
+              alert_type: "bom_buyable",
+              part_id: null,
+              project_id: projectId,
+              threshold: { build_quantity: 5 },
+            }),
+          ],
+        total: 51,
+        limit: 50,
+        offset,
+      } as never;
     }
     throw new Error(`unexpected GET ${path}`);
   });
@@ -149,6 +162,29 @@ describe("AlertsPage", () => {
     expect(screen.getByText("Below 10")).toBeDefined();
   });
 
+  it("test_renders_paginated_total_label", async () => {
+    mockReads();
+
+    renderPage();
+
+    expect(await screen.findByText("Showing 1-2 of 51")).toBeDefined();
+  });
+
+  it("test_next_page_fetches_offset_50", async () => {
+    const user = userEvent.setup();
+    mockReads();
+
+    renderPage();
+
+    await screen.findByText("Showing 1-2 of 51");
+    await user.click(screen.getByRole("button", { name: "Next" }));
+
+    await waitFor(() => {
+      expect(api.get).toHaveBeenCalledWith("/sourcing/alerts?limit=50&offset=50", expect.any(Object));
+    });
+    expect(await screen.findByText("Showing 51-51 of 51")).toBeDefined();
+  });
+
   it("filter by alert_type narrows visible rows", async () => {
     const user = userEvent.setup();
     mockReads();
@@ -159,7 +195,10 @@ describe("AlertsPage", () => {
     await user.selectOptions(screen.getByLabelText("Alert type"), "bom_buyable");
 
     await waitFor(() => {
-      expect(api.get).toHaveBeenCalledWith("/sourcing/alerts?alert_type=bom_buyable", expect.any(Object));
+      expect(api.get).toHaveBeenCalledWith(
+        "/sourcing/alerts?alert_type=bom_buyable&limit=50&offset=0",
+        expect.any(Object),
+      );
     });
     const table = screen.getByRole("table");
     expect(within(table).getByText("BOM buyable")).toBeDefined();

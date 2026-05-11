@@ -429,6 +429,15 @@ class SourcingAlertOut(BaseModel):
     updated_at: datetime
 
 
+class SourcingAlertListOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[SourcingAlertOut]
+    total: int
+    limit: int
+    offset: int
+
+
 class SourcingBomOfferOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

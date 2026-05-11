@@ -640,7 +640,7 @@ def test_sourcing_alerts_isolated_by_workspace():
         },
     ).json()["data"]
 
-    listed_b = b.get("/api/sourcing/alerts").json()["data"]
+    listed_b = b.get("/api/sourcing/alerts").json()["data"]["items"]
 
     assert alert_b["id"] in {alert["id"] for alert in listed_b}
     assert alert_a["id"] not in {alert["id"] for alert in listed_b}

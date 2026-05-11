@@ -23,6 +23,7 @@ import type { Part, Project } from "@/types";
 import AlertFormModal from "./AlertFormModal";
 
 type EnabledFilter = "all" | "enabled" | "disabled";
+const PAGE_SIZE = 50;
 
 function formatThreshold(alert: SourcingAlert): string {
   switch (alert.alert_type) {
@@ -63,15 +64,16 @@ export default function AlertsPage() {
   const [includeArchived, setIncludeArchived] = useState(false);
   const [formAlert, setFormAlert] = useState<SourcingAlert | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [offset, setOffset] = useState(0);
 
   const enabled = enabledFilter === "all" ? null : enabledFilter === "enabled";
   const query = useQuery({
-    queryKey: useWsKey("sourcing-alerts", typeFilter, enabledFilter, includeArchived),
+    queryKey: useWsKey("sourcing-alerts", typeFilter, enabledFilter, includeArchived, PAGE_SIZE, offset),
     queryFn: ({ signal }) => listSourcingAlerts({
       alert_type: typeFilter,
       enabled,
       include_archived: includeArchived,
-    }, { signal }),
+    }, { limit: PAGE_SIZE, offset }, { signal }),
   });
   const partsQuery = useQuery({
     queryKey: useWsKey("parts", "alert-scope-map"),
@@ -83,7 +85,12 @@ export default function AlertsPage() {
   });
   const partMap = useMemo(() => mapById(partsQuery.data), [partsQuery.data]);
   const projectMap = useMemo(() => mapById(projectsQuery.data), [projectsQuery.data]);
-  const rows = query.data ?? [];
+  const rows = query.data?.items ?? [];
+  const total = query.data?.total ?? 0;
+  const showingStart = total === 0 ? 0 : offset + 1;
+  const showingEnd = Math.min(offset + rows.length, total);
+  const canGoPrevious = offset > 0;
+  const canGoNext = offset + PAGE_SIZE < total;
 
   const archiveMutation = useApiMutation<SourcingAlert, SourcingAlert>({
     mutationKey: wsKeyOf(workspaceId, "sourcing-alerts", "archive"),
@@ -200,7 +207,14 @@ export default function AlertsPage() {
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <label className="label">
             Alert type
-            <select className="input" value={typeFilter} onChange={event => setTypeFilter(event.currentTarget.value as SourcingAlertType | "")}>
+            <select
+              className="input"
+              value={typeFilter}
+              onChange={event => {
+                setTypeFilter(event.currentTarget.value as SourcingAlertType | "");
+                setOffset(0);
+              }}
+            >
               <option value="">All types</option>
               <option value="stock_below">Stock below</option>
               <option value="stock_above">Stock above</option>
@@ -212,7 +226,14 @@ export default function AlertsPage() {
           </label>
           <label className="label">
             Enabled
-            <select className="input" value={enabledFilter} onChange={event => setEnabledFilter(event.currentTarget.value as EnabledFilter)}>
+            <select
+              className="input"
+              value={enabledFilter}
+              onChange={event => {
+                setEnabledFilter(event.currentTarget.value as EnabledFilter);
+                setOffset(0);
+              }}
+            >
               <option value="all">All</option>
               <option value="enabled">Enabled only</option>
               <option value="disabled">Disabled only</option>
@@ -222,7 +243,10 @@ export default function AlertsPage() {
             <input
               type="checkbox"
               checked={includeArchived}
-              onChange={event => setIncludeArchived(event.currentTarget.checked)}
+              onChange={event => {
+                setIncludeArchived(event.currentTarget.checked);
+                setOffset(0);
+              }}
             />
             Include archived
           </label>
@@ -239,6 +263,30 @@ export default function AlertsPage() {
         exportFilename="sourcing-alerts"
         empty={query.isLoading ? "Loading alerts..." : "No sourcing alerts."}
       />
+
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted">
+        <span>
+          Showing {showingStart}-{showingEnd} of {total}
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={!canGoPrevious || query.isFetching}
+            onClick={() => setOffset(value => Math.max(0, value - PAGE_SIZE))}
+          >
+            Prev
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={!canGoNext || query.isFetching}
+            onClick={() => setOffset(value => value + PAGE_SIZE)}
+          >
+            Next
+          </button>
+        </div>
+      </div>
 
       <AlertFormModal
         open={formOpen}

@@ -68,6 +68,16 @@ def _create_project_alert(
     return r.json()["data"]
 
 
+def _list_alerts(client: TestClient, query: str = "") -> dict:
+    r = client.get(f"/api/sourcing/alerts{query}")
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+def _list_alert_items(client: TestClient, query: str = "") -> list[dict]:
+    return _list_alerts(client, query)["items"]
+
+
 def _single_line_project(client: TestClient, *, name: str = "Alerts BOM") -> tuple[str, str]:
     part_id = create_part(client, name=f"{name} part", mpn=f"ALERT-{uuid.uuid4().hex[:6]}")
     project_id = create_project_with_bom(
@@ -355,23 +365,19 @@ def test_list_filters(authed_client):
     )
     authed_client.delete(f"/api/sourcing/alerts/{archived_alert['id']}")
 
-    disabled = authed_client.get("/api/sourcing/alerts?enabled=false").json()["data"]
+    disabled = _list_alert_items(authed_client, "?enabled=false")
     assert {alert["id"] for alert in disabled} == {disabled_alert["id"]}
 
-    stock_above = authed_client.get("/api/sourcing/alerts?alert_type=stock_above").json()["data"]
+    stock_above = _list_alert_items(authed_client, "?alert_type=stock_above")
     assert {alert["id"] for alert in stock_above} == {disabled_alert["id"]}
 
-    part_filtered = authed_client.get(f"/api/sourcing/alerts?part_id={part_b}").json()["data"]
+    part_filtered = _list_alert_items(authed_client, f"?part_id={part_b}")
     assert {alert["id"] for alert in part_filtered} == {part_b_alert["id"]}
 
-    project_filtered = authed_client.get(
-        f"/api/sourcing/alerts?project_id={project_a}"
-    ).json()["data"]
+    project_filtered = _list_alert_items(authed_client, f"?project_id={project_a}")
     assert {alert["id"] for alert in project_filtered} == {project_a_alert["id"]}
 
-    include_archived = authed_client.get(
-        "/api/sourcing/alerts?include_archived=true"
-    ).json()["data"]
+    include_archived = _list_alert_items(authed_client, "?include_archived=true")
     assert archived_alert["id"] in {alert["id"] for alert in include_archived}
     assert enabled_alert["id"] in {alert["id"] for alert in include_archived}
     assert project_b_alert["id"] in {alert["id"] for alert in include_archived}
@@ -408,7 +414,7 @@ def test_archived_excluded_from_default_list(authed_client):
     alert = _create_stock_alert(authed_client, part_id)
     authed_client.delete(f"/api/sourcing/alerts/{alert['id']}")
 
-    data = authed_client.get("/api/sourcing/alerts").json()["data"]
+    data = _list_alert_items(authed_client)
 
     assert alert["id"] not in {item["id"] for item in data}
 
@@ -449,20 +455,58 @@ def test_delete_archived_returns_404(authed_client):
     assert r.json()["status"]["category"] == "not_found"
 
 
-def test_list_alerts_paginates(authed_client):
+def test_list_alerts_default_returns_first_50_with_total(authed_client):
+    part_id = create_part(authed_client, name="Default paged alert target")
+    alerts = [
+        _create_stock_alert(authed_client, part_id, threshold={"qty": qty})
+        for qty in range(55)
+    ]
+
+    data = _list_alerts(authed_client)
+
+    assert data["total"] == 55
+    assert data["limit"] == 50
+    assert data["offset"] == 0
+    assert len(data["items"]) == 50
+    assert {item["id"] for item in data["items"]}.issubset({alert["id"] for alert in alerts})
+
+
+def test_list_alerts_offset_pagination_works(authed_client):
     part_id = create_part(authed_client, name="Paged alert target")
     alerts = [
         _create_stock_alert(authed_client, part_id, threshold={"qty": qty})
         for qty in range(3)
     ]
 
-    first = authed_client.get("/api/sourcing/alerts?limit=1").json()["data"]
-    second = authed_client.get("/api/sourcing/alerts?limit=1&offset=1").json()["data"]
+    first = _list_alerts(authed_client, "?limit=1")
+    second = _list_alerts(authed_client, "?limit=1&offset=1")
 
-    assert len(first) == 1
-    assert len(second) == 1
-    assert first[0]["id"] != second[0]["id"]
-    assert {first[0]["id"], second[0]["id"]}.issubset({alert["id"] for alert in alerts})
+    assert first["total"] == 3
+    assert first["limit"] == 1
+    assert first["offset"] == 0
+    assert second["total"] == 3
+    assert second["limit"] == 1
+    assert second["offset"] == 1
+    assert len(first["items"]) == 1
+    assert len(second["items"]) == 1
+    assert first["items"][0]["id"] != second["items"][0]["id"]
+    assert {first["items"][0]["id"], second["items"][0]["id"]}.issubset(
+        {alert["id"] for alert in alerts}
+    )
+
+
+def test_list_alerts_limit_max_200(authed_client):
+    part_id = create_part(authed_client, name="Max paged alert target")
+    for qty in range(205):
+        _create_stock_alert(authed_client, part_id, threshold={"qty": qty})
+
+    data = _list_alerts(authed_client, "?limit=200")
+    over_limit = authed_client.get("/api/sourcing/alerts?limit=201")
+
+    assert data["total"] == 205
+    assert data["limit"] == 200
+    assert len(data["items"]) == 200
+    assert over_limit.status_code == 422
 
 
 def test_rate_limit_30_per_minute(authed_client, limiter_enabled):
@@ -491,7 +535,7 @@ def test_workspace_isolation_two_workspaces_same_part_alerts():
     alert_a = _create_stock_alert(client_a, part_a, threshold={"qty": 3})
     alert_b = _create_stock_alert(client_b, part_b, threshold={"qty": 3})
 
-    data_b = client_b.get("/api/sourcing/alerts").json()["data"]
+    data_b = _list_alert_items(client_b)
 
     assert alert_b["id"] in {alert["id"] for alert in data_b}
     assert alert_a["id"] not in {alert["id"] for alert in data_b}

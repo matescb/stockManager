@@ -8,6 +8,8 @@ the canonical record.
 
 ## 2026-05 — feedback brief fixes
 
+- **SA-12 / #504** Sourcing alerts now return `{ items, total, limit, offset }`
+  with 50-row default pagination and frontend next/previous controls.
 - **SA-17 / #509** Production cron sidecar jobs now have a 600-second
   per-run timeout that logs exit 124 on timeout while preserving cadence.
 - **SA-15 / #507** TrustedParts, Mouser, and DigiKey outbound calls now share
