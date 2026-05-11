@@ -103,6 +103,35 @@ describe("ProjectSourcingPage", () => {
     });
   });
 
+  it("uses structured provider rate-limit codes for sourcing toast", async () => {
+    mockReads();
+    vi.spyOn(api, "post").mockRejectedValue(
+      apiError(502, "TrustedParts rate limit reached", "sourcing.provider_rate_limited"),
+    );
+
+    renderPage();
+    await clickSource();
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith("Rate limit hit — wait a minute before sourcing again.");
+    });
+  });
+
+  it("links currency mismatch errors to workspace settings", async () => {
+    mockReads();
+    vi.spyOn(api, "post").mockRejectedValue(
+      apiError(422, "mixed currencies for distributor DigiKey", "sourcing.currency_mismatch"),
+    );
+
+    renderPage();
+    await clickSource();
+
+    expect(await screen.findByText("Sourcing returned mixed currencies.")).toBeDefined();
+    const link = screen.getByRole("link", { name: "Open workspace settings" });
+    expect(link.getAttribute("href")).toBe("/settings/workspace");
+    expect(toast.error).toHaveBeenCalledWith("Sourcing returned mixed currencies. Check workspace currency settings.");
+  });
+
   it("distributors multi-select defaults to workspace.sourcing_preferred_distributors", async () => {
     mockReads({
       sourcing_preferred_distributors: ["Mouser", "Arrow"],

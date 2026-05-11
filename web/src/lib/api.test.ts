@@ -148,11 +148,25 @@ describe("ApiError.userMessage", () => {
   it("populates userMessage from body.status.category", () => {
     const err = new ApiError(
       404,
-      { data: null, status: { category: "not_found", message: "DB says nope" } },
+      {
+        data: null,
+        status: { category: "not_found", message: "DB says nope" },
+        code: "resource.not_found",
+      },
       "DB says nope",
     );
     expect(err.message).toBe("DB says nope");
     expect(err.userMessage).toBe("Not found.");
+    expect(err.code).toBe("resource.not_found");
+  });
+
+  it("leaves code undefined when the envelope has no structured code", () => {
+    const err = new ApiError(
+      409,
+      { data: null, status: { category: "conflict", message: "dup" } },
+      "dup",
+    );
+    expect(err.code).toBeUndefined();
   });
 
   it("populates userMessage as generic fallback when body is null", () => {

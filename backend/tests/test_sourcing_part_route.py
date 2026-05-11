@@ -309,6 +309,7 @@ def test_foreign_part_returns_404_envelope(authed_client):
     assert r.status_code == 404, r.text
     body = r.json()
     assert body["data"] is None
+    assert body["code"] == "resource.not_found"
     assert body["status"]["category"] == "not_found"
 
 
@@ -322,6 +323,7 @@ def test_unconfigured_returns_409(authed_client, monkeypatch):
     r = authed_client.get(f"/api/parts/{part_id}/sourcing")
 
     assert r.status_code == 409, r.text
+    assert r.json()["code"] == "sourcing.workspace_not_configured"
     assert r.json()["status"] == {
         "category": "conflict",
         "message": "sourcing not configured",
@@ -336,6 +338,7 @@ def test_budget_blocked_returns_503(authed_client):
     r = authed_client.get(f"/api/parts/{part_id}/sourcing")
 
     assert r.status_code == 503, r.text
+    assert r.json()["code"] == "sourcing.budget_exhausted"
     assert r.json()["status"] == {
         "category": "server_error",
         "message": "sourcing budget exhausted",

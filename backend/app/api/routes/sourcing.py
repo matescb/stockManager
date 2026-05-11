@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.api._helpers import assert_in_workspace
 from app.core.deps import CurrentUser, CurrentWorkspace, require_role
+from app.core.errors import ErrorCodes
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import err, ok
 from app.core.time import utcnow
@@ -721,12 +722,51 @@ def _error_response(
     status_code: int,
     category: str,
     message: str,
+    *,
+    code: str | None = None,
+    **extra,
 ) -> JSONResponse:
+    body = err(
+        category,
+        message,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    body["code"] = code or _default_error_code(status_code, category, message)
+    body.update(extra)
     return JSONResponse(
         status_code=status_code,
-        content=err(
-            category,
-            message,
-            request_id=getattr(request.state, "request_id", None),
-        ),
+        content=body,
     )
+
+
+def _default_error_code(status_code: int, category: str, message: str) -> str:
+    normalized = message.strip().lower()
+    if normalized == "sourcing not configured":
+        return ErrorCodes.SOURCING_WORKSPACE_NOT_CONFIGURED
+    if normalized == "sourcing budget exhausted":
+        return ErrorCodes.SOURCING_BUDGET_EXHAUSTED
+    if normalized == "trustedparts rejected sourcing credentials":
+        return ErrorCodes.SOURCING_PROVIDER_AUTH_FAILED
+    if normalized == "trustedparts rate limit reached":
+        return ErrorCodes.SOURCING_PROVIDER_RATE_LIMITED
+    if normalized == "trustedparts request timed out":
+        return ErrorCodes.SOURCING_PROVIDER_TIMEOUT
+    if normalized == "trustedparts sourcing request failed":
+        return ErrorCodes.SOURCING_PROVIDER_UNAVAILABLE
+    if normalized == "purchase plan not found":
+        return ErrorCodes.RESOURCE_NOT_FOUND
+    if normalized == "plan expired":
+        return ErrorCodes.SOURCING_PLAN_EXPIRED
+    if normalized == "part has no mpn":
+        return ErrorCodes.SOURCING_PART_MISSING_MPN
+    if status_code == 409 and ("refresh" in normalized or "stale" in normalized):
+        return ErrorCodes.SOURCING_PLAN_STALE
+    if status_code == 422 and "mixed currencies" in normalized:
+        return ErrorCodes.SOURCING_CURRENCY_MISMATCH
+    if status_code == 422 and "override" in normalized:
+        return ErrorCodes.SOURCING_OVERRIDE_INVALID
+    if status_code == 422:
+        return ErrorCodes.SOURCING_INVALID_REQUEST
+    if category == "not_found":
+        return ErrorCodes.RESOURCE_NOT_FOUND
+    return ErrorCodes.SOURCING_GENERIC

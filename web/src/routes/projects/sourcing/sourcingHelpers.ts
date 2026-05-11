@@ -113,8 +113,21 @@ export function errorStatus(error: unknown): number | null {
 }
 
 export function sourcingErrorToastMessage(error: unknown): string {
-  if (errorStatus(error) === 429) return "Rate limit hit — wait a minute before sourcing again.";
-  if (error instanceof ApiError) return error.userMessage;
+  if (error instanceof ApiError) {
+    switch (error.code) {
+      case "rate_limited":
+      case "sourcing.provider_rate_limited":
+        return "Rate limit hit — wait a minute before sourcing again.";
+      case "sourcing.currency_mismatch":
+        return "Sourcing returned mixed currencies. Check workspace currency settings.";
+      case "sourcing.plan_stale":
+        return "Prices are stale. Refresh prices before continuing.";
+      default:
+        break;
+    }
+    if (error.status === 429) return "Rate limit hit — wait a minute before sourcing again.";
+    return error.userMessage;
+  }
   return "Failed to source BOM. Try again.";
 }
 

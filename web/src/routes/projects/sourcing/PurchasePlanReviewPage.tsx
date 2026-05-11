@@ -118,6 +118,20 @@ function groupLines(lines: PurchasePlanLine[]) {
 function summaryCurrency(plan: PurchasePlan): string | null {
   return plan.lines.find(line => line.selected_currency)?.selected_currency ?? plan.currency_code ?? null;
 }
+function purchasePlanActionErrorMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof ApiError)) return fallback;
+  switch (error.code) {
+    case "sourcing.plan_stale":
+      return "Prices are stale. Refresh prices before creating draft orders.";
+    case "sourcing.currency_mismatch":
+      return "Sourcing returned mixed currencies. Check workspace currency settings.";
+    case "rate_limited":
+    case "sourcing.provider_rate_limited":
+      return "Rate limit hit — wait a minute before trying again.";
+    default:
+      return error.userMessage || fallback;
+  }
+}
 export default function PurchasePlanReviewPage() {
   const { projectId, planId } = useParams<{ projectId: string; planId: string }>();
   const navigate = useNavigate();
@@ -136,6 +150,7 @@ export default function PurchasePlanReviewPage() {
   const plan = planQuery.data ?? null;
   const [project] = useState<Project | undefined>(locationState.project);
   const [busyAction, setBusyAction] = useState<"refresh" | "convert" | null>(null);
+  const [refreshAttention, setRefreshAttention] = useState(false);
   const [overrideLine, setOverrideLine] = useState<PurchasePlanLine | null>(null);
   const [overrides, setOverrides] = useState<Record<string, PurchasePlanOrderOverride>>({});
   const grouped = useMemo(() => groupLines(plan?.lines ?? []), [plan]);
@@ -255,10 +270,11 @@ export default function PurchasePlanReviewPage() {
     try {
       const next = await api.post<PurchasePlan>(`/sourcing/purchase-plans/${plan.id}/refresh`);
       queryClient.setQueryData(purchasePlanKey, next);
+      setRefreshAttention(false);
       toast.success("Prices refreshed");
     } catch (err) {
-      const message = err instanceof ApiError && err.userMessage ? err.userMessage : "Failed to refresh prices";
-      toast.error(message);
+      if (err instanceof ApiError && err.code === "sourcing.plan_stale") setRefreshAttention(true);
+      toast.error(purchasePlanActionErrorMessage(err, "Failed to refresh prices"));
     } finally {
       setBusyAction(null);
     }
@@ -307,8 +323,9 @@ export default function PurchasePlanReviewPage() {
       toast.success(`Created ${result.orders.length} draft orders`);
       queryClient.removeQueries({ queryKey: purchasePlanKey, exact: true });
       navigate("/orders");
-    } catch {
-      toast.error("Could not create draft orders");
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "sourcing.plan_stale") setRefreshAttention(true);
+      toast.error(purchasePlanActionErrorMessage(err, "Could not create draft orders"));
     } finally {
       setBusyAction(null);
     }
@@ -385,7 +402,12 @@ export default function PurchasePlanReviewPage() {
         </section>
       )}
       <div className="sticky bottom-0 bg-panel border border-border rounded-md p-3 flex flex-wrap justify-end gap-2">
-        <button type="button" className="btn" onClick={refresh} disabled={busyAction !== null}>
+        <button
+          type="button"
+          className={refreshAttention ? "btn border-warning text-warning" : "btn"}
+          onClick={refresh}
+          disabled={busyAction !== null}
+        >
           <RefreshCw size={14} className={busyAction === "refresh" ? "animate-spin" : ""} />
           Refresh prices
         </button>
