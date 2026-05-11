@@ -600,6 +600,16 @@ def test_purchase_plan_refresh_returns_404_for_foreign_workspace(monkeypatch):
     _assert_not_found_envelope(r)
 
 
+def test_purchase_plan_get_returns_404_for_foreign_workspace(monkeypatch):
+    a, b = _two_workspaces()
+    plan_a = _create_purchase_plan(a, monkeypatch, mpn="FOREIGN-GET")
+    project_b = _single_line_project(b, mpn="LOCAL-GET", quantity=1)
+
+    r = b.get(f"/api/projects/{project_b}/purchase-plans/{plan_a}")
+
+    _assert_not_found_envelope(r)
+
+
 def test_purchase_plan_convert_to_orders_returns_404_for_foreign_workspace(monkeypatch):
     a, b = _two_workspaces()
     plan_a = _create_refreshed_purchase_plan(a, monkeypatch, mpn="FOREIGN-ORDERS")

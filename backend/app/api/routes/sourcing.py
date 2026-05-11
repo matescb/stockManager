@@ -382,6 +382,25 @@ def create_project_purchase_plan(
     return ok(sourcing_service.purchase_plan_to_out(plan).model_dump(mode="json"))
 
 
+@projects_router.get(
+    "/{project_id}/purchase-plans/{plan_id}",
+    dependencies=[Depends(require_role("member"))],
+)
+def get_project_purchase_plan(
+    request: Request,
+    project_id: UUID,
+    plan_id: UUID,
+    ws: CurrentWorkspace,
+    db: Session = Depends(get_db),
+):
+    project = assert_in_workspace(db, Project, project_id, ws.id, label="project")
+    plan = assert_in_workspace(db, PurchasePlan, plan_id, ws.id, label="purchase plan")
+    if plan.project_id != project.id:
+        return _error_response(request, 404, "not_found", "purchase plan not found")
+
+    return ok(sourcing_service.purchase_plan_to_out(plan).model_dump(mode="json"))
+
+
 @search_router.post(
     "/purchase-plans/{plan_id}/refresh",
     dependencies=[Depends(require_role("member"))],

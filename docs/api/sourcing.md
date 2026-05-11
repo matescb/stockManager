@@ -382,6 +382,32 @@ Path: `project_id` is a project UUID in the current workspace.
 - `expires_at` is capped to `created_at + 7 days`; refresh and conversion are later Phase-4 endpoints.
 - Decimal monetary fields serialize as strings.
 
+### `GET /api/projects/{project_id}/purchase-plans/{plan_id}`
+
+Read a persisted purchase plan snapshot for the current workspace.
+
+**Request**
+
+Path: `project_id` is a project UUID in the current workspace; `plan_id` is a
+purchase plan UUID owned by that project and workspace.
+
+**Response** — `200 OK` (envelope: `{ data, status }`)
+
+Shape matches `POST /api/projects/{project_id}/purchase-plan`.
+
+**Errors**
+
+- `404 Not Found` — `project_id` or `plan_id` is missing, belongs to another
+  workspace, or the plan belongs to a different project.
+- `422 Unprocessable Entity` — malformed UUID.
+
+**Notes**
+
+- The route validates both the project and purchase plan with
+  `assert_in_workspace()` before serializing the plan.
+- The frontend purchase-plan review route uses this endpoint to hydrate
+  TanStack Query on direct links and browser reloads.
+
 ### `POST /api/sourcing/purchase-plans/{plan_id}/refresh`
 
 Re-run a purchase plan with fresh TrustedParts offers and replace its plan lines.

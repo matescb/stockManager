@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { RefreshCw, ShoppingCart } from "lucide-react";
 import { toast } from "sonner";
@@ -6,6 +7,7 @@ import { DataTable, type Column } from "@/components/DataTable";
 import { PoweredByTrustedParts } from "@/components/PoweredByTrustedParts";
 import { SourcingSourceLabel } from "@/components/SourcingSourceLabel";
 import { ApiError, api } from "@/lib/api";
+import { useWsKey } from "@/lib/queryKeys";
 import type { Project } from "@/types";
 import OverrideOfferModal from "./OverrideOfferModal";
 import type {
@@ -148,7 +150,17 @@ export default function PurchasePlanReviewPage() {
   const navigate = useNavigate();
   const { state } = useLocation();
   const locationState = (state ?? {}) as LocationState;
-  const [plan, setPlan] = useState<PurchasePlan | null>(locationState.plan ?? null);
+  const queryClient = useQueryClient();
+  const purchasePlanKey = useWsKey("purchase-plan", planId);
+  const initialPlan = locationState.plan?.id === planId ? locationState.plan : undefined;
+  const planQuery = useQuery({
+    queryKey: purchasePlanKey,
+    queryFn: () => api.get<PurchasePlan>(`/projects/${projectId}/purchase-plans/${planId}`),
+    enabled: !!projectId && !!planId,
+    initialData: initialPlan,
+    staleTime: 5 * 60 * 1000,
+  });
+  const plan = planQuery.data ?? null;
   const [project] = useState<Project | undefined>(locationState.project);
   const [busyAction, setBusyAction] = useState<"refresh" | "convert" | null>(null);
   const [overrideLine, setOverrideLine] = useState<PurchasePlanLine | null>(null);
@@ -165,6 +177,27 @@ export default function PurchasePlanReviewPage() {
   );
 
   if (!projectId || !planId) return null;
+  if (planQuery.isLoading) {
+    return (
+      <div className="card p-4">
+        <div className="font-medium">Loading purchase plan...</div>
+      </div>
+    );
+  }
+  if (planQuery.isError) {
+    const message = planQuery.error instanceof ApiError && planQuery.error.userMessage
+      ? planQuery.error.userMessage
+      : "Could not load purchase plan";
+    return (
+      <div className="card border-danger/40 p-4">
+        <div className="font-medium text-danger">Could not load purchase plan</div>
+        <div className="mt-1 text-sm text-muted">{message}</div>
+        <button type="button" className="btn mt-3" onClick={() => navigate(`/projects/${projectId}/sourcing`)}>
+          Back to sourcing
+        </button>
+      </div>
+    );
+  }
   if (!plan) {
     return (
       <div className="card p-4">
@@ -252,7 +285,7 @@ export default function PurchasePlanReviewPage() {
     setBusyAction("refresh");
     try {
       const next = await api.post<PurchasePlan>(`/sourcing/purchase-plans/${plan.id}/refresh`);
-      setPlan(next);
+      queryClient.setQueryData(purchasePlanKey, next);
       toast.success("Prices refreshed");
     } catch (err) {
       const message = err instanceof ApiError && err.userMessage ? err.userMessage : "Failed to refresh prices";
@@ -276,7 +309,7 @@ export default function PurchasePlanReviewPage() {
       selected_currency: offer.currency,
     };
 
-    setPlan(current => {
+    queryClient.setQueryData<PurchasePlan>(purchasePlanKey, current => {
       if (!current) return current;
       const nextLines = current.lines.map(currentLine =>
         currentLine.id === line.id
@@ -308,6 +341,7 @@ export default function PurchasePlanReviewPage() {
         { overrides },
       );
       toast.success(`Created ${result.orders.length} draft orders`);
+      queryClient.removeQueries({ queryKey: purchasePlanKey, exact: true });
       navigate("/orders");
     } catch {
       toast.error("Could not create draft orders");
