@@ -10,6 +10,7 @@ Reusable presentational + behavioural components shared across pages. Page-speci
 |---|---|
 | `DataTable.tsx` | The shared table — search, sort, hidden columns, CSV export, multi-select |
 | `DataTable.test.tsx` | Co-located unit test for DataTable |
+| `Modal.tsx` | Shared accessible dialog shell with focus trap, ESC close, backdrop dismiss, and focus restoration |
 | `EntityHeader.tsx` | Standard entity-page header (title / breadcrumbs / actions) |
 | `SubNav.tsx` | Tabbed sub-navigation used on entity pages |
 | `PartsTopNav.tsx` | Parts-area top nav |
@@ -35,6 +36,7 @@ Every component is its default / named export. The most commonly reused:
 | Component | Use for |
 |---|---|
 | `DataTable` | Any table — before rolling your own |
+| `Modal` | Dialogs that need `role="dialog"`, `aria-modal`, focus trapping, ESC close, backdrop dismiss, and trigger focus restoration |
 | `EntityHeader` + `SubNav` | Entity pages (Part, Order, Build, …) |
 | `AttachmentsPanel` | Any entity that supports attachments |
 | `ConfirmDialog` | Any destructive action |
@@ -43,8 +45,9 @@ Every component is its default / named export. The most commonly reused:
 ## Hard rules (this module)
 
 1. **Use `DataTable` before adding a new table.** It already does search, sort, hidden columns, CSV export, multi-select. See [components](../../../docs/frontend/components.md).
-2. **Use the `index.css` utility set** (`btn`, `card`, `pill`, `input`, …) before adding new ones. See [tailwind-utilities](../../../docs/frontend/tailwind-utilities.md).
-3. **Lazy routes wrap their suspense in `RouteSkeleton`** and their data in `QueryStateBoundary` for uniform loading / error UX.
+2. **Use `Modal` before adding a route-local dialog shell.** API: `open`, `onClose`, `title`, `children`, optional `initialFocusRef`, `size`, and `className` for the panel.
+3. **Use the `index.css` utility set** (`btn`, `card`, `pill`, `input`, …) before adding new ones. See [tailwind-utilities](../../../docs/frontend/tailwind-utilities.md).
+4. **Lazy routes wrap their suspense in `RouteSkeleton`** and their data in `QueryStateBoundary` for uniform loading / error UX.
 
 ## See also
 

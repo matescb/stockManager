@@ -17,6 +17,8 @@ the canonical record.
   overrides; add error toast on failure.
 - **SA-3 / #494** Sourcing alert notifications now commit `last_notified_at`
   before SMTP dispatch, trading one missed outage email for duplicate suppression.
+- **SA-7 / #498** Project Sourcing modals now share an accessible dialog shell
+  with focus trap, ESC close, backdrop dismiss, and focus restoration.
 - **SX-10 / #485** Project Sourcing capacity now shows cost per single BOM
   alongside total BOM cost and short-quantity price to pay.
 - **SX-12 / #487** Project Sourcing now uses the four-level TrustedParts

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import { ExternalLink, Info, ShieldAlert, ShieldCheck, X } from "lucide-react";
 import { DataTable, type Column } from "@/components/DataTable";
+import { Modal } from "@/components/Modal";
 import { PoweredByTrustedParts } from "@/components/PoweredByTrustedParts";
 import { lifecycleRiskTone, riskToneClass } from "@/lib/sourcing";
 import type {
@@ -157,73 +158,8 @@ function uniqueTrimmed(values: Array<string | null | undefined>): string[] {
     .sort((a, b) => a.localeCompare(b));
 }
 
-function focusableElements(container: HTMLElement): HTMLElement[] {
-  return Array.from(container.querySelectorAll<HTMLElement>(
-    [
-      "a[href]",
-      "button:not([disabled])",
-      "input:not([disabled])",
-      "select:not([disabled])",
-      "textarea:not([disabled])",
-      "[tabindex]:not([tabindex='-1'])",
-    ].join(","),
-  )).filter(element => element.getAttribute("aria-hidden") !== "true");
-}
-
 export function BomDistributorsModal({ open, onClose, line, workspaceCurrency }: Props) {
-  const dialogRef = useRef<HTMLDivElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
-  const restoreFocusRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    restoreFocusRef.current = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
-    window.setTimeout(() => {
-      closeButtonRef.current?.focus();
-    }, 0);
-
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-        return;
-      }
-      if (event.key !== "Tab") return;
-
-      const dialog = dialogRef.current;
-      if (!dialog) return;
-      const focusable = focusableElements(dialog);
-      if (focusable.length === 0) {
-        event.preventDefault();
-        dialog.focus();
-        return;
-      }
-
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      const active = document.activeElement;
-      if (event.shiftKey && active === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && active === last) {
-        event.preventDefault();
-        first.focus();
-      } else if (!dialog.contains(active)) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      const restoreFocus = restoreFocusRef.current;
-      if (restoreFocus && document.contains(restoreFocus)) {
-        restoreFocus.focus();
-      }
-      restoreFocusRef.current = null;
-    };
-  }, [open, onClose]);
 
   const rows = useMemo<DistributorRow[]>(() => {
     if (!line) return [];
@@ -343,60 +279,54 @@ export function BomDistributorsModal({ open, onClose, line, workspaceCurrency }:
   const stockedDistributorCount = new Set(rows.filter(row => row.stock > 0).map(row => row.distributor)).size;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="bom-distributors-title"
-      tabIndex={-1}
-      ref={dialogRef}
-      onMouseDown={event => {
-        if (event.target === event.currentTarget) onClose();
-      }}
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`${line.part_name} — ${line.mpn ?? "No MPN"}`}
+      initialFocusRef={closeButtonRef}
+      className="flex max-h-[90vh] w-full max-w-6xl flex-col rounded border border-border bg-panel shadow-lg"
     >
-      <div className="flex max-h-[90vh] w-full max-w-6xl flex-col rounded border border-border bg-panel shadow-lg">
-        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border p-4">
-          <div className="min-w-0">
-            <h2 id="bom-distributors-title" className="text-base font-semibold text-text">
-              {line.part_name} — {line.mpn ?? "No MPN"}
-            </h2>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <PoweredByTrustedParts />
-              {statusPills.lifecycle.map(value => (
-                <RiskPill key={`lifecycle:${value}`} label="Lifecycle risk" value={value} icon={<ShieldCheck size={12} aria-hidden="true" />} />
-              ))}
-              {statusPills.supplyChain.map(value => (
-                <RiskPill key={`supply:${value}`} label="Supply-chain risk" value={value} icon={<ShieldAlert size={12} aria-hidden="true" />} />
-              ))}
-              {statusPills.tariffAffected && (
-                <span className="pill inline-flex items-center gap-1 bg-danger/10 text-danger" aria-label="Tariff-affected (US)">
-                  <Info size={12} aria-hidden="true" />
-                  Tariff-affected (US)
-                </span>
-              )}
-            </div>
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border p-4">
+        <div className="min-w-0">
+          <h2 id="bom-distributors-title" className="text-base font-semibold text-text">
+            {line.part_name} — {line.mpn ?? "No MPN"}
+          </h2>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <PoweredByTrustedParts />
+            {statusPills.lifecycle.map(value => (
+              <RiskPill key={`lifecycle:${value}`} label="Lifecycle risk" value={value} icon={<ShieldCheck size={12} aria-hidden="true" />} />
+            ))}
+            {statusPills.supplyChain.map(value => (
+              <RiskPill key={`supply:${value}`} label="Supply-chain risk" value={value} icon={<ShieldAlert size={12} aria-hidden="true" />} />
+            ))}
+            {statusPills.tariffAffected && (
+              <span className="pill inline-flex items-center gap-1 bg-danger/10 text-danger" aria-label="Tariff-affected (US)">
+                <Info size={12} aria-hidden="true" />
+                Tariff-affected (US)
+              </span>
+            )}
           </div>
-          <button type="button" className="btn-ghost btn-sm" aria-label="Close" onClick={onClose} ref={closeButtonRef}>
-            <X size={16} aria-hidden="true" />
-          </button>
         </div>
-
-        <div className="min-h-0 flex-1 overflow-auto p-4">
-          <DataTable
-            rows={rows}
-            columns={columns}
-            rowKey={row => row.id}
-            tableId="project-sourcing-bom-distributors"
-            exportFilename="sourced-bom-distributors"
-            empty={<div className="text-muted">No distributor offers for this BOM line.</div>}
-          />
-        </div>
-
-        <div className="border-t border-border px-4 py-3 text-sm text-muted">
-          {stockedDistributorCount.toLocaleString()} distributor{stockedDistributorCount === 1 ? "" : "s"} with stock;{" "}
-          {totalDistributorCount.toLocaleString()} total
-        </div>
+        <button type="button" className="btn-ghost btn-sm" aria-label="Close" onClick={onClose} ref={closeButtonRef}>
+          <X size={16} aria-hidden="true" />
+        </button>
       </div>
-    </div>
+
+      <div className="min-h-0 flex-1 overflow-auto p-4">
+        <DataTable
+          rows={rows}
+          columns={columns}
+          rowKey={row => row.id}
+          tableId="project-sourcing-bom-distributors"
+          exportFilename="sourced-bom-distributors"
+          empty={<div className="text-muted">No distributor offers for this BOM line.</div>}
+        />
+      </div>
+
+      <div className="border-t border-border px-4 py-3 text-sm text-muted">
+        {stockedDistributorCount.toLocaleString()} distributor{stockedDistributorCount === 1 ? "" : "s"} with stock;{" "}
+        {totalDistributorCount.toLocaleString()} total
+      </div>
+    </Modal>
   );
 }

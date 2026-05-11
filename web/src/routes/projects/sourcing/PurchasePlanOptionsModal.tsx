@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { Modal } from "@/components/Modal";
 import type { PurchasePlanRequest } from "./purchasePlanTypes";
 
 type Props = {
@@ -47,14 +48,14 @@ export default function PurchasePlanOptionsModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-      <form
-        className="card max-w-lg w-full p-4 space-y-4"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="purchase-plan-options-title"
-        onSubmit={submit}
-      >
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Generate purchase plan"
+      size="sm"
+      className="card max-w-lg w-full"
+    >
+      <form className="p-4 space-y-4" onSubmit={submit}>
         <div className="flex items-start justify-between gap-3">
           <h2 id="purchase-plan-options-title" className="text-lg font-semibold">
             Generate purchase plan
@@ -145,6 +146,6 @@ export default function PurchasePlanOptionsModal({
           </button>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }
