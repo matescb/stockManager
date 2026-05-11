@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { DataTable, type Column } from "@/components/DataTable";
 import { PoweredByTrustedParts } from "@/components/PoweredByTrustedParts";
 import { SourcingSourceLabel } from "@/components/SourcingSourceLabel";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import type { Project } from "@/types";
 import OverrideOfferModal from "./OverrideOfferModal";
 import type {
@@ -253,8 +253,10 @@ export default function PurchasePlanReviewPage() {
     try {
       const next = await api.post<PurchasePlan>(`/sourcing/purchase-plans/${plan.id}/refresh`);
       setPlan(next);
-      setOverrides({});
       toast.success("Prices refreshed");
+    } catch (err) {
+      const message = err instanceof ApiError && err.userMessage ? err.userMessage : "Failed to refresh prices";
+      toast.error(message);
     } finally {
       setBusyAction(null);
     }

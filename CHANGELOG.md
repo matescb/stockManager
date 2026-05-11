@@ -10,6 +10,8 @@ the canonical record.
 
 - **SA-1 / #492** Sourcing capacity now treats mixed-currency BOM totals as
   unknown instead of silently using the first currency.
+- **SA-2 / #493** Fix PurchasePlanReviewPage refresh silently wiping user
+  overrides; add error toast on failure.
 - **SX-10 / #485** Project Sourcing capacity now shows cost per single BOM
   alongside total BOM cost and short-quantity price to pay.
 - **SX-12 / #487** Project Sourcing now uses the four-level TrustedParts

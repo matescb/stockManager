@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import PurchasePlanReviewPage from "../PurchasePlanReviewPage";
 import type { PurchasePlan } from "../purchasePlanTypes";
 
@@ -213,6 +213,81 @@ describe("PurchasePlanReviewPage", () => {
     await waitFor(() => expect(screen.getByText("Arrow")).toBeDefined());
     expect(api.post).toHaveBeenCalledWith("/sourcing/purchase-plans/plan-12345678/refresh");
     expect(toast.success).toHaveBeenCalledWith("Prices refreshed");
+  });
+
+  it("preserves overrides across a successful refresh", async () => {
+    const refreshed = plan({
+      est_total_cost: "18.40",
+      lines: [
+        {
+          ...plan().lines[0],
+          selected_distributor: "DigiKey",
+          selected_qty: 16,
+          selected_unit_price: "1.15",
+        },
+        plan().lines[1],
+      ],
+      unfilled_count: 0,
+    });
+    const post = vi.spyOn(api, "post")
+      .mockResolvedValueOnce(refreshed)
+      .mockResolvedValueOnce({
+        orders: [{ id: "order-1", name: "Draft", supplier: "Arrow", status: "draft", entries: [] }],
+      });
+    renderPage();
+
+    await selectArrowOffer();
+    await userEvent.click(screen.getByRole("button", { name: /Refresh prices/ }));
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Prices refreshed"));
+
+    await userEvent.click(screen.getByRole("button", { name: /Create draft orders/ }));
+
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/orders"));
+    expect(post).toHaveBeenNthCalledWith(2, "/sourcing/purchase-plans/plan-12345678/orders", {
+      overrides: {
+        "line-1": {
+          selected_distributor: "Arrow",
+          selected_qty: 16,
+          selected_unit_price: "2.05",
+          selected_currency: "USD",
+        },
+      },
+    });
+  });
+
+  it("shows error toast on refresh failure", async () => {
+    const apiError = new ApiError(
+      502,
+      { data: null, status: { category: "trustedparts_unavailable", message: "TrustedParts unavailable" } },
+      "Bad Gateway",
+    );
+    apiError.userMessage = "TrustedParts unavailable. Retry later.";
+    const post = vi.spyOn(api, "post")
+      .mockRejectedValueOnce(apiError)
+      .mockResolvedValueOnce({
+        orders: [{ id: "order-1", name: "Draft", supplier: "Arrow", status: "draft", entries: [] }],
+      });
+    renderPage();
+
+    await selectArrowOffer();
+    await userEvent.click(screen.getByRole("button", { name: /Refresh prices/ }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("TrustedParts unavailable. Retry later."));
+
+    await userEvent.click(screen.getByRole("button", { name: /Create draft orders/ }));
+
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/orders"));
+    expect(post).toHaveBeenNthCalledWith(2, "/sourcing/purchase-plans/plan-12345678/orders", {
+      overrides: {
+        "line-1": {
+          selected_distributor: "Arrow",
+          selected_qty: 16,
+          selected_unit_price: "2.05",
+          selected_currency: "USD",
+        },
+      },
+    });
   });
 
   it("Create draft orders is disabled when last_refreshed_at is null", () => {
