@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.time import utcnow
 from app.domain.sourcing.models import PurchasePlan, SourcingCache
+from app.domain.workspaces.master_lists import ALL_DISTRIBUTORS
 
 SEVEN_DAYS = timedelta(days=7)
 
@@ -23,6 +24,56 @@ def canonical_query_hash(query: dict[str, Any]) -> str:
     """SHA-256 of canonical JSON: sorted keys and compact separators."""
     canonical = json.dumps(query, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def sourcing_search_query(
+    *,
+    workspace_id: UUID,
+    provider: str,
+    mpn: str,
+    country_code: str | None,
+    currency_code: str | None,
+    language_code: str | None,
+    distributors: list[str] | None,
+    in_stock_only: bool,
+    use_cached_data: bool,
+    exact_match: bool = True,
+) -> dict[str, Any]:
+    """Canonical TrustedParts cache query shape.
+
+    Fields are: ``workspace_id``, ``provider``, ``mpn``, ``country_code``,
+    ``currency_code``, ``language_code``, sorted/canonical-cased
+    ``distributors``, ``in_stock_only``, ``use_cached_data``, and
+    ``exact_match``. Every field is an upstream request input or an isolation
+    boundary that must produce a different cache hash when changed.
+    """
+    return {
+        "workspace_id": str(workspace_id),
+        "provider": provider.strip().casefold(),
+        "mpn": mpn.strip(),
+        "country_code": _canonical_code(country_code),
+        "currency_code": _canonical_code(currency_code),
+        "language_code": _canonical_language(language_code),
+        "distributors": _canonical_distributors(distributors),
+        "in_stock_only": in_stock_only,
+        "use_cached_data": use_cached_data,
+        "exact_match": exact_match,
+    }
+
+
+def purge_provider_cache(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    provider: str,
+) -> int:
+    """Delete cache rows for one workspace/provider and return row count."""
+    result = db.execute(
+        delete(SourcingCache)
+        .where(SourcingCache.workspace_id == workspace_id)
+        .where(SourcingCache.query_json["provider"].astext == provider.strip().casefold())
+    )
+    return result.rowcount or 0
 
 
 def get_or_fetch(
@@ -70,6 +121,32 @@ def get_or_fetch(
         )
     )
     return response, False
+
+
+def _canonical_code(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.strip().upper()
+    return value or None
+
+
+def _canonical_language(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.strip().casefold()
+    return value or None
+
+
+def _canonical_distributors(value: list[str] | None) -> list[str]:
+    if not value:
+        return []
+    known = {item.casefold(): item for item in ALL_DISTRIBUTORS}
+    canonical = {
+        known.get(str(item).strip().casefold(), str(item).strip())
+        for item in value
+        if str(item).strip()
+    }
+    return sorted(canonical, key=str.casefold)
 
 
 def sweep_expired(db: Session, *, workspace_id: UUID) -> int:

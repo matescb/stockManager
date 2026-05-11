@@ -352,7 +352,12 @@ project
 ```
 
 The cache boundary is per MPN inside each chunk: `search()` canonicalises one query per
-MPN and calls `get_or_fetch()` with the caller workspace id. Sources:
+MPN and calls `get_or_fetch()` with the caller workspace id. The canonical query dict
+contains `workspace_id`, `provider`, `mpn`, `country_code`, `currency_code`,
+`language_code`, sorted/canonical-cased `distributors`, `in_stock_only`,
+`use_cached_data`, and `exact_match`. Sourcing credential rotation, deletion, or
+provider deconfiguration purges rows for that workspace and provider in the same
+transaction as the workspace settings write. Sources:
 `backend/app/domain/sourcing/service.py:88-145`,
 `backend/app/domain/sourcing/service.py:195-231`
 
@@ -366,7 +371,9 @@ limit build count before and after purchase. Source:
 | Operation | Entry point | Notes |
 |---|---|---|
 | Hash query | `app.domain.sourcing.cache::canonical_query_hash` | `json.dumps(..., sort_keys=True, separators=(",", ":"))`. |
+| Build TrustedParts query | `app.domain.sourcing.cache::sourcing_search_query` | Includes workspace/provider/MPN/locale/distributor/request-shape fields. |
 | Read/write cache | `app.domain.sourcing.cache::get_or_fetch` | Returns `(response_json, cache_hit)` and upserts on miss. |
+| Purge provider rows | `app.domain.sourcing.cache::purge_provider_cache` | Deletes one workspace/provider scope on credential rotation or deconfiguration. |
 | Sweep expired rows | `app.domain.sourcing.cache::sweep_expired` | Deletes rows with `expires_at < now()`. |
 
 Source: `backend/app/domain/sourcing/cache.py:23`
