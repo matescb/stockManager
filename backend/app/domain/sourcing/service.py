@@ -980,16 +980,18 @@ def search(
 
     provider.country_code = effective_country
     provider.currency_code = effective_currency
+    provider_name = getattr(provider, "name", "trustedparts")
+    provider_language_code = getattr(provider, "language_code", workspace.sourcing_language_code)
 
     results: list[SourcingSearchResult] = []
     for mpn in clean_mpns:
         query = cache.sourcing_search_query(
             workspace_id=workspace.id,
-            provider=provider.name,
+            provider=provider_name,
             mpn=mpn,
             country_code=effective_country,
             currency_code=effective_currency,
-            language_code=provider.language_code,
+            language_code=provider_language_code,
             in_stock_only=in_stock_only,
             distributors=effective_distributors,
             use_cached_data=effective_use_cached,
