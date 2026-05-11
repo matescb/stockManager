@@ -836,6 +836,104 @@ def test_cooldown_elapsed_re_triggers(db: Session, monkeypatch) -> None:
     assert len(sent) == 1
 
 
+def test_smtp_failure_does_not_cause_resend_next_pass(
+    db: Session,
+    monkeypatch,
+    caplog,
+) -> None:
+    workspace, user = _workspace(db)
+    part = _part(db, workspace, user)
+    alert = _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="stock_below",
+        threshold={"qty": 5},
+        cooldown_seconds=60,
+    )
+    monkeypatch.setitem(
+        alerts_evaluator.EVALUATORS,
+        "stock_below",
+        lambda _db, _ws, _alert: AlertVerdict(True, "Triggered", {}, {"qty": 1}),
+    )
+    attempts: list[dict[str, Any]] = []
+
+    def fail_send(**kwargs: Any) -> None:
+        attempts.append(kwargs)
+        raise RuntimeError("smtp down")
+
+    monkeypatch.setattr(alerts_evaluator.mail, "send", fail_send)
+
+    assert evaluate_all_alerts(db) == 1
+    db.refresh(alert)
+    first_notified_at = alert.last_notified_at
+
+    assert first_notified_at is not None
+    assert evaluate_all_alerts(db) == 1
+    db.refresh(alert)
+    assert alert.last_notified_at == first_notified_at
+    assert len(attempts) == 1
+    assert "sourcing_alert.smtp_failed" in caplog.text
+    assert "exception_type=RuntimeError" in caplog.text
+
+
+def test_db_commit_failure_propagates_before_smtp(db: Session, monkeypatch, caplog) -> None:
+    workspace, user = _workspace(db)
+    part = _part(db, workspace, user)
+    _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="stock_below",
+        threshold={"qty": 5},
+    )
+    monkeypatch.setitem(
+        alerts_evaluator.EVALUATORS,
+        "stock_below",
+        lambda _db, _ws, _alert: AlertVerdict(True, "Triggered", {}, {"qty": 1}),
+    )
+    sent = _capture_mail(monkeypatch)
+
+    def fail_commit() -> None:
+        raise RuntimeError("commit failed")
+
+    monkeypatch.setattr(db, "commit", fail_commit)
+
+    assert evaluate_all_alerts(db) == 1
+
+    assert sent == []
+    assert "sourcing_alert.evaluation_failed" in caplog.text
+
+
+def test_happy_path_still_works(db: Session, monkeypatch) -> None:
+    workspace, user = _workspace(db)
+    part = _part(db, workspace, user)
+    alert = _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="stock_below",
+        threshold={"qty": 5},
+    )
+    monkeypatch.setitem(
+        alerts_evaluator.EVALUATORS,
+        "stock_below",
+        lambda _db, _ws, _alert: AlertVerdict(True, "Triggered", {}, {"qty": 1}),
+    )
+    sent = _capture_mail(monkeypatch)
+
+    assert evaluate_all_alerts(db) == 1
+
+    db.refresh(alert)
+    assert len(sent) == 1
+    assert alert.last_checked_at is not None
+    assert alert.last_notified_at is not None
+    assert alert.last_evaluation_state == {"qty": 1}
+
+
 def test_smtp_failure_does_not_crash_loop(db: Session, monkeypatch, caplog) -> None:
     workspace, user = _workspace(db)
     part = _part(db, workspace, user)
