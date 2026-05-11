@@ -24,6 +24,19 @@ from tests._factories import (
 from tests._factories import (
     signup_user,
 )
+from tests.test_purchase_plan_route import (
+    _configure_sourcing as _configure_purchase_plan_sourcing,
+)
+from tests.test_purchase_plan_route import (
+    _FakeTrustedPartsClient,
+    _single_line_project,
+)
+from tests.test_purchase_plan_route import (
+    _offer as _purchase_plan_offer,
+)
+from tests.test_purchase_plan_route import (
+    _post_plan as _post_purchase_plan,
+)
 
 
 def _signup(c: TestClient, email: str) -> str:
@@ -159,6 +172,55 @@ def _add_stock(
         storage_id=storage_id,
         lot_name=lot_name,
     ).json()["data"]
+
+
+def _assert_not_found_envelope(r) -> None:
+    assert r.status_code == 404, r.text
+    body = r.json()
+    assert body["data"] is None
+    assert body["status"]["category"] == "not_found"
+
+
+def _install_fake_sourcing_provider(monkeypatch, *, mpn: str) -> None:
+    _FakeTrustedPartsClient.calls = []
+    _FakeTrustedPartsClient.offers_by_mpn = {
+        mpn: [_purchase_plan_offer(mpn, distributor="DigiKey", stock=50)]
+    }
+    BUDGET._events.clear()
+    monkeypatch.setattr(
+        "app.domain.sourcing.service.make_sourcing_provider",
+        lambda workspace: _FakeTrustedPartsClient(workspace.id),
+    )
+
+
+def _create_purchase_plan(client: TestClient, monkeypatch, *, mpn: str) -> str:
+    _install_fake_sourcing_provider(monkeypatch, mpn=mpn)
+    _configure_purchase_plan_sourcing(client, preferred=["DigiKey"])
+    project_id = _single_line_project(client, mpn=mpn, quantity=5)
+    r = _post_purchase_plan(client, project_id)
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["id"]
+
+
+def _create_refreshed_purchase_plan(client: TestClient, monkeypatch, *, mpn: str) -> str:
+    plan_id = _create_purchase_plan(client, monkeypatch, mpn=mpn)
+    r = client.post(f"/api/sourcing/purchase-plans/{plan_id}/refresh")
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["id"]
+
+
+def _create_sourcing_alert(client: TestClient) -> str:
+    part_id = _create_part(client, "A-alert-target")
+    r = client.post(
+        "/api/sourcing/alerts",
+        json={
+            "alert_type": "stock_below",
+            "part_id": part_id,
+            "threshold": {"qty": 1},
+        },
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["id"]
 
 
 # ---------------------------------------------------------------------------
@@ -529,6 +591,24 @@ def test_purchase_plan_isolated_by_workspace(monkeypatch):
     assert r.json()["status"]["category"] == "not_found"
 
 
+def test_purchase_plan_refresh_returns_404_for_foreign_workspace(monkeypatch):
+    a, b = _two_workspaces()
+    plan_a = _create_purchase_plan(a, monkeypatch, mpn="FOREIGN-REFRESH")
+
+    r = b.post(f"/api/sourcing/purchase-plans/{plan_a}/refresh")
+
+    _assert_not_found_envelope(r)
+
+
+def test_purchase_plan_convert_to_orders_returns_404_for_foreign_workspace(monkeypatch):
+    a, b = _two_workspaces()
+    plan_a = _create_refreshed_purchase_plan(a, monkeypatch, mpn="FOREIGN-ORDERS")
+
+    r = b.post(f"/api/sourcing/purchase-plans/{plan_a}/orders")
+
+    _assert_not_found_envelope(r)
+
+
 def test_sourcing_alerts_isolated_by_workspace():
     a, b = _two_workspaces()
     part_a = _create_part(a, "A-alert-part")
@@ -554,6 +634,42 @@ def test_sourcing_alerts_isolated_by_workspace():
 
     assert alert_b["id"] in {alert["id"] for alert in listed_b}
     assert alert_a["id"] not in {alert["id"] for alert in listed_b}
+
+
+def test_alert_get_returns_404_for_foreign_workspace():
+    a, b = _two_workspaces()
+    alert_a = _create_sourcing_alert(a)
+
+    r = b.get(f"/api/sourcing/alerts/{alert_a}")
+
+    _assert_not_found_envelope(r)
+
+
+def test_alert_patch_returns_404_for_foreign_workspace():
+    a, b = _two_workspaces()
+    alert_a = _create_sourcing_alert(a)
+
+    r = b.patch(f"/api/sourcing/alerts/{alert_a}", json={"enabled": False})
+
+    _assert_not_found_envelope(r)
+
+
+def test_alert_delete_returns_404_for_foreign_workspace():
+    a, b = _two_workspaces()
+    alert_a = _create_sourcing_alert(a)
+
+    r = b.delete(f"/api/sourcing/alerts/{alert_a}")
+
+    _assert_not_found_envelope(r)
+
+
+def test_part_sourcing_refresh_returns_404_for_foreign_workspace():
+    a, b = _two_workspaces()
+    part_a = _create_part(a, "A-sourcing-refresh", mpn="FOREIGN-SOURCING")
+
+    r = b.post(f"/api/parts/{part_a}/sourcing/refresh")
+
+    _assert_not_found_envelope(r)
 
 
 # ---------------------------------------------------------------------------
