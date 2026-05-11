@@ -345,6 +345,24 @@ def test_budget_blocked_returns_503(authed_client):
     }
 
 
+def test_distributors_query_param_capped_at_25(authed_client):
+    _configure_sourcing(authed_client)
+    part_id = create_part(authed_client, name="BAT54", mpn="BAT54C")
+
+    r = authed_client.get(
+        f"/api/parts/{part_id}/sourcing",
+        params={"distributors": ",".join(f"D{index}" for index in range(26))},
+    )
+
+    assert r.status_code == 422, r.text
+    assert r.json()["code"] == "sourcing.too_many_distributors"
+    assert r.json()["status"] == {
+        "category": "validation_error",
+        "message": "distributors list capped at 25",
+    }
+    assert _FakeTrustedPartsClient.calls == []
+
+
 def test_rate_limit_after_60_per_minute(authed_client):
     _ratelimit_mod.limiter.enabled = True
     _configure_sourcing(authed_client)

@@ -87,6 +87,21 @@ def _create_refreshed_plan(
     return _refresh(client, plan_response.json()["data"]["id"])
 
 
+def test_convert_orders_rate_limit_after_10_per_minute(authed_client):
+    _ratelimit_mod.limiter.enabled = True
+    missing_plan_id = uuid.uuid4()
+
+    for _index in range(10):
+        r = _convert(authed_client, str(missing_plan_id))
+        assert r.status_code == 404, r.text
+
+    r = _convert(authed_client, str(missing_plan_id))
+
+    assert r.status_code == 429, r.text
+    assert r.json()["status"]["category"] == "rate_limited"
+    assert r.json()["code"] == "rate_limited"
+
+
 def test_basic_conversion_creates_one_order_per_distributor(authed_client):
     plan = _create_refreshed_plan(
         authed_client,

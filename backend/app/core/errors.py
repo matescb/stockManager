@@ -155,6 +155,7 @@ class ErrorCodes:
     SOURCING_PLAN_STALE = "sourcing.plan_stale"
     SOURCING_CURRENCY_MISMATCH = "sourcing.currency_mismatch"
     SOURCING_OVERRIDE_INVALID = "sourcing.override_invalid"
+    SOURCING_TOO_MANY_DISTRIBUTORS = "sourcing.too_many_distributors"
     SOURCING_INVALID_REQUEST = "sourcing.invalid_request"
     SOURCING_GENERIC = "sourcing.error"
 

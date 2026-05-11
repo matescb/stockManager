@@ -33,6 +33,7 @@ envelope. SlowAPI 429 responses add `code: "rate_limited"`.
 | `sourcing.part_missing_mpn` | 422 | Part sourcing refresh was requested for a part without an MPN. |
 | `sourcing.override_invalid` | 422 | Purchase-plan conversion override does not match cached offers. |
 | `sourcing.currency_mismatch` | 422 | A distributor group would mix selected currencies. |
+| `sourcing.too_many_distributors` | 422 | A distributor filter contained more than 25 values. |
 | `rate_limited` | 429 | Local workspace rate limit was exceeded. |
 | `sourcing.budget_exhausted` | 503 | Local TrustedParts parts-count budget blocked live calls. |
 | `sourcing.provider_auth_failed` | 502 | TrustedParts rejected sourcing credentials. |
@@ -105,7 +106,7 @@ Create a workspace-scoped alert definition.
 | `threshold` | `object` | Yes | Validated per `alert_type` at request parsing; no nested `kind` field is required. |
 | `country_code` | `string` | No | Two-letter sourcing filter for `back_in_stock`, `out_of_authorized_stock`, and `price_changed`. Ignored for stock threshold alerts. |
 | `currency_code` | `string` | No | Three-letter sourcing filter for `price_changed`. Ignored for stock threshold alerts. |
-| `distributor_filter` | `string[]` | No | Sourcing filter for authorized-stock and price alerts. Ignored for stock threshold alerts. |
+| `distributor_filter` | `string[]` | No | Max 25 values; sourcing filter for authorized-stock and price alerts. Ignored for stock threshold alerts. |
 | `notify_user_ids` | `uuid[]` | No | `null` means default recipients. Non-null values must be active members of the workspace. |
 | `cooldown_seconds` | `integer` | No | Defaults to `86400`; minimum `60`. |
 | `enabled` | `boolean` | No | Defaults to `true`. |
@@ -233,7 +234,7 @@ Path: `project_id` is a project UUID in the current workspace.
 | `build_quantity` | `integer` | Yes | Must be at least `1`. |
 | `country` | `string` | No | Two-letter override; falls back to workspace sourcing default. |
 | `currency` | `string` | No | Three-letter override; falls back to workspace sourcing default. |
-| `distributors` | `string[]` | No | Falls back to `sourcing_preferred_distributors` when omitted. |
+| `distributors` | `string[]` | No | Max 25 values; falls back to `sourcing_preferred_distributors` when omitted. |
 | `in_stock_only` | `boolean` | No | Defaults to `false`. |
 | `use_cached_data` | `boolean` | No | Falls back to `sourcing_use_cached_for_dashboards`; forced true when the request is in degraded budget mode. |
 
@@ -384,7 +385,7 @@ Path: `project_id` is a project UUID in the current workspace.
 | `strategy` | `string` | No | One of `lowest_total_price`, `fewest_distributors`, `fastest_availability`, `preferred_first`; defaults to `preferred_first`. |
 | `country` | `string` | No | Two-letter override; persisted on the plan. |
 | `currency` | `string` | No | Three-letter override; persisted on the plan. |
-| `distributors` | `string[]` | No | Distributor filter / preferred order for optimizer decisions. |
+| `distributors` | `string[]` | No | Max 25 values; distributor filter / preferred order for optimizer decisions. |
 | `max_distributors` | `integer` | No | Positive cap used by `fewest_distributors`. |
 | `moq_overbuy_cap` | `integer` | No | Positive cap; offers requiring more than `shortage * cap` are ignored. |
 | `price_tolerance_pct` | `decimal` | No | Preferred-first tolerance; defaults to `5`. |
@@ -549,10 +550,12 @@ Path: `plan_id` is a purchase plan UUID in the current workspace. No request bod
 - `404 Not Found` — `plan_id` is missing or belongs to another workspace.
 - `409 Conflict` — the plan has not been refreshed or its refresh is older than 10 minutes.
 - `422 Unprocessable Entity` — one distributor group contains mixed currencies.
+- `429 Too Many Requests` — workspace rate limit: 10 conversions/minute.
 
 **Notes**
 
 - The route creates one `Order(status="draft")` per selected distributor and one `OrderEntry` per selected plan line.
+- The route is rate-limited per workspace at 10 conversions/minute. Production keeps the single-worker rate-limit invariant unchanged.
 - Conversion flips the plan to `converted` in the same transaction.
 - Permanent order comments are compliance-safe summaries. The raw `selected_url` from ephemeral plan lines is never copied into `orders.comments` or `order_entries.comments`.
 
@@ -569,7 +572,7 @@ Path: `part_id` is a part UUID in the current workspace.
 | `country` | `string` | No | Two-letter override; falls back to workspace sourcing default. |
 | `currency` | `string` | No | Three-letter override; falls back to workspace sourcing default. |
 | `in_stock_only` | `boolean` | No | Defaults to `false`. |
-| `distributors` | `string[]` | No | Repeatable query param; comma-separated values are also accepted. Falls back to `sourcing_preferred_distributors` when omitted. |
+| `distributors` | `string[]` | No | Max 25 values after comma-splitting; repeatable query param; comma-separated values are also accepted. Falls back to `sourcing_preferred_distributors` when omitted. |
 
 **Response** — `200 OK` (envelope: `{ data, status }`)
 
@@ -725,7 +728,7 @@ Search TrustedParts for 1-50 exact MPNs using the current workspace's encrypted 
 | `country` | `string` | No | Two-letter override; falls back to workspace sourcing default. |
 | `currency` | `string` | No | Three-letter override; falls back to workspace sourcing default. |
 | `in_stock_only` | `boolean` | No | Defaults to `false`. |
-| `distributors` | `string[]` | No | Falls back to `sourcing_preferred_distributors` when omitted. |
+| `distributors` | `string[]` | No | Max 25 values; falls back to `sourcing_preferred_distributors` when omitted. |
 | `use_cached_data` | `boolean` | No | Falls back to `sourcing_use_cached_for_dashboards`; forced true when the request is in degraded budget mode. |
 
 **Response** — `200 OK` (envelope: `{ data, status }`)
