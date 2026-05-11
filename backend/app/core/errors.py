@@ -140,6 +140,24 @@ class ErrorCodes:
     RESOURCE_UNKNOWN_OBJECT_TYPE = "resource.unknown_object_type"
     RESOURCE_INSUFFICIENT_ROLE = "resource.insufficient_role"
 
+    # Global framework errors.
+    RATE_LIMITED = "rate_limited"
+
+    # Sourcing router.
+    SOURCING_WORKSPACE_NOT_CONFIGURED = "sourcing.workspace_not_configured"
+    SOURCING_BUDGET_EXHAUSTED = "sourcing.budget_exhausted"
+    SOURCING_PROVIDER_AUTH_FAILED = "sourcing.provider_auth_failed"
+    SOURCING_PROVIDER_RATE_LIMITED = "sourcing.provider_rate_limited"
+    SOURCING_PROVIDER_TIMEOUT = "sourcing.provider_timeout"
+    SOURCING_PROVIDER_UNAVAILABLE = "sourcing.provider_unavailable"
+    SOURCING_PLAN_EXPIRED = "sourcing.plan_expired"
+    SOURCING_PART_MISSING_MPN = "sourcing.part_missing_mpn"
+    SOURCING_PLAN_STALE = "sourcing.plan_stale"
+    SOURCING_CURRENCY_MISMATCH = "sourcing.currency_mismatch"
+    SOURCING_OVERRIDE_INVALID = "sourcing.override_invalid"
+    SOURCING_INVALID_REQUEST = "sourcing.invalid_request"
+    SOURCING_GENERIC = "sourcing.error"
+
     # Workspace dependency-injection edge cases (deps.py).
     # WORKSPACE_NONE: caller has no active membership in any workspace
     # at all — distinct from WORKSPACE_NOT_FOUND, which is "this id

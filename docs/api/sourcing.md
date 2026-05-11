@@ -17,7 +17,7 @@ top-level `code` discriminator:
 {
   "data": null,
   "status": { "category": "conflict", "message": "sourcing not configured" },
-  "code": "workspace_not_configured"
+  "code": "sourcing.workspace_not_configured"
 }
 ```
 
@@ -26,21 +26,20 @@ envelope. SlowAPI 429 responses add `code: "rate_limited"`.
 
 | Code | HTTP | Meaning |
 |---|---|---|
-| `resource.not_found` | 404 | Workspace-scoped project, part, or purchase-plan lookup failed. |
-| `workspace_not_configured` | 409 | Workspace has no usable TrustedParts sourcing API key. |
-| `purchase_plan_not_found` | 404 | Purchase plan exists outside the requested project/workspace relationship. |
-| `plan_expired` | 409 | Purchase plan is past its expiry and cannot be refreshed. |
-| `plan_stale` | 409 | Purchase plan must be refreshed before conversion. |
-| `part_missing_mpn` | 422 | Part sourcing refresh was requested for a part without an MPN. |
-| `override_invalid` | 422 | Purchase-plan conversion override does not match cached offers. |
-| `currency_mismatch` | 422 | A distributor group would mix selected currencies. |
+| `resource.not_found` | 404 | Workspace-scoped project, part, or purchase-plan lookup failed, including purchase plans outside the requested project relationship. |
+| `sourcing.workspace_not_configured` | 409 | Workspace has no usable TrustedParts sourcing API key. |
+| `sourcing.plan_expired` | 409 | Purchase plan is past its expiry and cannot be refreshed. |
+| `sourcing.plan_stale` | 409 | Purchase plan must be refreshed before conversion. |
+| `sourcing.part_missing_mpn` | 422 | Part sourcing refresh was requested for a part without an MPN. |
+| `sourcing.override_invalid` | 422 | Purchase-plan conversion override does not match cached offers. |
+| `sourcing.currency_mismatch` | 422 | A distributor group would mix selected currencies. |
 | `rate_limited` | 429 | Local workspace rate limit was exceeded. |
-| `budget_exhausted` | 503 | Local TrustedParts parts-count budget blocked live calls. |
-| `provider_auth_failed` | 502 | TrustedParts rejected sourcing credentials. |
-| `provider_rate_limited` | 502 | TrustedParts throttled the upstream request. |
-| `provider_timeout` | 502 | TrustedParts request timed out. |
-| `provider_unavailable` | 502 | TrustedParts returned another upstream/client failure. |
-| `invalid_sourcing_request` | 422 | Route-level sourcing validation failed. |
+| `sourcing.budget_exhausted` | 503 | Local TrustedParts parts-count budget blocked live calls. |
+| `sourcing.provider_auth_failed` | 502 | TrustedParts rejected sourcing credentials. |
+| `sourcing.provider_rate_limited` | 502 | TrustedParts throttled the upstream request. |
+| `sourcing.provider_timeout` | 502 | TrustedParts request timed out. |
+| `sourcing.provider_unavailable` | 502 | TrustedParts returned another upstream/client failure. |
+| `sourcing.invalid_request` | 422 | Route-level sourcing validation failed. |
 
 ## Routes
 

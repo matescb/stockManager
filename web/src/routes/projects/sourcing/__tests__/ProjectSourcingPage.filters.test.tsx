@@ -106,7 +106,7 @@ describe("ProjectSourcingPage", () => {
   it("uses structured provider rate-limit codes for sourcing toast", async () => {
     mockReads();
     vi.spyOn(api, "post").mockRejectedValue(
-      apiError(502, "TrustedParts rate limit reached", "provider_rate_limited"),
+      apiError(502, "TrustedParts rate limit reached", "sourcing.provider_rate_limited"),
     );
 
     renderPage();
@@ -120,7 +120,7 @@ describe("ProjectSourcingPage", () => {
   it("links currency mismatch errors to workspace settings", async () => {
     mockReads();
     vi.spyOn(api, "post").mockRejectedValue(
-      apiError(422, "mixed currencies for distributor DigiKey", "currency_mismatch"),
+      apiError(422, "mixed currencies for distributor DigiKey", "sourcing.currency_mismatch"),
     );
 
     renderPage();

@@ -223,6 +223,7 @@ def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
     ``Retry-After`` header."""
     from fastapi.responses import JSONResponse
 
+    from app.core.errors import ErrorCodes
     from app.core.responses import err
 
     # The limit object carries the window size in seconds via get_expiry().
@@ -233,7 +234,7 @@ def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
         pass
 
     body = err("rate_limited", f"rate limit exceeded: {exc.detail}")
-    body["code"] = "rate_limited"
+    body["code"] = ErrorCodes.RATE_LIMITED
     if retry_after is not None:
         body["retry_after_seconds"] = retry_after
 

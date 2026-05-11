@@ -151,13 +151,13 @@ describe("ApiError.userMessage", () => {
       {
         data: null,
         status: { category: "not_found", message: "DB says nope" },
-        code: "purchase_plan_not_found",
+        code: "resource.not_found",
       },
       "DB says nope",
     );
     expect(err.message).toBe("DB says nope");
     expect(err.userMessage).toBe("Not found.");
-    expect(err.code).toBe("purchase_plan_not_found");
+    expect(err.code).toBe("resource.not_found");
   });
 
   it("leaves code undefined when the envelope has no structured code", () => {

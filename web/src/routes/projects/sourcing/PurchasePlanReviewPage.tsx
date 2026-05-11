@@ -121,12 +121,12 @@ function summaryCurrency(plan: PurchasePlan): string | null {
 function purchasePlanActionErrorMessage(error: unknown, fallback: string): string {
   if (!(error instanceof ApiError)) return fallback;
   switch (error.code) {
-    case "plan_stale":
+    case "sourcing.plan_stale":
       return "Prices are stale. Refresh prices before creating draft orders.";
-    case "currency_mismatch":
+    case "sourcing.currency_mismatch":
       return "Sourcing returned mixed currencies. Check workspace currency settings.";
     case "rate_limited":
-    case "provider_rate_limited":
+    case "sourcing.provider_rate_limited":
       return "Rate limit hit — wait a minute before trying again.";
     default:
       return error.userMessage || fallback;
@@ -273,7 +273,7 @@ export default function PurchasePlanReviewPage() {
       setRefreshAttention(false);
       toast.success("Prices refreshed");
     } catch (err) {
-      if (err instanceof ApiError && err.code === "plan_stale") setRefreshAttention(true);
+      if (err instanceof ApiError && err.code === "sourcing.plan_stale") setRefreshAttention(true);
       toast.error(purchasePlanActionErrorMessage(err, "Failed to refresh prices"));
     } finally {
       setBusyAction(null);
@@ -324,7 +324,7 @@ export default function PurchasePlanReviewPage() {
       queryClient.removeQueries({ queryKey: purchasePlanKey, exact: true });
       navigate("/orders");
     } catch (err) {
-      if (err instanceof ApiError && err.code === "plan_stale") setRefreshAttention(true);
+      if (err instanceof ApiError && err.code === "sourcing.plan_stale") setRefreshAttention(true);
       toast.error(purchasePlanActionErrorMessage(err, "Could not create draft orders"));
     } finally {
       setBusyAction(null);

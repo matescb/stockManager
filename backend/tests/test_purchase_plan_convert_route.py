@@ -351,7 +351,7 @@ def test_unrefreshed_plan_returns_409(authed_client):
     r = _convert(authed_client, r_plan.json()["data"]["id"])
 
     assert r.status_code == 409, r.text
-    assert r.json()["code"] == "plan_stale"
+    assert r.json()["code"] == "sourcing.plan_stale"
     assert "refresh" in r.json()["status"]["message"]
 
 
@@ -365,7 +365,7 @@ def test_stale_refresh_returns_409(authed_client, db):
     r = _convert(authed_client, plan["id"])
 
     assert r.status_code == 409, r.text
-    assert r.json()["code"] == "plan_stale"
+    assert r.json()["code"] == "sourcing.plan_stale"
     assert r.json()["status"]["message"] == "plan refresh is stale; refresh again before conversion"
 
 
@@ -397,7 +397,7 @@ def test_mixed_currency_in_group_returns_422(authed_client):
     r = _convert(authed_client, plan["id"])
 
     assert r.status_code == 422, r.text
-    assert r.json()["code"] == "currency_mismatch"
+    assert r.json()["code"] == "sourcing.currency_mismatch"
     assert "mixed currencies" in r.json()["status"]["message"]
 
 

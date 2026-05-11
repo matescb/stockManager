@@ -356,13 +356,13 @@ describe("PurchasePlanReviewPage", () => {
     });
   });
 
-  it("uses plan_stale code to highlight refresh after conversion failure", async () => {
+  it("uses sourcing.plan_stale code to highlight refresh after conversion failure", async () => {
     const apiError = new ApiError(
       409,
       {
         data: null,
         status: { category: "conflict", message: "plan refresh is stale; refresh again before conversion" },
-        code: "plan_stale",
+        code: "sourcing.plan_stale",
       },
       "plan refresh is stale; refresh again before conversion",
     );

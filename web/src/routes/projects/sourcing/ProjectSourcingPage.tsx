@@ -141,10 +141,14 @@ export default function ProjectSourcingPage() {
           </button>
         </div>
       )}
-      {sourcing.isError && status !== 409 && status !== 502 && status !== 503 && (
+      {sourcing.isError &&
+        status !== 409 &&
+        status !== 502 &&
+        status !== 503 &&
+        errorCode !== "sourcing.currency_mismatch" && (
         <div className="card p-4 text-sm text-danger">Failed to source BOM.</div>
       )}
-      {errorCode === "currency_mismatch" && (
+      {errorCode === "sourcing.currency_mismatch" && (
         <div className="rounded-md border border-warning/40 bg-warning/10 p-4 text-sm" role="status">
           <div className="font-medium text-warning">Sourcing returned mixed currencies.</div>
           <div className="mt-1 text-muted">

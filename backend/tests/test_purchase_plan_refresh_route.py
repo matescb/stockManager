@@ -164,7 +164,7 @@ def test_expired_plan_returns_conflict(authed_client, db):
     r = _refresh(authed_client, initial["id"])
 
     assert r.status_code == 409, r.text
-    assert r.json()["code"] == "plan_expired"
+    assert r.json()["code"] == "sourcing.plan_expired"
     assert r.json()["status"] == {"category": "conflict", "message": "plan expired"}
 
 

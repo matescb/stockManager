@@ -194,7 +194,7 @@ def test_unconfigured_returns_409(authed_client, monkeypatch):
     r = authed_client.post("/api/sourcing/search", json={"mpns": ["BAT54C"]})
 
     assert r.status_code == 409, r.text
-    assert r.json()["code"] == "workspace_not_configured"
+    assert r.json()["code"] == "sourcing.workspace_not_configured"
     assert r.json()["status"] == {
         "category": "conflict",
         "message": "sourcing not configured",
@@ -209,7 +209,7 @@ def test_budget_blocked_returns_503(authed_client):
     r = authed_client.post("/api/sourcing/search", json={"mpns": ["BAT54C"]})
 
     assert r.status_code == 503, r.text
-    assert r.json()["code"] == "budget_exhausted"
+    assert r.json()["code"] == "sourcing.budget_exhausted"
     assert r.json()["status"] == {
         "category": "server_error",
         "message": "sourcing budget exhausted",

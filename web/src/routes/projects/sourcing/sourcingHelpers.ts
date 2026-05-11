@@ -116,11 +116,11 @@ export function sourcingErrorToastMessage(error: unknown): string {
   if (error instanceof ApiError) {
     switch (error.code) {
       case "rate_limited":
-      case "provider_rate_limited":
+      case "sourcing.provider_rate_limited":
         return "Rate limit hit — wait a minute before sourcing again.";
-      case "currency_mismatch":
+      case "sourcing.currency_mismatch":
         return "Sourcing returned mixed currencies. Check workspace currency settings.";
-      case "plan_stale":
+      case "sourcing.plan_stale":
         return "Prices are stale. Refresh prices before continuing.";
       default:
         break;
