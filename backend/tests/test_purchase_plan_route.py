@@ -202,6 +202,38 @@ def test_basic_plan_creation_with_default_strategy(authed_client, db):
     assert plan.expires_at <= plan.created_at + timedelta(days=7)
 
 
+def test_get_purchase_plan_returns_persisted_plan(authed_client):
+    _configure_sourcing(authed_client, preferred=["DigiKey"])
+    project_id = _single_line_project(authed_client, mpn="GET-PLAN", quantity=4)
+    created = _post_plan(authed_client, project_id, build_quantity=2)
+    assert created.status_code == 200, created.text
+    plan_id = created.json()["data"]["id"]
+
+    r = authed_client.get(f"/api/projects/{project_id}/purchase-plans/{plan_id}")
+
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["id"] == plan_id
+    assert data["project_id"] == project_id
+    assert len(data["lines"]) == 1
+
+
+def test_get_purchase_plan_requires_matching_project(authed_client):
+    _configure_sourcing(authed_client, preferred=["DigiKey"])
+    project_id = _single_line_project(authed_client, mpn="GET-PLAN-MATCH", quantity=4)
+    other_project_id = _single_line_project(authed_client, mpn="GET-PLAN-OTHER", quantity=1)
+    created = _post_plan(authed_client, project_id)
+    assert created.status_code == 200, created.text
+    plan_id = created.json()["data"]["id"]
+
+    r = authed_client.get(f"/api/projects/{other_project_id}/purchase-plans/{plan_id}")
+
+    assert r.status_code == 404, r.text
+    body = r.json()
+    assert body["data"] is None
+    assert body["status"]["category"] == "not_found"
+
+
 @pytest.mark.parametrize(
     "strategy",
     [

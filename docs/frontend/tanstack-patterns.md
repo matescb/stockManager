@@ -159,6 +159,15 @@ Initial loads still render their skeleton. Background refetches render the
 existing data plus a small `isFetching && !isLoading` status hint
 (`web/src/routes/projects/sourcing/ProjectSourcingPage.tsx:895-900`).
 
+## Purchase Plan Review State
+
+`PurchasePlanReviewPage` treats TanStack Query as the source of truth for
+the persisted purchase plan response, keyed by the active workspace and
+`planId` (`useWsKey("purchase-plan", planId)`). Local React state on that
+page is reserved for ephemeral UI state such as offer overrides and the
+currently open override modal; refresh writes the new server plan into the
+query cache without clearing those overrides.
+
 ## QueryClient defaults
 
 `web/src/main.tsx:45-49`:

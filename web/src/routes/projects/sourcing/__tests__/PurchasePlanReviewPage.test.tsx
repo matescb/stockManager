@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -13,6 +14,10 @@ vi.mock("sonner", () => ({
     success: vi.fn(),
     error: vi.fn(),
   },
+}));
+
+vi.mock("@/lib/auth", () => ({
+  useAuth: () => ({ workspaceId: "ws-1" }),
 }));
 
 function plan(overrides: Partial<PurchasePlan> = {}): PurchasePlan {
@@ -125,16 +130,39 @@ function LocationProbe() {
   return <div data-testid="location">{location.pathname}</div>;
 }
 
-function renderPage(initialPlan: PurchasePlan = plan()) {
-  render(
+function makeQueryClient() {
+  return new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+}
+
+function renderPage({
+  initialPlan = plan(),
+  client = makeQueryClient(),
+}: {
+  initialPlan?: PurchasePlan | null;
+  client?: QueryClient;
+} = {}) {
+  const view = render(
+    <QueryClientProvider client={client}>
+      <PurchasePlanRoutes initialPlan={initialPlan} />
+    </QueryClientProvider>,
+  );
+  return { ...view, client };
+}
+
+function PurchasePlanRoutes({ initialPlan }: { initialPlan?: PurchasePlan | null }) {
+  return (
     <MemoryRouter
       initialEntries={[
         {
           pathname: "/projects/project-123/purchase-plans/plan-12345678",
-          state: {
-            plan: initialPlan,
-            project: { id: "project-123", name: "Amplifier" },
-          },
+          state: initialPlan != null
+            ? {
+                plan: initialPlan,
+                project: { id: "project-123", name: "Amplifier" },
+              }
+            : undefined,
         },
       ]}
     >
@@ -145,7 +173,7 @@ function renderPage(initialPlan: PurchasePlan = plan()) {
         />
         <Route path="/orders" element={<LocationProbe />} />
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
   );
 }
 
@@ -165,6 +193,44 @@ beforeEach(() => {
 });
 
 describe("PurchasePlanReviewPage", () => {
+  it("deep-link to /purchase-plans/:id renders the plan", async () => {
+    vi.spyOn(api, "get").mockResolvedValueOnce(plan());
+
+    renderPage({ initialPlan: null });
+
+    expect(await screen.findByRole("heading", { name: /Purchase plan #\s*plan-123/ })).toBeDefined();
+    expect(api.get).toHaveBeenCalledWith("/projects/project-123/purchase-plans/plan-12345678");
+  });
+
+  it("reload preserves the plan view from the fresh query cache", async () => {
+    const get = vi.spyOn(api, "get").mockResolvedValueOnce(plan());
+    const client = makeQueryClient();
+
+    const first = renderPage({ initialPlan: null, client });
+    expect(await screen.findByRole("heading", { name: /Purchase plan #\s*plan-123/ })).toBeDefined();
+    first.unmount();
+
+    renderPage({ initialPlan: null, client });
+
+    expect(await screen.findByRole("heading", { name: /Purchase plan #\s*plan-123/ })).toBeDefined();
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it("error state renders banner", async () => {
+    const apiError = new ApiError(
+      500,
+      { data: null, status: { category: "server_error", message: "plan exploded" } },
+      "Internal Server Error",
+    );
+    apiError.userMessage = "Purchase plan unavailable.";
+    vi.spyOn(api, "get").mockRejectedValueOnce(apiError);
+
+    renderPage({ initialPlan: null });
+
+    expect(await screen.findByText("Could not load purchase plan")).toBeDefined();
+    expect(screen.getByText("Purchase plan unavailable.")).toBeDefined();
+  });
+
   it("renders summary cards from server response", () => {
     renderPage();
 
@@ -291,7 +357,7 @@ describe("PurchasePlanReviewPage", () => {
   });
 
   it("Create draft orders is disabled when last_refreshed_at is null", () => {
-    renderPage(plan({ last_refreshed_at: null }));
+    renderPage({ initialPlan: plan({ last_refreshed_at: null }) });
 
     const button = screen.getByRole("button", { name: /Create draft orders/ });
     expect((button as HTMLButtonElement).disabled).toBe(true);
@@ -299,7 +365,7 @@ describe("PurchasePlanReviewPage", () => {
 
   it("Create draft orders is disabled when last_refreshed_at is > 10 min old", () => {
     const stale = new Date(Date.now() - 11 * 60 * 1000).toISOString();
-    renderPage(plan({ last_refreshed_at: stale }));
+    renderPage({ initialPlan: plan({ last_refreshed_at: stale }) });
 
     const button = screen.getByRole("button", { name: /Create draft orders/ });
     expect((button as HTMLButtonElement).disabled).toBe(true);
@@ -310,13 +376,14 @@ describe("PurchasePlanReviewPage", () => {
     vi.spyOn(api, "post").mockResolvedValueOnce({
       orders: [{ id: "order-1", name: "Draft", supplier: "DigiKey", status: "draft", entries: [] }],
     });
-    renderPage();
+    const { client } = renderPage();
 
     await userEvent.click(screen.getByRole("button", { name: /Create draft orders/ }));
 
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/orders"));
     expect(api.post).toHaveBeenCalledWith("/sourcing/purchase-plans/plan-12345678/orders", { overrides: {} });
     expect(toast.success).toHaveBeenCalledWith("Created 1 draft orders");
+    expect(client.getQueryData(["ws", "ws-1", "purchase-plan", "plan-12345678"])).toBeUndefined();
   });
 
   it("selects an alternate cached offer and sends it as a conversion override", async () => {
