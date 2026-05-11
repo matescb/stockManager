@@ -138,6 +138,9 @@ describe("ProjectSourcingPage", () => {
     expect(supplyChain.className).toContain("text-warning");
     expect(tariff.className).toContain("text-warning");
     expect(rohs.className).toContain("text-danger");
+    expect(lifecycle.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    expect(supplyChain.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    expect(rohs.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
 
     const riskCell = within(bomRowsTable).getByRole("row", { name: /STM32/ }).querySelectorAll("td")[12];
     expect(within(riskCell as HTMLElement).queryByText("lifecycle")).toBeNull();
