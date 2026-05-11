@@ -3,6 +3,7 @@ import { useOutletContext } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ExternalLink, RefreshCw } from "lucide-react";
+import { DataTable, type Column } from "@/components/DataTable";
 import { api, ApiError } from "@/lib/api";
 import { isCatalogKey } from "@/lib/providerCatalog";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
@@ -65,6 +66,20 @@ export default function PartSourcing() {
     part.linked_provider && part.mpn
       ? PROVIDER_SEARCH_URL[part.linked_provider]?.(part.mpn)
       : null;
+  const columns: Column<CustomFieldRow>[] = [
+    {
+      key: "key",
+      header: "Field",
+      accessor: row => row.key,
+      render: row => <span className="text-muted whitespace-nowrap">{row.key}</span>,
+    },
+    {
+      key: "value",
+      header: "Value",
+      accessor: row => row.value,
+      render: row => <span className="tabular-nums">{row.value}</span>,
+    },
+  ];
 
   return (
     <div className="card p-4 space-y-3">
@@ -118,16 +133,14 @@ export default function PartSourcing() {
           No catalog data yet. Click Refresh to pull stock + pricing from {providerLabel ?? "the provider"}.
         </div>
       ) : (
-        <table className="text-sm w-full">
-          <tbody>
-            {rows.map(r => (
-              <tr key={r.id} className="align-top">
-                <td className="text-muted pr-4 py-1 whitespace-nowrap">{r.key}</td>
-                <td className="py-1 tabular-nums">{r.value}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <DataTable
+          rows={rows}
+          columns={columns}
+          rowKey={row => row.id}
+          tableId="part-sourcing-catalog"
+          exportFilename="part-sourcing"
+          searchPlaceholder="Search catalog data..."
+        />
       )}
     </div>
   );

@@ -18,6 +18,10 @@ function sameCombo(left: string[], right: string[]): boolean {
   return leftSorted.length === rightSorted.length && leftSorted.every((item, index) => item === rightSorted[index]);
 }
 
+function formatCoveragePct(pct: number): string {
+  return `${Math.floor(pct * 100)}%`;
+}
+
 function coverageForCombo(data: SourcingBomResponse, combo: string[]): { pct: number | null; shortLines: number | null } {
   if (combo.length === 0 || data.coverage.total_lines === 0) return { pct: null, shortLines: null };
   const comboSet = new Set(combo.map(item => item.toLocaleLowerCase()));
@@ -53,7 +57,7 @@ function CoverageVariantCard({
 }) {
   const { pct, shortLines } = coverageForCombo(data, variant.combo);
   const comboText = variant.combo.length > 0 ? normalizedCombo(variant.combo).join(" + ") : "—";
-  const coverageText = pct == null ? "—" : `${Math.round(pct * 100)}%`;
+  const coverageText = pct == null ? "—" : formatCoveragePct(pct);
   const hasPartialCoverage = shortLines != null && shortLines > 0;
   const priceLabel = hasPartialCoverage ? "Price (covered lines)" : "Price";
   const uncoveredText = hasPartialCoverage
@@ -129,7 +133,7 @@ export function CoverageMatrix({ data, currency }: { data: SourcingBomResponse; 
       key: "coverage",
       header: "Coverage",
       accessor: row => row.coverage_pct,
-      render: row => `${Math.round(row.coverage_pct * 100)}%`,
+      render: row => formatCoveragePct(row.coverage_pct),
       align: "right",
     },
     {
