@@ -892,6 +892,7 @@ def source_bom(
                 requested_build_quantity=build_quantity,
             )
         ),
+        build_quantity=build_quantity,
         fetched_at=max(fetched_at_values, default=utcnow()),
         partial=partial,
         links=TRUSTEDPARTS_LINKS,

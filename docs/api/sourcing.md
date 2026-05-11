@@ -234,11 +234,13 @@ Path: `project_id` is a project UUID in the current workspace.
       "can_build_now": 0,
       "can_build_after_purchase": 3,
       "total_bom_cost": "2.00",
+      "cost_per_single_bom": "1.00",
       "purchase_to_pay_cost": "2.00",
       "est_purchase_cost": "2.00",
       "blocking_lines_now": [],
       "blocking_lines_after_purchase": []
     },
+    "build_quantity": 2,
     "powered_by": "TrustedParts",
     "fetched_at": "2026-05-08T12:00:00+00:00",
     "partial": false,
@@ -279,7 +281,14 @@ Sources: `backend/app/domain/sourcing/service.py:1322-1386`,
 - The route validates `project_id` with `assert_in_workspace()` before calling the sourcing service.
 - The service reuses `shortage_analysis()`, `dedupe_mpns()`, `chunk_mpns()`, and per-MPN `search()` cache rows; BOM chunks use `ttl_seconds=600`.
 - Decimal prices and extended costs serialize as strings.
-- `capacity.total_bom_cost` sums `required * best_offer.unit_price` for priced rows and ignores on-hand stock. `capacity.purchase_to_pay_cost` sums `short_by * best_offer.unit_price` for priced rows that are not blocking after authorized supply. `capacity.est_purchase_cost` is a deprecated alias of `purchase_to_pay_cost` for one release.
+- `build_quantity` echoes the requested build quantity. `capacity.total_bom_cost`
+  sums `required * best_offer.unit_price` for priced rows and ignores on-hand
+  stock. `capacity.cost_per_single_bom` is `total_bom_cost / build_quantity`,
+  rounded half-up to 2 decimal places, or `null` when no priced BOM cost is
+  available. `capacity.purchase_to_pay_cost` sums
+  `short_by * best_offer.unit_price` for priced rows that are not blocking after
+  authorized supply. `capacity.est_purchase_cost` is a deprecated alias of
+  `purchase_to_pay_cost` for one release.
 - Capacity totals use converted/display prices when available and skip rows whose displayed currency does not match the selected total currency, so mixed native currencies are not added together.
 - `coverage.best_single_distributor`, `coverage.best_two_distributor_combo`, and the
   per-distributor matrix rows use legacy shortfall coverage: an offer covers a row

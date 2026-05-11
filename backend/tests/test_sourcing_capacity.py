@@ -263,6 +263,55 @@ def test_total_bom_cost_sums_required_quantity_unit_price():
     assert capacity.total_bom_cost == Decimal("9.00")
 
 
+def test_cost_per_single_bom_divides_total_by_build_quantity():
+    capacity = compute_build_capacity(
+        [
+            _line(1, required=400, best_offer=_offer(unit_price="2.50")),
+        ],
+        requested_build_quantity=4,
+    )
+
+    assert capacity.total_bom_cost == Decimal("1000.00")
+    assert capacity.cost_per_single_bom == Decimal("250.00")
+
+
+def test_cost_per_single_bom_none_when_total_bom_cost_none():
+    capacity = compute_build_capacity(
+        [
+            _line(1, required=10),
+            _line(2, required=5),
+        ],
+        requested_build_quantity=3,
+    )
+
+    assert capacity.total_bom_cost is None
+    assert capacity.cost_per_single_bom is None
+
+
+def test_cost_per_single_bom_none_when_build_quantity_zero():
+    capacity = compute_build_capacity(
+        [
+            _line(1, required=10, best_offer=_offer(unit_price="2.00")),
+        ],
+        requested_build_quantity=0,
+    )
+
+    assert capacity.total_bom_cost == Decimal("20.00")
+    assert capacity.cost_per_single_bom is None
+
+
+def test_cost_per_single_bom_decimal_precision():
+    capacity = compute_build_capacity(
+        [
+            _line(1, required=1, best_offer=_offer(unit_price="333.33")),
+        ],
+        requested_build_quantity=3,
+    )
+
+    assert capacity.total_bom_cost == Decimal("333.33")
+    assert capacity.cost_per_single_bom == Decimal("111.11")
+
+
 def test_total_bom_cost_ignores_stock_on_hand():
     capacity = compute_build_capacity(
         [
@@ -387,6 +436,8 @@ def test_decimal_serialisation_for_both_costs():
 
     assert payload["total_bom_cost"] == "125.00"
     assert isinstance(payload["total_bom_cost"], str)
+    assert payload["cost_per_single_bom"] == "1.25"
+    assert isinstance(payload["cost_per_single_bom"], str)
     assert payload["purchase_to_pay_cost"] == "62.50"
     assert isinstance(payload["purchase_to_pay_cost"], str)
     assert payload["est_purchase_cost"] == "62.50"

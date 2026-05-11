@@ -156,11 +156,13 @@ function sourcingResponse(overrides: Record<string, unknown> = {}) {
       can_build_now: 0,
       can_build_after_purchase: 3,
       total_bom_cost: "30.00",
+      cost_per_single_bom: "15.00",
       purchase_to_pay_cost: "25.00",
       est_purchase_cost: "25.00",
       blocking_lines_now: ["entry-2"],
       blocking_lines_after_purchase: ["entry-1"],
     },
+    build_quantity: 2,
     powered_by: "TrustedParts" as const,
     fetched_at: "2026-05-08T12:00:00+00:00",
     partial: false,
@@ -320,7 +322,18 @@ describe("ProjectSourcingPage", () => {
     expect(screen.getByText("3")).toBeDefined();
     expect(screen.getByText("Total BOM cost:")).toBeDefined();
     expect(screen.getByText("30 USD")).toBeDefined();
-    expect(screen.getByText("if bought every line")).toBeDefined();
+    expect(screen.getByText("x 2 builds")).toBeDefined();
+  });
+
+  it("CapacityBanner renders Cost per 1 BOM when capacity.cost_per_single_bom is non-null", async () => {
+    mockReads();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+
+    renderPage();
+
+    expect(await screen.findByText("Cost per 1 BOM:")).toBeDefined();
+    expect(screen.getByText("15 USD")).toBeDefined();
+    expect(screen.getByText("one full build")).toBeDefined();
   });
 
   it("CapacityBanner renders Price to pay when capacity.purchase_to_pay_cost is non-null", async () => {
@@ -341,6 +354,7 @@ describe("ProjectSourcingPage", () => {
         can_build_now: 0,
         can_build_after_purchase: 0,
         total_bom_cost: null,
+        cost_per_single_bom: null,
         purchase_to_pay_cost: null,
         est_purchase_cost: null,
         blocking_lines_now: ["entry-1"],
@@ -351,9 +365,9 @@ describe("ProjectSourcingPage", () => {
     renderPage();
 
     expect(await screen.findByText("Total BOM cost:")).toBeDefined();
-    expect(screen.getByText("no pricing available on any line")).toBeDefined();
+    expect(screen.getAllByText("no pricing available on any line").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("no non-blocking priced shortages")).toBeDefined();
-    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(3);
   });
 
   it("renders coverage matrix with best-single + best-two highlights", async () => {
