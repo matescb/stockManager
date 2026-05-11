@@ -156,6 +156,8 @@ def _sum_best_offer_cost(
     running = Decimal("0")
     priced = False
     total_currency = _total_currency(rows)
+    if total_currency is None and _has_mixed_offer_currencies(rows):
+        return None
     for row in rows:
         qty = quantity_for_row(row)
         if not isinstance(qty, int) or qty <= 0:
@@ -178,7 +180,8 @@ def _total_currency(rows: list[SourcingBomLineOut]) -> str | None:
         and row.best_offer.currency_displayed is not None
     ]
     if converted:
-        return converted[0]
+        first = converted[0]
+        return first if all(currency == first for currency in converted) else None
 
     currencies = [
         currency
@@ -189,7 +192,17 @@ def _total_currency(rows: list[SourcingBomLineOut]) -> str | None:
     if not currencies:
         return None
     first = currencies[0]
-    return first if all(currency == first for currency in currencies) else first
+    return first if all(currency == first for currency in currencies) else None
+
+
+def _has_mixed_offer_currencies(rows: list[SourcingBomLineOut]) -> bool:
+    currencies = {
+        currency
+        for row in rows
+        if row.best_offer is not None
+        and (currency := _offer_display_currency(row.best_offer)) is not None
+    }
+    return len(currencies) > 1
 
 
 def _best_offer_priced_for_total(

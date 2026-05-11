@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from uuid import UUID
 
-from app.domain.sourcing.coverage import compute_build_capacity
+from app.domain.sourcing.coverage import _total_currency, compute_build_capacity
 from app.domain.sourcing.schemas import (
     BuildCapacityOut,
     SourcingBomLineOut,
@@ -346,6 +346,77 @@ def test_total_bom_cost_none_when_no_line_has_pricing():
     )
 
     assert capacity.total_bom_cost is None
+
+
+def test_total_currency_returns_none_when_mixed():
+    assert _total_currency(
+        [
+            _line(1, best_offer=_offer(currency="USD")),
+            _line(2, best_offer=_offer(currency="EUR")),
+        ]
+    ) is None
+    assert _total_currency(
+        [
+            _line(
+                1,
+                best_offer=_offer(
+                    currency="USD",
+                    unit_price_converted="1.00",
+                    currency_displayed="EUR",
+                ),
+            ),
+            _line(
+                2,
+                best_offer=_offer(
+                    currency="USD",
+                    unit_price_converted="1.00",
+                    currency_displayed="GBP",
+                ),
+            ),
+        ]
+    ) is None
+
+
+def test_total_currency_returns_first_when_all_same():
+    assert _total_currency(
+        [
+            _line(1, best_offer=_offer(currency="usd")),
+            _line(2, best_offer=_offer(currency="USD")),
+        ]
+    ) == "USD"
+
+
+def test_total_currency_handles_empty_and_none():
+    assert _total_currency([]) is None
+    assert _total_currency([_line(1)]) is None
+
+
+def test_compute_build_capacity_currency_is_none_when_offers_mix_currencies():
+    capacity = compute_build_capacity(
+        [
+            _line(1, required=2, best_offer=_offer(unit_price="1.50", currency="USD")),
+            _line(2, required=3, best_offer=_offer(unit_price="2.00", currency="EUR")),
+        ],
+        requested_build_quantity=1,
+    )
+
+    assert capacity.total_bom_cost is None
+    assert capacity.cost_per_single_bom is None
+    assert capacity.purchase_to_pay_cost is None
+
+
+def test_compute_build_capacity_keeps_total_when_offers_share_currency():
+    capacity = compute_build_capacity(
+        [
+            _line(1, required=2, best_offer=_offer(unit_price="1.50", currency="USD")),
+            _line(2, required=3, best_offer=_offer(unit_price="2.00", currency="USD")),
+        ],
+        requested_build_quantity=1,
+    )
+
+    assert capacity.total_bom_cost == Decimal("9.00")
+    assert capacity.cost_per_single_bom == Decimal("9.00")
+    assert capacity.purchase_to_pay_cost == Decimal("9.00")
 
 
 def test_purchase_to_pay_cost_sums_short_by_unit_price():
