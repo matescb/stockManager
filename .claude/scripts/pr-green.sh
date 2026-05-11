@@ -137,18 +137,27 @@ if [ -n "$CONFLICT_CANDIDATES" ]; then
   # shellcheck disable=SC2086
   git fetch --quiet origin main $REFS_TO_FETCH 2>/dev/null || true
 
+  # `set -e` is unfriendly to the natural shape of "test-and-skip" loops —
+  # use explicit `if`/`continue` blocks and `|| true` to keep the loop
+  # from tripping on the empty / no-match / merge-tree-failed cases.
   while IFS=$'\t' read -r NUM SHA BRANCH TITLE; do
-    [ -z "$NUM" ] && continue
+    if [ -z "$NUM" ]; then
+      continue
+    fi
     # Resolve the conflict file set against current main.
     CONFLICT_FILES="$(git merge-tree --write-tree --name-only --no-messages \
                        origin/main "origin/$BRANCH" 2>/dev/null \
-                     | tail -n +2)"
-    [ -z "$CONFLICT_FILES" ] && continue
+                     | tail -n +2 || true)"
+    if [ -z "$CONFLICT_FILES" ]; then
+      continue
+    fi
     # Every line must match the allowlist. grep -v with the inverted
     # allowlist returns lines that DON'T match — if any, bail.
-    DISALLOWED="$(echo "$CONFLICT_FILES" \
+    DISALLOWED="$(printf '%s\n' "$CONFLICT_FILES" \
                   | grep -vE '^(CHANGELOG\.md|docs/.*\.md)$' || true)"
-    [ -n "$DISALLOWED" ] && continue
+    if [ -n "$DISALLOWED" ]; then
+      continue
+    fi
     printf '%s\t%s\t%s\n' "$NUM" "$SHA" "$TITLE"
   done <<< "$CONFLICT_CANDIDATES"
 fi
