@@ -437,7 +437,7 @@ def test_sourcing_response_converts_when_distributor_returns_different_currency(
     data = r.json()["data"]
     distributor = data["offers"][0]["distributors"][0]
     assert data["fx_status"] is None
-    assert distributor["unit_price"] == 2.5
+    assert distributor["unit_price"] == "2.5"
     assert distributor["currency"] == "USD"
     assert Decimal(distributor["unit_price_converted"]) == Decimal("1.2500")
     assert distributor["currency_displayed"] == "EUR"
@@ -478,7 +478,7 @@ def test_sourcing_response_surfaces_fx_status_unavailable(authed_client, monkeyp
     data = r.json()["data"]
     distributor = data["offers"][0]["distributors"][0]
     assert data["fx_status"] == "unavailable"
-    assert distributor["unit_price"] == 1.23
+    assert distributor["unit_price"] == "1.23"
     assert distributor["currency"] == "USD"
     assert distributor["unit_price_converted"] is None
     assert distributor["fx_converted"] is None
