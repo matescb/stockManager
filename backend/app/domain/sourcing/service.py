@@ -84,6 +84,32 @@ class _LineUpdate:
     selected_url: str | None
 
 
+@dataclass(frozen=True)
+class _AlertValuesInput:
+    alert_type: SourcingAlertType | str
+    part_id: UUID | None
+    project_id: UUID | None
+    threshold: SourcingAlertThreshold | dict[str, Any]
+    country_code: str | None
+    currency_code: str | None
+    distributor_filter: list[str] | None
+    notify_user_ids: list[UUID] | list[str] | None
+    cooldown_seconds: int
+    enabled: bool
+
+
+@dataclass(frozen=True)
+class _BomSearchOptions:
+    country: str | None
+    currency: str | None
+    distributors: list[str] | None
+    in_stock_only: bool
+    use_cached_data: bool | None
+    ttl_seconds: int
+    requested_by: UUID | None
+    force_refresh: bool
+
+
 class SourcingNotConfigured(Exception):
     """Workspace has no usable TrustedParts sourcing configuration."""
 
@@ -114,16 +140,18 @@ def create_alert(
     values = _validated_alert_values(
         db,
         workspace=workspace,
-        alert_type=payload.alert_type,
-        part_id=payload.part_id,
-        project_id=payload.project_id,
-        threshold=payload.threshold,
-        country_code=payload.country_code,
-        currency_code=payload.currency_code,
-        distributor_filter=payload.distributor_filter,
-        notify_user_ids=payload.notify_user_ids,
-        cooldown_seconds=payload.cooldown_seconds,
-        enabled=payload.enabled,
+        values=_AlertValuesInput(
+            alert_type=payload.alert_type,
+            part_id=payload.part_id,
+            project_id=payload.project_id,
+            threshold=payload.threshold,
+            country_code=payload.country_code,
+            currency_code=payload.currency_code,
+            distributor_filter=payload.distributor_filter,
+            notify_user_ids=payload.notify_user_ids,
+            cooldown_seconds=payload.cooldown_seconds,
+            enabled=payload.enabled,
+        ),
     )
     alert = SourcingAlert(
         workspace_id=workspace.id,
@@ -259,16 +287,18 @@ def update_alert(
     values = _validated_alert_values(
         db,
         workspace=workspace,
-        alert_type=alert.alert_type,
-        part_id=data.get("part_id", alert.part_id),
-        project_id=data.get("project_id", alert.project_id),
-        threshold=data.get("threshold", alert.threshold),
-        country_code=data.get("country_code", alert.country_code),
-        currency_code=data.get("currency_code", alert.currency_code),
-        distributor_filter=data.get("distributor_filter", alert.distributor_filter),
-        notify_user_ids=data.get("notify_user_ids", alert.notify_user_ids),
-        cooldown_seconds=data.get("cooldown_seconds", alert.cooldown_seconds),
-        enabled=data.get("enabled", alert.enabled),
+        values=_AlertValuesInput(
+            alert_type=alert.alert_type,
+            part_id=data.get("part_id", alert.part_id),
+            project_id=data.get("project_id", alert.project_id),
+            threshold=data.get("threshold", alert.threshold),
+            country_code=data.get("country_code", alert.country_code),
+            currency_code=data.get("currency_code", alert.currency_code),
+            distributor_filter=data.get("distributor_filter", alert.distributor_filter),
+            notify_user_ids=data.get("notify_user_ids", alert.notify_user_ids),
+            cooldown_seconds=data.get("cooldown_seconds", alert.cooldown_seconds),
+            enabled=data.get("enabled", alert.enabled),
+        ),
     )
     for key, value in values.items():
         setattr(alert, key, value)
@@ -293,23 +323,14 @@ def _validated_alert_values(
     db: Session,
     *,
     workspace: Any,
-    alert_type: SourcingAlertType | str,
-    part_id: UUID | None,
-    project_id: UUID | None,
-    threshold: SourcingAlertThreshold | dict[str, Any],
-    country_code: str | None,
-    currency_code: str | None,
-    distributor_filter: list[str] | None,
-    notify_user_ids: list[UUID] | list[str] | None,
-    cooldown_seconds: int,
-    enabled: bool,
+    values: _AlertValuesInput,
 ) -> dict[str, Any]:
-    if threshold is None:
-        raise_http(422, "sourcing_alert.invalid_threshold", "threshold is required")
-    if cooldown_seconds is None:
-        raise_http(422, "sourcing_alert.invalid_cooldown", "cooldown_seconds is required")
-    if enabled is None:
-        raise_http(422, "sourcing_alert.invalid_enabled", "enabled is required")
+    alert_type = values.alert_type
+    part_id = values.part_id
+    project_id = values.project_id
+    country_code = values.country_code
+    currency_code = values.currency_code
+    distributor_filter = values.distributor_filter
     if alert_type not in SOURCING_ALERT_TYPE_VALUES:
         raise_http(422, "sourcing_alert.invalid_type", "invalid alert_type")
     if (part_id is None) == (project_id is None):
@@ -343,11 +364,11 @@ def _validated_alert_values(
     if project_id is not None:
         assert_in_workspace(db, Project, project_id, workspace.id, label="project")
 
-    validated_threshold = _validated_threshold(alert_type, threshold)
+    validated_threshold = _validated_threshold(alert_type, values.threshold)
     validated_notify_user_ids = _validated_notify_user_ids(
         db,
         workspace_id=workspace.id,
-        notify_user_ids=notify_user_ids,
+        notify_user_ids=values.notify_user_ids,
     )
     if alert_type not in _SOURCING_FILTER_ALERT_TYPES:
         country_code = None
@@ -363,8 +384,8 @@ def _validated_alert_values(
         "currency_code": currency_code,
         "distributor_filter": distributor_filter,
         "notify_user_ids": validated_notify_user_ids,
-        "cooldown_seconds": cooldown_seconds,
-        "enabled": enabled,
+        "cooldown_seconds": values.cooldown_seconds,
+        "enabled": values.enabled,
     }
 
 
@@ -429,6 +450,7 @@ def build_purchase_plan(
     price_tolerance_pct: Decimal = Decimal("5"),
     requested_by: UUID | None = None,
 ) -> PurchasePlan:
+    _assert_same_workspace(project, workspace, resource="project")
     bom = source_bom(
         db,
         workspace=workspace,
@@ -524,6 +546,7 @@ def convert_plan_to_orders(
     user_id: UUID | None,
     overrides: dict[UUID, PurchasePlanOrderOverrideIn] | None = None,
 ) -> list[Order]:
+    _assert_same_workspace(plan, workspace, resource="purchase plan")
     if plan.status != "refreshed":
         raise PurchasePlanStaleError(
             "plan must be refreshed before conversion; call /refresh first"
@@ -689,11 +712,16 @@ def refresh_purchase_plan(
     plan: PurchasePlan,
     requested_by: UUID | None = None,
 ) -> PurchasePlan:
+    _assert_same_workspace(plan, workspace, resource="purchase plan")
     project = db.execute(
-        select(Project).where(Project.id == plan.project_id, Project.workspace_id == workspace.id)
+        select(Project).where(
+            Project.id == plan.project_id,
+            Project.workspace_id == workspace.id,
+            Project.archived_at.is_(None),
+        )
     ).scalar_one_or_none()
     if project is None:
-        raise ValueError("purchase plan project not found")
+        raise_http(404, ErrorCodes.PROJECT_NOT_FOUND, "project not found")
 
     bom = source_bom(
         db,
@@ -858,6 +886,7 @@ def source_bom(
     requested_by: UUID | None = None,
     force_refresh: bool = False,
 ) -> SourcingBomOut:
+    _assert_same_workspace(project, workspace, resource="project")
     shortage = shortage_analysis(
         db,
         workspace_id=workspace.id,
@@ -872,28 +901,21 @@ def source_bom(
         if part_id in parts_by_id
     )
 
-    search_results: dict[str, SourcingSearchResult] = {}
-    fetched_at_values: list[datetime] = []
-    partial = False
-    for chunk in chunk_mpns(mpns):
-        verdict = BUDGET.check(workspace.id, parts_count=len(chunk))
-        partial = partial or verdict.mode == "degraded"
-        out = search(
-            db,
-            workspace=workspace,
-            mpns=chunk,
+    search_results, fetched_at_values, partial = _source_bom_search_results(
+        db,
+        workspace=workspace,
+        mpns=mpns,
+        options=_BomSearchOptions(
             country=country,
             currency=currency,
-            in_stock_only=in_stock_only,
             distributors=distributors,
+            in_stock_only=in_stock_only,
             use_cached_data=use_cached_data,
             ttl_seconds=ttl_seconds,
             requested_by=requested_by,
             force_refresh=force_refresh,
-        )
-        fetched_at_values.append(out.fetched_at)
-        for result in out.results:
-            search_results[result.mpn.casefold()] = result
+        ),
+    )
 
     preferred = _clean_distributors(workspace.sourcing_preferred_distributors)
     rows = [
@@ -927,6 +949,38 @@ def source_bom(
         links=TRUSTEDPARTS_LINKS,
         fx_status=fx_status,
     )
+
+
+def _source_bom_search_results(
+    db: Session,
+    *,
+    workspace: Any,
+    mpns: list[str],
+    options: _BomSearchOptions,
+) -> tuple[dict[str, SourcingSearchResult], list[datetime], bool]:
+    search_results: dict[str, SourcingSearchResult] = {}
+    fetched_at_values: list[datetime] = []
+    partial = False
+    for chunk in chunk_mpns(mpns):
+        verdict = BUDGET.check(workspace.id, parts_count=len(chunk))
+        partial = partial or verdict.mode == "degraded"
+        out = search(
+            db,
+            workspace=workspace,
+            mpns=chunk,
+            country=options.country,
+            currency=options.currency,
+            in_stock_only=options.in_stock_only,
+            distributors=options.distributors,
+            use_cached_data=options.use_cached_data,
+            ttl_seconds=options.ttl_seconds,
+            requested_by=options.requested_by,
+            force_refresh=options.force_refresh,
+        )
+        fetched_at_values.append(out.fetched_at)
+        for result in out.results:
+            search_results[result.mpn.casefold()] = result
+    return search_results, fetched_at_values, partial
 
 
 def _apply_fx_to_bom_rows(
@@ -973,6 +1027,7 @@ def _apply_fx_to_bom_rows(
             )
             statuses.append(status)
             row_unavailable = row_unavailable or status == "unavailable"
+        row.est_extended_cost = _offer_extended_cost(row.best_offer, row.short_by)
         row.fx_status = "unavailable" if row_unavailable else None
 
     if requested is None:
@@ -1249,12 +1304,7 @@ def _source_bom_line(
     search_results: dict[str, SourcingSearchResult],
     preferred_distributors: list[str] | None,
 ) -> SourcingBomLineOut:
-    part_id = UUID(str(row["part_id"]))
-    substitute_ids = [UUID(str(item)) for item in row.get("substitute_ids", [])]
-    candidate_ids = [part_id, *substitute_ids]
-    candidate_mpns = dedupe_mpns(
-        parts_by_id[item].mpn for item in candidate_ids if item in parts_by_id
-    )
+    part_id, substitute_ids, candidate_mpns = _bom_line_candidates(row, parts_by_id)
     short_by = int(row["short_by"])
     offers = _joined_offers(candidate_mpns, search_results, qty=max(short_by, 1))
     best_offer = _best_offer_at_qty(offers, short_by)
@@ -1275,11 +1325,7 @@ def _source_bom_line(
         authorized_stock=authorized_stock,
         offers=offers,
         best_offer=best_offer,
-        est_extended_cost=(
-            best_offer.unit_price * Decimal(short_by)
-            if best_offer is not None and best_offer.unit_price is not None
-            else None
-        ),
+        est_extended_cost=_offer_extended_cost(best_offer, short_by),
         lead_time_days=best_offer.lead_time_days if best_offer is not None else None,
         cache_hit=cache_hit,
         reason=reason,
@@ -1290,6 +1336,19 @@ def _source_bom_line(
             preferred_distributors=preferred_distributors,
         ),
     )
+
+
+def _bom_line_candidates(
+    row: dict[str, Any],
+    parts_by_id: dict[UUID, Part],
+) -> tuple[UUID, list[UUID], list[str]]:
+    part_id = UUID(str(row["part_id"]))
+    substitute_ids = [UUID(str(item)) for item in row.get("substitute_ids", [])]
+    candidate_ids = [part_id, *substitute_ids]
+    candidate_mpns = dedupe_mpns(
+        parts_by_id[item].mpn for item in candidate_ids if item in parts_by_id
+    )
+    return part_id, substitute_ids, candidate_mpns
 
 
 def _bom_line_cache_hit(
@@ -1368,12 +1427,35 @@ def _best_offer_at_qty(
 
     best: tuple[Decimal, SourcingBomOfferOut] | None = None
     for offer in offers:
-        price = offer.unit_price
+        price = _offer_unit_price_at_qty(offer, qty)
         if price is None:
             continue
         if best is None or price < best[0]:
             best = (price, offer)
     return best[1] if best is not None else None
+
+
+def _offer_extended_cost(
+    offer: SourcingBomOfferOut | None,
+    qty: int,
+) -> Decimal | None:
+    if offer is None or qty <= 0:
+        return None
+    unit_price = _offer_unit_price_at_qty(offer, qty)
+    if unit_price is None:
+        return None
+    return unit_price * Decimal(qty)
+
+
+def _offer_unit_price_at_qty(
+    offer: SourcingBomOfferOut,
+    qty: int,
+) -> Decimal | None:
+    price_breaks = offer.price_breaks_converted or offer.price_breaks
+    best = best_unit_price_at_qty(price_breaks, qty)
+    if best is not None:
+        return best[0]
+    return offer.unit_price_converted or offer.unit_price
 
 
 def _unit_price_for_distributor(distributor: Any, qty: int) -> Decimal | None:
@@ -1387,6 +1469,16 @@ def _unit_price_for_distributor(distributor: Any, qty: int) -> Decimal | None:
         ]
     best = best_unit_price_at_qty(price_breaks, qty)
     return best[0] if best is not None else None
+
+
+def _assert_same_workspace(obj: Any, workspace: Any, *, resource: str) -> None:
+    if getattr(obj, "workspace_id", None) != workspace.id:
+        raise_http(
+            404,
+            ErrorCodes.RESOURCE_NOT_FOUND,
+            f"{resource} not found",
+            resource=resource.replace(" ", "_"),
+        )
 
 
 def _price_breaks_for_distributor(distributor: Any) -> list[SourcingBomPriceBreakOut]:

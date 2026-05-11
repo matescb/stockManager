@@ -230,7 +230,7 @@ def _queried_mpns() -> list[str]:
 
 
 def _monetary_values(data: Any):
-    monetary_keys = {"unit_price", "est_extended_cost", "est_purchase_cost", "est_total_cost"}
+    monetary_keys = {"unit_price", "est_extended_cost", "est_total_cost"}
     if isinstance(data, dict):
         for key, value in data.items():
             if key in monetary_keys and value is not None:

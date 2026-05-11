@@ -94,7 +94,7 @@ Project BOM capacity reports two response-level cost numbers. `total_bom_cost`
 sums required quantity times best-offer unit price for every priced row and ignores
 on-hand stock. `purchase_to_pay_cost` sums short quantity times best-offer unit
 price for priced rows that are not blocking after authorized supply; the deprecated
-`est_purchase_cost` field is the same value for one release. Both totals use Decimal
+`purchase_to_pay_cost` field exposes the short-quantity price to pay. Totals use Decimal
 math, prefer converted/display prices from BOM FX conversion, and skip rows whose
 display currency does not match the selected total currency.
 

@@ -97,6 +97,31 @@ def test_single_distributor_covers_all():
     assert matrix.fewest_distributors_total == Decimal("22.50")
 
 
+def test_lines_covered_counts_distinct_lines_not_offers():
+    matrix = compute_coverage(
+        [
+            _line(
+                1,
+                offers=[
+                    _offer("DigiKey", mpn="A-1"),
+                    _offer("DigiKey", mpn="A-1-ALT", unit_price="1.25"),
+                ],
+            ),
+            _line(
+                2,
+                offers=[
+                    _offer("DigiKey", mpn="B-1"),
+                    _offer("DigiKey", mpn="B-1-ALT", unit_price="1.25"),
+                ],
+            ),
+        ]
+    )
+
+    rows = {row.distributor: row for row in matrix.rows}
+    assert rows["DigiKey"].lines_covered == 2
+    assert rows["DigiKey"].coverage_pct == 1
+
+
 def test_two_distributors_needed_finds_optimal_pair():
     matrix = compute_coverage(
         [

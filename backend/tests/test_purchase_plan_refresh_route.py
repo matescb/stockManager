@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 import app.core.ratelimit as _ratelimit_mod
 from app.core.time import utcnow
+from app.domain.projects.models import Project
 from app.domain.sourcing.budget import BUDGET
 from app.domain.sourcing.models import PurchasePlan, PurchasePlanLine
 from app.main import app
@@ -182,6 +183,21 @@ def test_workspace_isolation_two_plans_different_workspaces(authed_client):
     assert foreign.json()["code"] == "resource.not_found"
     assert own.status_code == 200, own.text
     assert own.json()["data"]["id"] == plan_b["id"]
+
+
+def test_refresh_rejects_archived_project(authed_client, db):
+    initial = _create_plan(authed_client)
+    plan = db.get(PurchasePlan, uuid.UUID(initial["id"]))
+    assert plan is not None
+    project = db.get(Project, plan.project_id)
+    assert project is not None
+    project.archived_at = utcnow()
+    db.flush()
+
+    r = _refresh(authed_client, initial["id"])
+
+    assert r.status_code == 404, r.text
+    assert r.json()["code"] == "project.not_found"
 
 
 def test_decimals_as_strings_on_wire(authed_client):

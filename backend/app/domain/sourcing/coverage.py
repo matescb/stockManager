@@ -8,6 +8,7 @@ from itertools import combinations
 from math import ceil
 from uuid import UUID
 
+from app.domain.sourcing.constants import INFINITE_LEAD_TIME_DAYS
 from app.domain.sourcing.optimizer import optimize
 from app.domain.sourcing.pricing import best_unit_price_at_qty
 from app.domain.sourcing.schemas import SourcingBomLineOut, SourcingBomOfferOut
@@ -561,7 +562,7 @@ def _best_offer_for_quantity(
         candidates,
         key=lambda offer: (
             _price_sort_value(_offer_unit_price(offer, quantity_for_offer(offer))),
-            offer.lead_time_days if offer.lead_time_days is not None else 10**9,
+            offer.lead_time_days if offer.lead_time_days is not None else INFINITE_LEAD_TIME_DAYS,
             offer.mpn.casefold(),
         ),
     )

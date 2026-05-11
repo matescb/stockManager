@@ -8,6 +8,10 @@ the canonical record.
 
 ## 2026-05 — feedback brief fixes
 
+- **SA-MED / #512** Sourcing cleanup tightened service-layer workspace
+  guards, archived-project refresh filtering, raw Decimal wire prices, hashed
+  TrustedParts user-agent workspace identifiers, budget-counter locking, and
+  removed the deprecated `est_purchase_cost` sourcing capacity alias.
 - **SA-12 / #504** Sourcing alerts now return `{ items, total, limit, offset }`
   with 50-row default pagination and frontend next/previous controls.
 - **SA-13 / #505** Purchase-plan conversion is now capped at 10
