@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -224,6 +224,18 @@ function renderPage() {
   );
 }
 
+async function clickSource(user = userEvent.setup()) {
+  const button = await screen.findByRole("button", { name: "Source" }) as HTMLButtonElement;
+  await waitFor(() => expect(button.disabled).toBe(false));
+  await user.click(button);
+  return button;
+}
+
+async function sourceBom(user = userEvent.setup()) {
+  await clickSource(user);
+  expect(await screen.findByText("BOM rows")).toBeDefined();
+}
+
 beforeEach(() => {
   cleanup();
   localStorage.clear();
@@ -252,6 +264,67 @@ describe("ProjectSourcingPage", () => {
 
     const country = await screen.findByLabelText("Country") as HTMLSelectElement;
     await waitFor(() => expect(country.value).toBe("DE"));
+  });
+
+  it("does not fire POST on mount", async () => {
+    mockReads();
+    const post = vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+
+    renderPage();
+
+    await screen.findByRole("button", { name: "Source" });
+    await waitFor(() => expect((screen.getByRole("button", { name: "Source" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("fires exactly one POST on submit", async () => {
+    mockReads();
+    const post = vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+
+    renderPage();
+    await clickSource();
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not refire POST on window focus", async () => {
+    mockReads();
+    const post = vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+
+    renderPage();
+    await clickSource();
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+
+    fireEvent.focus(window);
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not refire POST on requestBody keystroke before submit", async () => {
+    const user = userEvent.setup();
+    mockReads();
+    const post = vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+
+    renderPage();
+
+    await screen.findByRole("button", { name: "Source" });
+    await waitFor(() => expect((screen.getByRole("button", { name: "Source" }) as HTMLButtonElement).disabled).toBe(false));
+    await user.clear(screen.getByLabelText("Build quantity"));
+    await user.type(screen.getByLabelText("Build quantity"), "12");
+
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("shows error toast on 429", async () => {
+    mockReads();
+    vi.spyOn(api, "post").mockRejectedValue(apiError(429, "Too Many Requests"));
+
+    renderPage();
+    await clickSource();
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith("Rate limit hit — wait a minute before sourcing again.");
+    });
   });
 
   it("distributors multi-select defaults to workspace.sourcing_preferred_distributors", async () => {
@@ -316,6 +389,7 @@ describe("ProjectSourcingPage", () => {
     vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
 
     renderPage();
+    await clickSource();
 
     expect(await screen.findByText("Can build now")).toBeDefined();
     expect(screen.getByText("After purchase")).toBeDefined();
@@ -330,6 +404,7 @@ describe("ProjectSourcingPage", () => {
     vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
 
     renderPage();
+    await clickSource();
 
     expect(await screen.findByText("Cost per 1 BOM:")).toBeDefined();
     expect(screen.getByText("15 USD")).toBeDefined();
@@ -341,6 +416,7 @@ describe("ProjectSourcingPage", () => {
     vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
 
     renderPage();
+    await clickSource();
 
     expect(await screen.findByText("Price to pay:")).toBeDefined();
     expect(screen.getAllByText("25 USD").length).toBeGreaterThan(0);
@@ -363,6 +439,7 @@ describe("ProjectSourcingPage", () => {
     }));
 
     renderPage();
+    await clickSource();
 
     expect(await screen.findByText("Total BOM cost:")).toBeDefined();
     expect(screen.getAllByText("no pricing available on any line").length).toBeGreaterThanOrEqual(2);
@@ -375,6 +452,7 @@ describe("ProjectSourcingPage", () => {
     vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
 
     renderPage();
+    await clickSource();
 
     const coverage = await screen.findByText("Coverage matrix");
     expect(coverage).toBeDefined();
@@ -384,12 +462,13 @@ describe("ProjectSourcingPage", () => {
     expect(within(table).getAllByText("Best two-distributor combo")).toHaveLength(2);
   });
 
-  it("cold load shows the sourced BOM skeleton without the background refresh hint", async () => {
+  it("first submit shows the sourced BOM skeleton without the background refresh hint", async () => {
     mockReads();
     const firstLoad = deferred<ReturnType<typeof sourcingResponse>>();
     vi.spyOn(api, "post").mockReturnValue(firstLoad.promise as never);
 
     renderPage();
+    await clickSource();
 
     expect(await screen.findByRole("status", { name: "Loading sourced BOM" })).toBeDefined();
     expect(screen.queryByText("Refreshing prices in the background...")).toBeNull();
@@ -407,8 +486,8 @@ describe("ProjectSourcingPage", () => {
 
     renderPage();
 
-    expect(await screen.findByText("BOM rows")).toBeDefined();
-    await user.click(screen.getByRole("button", { name: "Source" }));
+    await sourceBom(user);
+    await clickSource(user);
 
     expect(await screen.findByText("Refreshing prices in the background...")).toBeDefined();
     expect(screen.getAllByText("STM32").length).toBeGreaterThan(0);
@@ -417,7 +496,7 @@ describe("ProjectSourcingPage", () => {
     refetch.resolve(sourcingResponse());
   });
 
-  it("placeholderData renders previous result during a filter refetch", async () => {
+  it("display cache keeps previous result until a filter refresh is submitted", async () => {
     const user = userEvent.setup();
     mockReads();
     const filteredLoad = deferred<ReturnType<typeof sourcingResponse>>();
@@ -427,9 +506,11 @@ describe("ProjectSourcingPage", () => {
 
     renderPage();
 
-    expect(await screen.findByText("BOM rows")).toBeDefined();
+    await sourceBom(user);
     await user.click(screen.getByRole("checkbox", { name: "Mouser" }));
 
+    expect(post).toHaveBeenCalledTimes(1);
+    await clickSource(user);
     await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
     expect(await screen.findByText("Refreshing prices in the background...")).toBeDefined();
     expect(screen.getAllByText("STM32").length).toBeGreaterThan(0);
@@ -463,6 +544,7 @@ describe("ProjectSourcingPage", () => {
     }));
 
     renderPage();
+    await clickSource();
 
     expect(await screen.findByText("Lowest total price")).toBeDefined();
     expect(screen.getByText("DigiKey + Mouser")).toBeDefined();
@@ -484,6 +566,7 @@ describe("ProjectSourcingPage", () => {
     }));
 
     renderPage();
+    await clickSource();
 
     expect(await screen.findByText("Price (covered lines)")).toBeDefined();
     expect(screen.getByText("1 uncovered line")).toBeDefined();
@@ -503,6 +586,7 @@ describe("ProjectSourcingPage", () => {
     }));
 
     renderPage();
+    await clickSource();
 
     expect(await screen.findByText("Price (covered lines)")).toBeDefined();
     expect(screen.getByText("No pricing available on covered lines.")).toBeDefined();
@@ -532,6 +616,7 @@ describe("ProjectSourcingPage", () => {
     }));
 
     renderPage();
+    await clickSource();
 
     expect(await screen.findByText("Fewest distributors")).toBeDefined();
     expect(screen.getAllByText("40 USD").length).toBeGreaterThan(0);
@@ -542,6 +627,7 @@ describe("ProjectSourcingPage", () => {
     vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
 
     renderPage();
+    await clickSource();
 
     expect(await screen.findByText("Lowest total price")).toBeDefined();
     expect(screen.getByText("Fewest distributors")).toBeDefined();
@@ -553,6 +639,7 @@ describe("ProjectSourcingPage", () => {
     vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
 
     renderPage();
+    await clickSource();
 
     expect(await screen.findByText("Single source")).toBeDefined();
     expect(screen.getByText("Long lead time")).toBeDefined();
@@ -583,7 +670,7 @@ describe("ProjectSourcingPage", () => {
 
     renderPage();
 
-    await screen.findByText("BOM rows");
+    await sourceBom(user);
     const bomRowsTable = screen.getAllByRole("table")[1];
     await user.click(within(bomRowsTable).getByRole("row", { name: /Open STM32/ }));
 
@@ -613,7 +700,7 @@ describe("ProjectSourcingPage", () => {
 
     renderPage();
 
-    await screen.findByText("BOM rows");
+    await sourceBom(user);
     const bomRowsTable = screen.getAllByRole("table")[1];
     await user.click(within(bomRowsTable).getByRole("row", { name: /STM32/ }));
 
@@ -652,7 +739,7 @@ describe("ProjectSourcingPage", () => {
 
     renderPage();
 
-    await screen.findByText("BOM rows");
+    await sourceBom();
     const bomRowsTable = screen.getAllByRole("table")[1];
     expect(within(bomRowsTable).getByRole("columnheader", { name: /Lifecycle/ })).toBeDefined();
     expect(within(bomRowsTable).getByRole("columnheader", { name: /Supply chain/ })).toBeDefined();
@@ -681,7 +768,7 @@ describe("ProjectSourcingPage", () => {
 
     renderPage();
 
-    await screen.findByText("BOM rows");
+    await sourceBom(user);
     const bomRowsTable = screen.getAllByRole("table")[1];
     const lifecycleHeader = within(bomRowsTable).getByRole("columnheader", { name: /Lifecycle/ });
     const supplyChainHeader = within(bomRowsTable).getByRole("columnheader", { name: /Supply chain/ });
@@ -722,7 +809,7 @@ describe("ProjectSourcingPage", () => {
 
     renderPage();
 
-    await screen.findByText("BOM rows");
+    await sourceBom();
     const rohs = screen.getByText("Compliant");
     expect(rohs.className).toContain("text-success");
   });
@@ -744,7 +831,7 @@ describe("ProjectSourcingPage", () => {
 
     renderPage();
 
-    await screen.findByText("BOM rows");
+    await sourceBom();
     const bomRowsTable = screen.getAllByRole("table")[1];
     expect(within(bomRowsTable).getByRole("columnheader", { name: /Lifecycle/ })).toBeDefined();
     const lifecycle = screen.getByLabelText("Lifecycle risk: Obsolete");
@@ -768,7 +855,7 @@ describe("ProjectSourcingPage", () => {
 
     renderPage();
 
-    await screen.findByText("BOM rows");
+    await sourceBom();
     const lifecycle = screen.getByLabelText("Lifecycle risk: Low risk");
     expect(lifecycle.className).toContain("text-success");
   });
@@ -798,7 +885,7 @@ describe("ProjectSourcingPage", () => {
 
     renderPage();
 
-    await screen.findByText("BOM rows");
+    await sourceBom(user);
     const bomRowsTable = screen.getAllByRole("table")[1];
     expect(within(bomRowsTable).queryByRole("columnheader", { name: "Lead time" })).toBeNull();
 
@@ -819,6 +906,7 @@ describe("ProjectSourcingPage", () => {
     vi.spyOn(api, "post").mockRejectedValue(apiError(409, "sourcing not configured"));
 
     renderPage();
+    await clickSource();
 
     expect(await screen.findByText("Sourcing not configured.")).toBeDefined();
     expect(screen.getByRole("status", { name: "Sourcing diagnostics" })).toBeDefined();
@@ -846,6 +934,7 @@ describe("ProjectSourcingPage", () => {
     }));
 
     renderPage();
+    await clickSource();
 
     expect(await screen.findByRole("status", { name: "Sourcing diagnostics" })).toBeDefined();
     expect(screen.getByText("BOM lines need manufacturer part numbers.")).toBeDefined();
@@ -872,6 +961,7 @@ describe("ProjectSourcingPage", () => {
     }));
 
     renderPage();
+    await clickSource(user);
 
     expect(await screen.findByText("Only cached no-offer results were available.")).toBeDefined();
     await user.click(screen.getByRole("button", { name: "Refresh prices" }));
@@ -897,6 +987,7 @@ describe("ProjectSourcingPage", () => {
     }));
 
     renderPage();
+    await clickSource();
 
     expect(await screen.findByText("Prices were found, but currency conversion is unavailable.")).toBeDefined();
     expect(screen.getByText("Retry later or choose the offer currency while exchange rates are unavailable.")).toBeDefined();
@@ -920,6 +1011,7 @@ describe("ProjectSourcingPage", () => {
     }));
 
     renderPage();
+    await clickSource();
 
     expect(await screen.findByText("No matching offers found.")).toBeDefined();
     expect(screen.getByText("TrustedParts returned no authorized offers for the selected country, currency, and distributors.")).toBeDefined();
@@ -930,6 +1022,7 @@ describe("ProjectSourcingPage", () => {
     vi.spyOn(api, "post").mockRejectedValue(apiError(503, "sourcing budget exhausted"));
 
     renderPage();
+    await clickSource();
 
     expect(await screen.findByText("TrustedParts request budget reached for this hour. Retry is paused for 5 minutes.")).toBeDefined();
     const retry = screen.getByRole("button", { name: "Retry Source BOM" }) as HTMLButtonElement;
@@ -941,6 +1034,7 @@ describe("ProjectSourcingPage", () => {
     vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({ partial: true }));
 
     renderPage();
+    await clickSource();
 
     expect(await screen.findByText("Partial — some chunks served from cache")).toBeDefined();
   });
@@ -951,7 +1045,7 @@ describe("ProjectSourcingPage", () => {
 
     renderPage();
 
-    await screen.findByText("BOM rows");
+    await sourceBom();
     await waitFor(() => {
       expect(post).toHaveBeenCalledWith(
         `/projects/${projectId}/sourcing`,
@@ -961,7 +1055,6 @@ describe("ProjectSourcingPage", () => {
           currency: "EUR",
           distributors: ["DigiKey", "Mouser"],
         }),
-        expect.anything(),
       );
     });
   });
@@ -972,7 +1065,7 @@ describe("ProjectSourcingPage", () => {
 
     renderPage();
 
-    await screen.findByText("BOM rows");
+    await sourceBom();
     await waitFor(() => {
       expect(post).toHaveBeenCalledWith(
         `/projects/${projectId}/sourcing`,
@@ -980,7 +1073,6 @@ describe("ProjectSourcingPage", () => {
           build_quantity: 1,
           currency: null,
         }),
-        expect.anything(),
       );
     });
   });
@@ -1006,6 +1098,7 @@ describe("ProjectSourcingPage", () => {
     }));
 
     renderPage();
+    await clickSource();
 
     expect(await screen.findByText("1 EUR")).toBeDefined();
     expect(screen.queryByText("2 USD")).toBeNull();
@@ -1013,6 +1106,7 @@ describe("ProjectSourcingPage", () => {
   });
 
   it("Generate purchase plan posts default strategy from current sourcing filters", async () => {
+    const user = userEvent.setup();
     mockReads();
     const post = vi.spyOn(api, "post");
     post.mockResolvedValueOnce(sourcingResponse());
@@ -1031,9 +1125,9 @@ describe("ProjectSourcingPage", () => {
 
     renderPage();
 
-    await screen.findByText("BOM rows");
-    await userEvent.click(screen.getByRole("button", { name: "Generate purchase plan" }));
-    await userEvent.click(screen.getByRole("button", { name: "Generate" }));
+    await sourceBom(user);
+    await user.click(screen.getByRole("button", { name: "Generate purchase plan" }));
+    await user.click(screen.getByRole("button", { name: "Generate" }));
 
     expect(await screen.findByTestId("plan-route")).toBeDefined();
     await waitFor(() => {
@@ -1057,7 +1151,7 @@ describe("ProjectSourcingPage", () => {
 
     renderPage();
 
-    await screen.findByText("BOM rows");
+    await screen.findByLabelText("Build quantity");
     await user.clear(screen.getByLabelText("Build quantity"));
     await user.type(screen.getByLabelText("Build quantity"), "12");
     await user.click(screen.getByRole("button", { name: "Set BOM-buyable alert" }));
@@ -1087,19 +1181,15 @@ describe("ProjectSourcingPage", () => {
     expect(screen.getByText("Sourcing not configured")).toBeDefined();
   });
 
-  it("502 path shows toast and retry action", async () => {
+  it("502 path shows toast and retry button", async () => {
     mockReads();
     vi.spyOn(api, "post").mockRejectedValue(apiError(502, "TrustedParts request timed out"));
 
     renderPage();
+    await clickSource();
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith(
-        "TrustedParts unavailable. Retry?",
-        expect.objectContaining({
-          action: expect.objectContaining({ label: "Retry" }),
-        }),
-      );
+      expect(toast.error).toHaveBeenCalledWith("Something went wrong. Try again, or refresh.");
     });
     expect(screen.getByRole("button", { name: "Retry Source BOM" })).toBeDefined();
   });
