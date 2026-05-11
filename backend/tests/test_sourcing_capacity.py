@@ -19,7 +19,7 @@ def _uuid(index: int) -> UUID:
 def _offer(
     *,
     stock: int = 100,
-    unit_price: str = "1.00",
+    unit_price: str | Decimal = "1.00",
     distributor: str = "DigiKey",
     currency: str | None = None,
     unit_price_converted: str | None = None,
@@ -169,6 +169,34 @@ def test_est_purchase_cost_correct_at_build_quantity_1():
     assert capacity.can_build_after_purchase == 0
     assert capacity.purchase_to_pay_cost == Decimal("2.50")
     assert capacity.est_purchase_cost == Decimal("2.50")
+
+
+def test_est_purchase_cost_priced_when_capacity_floors_to_zero():
+    """Regression for CLAUDE.md hard rule: Sourcing est_purchase_cost still
+    prices when after-purchase capacity floors to zero.
+    """
+    capacity = compute_build_capacity(
+        [
+            _line(
+                1,
+                required=3,
+                available=2,
+                best_offer=_offer(
+                    stock=100,
+                    unit_price=Decimal("5.00"),
+                    currency="EUR",
+                ),
+            )
+        ],
+        requested_build_quantity=1,
+    )
+
+    assert capacity.can_build_now == 0
+    assert capacity.can_build_after_purchase == 0
+    assert capacity.est_purchase_cost is not None
+    assert capacity.est_purchase_cost > Decimal("0")
+    assert capacity.purchase_to_pay_cost == Decimal("5.00")
+    assert capacity.est_purchase_cost == Decimal("5.00")
 
 
 def test_est_purchase_cost_correct_at_build_quantity_2():
