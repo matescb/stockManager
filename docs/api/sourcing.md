@@ -19,7 +19,7 @@ List current workspace sourcing alerts.
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `enabled` | `boolean` | No | Filters enabled or disabled alerts. |
-| `alert_type` | `string` | No | One of the six MVP alert types in the threshold table below. |
+| `alert_type` | `string` | No | One of the alert types in the threshold table below. |
 | `part_id` | `uuid` | No | Filters part-scoped alerts. |
 | `project_id` | `uuid` | No | Filters project-scoped alerts. |
 | `include_archived` | `boolean` | No | Defaults to `false`; archived rows are soft-deleted alerts. |
@@ -63,7 +63,7 @@ Create a workspace-scoped alert definition.
 | `alert_type` | `string` | Yes | See threshold table below. Immutable after create. |
 | `part_id` | `uuid` | Conditional | Required for all non-`bom_buyable` alerts. Mutually exclusive with `project_id`. |
 | `project_id` | `uuid` | Conditional | Required for `bom_buyable`. Mutually exclusive with `part_id`. |
-| `threshold` | `object` | Yes | Validated per `alert_type` in the service layer. |
+| `threshold` | `object` | Yes | Validated per `alert_type` at request parsing; no nested `kind` field is required. |
 | `country_code` | `string` | No | Two-letter sourcing filter for `back_in_stock`, `out_of_authorized_stock`, and `price_changed`. Ignored for stock threshold alerts. |
 | `currency_code` | `string` | No | Three-letter sourcing filter for `price_changed`. Ignored for stock threshold alerts. |
 | `distributor_filter` | `string[]` | No | Sourcing filter for authorized-stock and price alerts. Ignored for stock threshold alerts. |
@@ -81,6 +81,9 @@ Create a workspace-scoped alert definition.
 | `out_of_authorized_stock` | part | `{}`. |
 | `price_changed` | part | `{ "delta_pct": 5 }`, decimal `0 < delta_pct <= 100`. V1 is relative-change only; absolute target-price thresholds are out of scope for TP-502. |
 | `bom_buyable` | project | `{ "build_quantity": 10 }`, integer `build_quantity >= 1`. |
+| `lifecycle_risk_changed` | part | `{}` or `{ "must_contain": "EOL", "case_sensitive": false }`. |
+| `supply_chain_risk_changed` | part | `{}` or `{ "must_contain": "NRND", "case_sensitive": false }`. |
+| `tariff_status_changed` | part | `{}`. |
 
 **Response** — `200 OK` (envelope: `{ data, status }`)
 
@@ -92,10 +95,25 @@ Shape matches one item from `GET /api/sourcing/alerts`.
 - `422 Unprocessable Entity` — invalid threshold, invalid target scope, both/neither `part_id` and `project_id`, immutable fields, or malformed body.
 - `429 Too Many Requests` — workspace rate limit: 30 creates/minute.
 
+Malformed thresholds return a validation envelope with a field path under `body.threshold`:
+
+```json
+{
+  "data": null,
+  "status": { "category": "validation_error", "message": "validation failed" },
+  "errors": [
+    {
+      "field": "body.threshold.stock_below.qty",
+      "message": "Field required"
+    }
+  ]
+}
+```
+
 **Notes**
 
 - `bom_buyable` rejects sourcing filters; stock threshold alerts silently drop sourcing filters because they evaluate internal stock only.
-- Empty threshold objects are intentionally valid for transition alerts, so validation is mapped per type instead of using a nested discriminator.
+- Empty threshold objects are intentionally valid for transition alerts; the parent `alert_type` selects the threshold schema.
 - Source: `backend/app/api/routes/sourcing.py:181-199`.
 - Service: `backend/app/domain/sourcing/service.py:114-142`.
 

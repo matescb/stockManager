@@ -4,10 +4,18 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, get_args
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationInfo,
+    field_validator,
+)
 
 
 class SourcingQuery(BaseModel):
@@ -214,37 +222,49 @@ SourcingAlertType = Literal[
     "supply_chain_risk_changed",
     "tariff_status_changed",
 ]
+SOURCING_ALERT_TYPE_VALUES = frozenset(get_args(SourcingAlertType))
 
 
 class StockBelowThreshold(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    alert_type: Literal["stock_below"] = Field(default="stock_below", exclude=True)
     qty: int = Field(ge=0)
 
 
 class StockAboveThreshold(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    alert_type: Literal["stock_above"] = Field(default="stock_above", exclude=True)
     qty: int = Field(ge=0)
 
 
 class BackInStockThreshold(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    alert_type: Literal["back_in_stock"] = Field(default="back_in_stock", exclude=True)
+
 
 class OutOfAuthorizedStockThreshold(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    alert_type: Literal["out_of_authorized_stock"] = Field(
+        default="out_of_authorized_stock",
+        exclude=True,
+    )
 
 
 class PriceChangedThreshold(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    alert_type: Literal["price_changed"] = Field(default="price_changed", exclude=True)
     delta_pct: Decimal = Field(gt=0, le=100)
 
 
 class BomBuyableThreshold(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    alert_type: Literal["bom_buyable"] = Field(default="bom_buyable", exclude=True)
     build_quantity: int = Field(ge=1)
 
 
@@ -258,6 +278,73 @@ class StringChangedThreshold(BaseModel):
 class TariffStatusChangedThreshold(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    alert_type: Literal["tariff_status_changed"] = Field(
+        default="tariff_status_changed",
+        exclude=True,
+    )
+
+
+class LifecycleRiskChangedThreshold(StringChangedThreshold):
+    alert_type: Literal["lifecycle_risk_changed"] = Field(
+        default="lifecycle_risk_changed",
+        exclude=True,
+    )
+
+
+class SupplyChainRiskChangedThreshold(StringChangedThreshold):
+    alert_type: Literal["supply_chain_risk_changed"] = Field(
+        default="supply_chain_risk_changed",
+        exclude=True,
+    )
+
+
+SourcingAlertThreshold = Annotated[
+    StockBelowThreshold
+    | StockAboveThreshold
+    | BackInStockThreshold
+    | OutOfAuthorizedStockThreshold
+    | PriceChangedThreshold
+    | BomBuyableThreshold
+    | LifecycleRiskChangedThreshold
+    | SupplyChainRiskChangedThreshold
+    | TariffStatusChangedThreshold,
+    Field(discriminator="alert_type"),
+]
+
+
+def _threshold_with_parent_alert_type(value: Any, info: ValidationInfo) -> Any:
+    if isinstance(value, dict) and "alert_type" not in value and isinstance(info.data, dict):
+        alert_type = info.data.get("alert_type")
+        if alert_type is not None:
+            return {"alert_type": alert_type, **value}
+    return value
+
+
+SourcingAlertThresholdIn = Annotated[
+    SourcingAlertThreshold,
+    BeforeValidator(_threshold_with_parent_alert_type),
+]
+
+_THRESHOLD_ADAPTER = TypeAdapter(SourcingAlertThreshold)
+
+
+def validate_alert_threshold(
+    alert_type: SourcingAlertType | str,
+    threshold: SourcingAlertThreshold | dict[str, Any],
+) -> SourcingAlertThreshold:
+    if isinstance(threshold, BaseModel) and getattr(threshold, "alert_type", None) == alert_type:
+        return threshold
+    if isinstance(threshold, BaseModel):
+        threshold = threshold.model_dump(mode="python")
+    return _THRESHOLD_ADAPTER.validate_python({"alert_type": alert_type, **threshold})
+
+
+def dump_alert_threshold(
+    alert_type: SourcingAlertType | str,
+    threshold: SourcingAlertThreshold | dict[str, Any],
+) -> dict[str, Any]:
+    return validate_alert_threshold(alert_type, threshold).model_dump(mode="json")
+
 
 class SourcingAlertIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -265,7 +352,7 @@ class SourcingAlertIn(BaseModel):
     alert_type: SourcingAlertType
     part_id: UUID | None = None
     project_id: UUID | None = None
-    threshold: dict[str, Any]
+    threshold: SourcingAlertThresholdIn
     country_code: str | None = Field(default=None, min_length=2, max_length=2)
     currency_code: str | None = Field(default=None, min_length=3, max_length=3)
     distributor_filter: list[str] | None = None
@@ -319,11 +406,21 @@ class SourcingAlertPatch(BaseModel):
         return stripped or None
 
 
-class SourcingAlertOut(SourcingAlertIn):
+class SourcingAlertOut(BaseModel):
     model_config = ConfigDict(extra="forbid", from_attributes=True)
 
     id: UUID
     workspace_id: UUID
+    alert_type: SourcingAlertType
+    part_id: UUID | None = None
+    project_id: UUID | None = None
+    threshold: dict[str, Any]
+    country_code: str | None = None
+    currency_code: str | None = None
+    distributor_filter: list[str] | None = None
+    notify_user_ids: list[UUID] | None = None
+    cooldown_seconds: int
+    enabled: bool
     last_checked_at: datetime | None = None
     last_notified_at: datetime | None = None
     archived_at: datetime | None = None

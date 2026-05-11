@@ -10,7 +10,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -31,17 +31,15 @@ from app.domain.sourcing.models import PurchasePlan, PurchasePlanLine, SourcingA
 from app.domain.sourcing.optimizer import Strategy, optimize
 from app.domain.sourcing.pricing import best_unit_price_at_qty
 from app.domain.sourcing.schemas import (
-    BackInStockThreshold,
-    BomBuyableThreshold,
+    SOURCING_ALERT_TYPE_VALUES,
     BuildCapacityOut,
     DistributorCoverageMatrixOut,
-    OutOfAuthorizedStockThreshold,
-    PriceChangedThreshold,
     PurchasePlanOrderOverrideIn,
     PurchasePlanOrdersOut,
     PurchasePlanOut,
     SourcingAlertIn,
     SourcingAlertPatch,
+    SourcingAlertThreshold,
     SourcingAlertType,
     SourcingAttributionLinks,
     SourcingBomLineOut,
@@ -52,10 +50,7 @@ from app.domain.sourcing.schemas import (
     SourcingSearchOut,
     SourcingSearchRaw,
     SourcingSearchResult,
-    StockAboveThreshold,
-    StockBelowThreshold,
-    StringChangedThreshold,
-    TariffStatusChangedThreshold,
+    dump_alert_threshold,
 )
 from app.domain.workspaces.models import WorkspaceMember
 
@@ -76,19 +71,6 @@ _SOURCING_FILTER_ALERT_TYPES = {
     "supply_chain_risk_changed",
     "tariff_status_changed",
 }
-_THRESHOLD_SCHEMAS: dict[SourcingAlertType, type[BaseModel]] = {
-    "stock_below": StockBelowThreshold,
-    "stock_above": StockAboveThreshold,
-    "back_in_stock": BackInStockThreshold,
-    "out_of_authorized_stock": OutOfAuthorizedStockThreshold,
-    "price_changed": PriceChangedThreshold,
-    "bom_buyable": BomBuyableThreshold,
-    "lifecycle_risk_changed": StringChangedThreshold,
-    "supply_chain_risk_changed": StringChangedThreshold,
-    "tariff_status_changed": TariffStatusChangedThreshold,
-}
-
-
 @dataclass(frozen=True)
 class _LineUpdate:
     line: PurchasePlanLine
@@ -265,7 +247,7 @@ def _validated_alert_values(
     alert_type: SourcingAlertType | str,
     part_id: UUID | None,
     project_id: UUID | None,
-    threshold: dict[str, Any],
+    threshold: SourcingAlertThreshold | dict[str, Any],
     country_code: str | None,
     currency_code: str | None,
     distributor_filter: list[str] | None,
@@ -279,7 +261,7 @@ def _validated_alert_values(
         raise_http(422, "sourcing_alert.invalid_cooldown", "cooldown_seconds is required")
     if enabled is None:
         raise_http(422, "sourcing_alert.invalid_enabled", "enabled is required")
-    if alert_type not in _THRESHOLD_SCHEMAS:
+    if alert_type not in SOURCING_ALERT_TYPE_VALUES:
         raise_http(422, "sourcing_alert.invalid_type", "invalid alert_type")
     if (part_id is None) == (project_id is None):
         raise_http(
@@ -339,11 +321,10 @@ def _validated_alert_values(
 
 def _validated_threshold(
     alert_type: SourcingAlertType | str,
-    threshold: dict[str, Any],
+    threshold: SourcingAlertThreshold | dict[str, Any],
 ) -> dict[str, Any]:
-    schema = _THRESHOLD_SCHEMAS[alert_type]
     try:
-        parsed = schema.model_validate(threshold)
+        return dump_alert_threshold(alert_type, threshold)
     except ValidationError as exc:
         raise_http(
             422,
@@ -351,7 +332,6 @@ def _validated_threshold(
             "invalid threshold for alert_type",
             errors=json.loads(exc.json()),
         )
-    return parsed.model_dump(mode="json")
 
 
 def _validated_notify_user_ids(

@@ -161,7 +161,7 @@ def test_create_tariff_status_changed_alert_empty_threshold(authed_client):
         ("tariff_status_changed", {"must_contain": "yes"}),
     ],
 )
-def test_create_with_invalid_threshold_returns_422(
+def test_create_alert_with_wrong_threshold_shape_returns_422(
     authed_client,
     alert_type: str,
     threshold: dict,
@@ -179,7 +179,56 @@ def test_create_with_invalid_threshold_returns_422(
     r = authed_client.post("/api/sourcing/alerts", json=payload)
 
     assert r.status_code == 422, r.text
-    assert r.json()["status"]["category"] == "validation_error"
+    body = r.json()
+    assert body["status"]["category"] == "validation_error"
+    fields = {error["field"] for error in body["errors"]}
+    assert any(field.startswith("body.threshold.") for field in fields)
+
+
+@pytest.mark.parametrize(
+    ("alert_type", "threshold", "expected_threshold"),
+    [
+        ("stock_below", {"qty": 5}, {"qty": 5}),
+        ("stock_above", {"qty": 5}, {"qty": 5}),
+        ("back_in_stock", {}, {}),
+        ("out_of_authorized_stock", {}, {}),
+        ("price_changed", {"delta_pct": 5}, {"delta_pct": "5"}),
+        ("bom_buyable", {"build_quantity": 2}, {"build_quantity": 2}),
+        (
+            "lifecycle_risk_changed",
+            {"must_contain": "EOL", "case_sensitive": True},
+            {"must_contain": "EOL", "case_sensitive": True},
+        ),
+        (
+            "supply_chain_risk_changed",
+            {"must_contain": "NRND", "case_sensitive": False},
+            {"must_contain": "NRND", "case_sensitive": False},
+        ),
+        ("tariff_status_changed", {}, {}),
+    ],
+)
+def test_create_alert_with_valid_threshold_persists(
+    authed_client,
+    alert_type: str,
+    threshold: dict,
+    expected_threshold: dict,
+):
+    project_id, part_id = _single_line_project(authed_client)
+    payload = {
+        "alert_type": alert_type,
+        "threshold": threshold,
+    }
+    if alert_type == "bom_buyable":
+        payload["project_id"] = project_id
+    else:
+        payload["part_id"] = part_id
+
+    r = authed_client.post("/api/sourcing/alerts", json=payload)
+
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["alert_type"] == alert_type
+    assert data["threshold"] == expected_threshold
 
 
 @pytest.mark.parametrize(
