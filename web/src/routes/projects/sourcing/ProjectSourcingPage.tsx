@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BellPlus, FolderKanban, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import EmptyState from "@/components/EmptyState";
@@ -138,7 +138,6 @@ type SourcingRequest = {
   distributors?: string[];
 };
 
-const SOURCING_BOM_STALE_TIME_MS = 5 * 60 * 1000;
 const SOURCING_BOM_GC_TIME_MS = 30 * 60 * 1000;
 
 function numberOrNull(value: string | number | null | undefined): number | null {
@@ -274,6 +273,12 @@ function RohsRiskPill({ tone }: { tone: "good" | "danger" | "neutral" }) {
 
 function errorStatus(error: unknown): number | null {
   return error instanceof ApiError ? error.status : null;
+}
+
+function sourcingErrorToastMessage(error: unknown): string {
+  if (errorStatus(error) === 429) return "Rate limit hit — wait a minute before sourcing again.";
+  if (error instanceof ApiError) return error.userMessage;
+  return "Failed to source BOM. Try again.";
 }
 
 function defaultFromActiveList(saved: string | null | undefined, active: string[]): string {
@@ -798,6 +803,7 @@ function BomRows({ rows, workspaceCurrency }: { rows: SourcingBomLine[]; workspa
 export default function ProjectSourcingPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [buildQuantity, setBuildQuantity] = useState(1);
   const [country, setCountry] = useState("");
   const [currency, setCurrency] = useState("");
@@ -881,35 +887,32 @@ export default function ProjectSourcingPage() {
     return body;
   }, [buildQuantity, country, currency, distributors, workspace?.sourcing_currency_code]);
 
-  const query = useQuery({
-    queryKey: useWsKey("sourcing", "project", projectId, requestBody),
-    queryFn: ({ signal }) =>
-      api.post<SourcingBomResponse, SourcingRequest>(`/projects/${projectId}/sourcing`, requestBody, { signal }),
-    enabled: !!projectId && buildQuantity >= 1 && defaultsApplied && activeListErrors.length === 0,
-    staleTime: SOURCING_BOM_STALE_TIME_MS,
+  const sourcingDisplayCacheKey = useWsKey("project-sourcing", projectId);
+  const cachedSourcing = useQuery<SourcingBomResponse | null>({
+    queryKey: sourcingDisplayCacheKey,
+    queryFn: async () => null,
+    enabled: false,
+    staleTime: Infinity,
     gcTime: SOURCING_BOM_GC_TIME_MS,
-    placeholderData: previousData => previousData,
-    refetchOnWindowFocus: false,
   });
+  const sourcing = useMutation<SourcingBomResponse, unknown, SourcingRequest>({
+    mutationFn: body =>
+      api.post<SourcingBomResponse, SourcingRequest>(`/projects/${projectId}/sourcing`, body),
+    onSuccess: result => {
+      queryClient.setQueryData(sourcingDisplayCacheKey, result);
+    },
+    onError: error => {
+      const status = errorStatus(error);
+      if (status === 503) setBudgetDisabledUntil(Date.now() + 5 * 60 * 1000);
+      toast.error(sourcingErrorToastMessage(error));
+    },
+  });
+  const sourcingData = sourcing.data ?? cachedSourcing.data ?? undefined;
   const purchasePlanBaseRequest = useMemo<Omit<PurchasePlanRequest, "strategy">>(() => {
     const body = { ...requestBody };
     if (body.currency == null) delete body.currency;
     return body as Omit<PurchasePlanRequest, "strategy">;
   }, [requestBody]);
-  const queryIsError = query.isError;
-  const queryError = query.error;
-  const refetchSourcing = query.refetch;
-
-  useEffect(() => {
-    if (!queryIsError) return;
-    const status = errorStatus(queryError);
-    if (status === 503) setBudgetDisabledUntil(Date.now() + 5 * 60 * 1000);
-    if (status === 502 || (queryError instanceof Error && queryError.name === "AbortError")) {
-      toast.error("TrustedParts unavailable. Retry?", {
-        action: { label: "Retry", onClick: () => refetchSourcing() },
-      });
-    }
-  }, [queryIsError, queryError, refetchSourcing]);
 
   useEffect(() => {
     if (budgetDisabledUntil == null) return;
@@ -918,16 +921,23 @@ export default function ProjectSourcingPage() {
     return () => window.clearTimeout(timeout);
   }, [budgetDisabledUntil]);
 
-  const status = errorStatus(query.error);
-  const sourceDisabled = query.isFetching ||
+  const status = errorStatus(sourcing.error);
+  const sourceBlocked =
     buildQuantity < 1 ||
+    !defaultsApplied ||
     activeListErrors.length > 0 ||
     (workspace ? !workspace.active_countries.includes(country) : false) ||
     (workspace ? !workspace.active_currencies.includes(currency) : false) ||
     distributors.some(distributor => workspace ? !workspace.active_distributors.includes(distributor) : false) ||
     (budgetDisabledUntil != null && Date.now() < budgetDisabledUntil);
-  const hasRows = (query.data?.rows.length ?? 0) > 0;
-  const primaryUrl = query.data?.links.primary;
+  const sourceDisabled = sourcing.isPending || sourceBlocked;
+  const hasRows = (sourcingData?.rows.length ?? 0) > 0;
+  const primaryUrl = sourcingData?.links.primary;
+
+  function runSourcing() {
+    if (!projectId || sourceDisabled) return;
+    sourcing.mutate(requestBody);
+  }
 
   async function generatePurchasePlan(planRequest: PurchasePlanRequest) {
     if (!projectId) return;
@@ -955,7 +965,7 @@ export default function ProjectSourcingPage() {
           <div className="text-sm text-muted">Projects · {project?.name ?? "Project"} · Sourcing</div>
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-semibold">Source BOM</h1>
-            {query.data?.partial && <span className="pill bg-warning/10 text-warning">Partial — some chunks served from cache</span>}
+            {sourcingData?.partial && <span className="pill bg-warning/10 text-warning">Partial — some chunks served from cache</span>}
           </div>
         </div>
         <PoweredByTrustedParts primaryUrl={primaryUrl} />
@@ -1058,47 +1068,47 @@ export default function ProjectSourcingPage() {
             type="button"
             className="btn-primary"
             disabled={sourceDisabled}
-            onClick={() => query.refetch()}
+            onClick={runSourcing}
           >
-            <RefreshCw size={14} className={query.isFetching ? "animate-spin" : ""} />
-            {query.isFetching ? "Sourcing…" : "Source"}
+            <RefreshCw size={14} className={sourcing.isPending ? "animate-spin" : ""} />
+            {sourcing.isPending ? "Sourcing…" : "Source"}
           </button>
         </div>
       </div>
 
-      {query.isLoading && <SourcingSkeleton />}
-      {query.isFetching && !query.isLoading && (
+      {sourcing.isPending && !sourcingData && <SourcingSkeleton />}
+      {sourcing.isPending && sourcingData && (
         <div className="text-xs text-muted" role="status">
           Refreshing prices in the background...
         </div>
       )}
-      {status === 503 && <BudgetState disabledUntil={budgetDisabledUntil} onRetry={() => query.refetch()} />}
+      {status === 503 && <BudgetState disabledUntil={budgetDisabledUntil} onRetry={runSourcing} />}
       {status === 502 && (
         <div className="card p-4" role="status">
-          <button type="button" className="btn" onClick={() => query.refetch()}>
+          <button type="button" className="btn" onClick={runSourcing}>
             Retry Source BOM
           </button>
         </div>
       )}
-      {query.isError && status !== 409 && status !== 502 && status !== 503 && (
+      {sourcing.isError && status !== 409 && status !== 502 && status !== 503 && (
         <div className="card p-4 text-sm text-danger">Failed to source BOM.</div>
       )}
 
-      {query.data && !hasRows && <EmptyBomState projectId={projectId} />}
+      {sourcingData && !hasRows && <EmptyBomState projectId={projectId} />}
       <SourcingDiagnosticsPanel
-        data={query.data}
+        data={sourcingData}
         projectId={projectId}
         status={status}
-        onRefresh={() => query.refetch()}
+        onRefresh={runSourcing}
       />
 
-      {query.data && hasRows && (
+      {sourcingData && hasRows && (
         <>
-          <CapacityBanner data={query.data} currency={requestBody.currency} />
-          <CoverageMatrix data={query.data} currency={requestBody.currency} />
-          <BomRows rows={query.data.rows} workspaceCurrency={requestBody.currency ?? workspace?.sourcing_currency_code ?? null} />
+          <CapacityBanner data={sourcingData} currency={requestBody.currency} />
+          <CoverageMatrix data={sourcingData} currency={requestBody.currency} />
+          <BomRows rows={sourcingData.rows} workspaceCurrency={requestBody.currency ?? workspace?.sourcing_currency_code ?? null} />
           <div className="text-xs text-muted">
-            {formatCount(query.data.rows.length)} line{query.data.rows.length === 1 ? "" : "s"} fetched from {query.data.powered_by}.
+            {formatCount(sourcingData.rows.length)} line{sourcingData.rows.length === 1 ? "" : "s"} fetched from {sourcingData.powered_by}.
           </div>
         </>
       )}

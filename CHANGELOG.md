@@ -8,6 +8,9 @@ the canonical record.
 
 ## 2026-05 — feedback brief fixes
 
+- **SA-6 / #497** Project Sourcing now runs the audited BOM sourcing POST only
+  from an explicit Source click, preserving the display cache without
+  remount/focus/filter-change refetches.
 - **SA-1 / #492** Sourcing capacity now treats mixed-currency BOM totals as
   unknown instead of silently using the first currency.
 - **SA-2 / #493** Fix PurchasePlanReviewPage refresh silently wiping user

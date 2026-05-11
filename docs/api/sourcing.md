@@ -279,6 +279,8 @@ Sources: `backend/app/domain/sourcing/service.py:1322-1386`,
 **Notes**
 
 - The route validates `project_id` with `assert_in_workspace()` before calling the sourcing service.
+- The React project sourcing page treats this audited POST as an explicit user-submit mutation, not a query. A successful response seeds a workspace-scoped TanStack display cache with `queryClient.setQueryData()`, so revisiting the page can render the previous result immediately; focus, remounts, and filter edits do not call this route again until the operator clicks Source.
+- Client source: `web/src/routes/projects/sourcing/ProjectSourcingPage.tsx:890-908`, `web/src/routes/projects/sourcing/ProjectSourcingPage.tsx:1067-1083`.
 - The service reuses `shortage_analysis()`, `dedupe_mpns()`, `chunk_mpns()`, and per-MPN `search()` cache rows; BOM chunks use `ttl_seconds=600`.
 - Decimal prices and extended costs serialize as strings.
 - `build_quantity` echoes the requested build quantity. `capacity.total_bom_cost`
