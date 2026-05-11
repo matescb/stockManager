@@ -99,6 +99,8 @@ describe("BomDistributorsModal", () => {
     renderModal();
 
     const dialog = screen.getByRole("dialog", { name: /STM32/ });
+    expect(dialog.getAttribute("aria-modal")).toBe("true");
+    expect(dialog.getAttribute("aria-labelledby")).toBeTruthy();
     expect(within(dialog).getByText("DigiKey")).toBeDefined();
     expect(within(dialog).getByText("Mouser")).toBeDefined();
     expect(within(dialog).getByText("2 distributors with stock; 2 total")).toBeDefined();
