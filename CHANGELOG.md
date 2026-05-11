@@ -18,6 +18,8 @@ the canonical record.
 - **SA-11 / #503** Sourcing alert create requests now validate threshold shape
   from the parent `alert_type`, returning 422 field errors for malformed
   thresholds before an alert can be persisted.
+- **SA-16 / #508** Sourcing cache keys now include full workspace/provider
+  request shape and TrustedParts credential rotation purges matching cache rows.
 - **SA-8 / #499** Decompose ProjectSourcingPage into a feature folder.
 - **SA-6 / #497** Project Sourcing now runs the audited BOM sourcing POST only
   from an explicit Source click, preserving the display cache without

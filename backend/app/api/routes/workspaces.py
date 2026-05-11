@@ -17,6 +17,7 @@ from app.core.ratelimit import limiter
 from app.core.responses import ok
 from app.core.secrets import decrypt, encrypt
 from app.domain.audit.service import log as _audit_log
+from app.domain.sourcing import cache as sourcing_cache
 from app.domain.users.models import User
 from app.domain.workspaces.master_lists import (
     ALL_COUNTRIES,
@@ -213,6 +214,7 @@ def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace, 
     data = payload.model_dump(exclude_unset=True)
     regenerate = bool(data.pop("regenerate_catalog_token", False))
     was_enabled = bool(ws.catalog_enabled)
+    previous_sourcing_provider = ws.sourcing_provider or "none"
     active_list_changes = {
         key: value
         for key, value in data.items()
@@ -250,6 +252,27 @@ def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace, 
 
     for k, v in data.items():
         setattr(ws, k, v)
+
+    sourcing_provider_changed = (
+        "sourcing_provider" in payload.model_fields_set
+        and (ws.sourcing_provider or "none") != previous_sourcing_provider
+    )
+    sourcing_credentials_changed = any(
+        field in _credential_fields_changed
+        for field in ("sourcing_company_id", "sourcing_api_key")
+    )
+    if (
+        sourcing_credentials_changed
+        or (
+            sourcing_provider_changed
+            and "trustedparts" in {previous_sourcing_provider, ws.sourcing_provider}
+        )
+    ):
+        sourcing_cache.purge_provider_cache(
+            db,
+            workspace_id=ws.id,
+            provider="trustedparts",
+        )
     # Mint a token when enabling the catalog for the first time, or when the
     # caller explicitly asks for a fresh one while it's enabled.
     #

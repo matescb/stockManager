@@ -8,11 +8,13 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.secrets import decrypt
 from app.core.time import utcnow
 from app.domain.projects.models import Project
 from app.domain.sourcing.cache import (
     canonical_query_hash,
     get_or_fetch,
+    sourcing_search_query,
     sweep_expired,
     sweep_expired_all_workspaces,
 )
@@ -37,6 +39,12 @@ def _workspace(db: Session) -> uuid.UUID:
     db.add(workspace)
     db.flush()
     return workspace.id
+
+
+def _current_workspace_id(authed_client) -> uuid.UUID:
+    response = authed_client.get("/api/workspaces/current")
+    assert response.status_code == 200, response.text
+    return uuid.UUID(response.json()["data"]["id"])
 
 
 def _project(db: Session, *, workspace_id: uuid.UUID) -> Project:
@@ -66,6 +74,34 @@ def _cache_row(
         fetched_at=fetched_at,
         expires_at=fetched_at + ttl,
     )
+
+
+def _sourcing_query(
+    *,
+    workspace_id: uuid.UUID,
+    provider: str = "trustedparts",
+    mpn: str = "BAT54C",
+) -> dict:
+    return sourcing_search_query(
+        workspace_id=workspace_id,
+        provider=provider,
+        mpn=mpn,
+        country_code="CZ",
+        currency_code="EUR",
+        language_code="en",
+        distributors=["DigiKey", "Mouser"],
+        in_stock_only=False,
+        use_cached_data=True,
+    )
+
+
+def _cache_count(db: Session, *, workspace_id: uuid.UUID, provider: str) -> int:
+    return db.execute(
+        select(func.count())
+        .select_from(SourcingCache)
+        .where(SourcingCache.workspace_id == workspace_id)
+        .where(SourcingCache.query_json["provider"].astext == provider)
+    ).scalar_one()
 
 
 def _purchase_plan(
@@ -110,6 +146,64 @@ def test_canonical_query_hash_is_order_insensitive() -> None:
     assert canonical_query_hash({"a": 1, "b": 2}) == canonical_query_hash({"b": 2, "a": 1})
 
 
+def test_canonical_query_includes_country_currency_language_distributors() -> None:
+    base = sourcing_search_query(
+        workspace_id=uuid.uuid4(),
+        provider="TrustedParts",
+        mpn=" BAT54C ",
+        country_code="cz",
+        currency_code="eur",
+        language_code="EN",
+        distributors=["mouser", "DigiKey"],
+        in_stock_only=False,
+        use_cached_data=True,
+    )
+
+    assert set(base) == {
+        "workspace_id",
+        "provider",
+        "mpn",
+        "country_code",
+        "currency_code",
+        "language_code",
+        "distributors",
+        "in_stock_only",
+        "use_cached_data",
+        "exact_match",
+    }
+    assert base["provider"] == "trustedparts"
+    assert base["mpn"] == "BAT54C"
+    assert base["country_code"] == "CZ"
+    assert base["currency_code"] == "EUR"
+    assert base["language_code"] == "en"
+    assert base["distributors"] == ["DigiKey", "Mouser"]
+
+    changed_inputs = [
+        {"workspace_id": uuid.uuid4()},
+        {"provider": "mouser"},
+        {"mpn": "BAV99"},
+        {"country_code": "DE"},
+        {"currency_code": "USD"},
+        {"language_code": "de"},
+        {"distributors": ["DigiKey"]},
+    ]
+    for change in changed_inputs:
+        params = {
+            "workspace_id": uuid.UUID(base["workspace_id"]),
+            "provider": base["provider"],
+            "mpn": base["mpn"],
+            "country_code": base["country_code"],
+            "currency_code": base["currency_code"],
+            "language_code": base["language_code"],
+            "distributors": base["distributors"],
+            "in_stock_only": base["in_stock_only"],
+            "use_cached_data": base["use_cached_data"],
+            **change,
+        }
+        candidate = sourcing_search_query(**params)
+        assert canonical_query_hash(candidate) != canonical_query_hash(base)
+
+
 def test_get_or_fetch_hit(db: Session) -> None:
     workspace_id = _workspace(db)
     query = {"mpn": "STM32F103C8T6", "qty": 10}
@@ -139,6 +233,110 @@ def test_get_or_fetch_hit(db: Session) -> None:
     assert second_hit is True
     assert second == first
     assert calls == 1
+
+
+def test_rotate_api_key_purges_cache_rows(authed_client, db: Session) -> None:
+    workspace_id = _current_workspace_id(authed_client)
+    other_workspace_id = _workspace(db)
+    rows = [
+        _cache_row(
+            workspace_id=workspace_id,
+            query=_sourcing_query(workspace_id=workspace_id, provider="trustedparts"),
+            response={"provider": "trustedparts"},
+        ),
+        _cache_row(
+            workspace_id=workspace_id,
+            query=_sourcing_query(
+                workspace_id=workspace_id,
+                provider="mouser",
+                mpn="MOU-1",
+            ),
+            response={"provider": "mouser"},
+        ),
+        _cache_row(
+            workspace_id=other_workspace_id,
+            query=_sourcing_query(workspace_id=other_workspace_id, provider="trustedparts"),
+            response={"provider": "trustedparts", "workspace": "other"},
+        ),
+    ]
+    db.add_all(rows)
+    db.flush()
+
+    response = authed_client.patch(
+        "/api/workspaces/current",
+        json={
+            "sourcing_provider": "trustedparts",
+            "sourcing_api_key": "rotated-api-key",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert _cache_count(db, workspace_id=workspace_id, provider="trustedparts") == 0
+    assert _cache_count(db, workspace_id=workspace_id, provider="mouser") == 1
+    assert _cache_count(db, workspace_id=other_workspace_id, provider="trustedparts") == 1
+
+
+def test_delete_api_key_purges_cache_rows(authed_client, db: Session) -> None:
+    workspace_id = _current_workspace_id(authed_client)
+    response = authed_client.patch(
+        "/api/workspaces/current",
+        json={
+            "sourcing_provider": "trustedparts",
+            "sourcing_api_key": "api-key-before-delete",
+        },
+    )
+    assert response.status_code == 200, response.text
+    db.add(
+        _cache_row(
+            workspace_id=workspace_id,
+            query=_sourcing_query(workspace_id=workspace_id, provider="trustedparts"),
+            response={"provider": "trustedparts"},
+        )
+    )
+    db.flush()
+
+    response = authed_client.patch(
+        "/api/workspaces/current",
+        json={"sourcing_api_key": ""},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["has_sourcing_api_key"] is False
+    assert _cache_count(db, workspace_id=workspace_id, provider="trustedparts") == 0
+
+
+def test_rotate_failure_does_not_partial_commit(
+    authed_client,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace_id = _current_workspace_id(authed_client)
+    response = authed_client.patch(
+        "/api/workspaces/current",
+        json={
+            "sourcing_provider": "trustedparts",
+            "sourcing_api_key": "old-api-key",
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    def fail_purge(*args, **kwargs) -> int:
+        raise RuntimeError("purge failed")
+
+    monkeypatch.setattr(
+        "app.api.routes.workspaces.sourcing_cache.purge_provider_cache",
+        fail_purge,
+    )
+    with pytest.raises(RuntimeError, match="purge failed"):
+        authed_client.patch(
+            "/api/workspaces/current",
+            json={"sourcing_api_key": "new-api-key"},
+        )
+
+    db.expire_all()
+    workspace = db.get(Workspace, workspace_id)
+    assert workspace is not None
+    assert decrypt(workspace.sourcing_api_key_enc) == "old-api-key"
 
 
 def test_get_or_fetch_miss_after_expiry(db: Session) -> None:

@@ -980,13 +980,18 @@ def search(
 
     provider.country_code = effective_country
     provider.currency_code = effective_currency
+    provider_name = getattr(provider, "name", "trustedparts")
+    provider_language_code = getattr(provider, "language_code", workspace.sourcing_language_code)
 
     results: list[SourcingSearchResult] = []
     for mpn in clean_mpns:
-        query = _canonical_query(
+        query = cache.sourcing_search_query(
+            workspace_id=workspace.id,
+            provider=provider_name,
             mpn=mpn,
-            country=effective_country,
-            currency=effective_currency,
+            country_code=effective_country,
+            currency_code=effective_currency,
+            language_code=provider_language_code,
             in_stock_only=in_stock_only,
             distributors=effective_distributors,
             use_cached_data=effective_use_cached,
@@ -1141,27 +1146,6 @@ def _lead_time_label(value: int | None) -> str:
     if value is None:
         return "unknown"
     return f"{value}d"
-
-
-def _canonical_query(
-    *,
-    mpn: str,
-    country: str | None,
-    currency: str | None,
-    in_stock_only: bool,
-    distributors: list[str] | None,
-    use_cached_data: bool,
-) -> dict[str, Any]:
-    return {
-        "provider": "trustedparts",
-        "mpn": mpn,
-        "country": country,
-        "currency": currency,
-        "in_stock_only": in_stock_only,
-        "distributors": distributors or [],
-        "use_cached_data": use_cached_data,
-        "exact_match": True,
-    }
 
 
 def _raw_from_cache_response(response: dict[str, Any]) -> SourcingSearchRaw:

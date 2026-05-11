@@ -354,7 +354,8 @@ def test_workspace_isolation_no_cross_leak(db):
         select(SourcingCache).where(SourcingCache.query_json["mpn"].astext == "SHARED-00")
     ).scalars().all()
     assert {str(row.workspace_id) for row in cache_rows} == {ws_a, ws_b}
-    assert len({row.query_hash for row in cache_rows}) == 1
+    assert len({row.query_hash for row in cache_rows}) == 2
+    assert {row.query_json["workspace_id"] for row in cache_rows} == {ws_a, ws_b}
     assert all(row.response_json["offers"] for row in cache_rows)
 
 
