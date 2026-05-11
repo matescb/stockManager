@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections import defaultdict
+from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -18,6 +20,7 @@ from app.core.config import settings
 from app.core.time import utcnow
 from app.domain.parts.models import Part
 from app.domain.projects.models import Project
+from app.domain.sourcing import cache as sourcing_cache
 from app.domain.sourcing import service as sourcing_service
 from app.domain.sourcing.pricing import best_unit_price_at_qty
 from app.domain.sourcing.schemas import (
@@ -52,6 +55,36 @@ class AlertEmail:
 
 
 EvaluatorFn = Callable[[Session, Workspace, SourcingAlert], AlertVerdict]
+_SearchGroupKey = tuple[UUID, str]
+_SEARCH_ALERT_TYPES = {
+    "back_in_stock",
+    "out_of_authorized_stock",
+    "price_changed",
+    "lifecycle_risk_changed",
+    "supply_chain_risk_changed",
+    "tariff_status_changed",
+}
+
+
+@dataclass(frozen=True)
+class _SearchGroupAlert:
+    alert: SourcingAlert
+    workspace: Workspace
+    mpn: str
+
+
+@dataclass(frozen=True)
+class _SearchBatchContext:
+    alert_keys: dict[UUID, _SearchGroupKey]
+    results: dict[_SearchGroupKey, Any]
+    errors: dict[_SearchGroupKey, Exception]
+    alert_errors: dict[UUID, Exception]
+
+
+_SEARCH_BATCH_CONTEXT: ContextVar[_SearchBatchContext | None] = ContextVar(
+    "sourcing_alert_search_batch_context",
+    default=None,
+)
 
 
 def evaluate_all_alerts(db: Session) -> int:
@@ -60,14 +93,28 @@ def evaluate_all_alerts(db: Session) -> int:
     Returns the number of alert rows attempted. Each row commits
     independently so a bad alert cannot roll back earlier bookkeeping.
     """
-    rows = db.execute(
-        select(SourcingAlert, Workspace)
-        .join(Workspace, Workspace.id == SourcingAlert.workspace_id)
-        .where(SourcingAlert.enabled.is_(True))
-        .where(SourcingAlert.archived_at.is_(None))
-        .order_by(SourcingAlert.workspace_id, SourcingAlert.created_at, SourcingAlert.id)
-    ).all()
+    rows = [
+        (alert, workspace)
+        for alert, workspace in db.execute(
+            select(SourcingAlert, Workspace)
+            .join(Workspace, Workspace.id == SourcingAlert.workspace_id)
+            .where(SourcingAlert.enabled.is_(True))
+            .where(SourcingAlert.archived_at.is_(None))
+            .order_by(SourcingAlert.workspace_id, SourcingAlert.created_at, SourcingAlert.id)
+        ).all()
+    ]
+    search_batch = _prefetch_sourcing_searches(db, rows)
+    search_batch_token = _SEARCH_BATCH_CONTEXT.set(search_batch)
+    try:
+        return _evaluate_alert_rows(db, rows)
+    finally:
+        _SEARCH_BATCH_CONTEXT.reset(search_batch_token)
 
+
+def _evaluate_alert_rows(
+    db: Session,
+    rows: Sequence[tuple[SourcingAlert, Workspace]],
+) -> int:
     evaluated = 0
     for alert, workspace in rows:
         evaluated += 1
@@ -114,6 +161,118 @@ def evaluate_all_alerts(db: Session) -> int:
                 alert_type,
             )
     return evaluated
+
+
+def _prefetch_sourcing_searches(
+    db: Session,
+    rows: Sequence[tuple[SourcingAlert, Workspace]],
+) -> _SearchBatchContext:
+    groups: dict[_SearchGroupKey, list[_SearchGroupAlert]] = defaultdict(list)
+    alert_keys: dict[UUID, _SearchGroupKey] = {}
+    alert_errors: dict[UUID, Exception] = {}
+
+    for alert, workspace in rows:
+        if alert.alert_type not in _SEARCH_ALERT_TYPES:
+            continue
+        try:
+            part = _part_for_alert(db, workspace, alert)
+            if not part.mpn:
+                continue
+            query = _canonical_search_query_for_alert(workspace, alert, part)
+            _assert_query_is_workspace_scoped(query, workspace)
+            key = (workspace.id, sourcing_cache.canonical_query_hash(query))
+            groups[key].append(
+                _SearchGroupAlert(alert=alert, workspace=workspace, mpn=part.mpn)
+            )
+            alert_keys[alert.id] = key
+        except Exception as exc:
+            alert_errors[alert.id] = exc
+
+    results: dict[_SearchGroupKey, Any] = {}
+    errors: dict[_SearchGroupKey, Exception] = {}
+    for key, group in groups.items():
+        first = group[0]
+        try:
+            results[key] = sourcing_service.search(
+                db,
+                workspace=first.workspace,
+                mpns=[first.mpn],
+                country=first.alert.country_code,
+                currency=first.alert.currency_code,
+                distributors=_distributor_filter(first.alert),
+                use_cached_data=True,
+            )
+        except Exception as exc:
+            errors[key] = exc
+            db.rollback()
+
+    return _SearchBatchContext(
+        alert_keys=alert_keys,
+        results=results,
+        errors=errors,
+        alert_errors=alert_errors,
+    )
+
+
+def _canonical_search_query_for_alert(
+    workspace: Workspace,
+    alert: SourcingAlert,
+    part: Part,
+) -> dict[str, Any]:
+    alert_distributors = _distributor_filter(alert)
+    effective_distributors = (
+        sourcing_service._clean_distributors(alert_distributors)
+        if alert_distributors is not None
+        else sourcing_service._clean_distributors(workspace.sourcing_preferred_distributors)
+    )
+    return sourcing_cache.sourcing_search_query(
+        workspace_id=workspace.id,
+        provider=workspace.sourcing_provider or "trustedparts",
+        mpn=part.mpn or "",
+        country_code=sourcing_service._clean_code(alert.country_code)
+        or workspace.sourcing_country_code,
+        currency_code=sourcing_service._clean_code(alert.currency_code)
+        or workspace.sourcing_currency_code,
+        language_code=workspace.sourcing_language_code,
+        distributors=effective_distributors,
+        in_stock_only=False,
+        use_cached_data=True,
+    )
+
+
+def _assert_query_is_workspace_scoped(
+    query: dict[str, Any],
+    workspace: Workspace,
+) -> None:
+    if query.get("workspace_id") != str(workspace.id):
+        raise RuntimeError("canonical sourcing alert query is missing workspace_id")
+
+
+def _search_for_part(
+    db: Session,
+    workspace: Workspace,
+    alert: SourcingAlert,
+    part: Part,
+) -> Any:
+    context = _SEARCH_BATCH_CONTEXT.get()
+    if context is not None:
+        if alert.id in context.alert_errors:
+            raise context.alert_errors[alert.id]
+        key = context.alert_keys.get(alert.id)
+        if key is not None:
+            if key in context.errors:
+                raise context.errors[key]
+            return context.results[key]
+
+    return sourcing_service.search(
+        db,
+        workspace=workspace,
+        mpns=[part.mpn],
+        country=alert.country_code,
+        currency=alert.currency_code,
+        distributors=_distributor_filter(alert),
+        use_cached_data=True,
+    )
 
 
 def _evaluate_stock_below(
@@ -515,15 +674,7 @@ def _authorized_stock_for_part(
 ) -> int:
     if not part.mpn:
         return 0
-    result = sourcing_service.search(
-        db,
-        workspace=workspace,
-        mpns=[part.mpn],
-        country=alert.country_code,
-        currency=alert.currency_code,
-        distributors=_distributor_filter(alert),
-        use_cached_data=True,
-    )
+    result = _search_for_part(db, workspace, alert, part)
     return sum(
         max(0, int(distributor.stock or 0))
         for item in result.results
@@ -540,15 +691,7 @@ def _best_price_for_part(
 ) -> tuple[Decimal, str | None] | None:
     if not part.mpn:
         return None
-    result = sourcing_service.search(
-        db,
-        workspace=workspace,
-        mpns=[part.mpn],
-        country=alert.country_code,
-        currency=alert.currency_code,
-        distributors=_distributor_filter(alert),
-        use_cached_data=True,
-    )
+    result = _search_for_part(db, workspace, alert, part)
     best: tuple[Decimal, str | None] | None = None
     for item in result.results:
         for offer in item.offers:
@@ -583,15 +726,7 @@ def _first_matching_offer(
 ) -> Any | None:
     if not part.mpn:
         return None
-    result = sourcing_service.search(
-        db,
-        workspace=workspace,
-        mpns=[part.mpn],
-        country=alert.country_code,
-        currency=alert.currency_code,
-        distributors=_distributor_filter(alert),
-        use_cached_data=True,
-    )
+    result = _search_for_part(db, workspace, alert, part)
     expected = part.mpn.casefold()
     for item in result.results:
         item_mpn = getattr(item, "mpn", None)
