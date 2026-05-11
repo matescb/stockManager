@@ -32,6 +32,7 @@ from app.domain.sourcing.schemas import (
     PurchasePlanIn,
     PurchasePlanOrdersIn,
     SourcingAlertIn,
+    SourcingAlertListOut,
     SourcingAlertOut,
     SourcingAlertPatch,
     SourcingAlertType,
@@ -167,11 +168,11 @@ def list_sourcing_alerts(
     part_id: UUID | None = None,
     project_id: UUID | None = None,
     include_archived: bool = False,
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
-    alerts = sourcing_service.list_alerts(
+    alerts, total = sourcing_service.list_alerts_page(
         db,
         workspace=ws,
         enabled=enabled,
@@ -182,7 +183,13 @@ def list_sourcing_alerts(
         limit=limit,
         offset=offset,
     )
-    return ok([_alert_payload(alert) for alert in alerts])
+    payload = SourcingAlertListOut(
+        items=[SourcingAlertOut.model_validate(alert) for alert in alerts],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+    return ok(payload.model_dump(mode="json"))
 
 
 @search_router.post(

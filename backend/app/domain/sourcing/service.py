@@ -11,7 +11,7 @@ from typing import Any
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api._helpers import assert_in_workspace
@@ -135,7 +135,7 @@ def create_alert(
     return alert
 
 
-def list_alerts(
+def _alerts_query(
     db: Session,
     *,
     workspace: Any,
@@ -144,9 +144,7 @@ def list_alerts(
     part_id: UUID | None = None,
     project_id: UUID | None = None,
     include_archived: bool = False,
-    limit: int = 100,
-    offset: int = 0,
-) -> list[SourcingAlert]:
+):
     if part_id is not None:
         assert_in_workspace(db, Part, part_id, workspace.id, label="part")
     if project_id is not None:
@@ -163,9 +161,60 @@ def list_alerts(
         stmt = stmt.where(SourcingAlert.part_id == part_id)
     if project_id is not None:
         stmt = stmt.where(SourcingAlert.project_id == project_id)
+    return stmt
+
+
+def list_alerts_page(
+    db: Session,
+    *,
+    workspace: Any,
+    enabled: bool | None = None,
+    alert_type: str | None = None,
+    part_id: UUID | None = None,
+    project_id: UUID | None = None,
+    include_archived: bool = False,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[SourcingAlert], int]:
+    stmt = _alerts_query(
+        db,
+        workspace=workspace,
+        enabled=enabled,
+        alert_type=alert_type,
+        part_id=part_id,
+        project_id=project_id,
+        include_archived=include_archived,
+    )
+    total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
     stmt = stmt.order_by(SourcingAlert.created_at.desc(), SourcingAlert.id)
     stmt = stmt.limit(limit).offset(offset)
-    return list(db.execute(stmt).scalars())
+    return list(db.execute(stmt).scalars()), total
+
+
+def list_alerts(
+    db: Session,
+    *,
+    workspace: Any,
+    enabled: bool | None = None,
+    alert_type: str | None = None,
+    part_id: UUID | None = None,
+    project_id: UUID | None = None,
+    include_archived: bool = False,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[SourcingAlert]:
+    alerts, _total = list_alerts_page(
+        db,
+        workspace=workspace,
+        enabled=enabled,
+        alert_type=alert_type,
+        part_id=part_id,
+        project_id=project_id,
+        include_archived=include_archived,
+        limit=limit,
+        offset=offset,
+    )
+    return alerts
 
 
 def get_alert(

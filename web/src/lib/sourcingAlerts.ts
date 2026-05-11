@@ -63,6 +63,18 @@ export type SourcingAlertFilters = {
   project_id?: string | null;
 };
 
+export type SourcingAlertListOut = {
+  items: SourcingAlert[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type SourcingAlertPagination = {
+  limit?: number;
+  offset?: number;
+};
+
 export type WorkspaceSourcingSettings = {
   sourcing_country_code?: string | null;
   sourcing_currency_code?: string | null;
@@ -117,7 +129,11 @@ export function isSourcingFilteredAlert(type: SourcingAlertType): boolean {
     || type === "tariff_status_changed";
 }
 
-export function listSourcingAlerts(filters: SourcingAlertFilters = {}, opts?: ApiOptions) {
+export function listSourcingAlerts(
+  filters: SourcingAlertFilters = {},
+  pagination: SourcingAlertPagination = {},
+  opts?: ApiOptions,
+) {
   const params = new URLSearchParams();
   if (filters.alert_type) params.set("alert_type", filters.alert_type);
   if (filters.enabled !== undefined && filters.enabled !== null) {
@@ -126,8 +142,10 @@ export function listSourcingAlerts(filters: SourcingAlertFilters = {}, opts?: Ap
   if (filters.include_archived) params.set("include_archived", "true");
   if (filters.part_id) params.set("part_id", filters.part_id);
   if (filters.project_id) params.set("project_id", filters.project_id);
+  params.set("limit", String(pagination.limit ?? 50));
+  params.set("offset", String(pagination.offset ?? 0));
   const suffix = params.toString();
-  return api.get<SourcingAlert[]>(`/sourcing/alerts${suffix ? `?${suffix}` : ""}`, opts);
+  return api.get<SourcingAlertListOut>(`/sourcing/alerts${suffix ? `?${suffix}` : ""}`, opts);
 }
 
 export function createSourcingAlert(payload: SourcingAlertInput) {
