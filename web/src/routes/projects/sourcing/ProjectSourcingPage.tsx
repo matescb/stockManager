@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { PoweredByTrustedParts } from "@/components/PoweredByTrustedParts";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
 import AlertFormModal from "@/routes/sourcing/alerts/AlertFormModal";
 import type { Project } from "@/types";
@@ -64,6 +64,7 @@ export default function ProjectSourcingPage() {
   }, [budgetDisabledUntil]);
 
   const status = errorStatus(sourcing.error);
+  const errorCode = sourcing.error instanceof ApiError ? sourcing.error.code : undefined;
   const sourceDisabled = sourcing.isPending || sourceBlocked;
   const hasRows = (sourcingData?.rows.length ?? 0) > 0;
   const primaryUrl = sourcingData?.links.primary;
@@ -142,6 +143,17 @@ export default function ProjectSourcingPage() {
       )}
       {sourcing.isError && status !== 409 && status !== 502 && status !== 503 && (
         <div className="card p-4 text-sm text-danger">Failed to source BOM.</div>
+      )}
+      {errorCode === "currency_mismatch" && (
+        <div className="rounded-md border border-warning/40 bg-warning/10 p-4 text-sm" role="status">
+          <div className="font-medium text-warning">Sourcing returned mixed currencies.</div>
+          <div className="mt-1 text-muted">
+            Review workspace sourcing currency settings before converting offers.
+          </div>
+          <Link className="mt-2 inline-block text-accent hover:underline" to="/settings/workspace">
+            Open workspace settings
+          </Link>
+        </div>
       )}
 
       {sourcingData && !hasRows && <EmptyBomState projectId={projectId} />}

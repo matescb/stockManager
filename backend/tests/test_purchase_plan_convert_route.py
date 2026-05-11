@@ -351,6 +351,7 @@ def test_unrefreshed_plan_returns_409(authed_client):
     r = _convert(authed_client, r_plan.json()["data"]["id"])
 
     assert r.status_code == 409, r.text
+    assert r.json()["code"] == "plan_stale"
     assert "refresh" in r.json()["status"]["message"]
 
 
@@ -364,6 +365,7 @@ def test_stale_refresh_returns_409(authed_client, db):
     r = _convert(authed_client, plan["id"])
 
     assert r.status_code == 409, r.text
+    assert r.json()["code"] == "plan_stale"
     assert r.json()["status"]["message"] == "plan refresh is stale; refresh again before conversion"
 
 
@@ -395,6 +397,7 @@ def test_mixed_currency_in_group_returns_422(authed_client):
     r = _convert(authed_client, plan["id"])
 
     assert r.status_code == 422, r.text
+    assert r.json()["code"] == "currency_mismatch"
     assert "mixed currencies" in r.json()["status"]["message"]
 
 
@@ -407,6 +410,7 @@ def test_foreign_plan_returns_404(authed_client):
     r = _convert(client_b, plan["id"])
 
     assert r.status_code == 404, r.text
+    assert r.json()["code"] == "resource.not_found"
     assert r.json()["status"]["category"] == "not_found"
 
 
@@ -456,6 +460,7 @@ def test_workspace_isolation_two_plans_different_workspaces(authed_client):
     own = _convert(client_b, plan_b["id"])
 
     assert foreign.status_code == 404, foreign.text
+    assert foreign.json()["code"] == "resource.not_found"
     assert own.status_code == 200, own.text
     assert own.json()["data"]["orders"]
 

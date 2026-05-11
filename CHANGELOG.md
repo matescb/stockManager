@@ -20,6 +20,9 @@ the canonical record.
   thresholds before an alert can be persisted.
 - **SA-16 / #508** Sourcing cache keys now include full workspace/provider
   request shape and TrustedParts credential rotation purges matching cache rows.
+- **SA-10 / #502** Sourcing route-mapped failures now include stable
+  top-level `code` discriminators, and the frontend switches on those codes
+  for rate-limit, stale-plan, and currency-mismatch UX.
 - **SA-8 / #499** Decompose ProjectSourcingPage into a feature folder.
 - **SA-6 / #497** Project Sourcing now runs the audited BOM sourcing POST only
   from an explicit Source click, preserving the display cache without

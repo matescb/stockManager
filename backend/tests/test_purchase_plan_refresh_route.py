@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -21,6 +21,10 @@ from tests.test_purchase_plan_route import (
     _post_plan,
     _single_line_project,
 )
+
+
+def _parse_iso(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 @pytest.fixture(autouse=True)
@@ -79,7 +83,7 @@ def test_refresh_replaces_lines_and_sets_status(authed_client, db):
     data = r.json()["data"]
     assert data["status"] == "refreshed"
     assert data["last_refreshed_at"] is not None
-    assert data["expires_at"] == original_expires_at
+    assert _parse_iso(data["expires_at"]) == _parse_iso(original_expires_at)
     assert len(data["lines"]) == 1
     assert data["lines"][0]["id"] != original_line_id
     assert data["lines"][0]["selected_distributor"] == "Mouser"
@@ -146,6 +150,7 @@ def test_foreign_plan_returns_404(authed_client):
     r = _refresh(client_b, initial["id"])
 
     assert r.status_code == 404, r.text
+    assert r.json()["code"] == "resource.not_found"
     assert r.json()["status"]["category"] == "not_found"
 
 
@@ -159,6 +164,7 @@ def test_expired_plan_returns_conflict(authed_client, db):
     r = _refresh(authed_client, initial["id"])
 
     assert r.status_code == 409, r.text
+    assert r.json()["code"] == "plan_expired"
     assert r.json()["status"] == {"category": "conflict", "message": "plan expired"}
 
 
@@ -173,6 +179,7 @@ def test_workspace_isolation_two_plans_different_workspaces(authed_client):
     own = _refresh(client_b, plan_b["id"])
 
     assert foreign.status_code == 404, foreign.text
+    assert foreign.json()["code"] == "resource.not_found"
     assert own.status_code == 200, own.text
     assert own.json()["data"]["id"] == plan_b["id"]
 

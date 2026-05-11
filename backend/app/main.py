@@ -233,6 +233,7 @@ def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
         pass
 
     body = err("rate_limited", f"rate limit exceeded: {exc.detail}")
+    body["code"] = "rate_limited"
     if retry_after is not None:
         body["retry_after_seconds"] = retry_after
 

@@ -178,6 +178,7 @@ def test_part_without_mpn_returns_422(authed_client):
     assert r.status_code == 422, r.text
     body = r.json()
     assert body["data"] is None
+    assert body["code"] == "part_missing_mpn"
     assert body["status"] == {
         "category": "validation_error",
         "message": "part has no MPN",
@@ -195,6 +196,7 @@ def test_foreign_part_returns_404(authed_client):
     assert r.status_code == 404, r.text
     body = r.json()
     assert body["data"] is None
+    assert body["code"] == "resource.not_found"
     assert body["status"]["category"] == "not_found"
 
 
@@ -222,6 +224,7 @@ def test_budget_block_returns_503(authed_client):
     r = authed_client.post(f"/api/parts/{part_id}/sourcing/refresh")
 
     assert r.status_code == 503, r.text
+    assert r.json()["code"] == "budget_exhausted"
     assert r.json()["status"] == {
         "category": "server_error",
         "message": "sourcing budget exhausted",

@@ -356,6 +356,29 @@ describe("PurchasePlanReviewPage", () => {
     });
   });
 
+  it("uses plan_stale code to highlight refresh after conversion failure", async () => {
+    const apiError = new ApiError(
+      409,
+      {
+        data: null,
+        status: { category: "conflict", message: "plan refresh is stale; refresh again before conversion" },
+        code: "plan_stale",
+      },
+      "plan refresh is stale; refresh again before conversion",
+    );
+    vi.spyOn(api, "post").mockRejectedValueOnce(apiError);
+    renderPage();
+
+    await userEvent.click(screen.getByRole("button", { name: /Create draft orders/ }));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        "Prices are stale. Refresh prices before creating draft orders.",
+      );
+    });
+    expect(screen.getByRole("button", { name: /Refresh prices/ }).className).toContain("border-warning");
+  });
+
   it("Create draft orders is disabled when last_refreshed_at is null", () => {
     renderPage({ initialPlan: plan({ last_refreshed_at: null }) });
 

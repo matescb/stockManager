@@ -19,7 +19,12 @@
 import type { ZodType } from "zod";
 
 export type ApiOk<T> = { data: T; status: { category: string; message: string } };
-export type ApiErr = { data: null; status: { category: string; message: string }; errors?: { field: string; message: string }[] };
+export type ApiErr = {
+  data: null;
+  status: { category: string; message: string };
+  code?: string;
+  errors?: { field: string; message: string }[];
+};
 
 const BASE = "/api";
 
@@ -55,6 +60,10 @@ export class ApiError extends Error {
     this.status = status;
     this.body = body;
     this.userMessage = categoryToUserMessage(body?.status?.category);
+  }
+
+  get code(): string | undefined {
+    return typeof this.body?.code === "string" ? this.body.code : undefined;
   }
 }
 

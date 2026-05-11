@@ -721,12 +721,51 @@ def _error_response(
     status_code: int,
     category: str,
     message: str,
+    *,
+    code: str | None = None,
+    **extra,
 ) -> JSONResponse:
+    body = err(
+        category,
+        message,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    body["code"] = code or _default_error_code(status_code, category, message)
+    body.update(extra)
     return JSONResponse(
         status_code=status_code,
-        content=err(
-            category,
-            message,
-            request_id=getattr(request.state, "request_id", None),
-        ),
+        content=body,
     )
+
+
+def _default_error_code(status_code: int, category: str, message: str) -> str:
+    normalized = message.strip().lower()
+    if normalized == "sourcing not configured":
+        return "workspace_not_configured"
+    if normalized == "sourcing budget exhausted":
+        return "budget_exhausted"
+    if normalized == "trustedparts rejected sourcing credentials":
+        return "provider_auth_failed"
+    if normalized == "trustedparts rate limit reached":
+        return "provider_rate_limited"
+    if normalized == "trustedparts request timed out":
+        return "provider_timeout"
+    if normalized == "trustedparts sourcing request failed":
+        return "provider_unavailable"
+    if normalized == "purchase plan not found":
+        return "purchase_plan_not_found"
+    if normalized == "plan expired":
+        return "plan_expired"
+    if normalized == "part has no mpn":
+        return "part_missing_mpn"
+    if status_code == 409 and ("refresh" in normalized or "stale" in normalized):
+        return "plan_stale"
+    if status_code == 422 and "mixed currencies" in normalized:
+        return "currency_mismatch"
+    if status_code == 422 and "override" in normalized:
+        return "override_invalid"
+    if status_code == 422:
+        return "invalid_sourcing_request"
+    if category == "not_found":
+        return "not_found"
+    return "sourcing_error"

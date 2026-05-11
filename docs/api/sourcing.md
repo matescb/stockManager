@@ -8,6 +8,40 @@ TrustedParts sourcing endpoints for workspace-scoped connection checks, short-li
 
 See [API conventions](./README.md) for envelope, errors, pagination. Connection checks are mounted under `/api/workspaces`; search is mounted under `/api/sourcing`; part reads are mounted under `/api/parts`. Current routes require a cookie session and current workspace.
 
+## Error Codes
+
+Sourcing route-mapped errors keep the standard envelope and add a stable
+top-level `code` discriminator:
+
+```json
+{
+  "data": null,
+  "status": { "category": "conflict", "message": "sourcing not configured" },
+  "code": "workspace_not_configured"
+}
+```
+
+Framework-level request validation errors still use the shared validation
+envelope. SlowAPI 429 responses add `code: "rate_limited"`.
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `resource.not_found` | 404 | Workspace-scoped project, part, or purchase-plan lookup failed. |
+| `workspace_not_configured` | 409 | Workspace has no usable TrustedParts sourcing API key. |
+| `purchase_plan_not_found` | 404 | Purchase plan exists outside the requested project/workspace relationship. |
+| `plan_expired` | 409 | Purchase plan is past its expiry and cannot be refreshed. |
+| `plan_stale` | 409 | Purchase plan must be refreshed before conversion. |
+| `part_missing_mpn` | 422 | Part sourcing refresh was requested for a part without an MPN. |
+| `override_invalid` | 422 | Purchase-plan conversion override does not match cached offers. |
+| `currency_mismatch` | 422 | A distributor group would mix selected currencies. |
+| `rate_limited` | 429 | Local workspace rate limit was exceeded. |
+| `budget_exhausted` | 503 | Local TrustedParts parts-count budget blocked live calls. |
+| `provider_auth_failed` | 502 | TrustedParts rejected sourcing credentials. |
+| `provider_rate_limited` | 502 | TrustedParts throttled the upstream request. |
+| `provider_timeout` | 502 | TrustedParts request timed out. |
+| `provider_unavailable` | 502 | TrustedParts returned another upstream/client failure. |
+| `invalid_sourcing_request` | 422 | Route-level sourcing validation failed. |
+
 ## Routes
 
 ### `GET /api/sourcing/alerts`

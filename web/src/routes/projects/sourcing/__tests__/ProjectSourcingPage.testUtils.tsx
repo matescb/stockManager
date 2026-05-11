@@ -161,7 +161,7 @@ export function sourcingResponse(overrides: Record<string, unknown> = {}) {
   };
 }
 
-export function apiError(status: number, message: string) {
+export function apiError(status: number, message: string, code?: string) {
   return new ApiError(
     status,
     {
@@ -170,6 +170,7 @@ export function apiError(status: number, message: string) {
         category: status === 409 ? "conflict" : "server_error",
         message,
       },
+      code,
     },
     message,
   );
