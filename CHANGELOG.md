@@ -12,6 +12,8 @@ the canonical record.
   unknown instead of silently using the first currency.
 - **SA-2 / #493** Fix PurchasePlanReviewPage refresh silently wiping user
   overrides; add error toast on failure.
+- **SA-3 / #494** Sourcing alert notifications now commit `last_notified_at`
+  before SMTP dispatch, trading one missed outage email for duplicate suppression.
 - **SX-10 / #485** Project Sourcing capacity now shows cost per single BOM
   alongside total BOM cost and short-quantity price to pay.
 - **SX-12 / #487** Project Sourcing now uses the four-level TrustedParts

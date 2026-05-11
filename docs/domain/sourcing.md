@@ -256,13 +256,21 @@ Sources: `backend/alembic/versions/0044_sourcing_alerts.py:20`,
 `evaluate_all_alerts(db)` scans enabled, non-archived rows across workspaces, dispatches
 by `alert_type`, persists `last_checked_at` and `last_evaluation_state`, and commits
 per alert row. Evaluator failures roll back only the current row and are logged so later
-alerts still run. Source: `backend/app/domain/sourcing/alerts_evaluator.py:42-88`
+alerts still run. Source: `backend/app/domain/sourcing/alerts_evaluator.py:49-108`
+
+Alert notification dispatch is intentionally at-most-once. When a triggered alert has
+recipients, the evaluator renders the email, writes `last_notified_at`, and commits
+before calling SMTP; an SMTP outage logs a WARN and the cooldown suppresses duplicate
+sends until the next eligible window. A DB commit failure happens before SMTP and leaves
+the alert retryable. Source: `backend/app/domain/sourcing/alerts_evaluator.py:80-90`,
+`backend/app/domain/sourcing/alerts_evaluator.py:377-425`
 
 All evaluator queries stay workspace-scoped. Part and project targets are loaded with
 `workspace_id == workspace.id`, recipient lookup joins `workspace_members` on the same
 workspace, and sourcing calls receive the current alert workspace. Sources:
-`backend/app/domain/sourcing/alerts_evaluator.py:331-349`,
-`backend/app/domain/sourcing/alerts_evaluator.py:377-402`
+`backend/app/domain/sourcing/alerts_evaluator.py:428-446`,
+`backend/app/domain/sourcing/alerts_evaluator.py:474-499`,
+`backend/app/domain/sourcing/alerts_evaluator.py:502-596`
 
 | `alert_type` | Trigger rule | Persisted state |
 |---|---|---|

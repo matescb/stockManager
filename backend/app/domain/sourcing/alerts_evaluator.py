@@ -36,6 +36,13 @@ class AlertVerdict:
     new_state: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class AlertEmail:
+    recipients: list[str]
+    subject: str
+    body: str
+
+
 EvaluatorFn = Callable[[Session, Workspace, SourcingAlert], AlertVerdict]
 
 
@@ -56,24 +63,37 @@ def evaluate_all_alerts(db: Session) -> int:
     evaluated = 0
     for alert, workspace in rows:
         evaluated += 1
+        alert_id: UUID | None = None
+        alert_type: str | None = None
+        workspace_id: UUID | None = None
         try:
+            alert_id = alert.id
+            alert_type = alert.alert_type
+            workspace_id = workspace.id
             evaluator = EVALUATORS[alert.alert_type]
             verdict = evaluator(db, workspace, alert)
             checked_at = utcnow()
             alert.last_checked_at = checked_at
             alert.last_evaluation_state = verdict.new_state
             sent = False
+            email: AlertEmail | None = None
             if verdict.triggered and _cooldown_elapsed(alert):
-                sent = _send_alert_email(db, workspace, alert, verdict)
-                if sent:
+                email = _prepare_alert_email(db, workspace, alert, verdict)
+                if email is not None:
                     alert.last_notified_at = checked_at
             db.commit()
+            if email is not None:
+                sent = _send_alert_email(
+                    workspace_id=workspace_id,
+                    alert_id=alert_id,
+                    email=email,
+                )
             log.info(
                 "sourcing_alert.evaluated workspace_id=%s alert_id=%s type=%s "
                 "triggered=%s notified=%s",
-                workspace.id,
-                alert.id,
-                alert.alert_type,
+                workspace_id,
+                alert_id,
+                alert_type,
                 verdict.triggered,
                 sent,
             )
@@ -81,9 +101,9 @@ def evaluate_all_alerts(db: Session) -> int:
             db.rollback()
             log.exception(
                 "sourcing_alert.evaluation_failed workspace_id=%s alert_id=%s type=%s",
-                getattr(workspace, "id", None),
-                getattr(alert, "id", None),
-                getattr(alert, "alert_type", None),
+                workspace_id,
+                alert_id,
+                alert_type,
             )
     return evaluated
 
@@ -355,11 +375,42 @@ def _cooldown_elapsed(alert: SourcingAlert) -> bool:
 
 
 def _send_alert_email(
+    *,
+    workspace_id: UUID,
+    alert_id: UUID,
+    email: AlertEmail,
+) -> bool:
+    sent_any = False
+    for recipient in email.recipients:
+        try:
+            mail.send(to=recipient, subject=email.subject, text_body=email.body)
+            sent_any = True
+        except Exception as exc:
+            log.warning(
+                "sourcing_alert.smtp_failed workspace_id=%s alert_id=%s to=%s "
+                "exception_type=%s error=%s",
+                workspace_id,
+                alert_id,
+                recipient,
+                type(exc).__name__,
+                exc,
+            )
+            log.debug(
+                "sourcing_alert.smtp_failed_debug workspace_id=%s alert_id=%s to=%s",
+                workspace_id,
+                alert_id,
+                recipient,
+                exc_info=True,
+            )
+    return sent_any
+
+
+def _prepare_alert_email(
     db: Session,
     workspace: Workspace,
     alert: SourcingAlert,
     verdict: AlertVerdict,
-) -> bool:
+) -> AlertEmail | None:
     recipients = _recipient_emails(db, workspace, alert)
     if not recipients:
         log.warning(
@@ -367,24 +418,11 @@ def _send_alert_email(
             workspace.id,
             alert.id,
         )
-        return False
+        return None
 
     subject = f"[stockManager] {verdict.summary}"
     body = _render_email_body(workspace, alert, verdict)
-    sent_any = False
-    for recipient in recipients:
-        try:
-            mail.send(to=recipient, subject=subject, text_body=body)
-            sent_any = True
-        except Exception as exc:
-            log.warning(
-                "sourcing_alert.smtp_failed workspace_id=%s alert_id=%s to=%s error=%s",
-                workspace.id,
-                alert.id,
-                recipient,
-                exc,
-            )
-    return sent_any
+    return AlertEmail(recipients=recipients, subject=subject, body=body)
 
 
 def _recipient_emails(
