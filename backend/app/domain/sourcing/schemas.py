@@ -398,6 +398,13 @@ class BuildCapacityOut(BaseModel):
             "BOM lines, independent of on-hand stock."
         ),
     )
+    cost_per_single_bom: Decimal | None = Field(
+        default=None,
+        description=(
+            "Cost of building one complete BOM unit, derived from total_bom_cost "
+            "divided by the requested build quantity."
+        ),
+    )
     purchase_to_pay_cost: Decimal | None = Field(
         default=None,
         description=(
@@ -638,6 +645,7 @@ class SourcingBomOut(BaseModel):
     rows: list[SourcingBomLineOut]
     coverage: DistributorCoverageMatrixOut
     capacity: BuildCapacityOut
+    build_quantity: int
     powered_by: Literal["TrustedParts"] = "TrustedParts"
     fetched_at: datetime
     partial: bool

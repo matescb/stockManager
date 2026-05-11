@@ -112,11 +112,13 @@ type SourcingBomResponse = {
     can_build_now: number;
     can_build_after_purchase: number;
     total_bom_cost?: string | number | null;
+    cost_per_single_bom?: string | number | null;
     purchase_to_pay_cost?: string | number | null;
     est_purchase_cost?: string | number | null;
     blocking_lines_now: string[];
     blocking_lines_after_purchase: string[];
   };
+  build_quantity: number;
   powered_by: "TrustedParts";
   fetched_at: string;
   partial: boolean;
@@ -416,7 +418,10 @@ function CapacityBanner({ data, currency }: { data: SourcingBomResponse; currenc
   ) ?? null;
   const totalCostNote = data.capacity.total_bom_cost == null
     ? "no pricing available on any line"
-    : "if bought every line";
+    : `x ${data.build_quantity.toLocaleString()} build${data.build_quantity === 1 ? "" : "s"}`;
+  const singleBomCostNote = data.capacity.cost_per_single_bom == null
+    ? "no pricing available on any line"
+    : "one full build";
   const purchaseCostNote = data.capacity.purchase_to_pay_cost == null
     ? "no non-blocking priced shortages"
     : "short qty only, excluding blocking lines";
@@ -435,6 +440,11 @@ function CapacityBanner({ data, currency }: { data: SourcingBomResponse; currenc
         <div className="sm:col-span-2 lg:col-span-2 min-w-0">
           <div className="section-title">Costs</div>
           <div className="mt-1 flex flex-col gap-1 text-sm">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="text-muted">Cost per 1 BOM:</span>
+              <span className="font-mono tabular-nums">{formatMoney(data.capacity.cost_per_single_bom, purchaseCurrency)}</span>
+              <span className="text-xs text-muted">{singleBomCostNote}</span>
+            </div>
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
               <span className="text-muted">Total BOM cost:</span>
               <span className="font-mono tabular-nums">{formatMoney(data.capacity.total_bom_cost, purchaseCurrency)}</span>

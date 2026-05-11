@@ -205,11 +205,13 @@ def test_basic_bom_returns_enriched_lines(authed_client):
     datetime.fromisoformat(data["fetched_at"])
     assert data["powered_by"] == "TrustedParts"
     assert data["partial"] is False
+    assert data["build_quantity"] == 2
     assert data["coverage"]["total_lines"] == 1
     assert data["coverage"]["best_single_distributor"] == "DigiKey"
     assert data["capacity"]["can_build_now"] == 0
     assert data["capacity"]["can_build_after_purchase"] == 6
     assert Decimal(data["capacity"]["total_bom_cost"]) == Decimal("2.00")
+    assert Decimal(data["capacity"]["cost_per_single_bom"]) == Decimal("1.00")
     assert Decimal(data["capacity"]["purchase_to_pay_cost"]) == Decimal("2.00")
     assert data["capacity"]["est_purchase_cost"] == data["capacity"]["purchase_to_pay_cost"]
     row = data["rows"][0]

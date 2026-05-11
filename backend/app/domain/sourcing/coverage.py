@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from itertools import combinations
 from math import ceil
 from uuid import UUID
@@ -44,6 +44,7 @@ class BuildCapacity:
     can_build_now: int
     can_build_after_purchase: int
     total_bom_cost: Decimal | None
+    cost_per_single_bom: Decimal | None
     purchase_to_pay_cost: Decimal | None
     est_purchase_cost: Decimal | None
     blocking_lines_now: list[UUID]
@@ -62,6 +63,7 @@ def compute_build_capacity(
             can_build_now=0,
             can_build_after_purchase=0,
             total_bom_cost=None,
+            cost_per_single_bom=None,
             purchase_to_pay_cost=None,
             est_purchase_cost=None,
             blocking_lines_now=[],
@@ -103,6 +105,10 @@ def compute_build_capacity(
         effective_rows,
         quantity_for_row=lambda row: row.required,
     )
+    cost_per_single_bom = _cost_per_single_bom(
+        total_bom_cost,
+        requested_build_quantity=requested_build_quantity,
+    )
     payable_rows = [
         row for row in effective_rows if row.project_entry_id not in blocking_after
     ]
@@ -121,10 +127,24 @@ def compute_build_capacity(
         can_build_now=can_build_now,
         can_build_after_purchase=can_build_after_purchase,
         total_bom_cost=total_bom_cost,
+        cost_per_single_bom=cost_per_single_bom,
         purchase_to_pay_cost=purchase_to_pay_cost,
         est_purchase_cost=purchase_to_pay_cost,
         blocking_lines_now=blocking_lines_now,
         blocking_lines_after_purchase=blocking_lines_after_purchase,
+    )
+
+
+def _cost_per_single_bom(
+    total_bom_cost: Decimal | None,
+    *,
+    requested_build_quantity: int,
+) -> Decimal | None:
+    if total_bom_cost is None or requested_build_quantity <= 0:
+        return None
+    return (total_bom_cost / Decimal(requested_build_quantity)).quantize(
+        Decimal("0.01"),
+        rounding=ROUND_HALF_UP,
     )
 
 

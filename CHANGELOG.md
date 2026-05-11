@@ -8,6 +8,8 @@ the canonical record.
 
 ## 2026-05 — feedback brief fixes
 
+- **SX-10 / #485** Project Sourcing capacity now shows cost per single BOM
+  alongside total BOM cost and short-quantity price to pay.
 - **SX-5 / #480** Project Sourcing keeps the legacy distributor coverage matrix
   shortfall-based while the fewest-distributors variant continues to apply MOQ
   selected quantities for feasibility and totals.
