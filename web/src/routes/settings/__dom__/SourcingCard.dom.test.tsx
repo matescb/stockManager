@@ -20,6 +20,8 @@ const baseWorkspace: SourcingWorkspace = {
   sourcing_currency_code: null,
   sourcing_language_code: null,
   sourcing_preferred_distributors: null,
+  active_countries: ["CZ", "DE", "US"],
+  active_currencies: ["EUR", "USD"],
   sourcing_use_cached_for_dashboards: true,
   has_sourcing_company_id: false,
   has_sourcing_api_key: false,
@@ -62,6 +64,21 @@ describe("SourcingCard", () => {
     expect(screen.queryByText("Configured ✓")).toBeNull();
   });
 
+  it("renders country select with active countries", () => {
+    renderCard();
+
+    expect(screen.getByRole("combobox", { name: "Country" })).toBeDefined();
+    expect(screen.getByRole("option", { name: "CZ" })).toBeDefined();
+    expect(screen.getByRole("option", { name: "DE" })).toBeDefined();
+    expect(screen.queryByRole("textbox", { name: "Country" })).toBeNull();
+  });
+
+  it("disables save when country is empty", () => {
+    renderCard({ ...baseWorkspace, sourcing_currency_code: "EUR" });
+
+    expect(screen.getByRole("button", { name: "Save" })).toHaveProperty("disabled", true);
+  });
+
   it("submits PATCH with the expected body shape on Save", async () => {
     const user = userEvent.setup();
     const patchSpy = vi.spyOn(api, "patch").mockResolvedValue({
@@ -71,6 +88,8 @@ describe("SourcingCard", () => {
       sourcing_currency_code: "EUR",
       sourcing_language_code: "de",
       sourcing_preferred_distributors: ["DigiKey", "Mouser"],
+      active_countries: ["CZ", "DE", "US"],
+      active_currencies: ["EUR", "USD"],
       sourcing_use_cached_for_dashboards: false,
       has_sourcing_company_id: true,
       has_sourcing_api_key: true,
@@ -80,8 +99,8 @@ describe("SourcingCard", () => {
     await user.selectOptions(screen.getByLabelText("Provider"), "trustedparts");
     await user.type(screen.getByLabelText("CompanyId (deprecated)"), "company-123");
     await user.type(screen.getByLabelText("API Key"), "api-456");
-    await user.type(screen.getByLabelText("Country"), "cz");
-    await user.type(screen.getByLabelText("Currency"), "eur");
+    await user.selectOptions(screen.getByLabelText("Country"), "CZ");
+    await user.selectOptions(screen.getByLabelText("Currency"), "EUR");
     await user.selectOptions(screen.getByLabelText("Language"), "de");
     await user.type(screen.getByLabelText("Preferred distributors"), "DigiKey, Mouser");
     await user.click(screen.getByLabelText("Use cached data for dashboards"));
@@ -103,10 +122,39 @@ describe("SourcingCard", () => {
     expect(screen.getByText("Configured ✓")).toBeDefined();
   });
 
+  it("submits with selected country code", async () => {
+    const user = userEvent.setup();
+    const patchSpy = vi.spyOn(api, "patch").mockResolvedValue({
+      ...baseWorkspace,
+      sourcing_country_code: "US",
+      sourcing_currency_code: "USD",
+    });
+    renderCard();
+
+    await user.selectOptions(screen.getByLabelText("Country"), "US");
+    await user.selectOptions(screen.getByLabelText("Currency"), "USD");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(patchSpy).toHaveBeenCalledWith(
+        "/workspaces/current",
+        expect.objectContaining({
+          sourcing_country_code: "US",
+          sourcing_currency_code: "USD",
+        }),
+      );
+    });
+  });
+
   it("maps the default language option to null on Save", async () => {
     const user = userEvent.setup();
     const patchSpy = vi.spyOn(api, "patch").mockResolvedValue(baseWorkspace);
-    renderCard({ ...baseWorkspace, sourcing_language_code: "fr" });
+    renderCard({
+      ...baseWorkspace,
+      sourcing_country_code: "CZ",
+      sourcing_currency_code: "EUR",
+      sourcing_language_code: "fr",
+    });
 
     await user.selectOptions(screen.getByLabelText("Language"), "");
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -163,6 +211,8 @@ describe("SourcingCard", () => {
 
     await user.type(screen.getByLabelText("CompanyId (deprecated)"), "secret-company-id");
     await user.type(screen.getByLabelText("API Key"), "secret-api-key");
+    await user.selectOptions(screen.getByLabelText("Country"), "CZ");
+    await user.selectOptions(screen.getByLabelText("Currency"), "EUR");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {

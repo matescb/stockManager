@@ -205,3 +205,60 @@ def test_get_after_patch_masks_creds(authed_client):
     assert "sourcing_api_key_enc" not in body
     assert company_id not in r.text
     assert api_key not in r.text
+
+
+def test_save_sourcing_card_with_invalid_country_returns_422(authed_client):
+    r = authed_client.patch(
+        "/api/workspaces/current",
+        json={"sourcing_country_code": "ZZ"},
+    )
+
+    assert r.status_code == 422
+    body = r.json()
+    assert body["data"] is None
+    assert body["status"]["category"] == "validation_error"
+    assert body["code"] == "invalid_country_code"
+    assert body["field"] == "sourcing_country_code"
+    assert body["active_field"] == "active_countries"
+    assert body["value"] == "ZZ"
+
+
+def test_save_sourcing_card_with_inactive_currency_returns_422(authed_client):
+    r = authed_client.patch(
+        "/api/workspaces/current",
+        json={
+            "active_currencies": ["EUR"],
+            "sourcing_currency_code": "USD",
+        },
+    )
+
+    assert r.status_code == 422
+    body = r.json()
+    assert body["data"] is None
+    assert body["status"]["category"] == "validation_error"
+    assert body["code"] == "invalid_currency_code"
+    assert body["field"] == "sourcing_currency_code"
+    assert body["active_field"] == "active_currencies"
+    assert body["value"] == "USD"
+
+
+def test_save_sourcing_card_with_valid_codes_persists(authed_client, db):
+    r = authed_client.patch(
+        "/api/workspaces/current",
+        json={
+            "active_countries": ["CZ", "DE"],
+            "active_currencies": ["EUR", "USD"],
+            "sourcing_country_code": "cz",
+            "sourcing_currency_code": "eur",
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()["data"]
+    assert body["sourcing_country_code"] == "CZ"
+    assert body["sourcing_currency_code"] == "EUR"
+
+    ws = db.get(Workspace, _current_workspace_id(authed_client))
+    assert ws is not None
+    assert ws.sourcing_country_code == "CZ"
+    assert ws.sourcing_currency_code == "EUR"

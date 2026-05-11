@@ -157,6 +157,8 @@ class ErrorCodes:
     SOURCING_OVERRIDE_INVALID = "sourcing.override_invalid"
     SOURCING_TOO_MANY_DISTRIBUTORS = "sourcing.too_many_distributors"
     SOURCING_INVALID_REQUEST = "sourcing.invalid_request"
+    SOURCING_INVALID_COUNTRY_CODE = "invalid_country_code"
+    SOURCING_INVALID_CURRENCY_CODE = "invalid_currency_code"
     SOURCING_GENERIC = "sourcing.error"
 
     # Workspace dependency-injection edge cases (deps.py).
