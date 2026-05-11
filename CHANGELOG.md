@@ -10,6 +10,9 @@ the canonical record.
 
 - **SX-10 / #485** Project Sourcing capacity now shows cost per single BOM
   alongside total BOM cost and short-quantity price to pay.
+- **SX-12 / #487** Project Sourcing now uses the four-level TrustedParts
+  risk vocabulary, including a light-green Low-Med band and header popover
+  legends for Lifecycle and Supply chain risk columns.
 - **SX-5 / #480** Project Sourcing keeps the legacy distributor coverage matrix
   shortfall-based while the fewest-distributors variant continues to apply MOQ
   selected quantities for feasibility and totals.

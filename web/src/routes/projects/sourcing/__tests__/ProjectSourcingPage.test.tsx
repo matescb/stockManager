@@ -616,8 +616,8 @@ describe("ProjectSourcingPage", () => {
 
     await screen.findByText("BOM rows");
     const bomRowsTable = screen.getAllByRole("table")[1];
-    expect(within(bomRowsTable).getByRole("columnheader", { name: "Lifecycle" })).toBeDefined();
-    expect(within(bomRowsTable).getByRole("columnheader", { name: "Supply chain" })).toBeDefined();
+    expect(within(bomRowsTable).getByRole("columnheader", { name: /Lifecycle/ })).toBeDefined();
+    expect(within(bomRowsTable).getByRole("columnheader", { name: /Supply chain/ })).toBeDefined();
     expect(within(bomRowsTable).getByRole("columnheader", { name: "RoHS" })).toBeDefined();
 
     const lifecycle = screen.getByLabelText("Lifecycle risk: High");
@@ -634,6 +634,34 @@ describe("ProjectSourcingPage", () => {
     expect(within(riskCell as HTMLElement).queryByText("supply chain")).toBeNull();
     expect(within(riskCell as HTMLElement).queryByText("RoHS")).toBeNull();
     expect(screen.getByLabelText("TrustedParts did not find a compliant RoHS region for this BOM line.")).toBeDefined();
+  });
+
+  it("opens distinct 4-row risk legends from the Lifecycle and Supply chain headers", async () => {
+    const user = userEvent.setup();
+    mockReads();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+
+    renderPage();
+
+    await screen.findByText("BOM rows");
+    const bomRowsTable = screen.getAllByRole("table")[1];
+    const lifecycleHeader = within(bomRowsTable).getByRole("columnheader", { name: /Lifecycle/ });
+    const supplyChainHeader = within(bomRowsTable).getByRole("columnheader", { name: /Supply chain/ });
+
+    expect(within(lifecycleHeader).getByRole("button", { name: "Show Lifecycle Risk Statuses" })).toBeDefined();
+
+    await user.click(within(lifecycleHeader).getByRole("button", { name: "Show Lifecycle Risk Statuses" }));
+    const lifecycleLegend = await screen.findByRole("dialog", { name: "Lifecycle Risk Statuses" });
+    expect(within(lifecycleLegend).getAllByRole("listitem")).toHaveLength(4);
+    expect(within(lifecycleLegend).getByText("This product is active.")).toBeDefined();
+    expect(within(lifecycleLegend).getByText("This product may be EOL (end of life) or NRND.")).toBeDefined();
+
+    await user.click(within(supplyChainHeader).getByRole("button", { name: "Show Supply Chain Risk Statuses" }));
+    const supplyChainLegend = await screen.findByRole("dialog", { name: "Supply Chain Risk Statuses" });
+    expect(within(supplyChainLegend).getAllByRole("listitem")).toHaveLength(4);
+    expect(within(supplyChainLegend).getByText("Available stock with short lead times.")).toBeDefined();
+    expect(within(supplyChainLegend).getByText("Limited stock or long lead times.")).toBeDefined();
+    expect(within(supplyChainLegend).queryByText("This product is active.")).toBeNull();
   });
 
   it("renders compliant RoHS data as a green pill", async () => {
@@ -680,7 +708,7 @@ describe("ProjectSourcingPage", () => {
 
     await screen.findByText("BOM rows");
     const bomRowsTable = screen.getAllByRole("table")[1];
-    expect(within(bomRowsTable).getByRole("columnheader", { name: "Lifecycle" })).toBeDefined();
+    expect(within(bomRowsTable).getByRole("columnheader", { name: /Lifecycle/ })).toBeDefined();
     const lifecycle = screen.getByLabelText("Lifecycle risk: Obsolete");
     expect(lifecycle.className).toContain("text-danger");
   });

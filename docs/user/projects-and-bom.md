@@ -106,7 +106,7 @@ Bulk provider import processes up to 200 unmatched rows at a time; run it again 
 
 ## Source BOM coverage
 
-The **Source BOM** page can show TrustedParts sourcing context on each BOM line. Lifecycle, supply-chain, and RoHS details have their own BOM columns, while the legacy **Risk** column stays focused on operational flags such as single-source, stock, MOQ, lead-time, preferred-distributor, and tariff warnings. Lifecycle and supply-chain pills colour TrustedParts `Low` as green, `Medium` or `Moderate` as amber, and `High` or `Severe` as red. The **Lead time** column is available from the column menu when you need the raw per-row lead-time values.
+The **Source BOM** page can show TrustedParts sourcing context on each BOM line. Lifecycle, supply-chain, and RoHS details have their own BOM columns, while the legacy **Risk** column stays focused on operational flags such as single-source, stock, MOQ, lead-time, preferred-distributor, and tariff warnings. Lifecycle and supply-chain pills colour TrustedParts `Low` as green, `Low-Med` as light green, `Medium` or `Moderate` as amber, and `High` or `Severe` as red. Click the info icon next to **Lifecycle** or **Supply chain** to see the four-level risk legend with wording tailored to that column. The **Lead time** column is available from the column menu when you need the raw per-row lead-time values.
 
 Click a sourced BOM row to compare every TrustedParts distributor offer for that line. The drill-down shows stock, raw availability text, price breaks, MOQ, quantity multiple, packaging, RoHS regions, and a distributor product link. Rows without distributor offers do not open a drill-down.
 

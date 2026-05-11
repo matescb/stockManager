@@ -12,6 +12,7 @@ import {
   bestUnitPriceAtQty,
   extendedPrice,
   lifecycleRiskTone,
+  riskToneClass,
   type SourcingPriceBreak,
 } from "@/lib/sourcing";
 import type { Column } from "@/components/DataTable";
@@ -302,7 +303,8 @@ function RiskBadge({
   if (!trimmed) return null;
   return (
     <span
-      className={`pill inline-flex items-center gap-1 ${lifecycleRiskTone(trimmed)}`}
+      className={`pill inline-flex items-center gap-1 ${riskToneClass(lifecycleRiskTone(trimmed))}`}
+      title={trimmed}
       aria-label={`${label}: ${trimmed}`}
     >
       {icon}
