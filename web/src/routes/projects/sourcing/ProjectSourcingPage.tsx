@@ -537,6 +537,12 @@ function CoverageVariantCard({
   const { pct, shortLines } = coverageForCombo(data, variant.combo);
   const comboText = variant.combo.length > 0 ? normalizedCombo(variant.combo).join(" + ") : "—";
   const coverageText = pct == null ? "—" : `${Math.round(pct * 100)}%`;
+  const hasPartialCoverage = shortLines != null && shortLines > 0;
+  const priceLabel = hasPartialCoverage ? "Price (covered lines)" : "Price";
+  const uncoveredText = hasPartialCoverage
+    ? `${shortLines.toLocaleString()} uncovered line${shortLines === 1 ? "" : "s"}`
+    : "";
+  const hasNoCoveredLinePricing = variant.total == null && variant.combo.length > 0;
   const shortText = shortLines && shortLines > 0
     ? ` (${shortLines.toLocaleString()} line${shortLines === 1 ? "" : "s"} short)`
     : "";
@@ -551,8 +557,14 @@ function CoverageVariantCard({
       <div className="text-lg font-semibold leading-snug">{comboText}</div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
         <div>
-          <div className="section-title">Price</div>
+          <div className="section-title">{priceLabel}</div>
           <div className="font-mono tabular-nums">{formatMoney(variant.total, currency)}</div>
+          {hasPartialCoverage && (
+            <div className="text-xs text-muted">{uncoveredText}</div>
+          )}
+          {hasNoCoveredLinePricing && (
+            <div className="text-xs text-muted">No pricing available on covered lines.</div>
+          )}
         </div>
         <div>
           <div className="section-title">Coverage</div>

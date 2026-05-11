@@ -21,7 +21,7 @@ def _offer(
     *,
     mpn: str = "MPN",
     stock: int = 10,
-    unit_price: str = "1.00",
+    unit_price: str | None = "1.00",
     moq: int | None = None,
     lead_time_days: int | None = 3,
     price_breaks: list[tuple[int, str]] | None = None,
@@ -30,12 +30,14 @@ def _offer(
         mpn=mpn,
         distributor=distributor,
         stock=stock,
-        unit_price=Decimal(unit_price),
+        unit_price=Decimal(unit_price) if unit_price is not None else None,
         moq=moq,
         lead_time_days=lead_time_days,
         price_breaks=[
             SourcingBomPriceBreakOut(quantity=quantity, unit_price=Decimal(price))
-            for quantity, price in (price_breaks or [(1, unit_price)])
+            for quantity, price in (
+                price_breaks or ([(1, unit_price)] if unit_price is not None else [])
+            )
         ],
     )
 
@@ -223,6 +225,53 @@ def test_lowest_total_price_combo_uses_optimizer_selections():
     assert matrix.fewest_distributors_total == Decimal("135.00")
 
 
+def test_lowest_total_price_total_sums_partial_covered_priced_lines():
+    matrix = compute_coverage(
+        [
+            _line(1, offers=[_offer("Alpha", unit_price="2.00")]),
+            _line(2, offers=[]),
+        ]
+    )
+
+    assert matrix.lowest_total_price_combo == ["Alpha"]
+    assert matrix.lowest_total_price_total == Decimal("10.00")
+
+
+def test_lowest_total_price_total_full_coverage_unchanged():
+    matrix = compute_coverage(
+        [
+            _line(1, offers=[_offer("Alpha", unit_price="2.00")]),
+            _line(2, offers=[_offer("Beta", unit_price="3.00")]),
+        ]
+    )
+
+    assert matrix.lowest_total_price_combo == ["Alpha", "Beta"]
+    assert matrix.lowest_total_price_total == Decimal("25.00")
+
+
+def test_variant_totals_return_none_when_no_covered_line_has_pricing():
+    matrix = compute_coverage(
+        [
+            _line(1, offers=[_offer("Unpriced", unit_price=None)]),
+            _line(2, offers=[]),
+        ]
+    )
+
+    assert matrix.lowest_total_price_combo == []
+    assert matrix.lowest_total_price_total is None
+    assert matrix.fewest_distributors_combo == ["Unpriced"]
+    assert matrix.fewest_distributors_total is None
+
+
+def test_variant_totals_return_none_for_zero_coverage():
+    matrix = compute_coverage([_line(1, offers=[])])
+
+    assert matrix.lowest_total_price_combo == []
+    assert matrix.lowest_total_price_total is None
+    assert matrix.fewest_distributors_combo == []
+    assert matrix.fewest_distributors_total is None
+
+
 def test_fewest_distributors_combo_returns_minimum_set():
     matrix = compute_coverage(
         [
@@ -271,6 +320,22 @@ def test_fewest_distributors_combo_tiebreak_by_total_cost():
 
     assert matrix.fewest_distributors_combo == ["Alpha", "Beta"]
     assert matrix.fewest_distributors_total == Decimal("10.00")
+
+
+def test_fewest_distributors_total_sums_partial_covered_priced_lines_with_moq():
+    matrix = compute_coverage(
+        [
+            _line(1, offers=[_offer("Alpha", unit_price="1.00")]),
+            _line(
+                2,
+                offers=[_offer("Alpha", stock=20, unit_price="2.00", moq=10)],
+            ),
+            _line(3, offers=[]),
+        ]
+    )
+
+    assert matrix.fewest_distributors_combo == ["Alpha"]
+    assert matrix.fewest_distributors_total == Decimal("25.00")
 
 
 def test_fewest_distributors_respects_moq_stock_and_totals_selected_qty():

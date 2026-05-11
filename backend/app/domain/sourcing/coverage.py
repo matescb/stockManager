@@ -354,7 +354,8 @@ def _lowest_total_price_variant(
     bom_rows: list[SourcingBomLineOut],
 ) -> tuple[list[str], Decimal | None]:
     outcome = optimize(bom_rows, strategy="lowest_total_price")
-    return outcome.distributors_used, outcome.est_total_cost
+    combo = tuple(distributor.casefold() for distributor in outcome.distributors_used)
+    return outcome.distributors_used, _combo_total_cost(combo, bom_rows)
 
 
 def _fewest_distributors_variant(
@@ -490,7 +491,7 @@ def _combo_total_cost(
         ]
         priced_costs = [cost for cost in costs if cost is not None]
         if not priced_costs:
-            return None
+            continue
         running += min(priced_costs)
         has_priced_line = True
     return running if has_priced_line else None

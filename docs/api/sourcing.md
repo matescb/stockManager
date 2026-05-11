@@ -293,12 +293,15 @@ Sources: `backend/app/domain/sourcing/service.py:1322-1386`,
 - `coverage.best_single_distributor`, `coverage.best_two_distributor_combo`, and the
   per-distributor matrix rows use legacy shortfall coverage: an offer covers a row
   when distributor stock is at least `short_by`. `coverage.lowest_total_price_combo`
-  and `coverage.lowest_total_price_total` come from the optimizer's
-  `lowest_total_price` per-line selections. `coverage.fewest_distributors_combo`
-  and `coverage.fewest_distributors_total` choose the smallest distributor set that
-  reaches `target_coverage_pct`; this variant evaluates offer feasibility and totals
-  with the MOQ-aware selected quantity `max(short_by, moq)`. The implementation is
-  exhaustive up to 10 distributors and greedy beyond that threshold.
+  comes from the optimizer's `lowest_total_price` per-line selections.
+  `coverage.lowest_total_price_total` and `coverage.fewest_distributors_total`
+  sum only covered, purchasable lines that have pricing for the returned combo,
+  so partial coverage can still return a partial price. They are `null` only when
+  no covered, purchasable line has pricing. `coverage.fewest_distributors_combo`
+  chooses the smallest distributor set that reaches `target_coverage_pct`; this
+  variant evaluates offer feasibility and totals with the MOQ-aware selected
+  quantity `max(short_by, moq)`. The implementation is exhaustive up to 10
+  distributors and greedy beyond that threshold.
 - When `currency` is supplied, BOM offer prices whose native distributor currency differs are display-converted through the global ECB daily snapshot. Native `unit_price` and `currency` stay unchanged; converted display values are exposed as `unit_price_converted`, `currency_displayed`, `fx_converted`, `fx_rate_date`, and `price_breaks_converted`.
 - Each row exposes sourcing diagnostics: `reason` is `ok`, `no_mpn`, or `no_offers`; `cache_hit` is `true`/`false` for searched rows and `null` when no MPN was searched; row `fx_status` is `unavailable` when any offer on the row could not be converted. Top-level `fx_status` is `ok`, `partial`, or `unavailable` when a request currency was supplied and `null` when conversion was not requested.
 - BOM offer projections carry offer-level TrustedParts gap fields for downstream risk/report consumers, plus distributor availability text and quantity multiple for per-BOM-line distributor drill-downs.
