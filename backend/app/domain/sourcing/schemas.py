@@ -17,6 +17,8 @@ from pydantic import (
     field_validator,
 )
 
+MAX_DISTRIBUTORS = 25
+
 
 class SourcingQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -126,7 +128,7 @@ class SourcingSearchIn(BaseModel):
     country: str | None = Field(default=None, min_length=2, max_length=2)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     in_stock_only: bool = False
-    distributors: list[str] | None = None
+    distributors: list[str] | None = Field(default=None, max_length=MAX_DISTRIBUTORS)
     use_cached_data: bool | None = None
 
     @field_validator("mpns")
@@ -191,7 +193,7 @@ class SourcingBomIn(BaseModel):
     build_quantity: int = Field(ge=1)
     country: str | None = Field(default=None, min_length=2, max_length=2)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
-    distributors: list[str] | None = None
+    distributors: list[str] | None = Field(default=None, max_length=MAX_DISTRIBUTORS)
     in_stock_only: bool = False
     use_cached_data: bool | None = None
 
@@ -355,7 +357,7 @@ class SourcingAlertIn(BaseModel):
     threshold: SourcingAlertThresholdIn
     country_code: str | None = Field(default=None, min_length=2, max_length=2)
     currency_code: str | None = Field(default=None, min_length=3, max_length=3)
-    distributor_filter: list[str] | None = None
+    distributor_filter: list[str] | None = Field(default=None, max_length=MAX_DISTRIBUTORS)
     notify_user_ids: list[UUID] | None = None
     cooldown_seconds: int = Field(default=86400, ge=60)
     enabled: bool = True
@@ -385,7 +387,7 @@ class SourcingAlertPatch(BaseModel):
     threshold: dict[str, Any] | None = None
     country_code: str | None = Field(default=None, min_length=2, max_length=2)
     currency_code: str | None = Field(default=None, min_length=3, max_length=3)
-    distributor_filter: list[str] | None = None
+    distributor_filter: list[str] | None = Field(default=None, max_length=MAX_DISTRIBUTORS)
     notify_user_ids: list[UUID] | None = None
     cooldown_seconds: int | None = Field(default=None, ge=60)
     enabled: bool | None = None
@@ -569,7 +571,7 @@ class PurchasePlanIn(BaseModel):
     ] = "preferred_first"
     country: str | None = Field(default=None, min_length=2, max_length=2)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
-    distributors: list[str] | None = None
+    distributors: list[str] | None = Field(default=None, max_length=MAX_DISTRIBUTORS)
     max_distributors: int | None = Field(default=None, ge=1)
     moq_overbuy_cap: int | None = Field(default=None, ge=1)
     price_tolerance_pct: Decimal = Field(default=Decimal("5"), ge=0)

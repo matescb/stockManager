@@ -10,6 +10,9 @@ the canonical record.
 
 - **SA-12 / #504** Sourcing alerts now return `{ items, total, limit, offset }`
   with 50-row default pagination and frontend next/previous controls.
+- **SA-13 / #505** Purchase-plan conversion is now capped at 10
+  conversions/minute per workspace, and sourcing distributor filters reject
+  requests with more than 25 values before provider fanout.
 - **SA-17 / #509** Production cron sidecar jobs now have a 600-second
   per-run timeout that logs exit 124 on timeout while preserving cadence.
 - **SA-15 / #507** TrustedParts, Mouser, and DigiKey outbound calls now share

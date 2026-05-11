@@ -174,6 +174,22 @@ def test_too_few_or_too_many_mpns_422(authed_client):
     assert r.json()["status"]["category"] == "validation_error"
 
 
+def test_distributors_body_field_capped_at_25(authed_client):
+    r = authed_client.post(
+        "/api/sourcing/search",
+        json={
+            "mpns": ["BAT54C"],
+            "distributors": [f"D{index}" for index in range(26)],
+        },
+    )
+
+    assert r.status_code == 422, r.text
+    body = r.json()
+    assert body["status"]["category"] == "validation_error"
+    assert body["errors"][0]["field"] == "body.distributors"
+    assert _FakeTrustedPartsClient.calls == []
+
+
 def test_short_search_token_returns_422_without_provider_call(authed_client):
     _configure_sourcing(authed_client)
 

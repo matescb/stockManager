@@ -29,6 +29,7 @@ from app.domain.sourcing import service as sourcing_service
 from app.domain.sourcing.factory import make_sourcing_provider
 from app.domain.sourcing.models import PurchasePlan
 from app.domain.sourcing.schemas import (
+    MAX_DISTRIBUTORS,
     PurchasePlanIn,
     PurchasePlanOrdersIn,
     SourcingAlertIn,
@@ -474,6 +475,7 @@ def refresh_purchase_plan(
     "/purchase-plans/{plan_id}/orders",
     dependencies=[Depends(require_role("member"))],
 )
+@limiter.limit("10/minute", key_func=workspace_key)
 def convert_purchase_plan_to_orders(
     request: Request,
     plan_id: UUID,
@@ -717,6 +719,8 @@ def _clean_query_distributors(value: list[str] | None) -> list[str] | None:
     cleaned: list[str] = []
     for item in value:
         cleaned.extend(part.strip() for part in item.split(",") if part.strip())
+    if len(cleaned) > MAX_DISTRIBUTORS:
+        raise ValueError(f"distributors list capped at {MAX_DISTRIBUTORS}")
     return cleaned or None
 
 
@@ -772,6 +776,8 @@ def _default_error_code(status_code: int, category: str, message: str) -> str:
         return ErrorCodes.SOURCING_CURRENCY_MISMATCH
     if status_code == 422 and "override" in normalized:
         return ErrorCodes.SOURCING_OVERRIDE_INVALID
+    if normalized == f"distributors list capped at {MAX_DISTRIBUTORS}":
+        return ErrorCodes.SOURCING_TOO_MANY_DISTRIBUTORS
     if status_code == 422:
         return ErrorCodes.SOURCING_INVALID_REQUEST
     if category == "not_found":
