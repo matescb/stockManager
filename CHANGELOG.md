@@ -13,6 +13,9 @@ the canonical record.
 - **SX-12 / #487** Project Sourcing now uses the four-level TrustedParts
   risk vocabulary, including a light-green Low-Med band and header popover
   legends for Lifecycle and Supply chain risk columns.
+- **SX-11 / #486** Project Sourcing coverage variant prices now represent the
+  purchasable covered lines for the returned distributor combo, including partial
+  coverage, and the UI labels partial totals as covered-line prices.
 - **SX-5 / #480** Project Sourcing keeps the legacy distributor coverage matrix
   shortfall-based while the fewest-distributors variant continues to apply MOQ
   selected quantities for feasibility and totals.

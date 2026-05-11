@@ -88,8 +88,12 @@ Sources: `backend/app/domain/sourcing/coverage.py:45-120`,
 
 Project BOM coverage returns two combination summaries above the per-distributor
 matrix: `lowest_total_price_combo` reuses the purchase-plan optimizer's
-`lowest_total_price` strategy, while `fewest_distributors_combo` finds the smallest
-distributor set that reaches the target coverage. The fewest-distributors search is
+`lowest_total_price` strategy for distributor selection, while
+`fewest_distributors_combo` finds the smallest distributor set that reaches the
+target coverage. Variant totals are the price of covered, purchasable BOM lines
+with pricing for that combination; partial coverage does not force the total to
+`null`. The total is `null` only when no covered, purchasable line has pricing.
+The fewest-distributors search is
 exhaustive through 10 distributors, then switches to a deterministic greedy set-cover
 heuristic that picks the distributor covering the most remaining lines and breaks ties
 by combo cost and distributor name.

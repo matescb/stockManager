@@ -466,8 +466,46 @@ describe("ProjectSourcingPage", () => {
 
     expect(await screen.findByText("Lowest total price")).toBeDefined();
     expect(screen.getByText("DigiKey + Mouser")).toBeDefined();
+    expect(screen.getAllByText("Price").length).toBeGreaterThan(0);
     expect(screen.getAllByText("25 USD").length).toBeGreaterThan(0);
     expect(screen.getAllByText("100%").length).toBeGreaterThan(0);
+  });
+
+  it("Coverage card labels partial variant totals as covered-line prices", async () => {
+    mockReads();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({
+      coverage: {
+        ...sourcingResponse().coverage,
+        lowest_total_price_combo: ["DigiKey"],
+        lowest_total_price_total: "20.00",
+        fewest_distributors_combo: ["DigiKey"],
+        fewest_distributors_total: "20.00",
+      },
+    }));
+
+    renderPage();
+
+    expect(await screen.findByText("Price (covered lines)")).toBeDefined();
+    expect(screen.getByText("1 uncovered line")).toBeDefined();
+    expect(screen.getAllByText("20 USD").length).toBeGreaterThan(0);
+  });
+
+  it("Coverage card explains null covered-line totals", async () => {
+    mockReads();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({
+      coverage: {
+        ...sourcingResponse().coverage,
+        lowest_total_price_combo: ["DigiKey"],
+        lowest_total_price_total: null,
+        fewest_distributors_combo: ["DigiKey"],
+        fewest_distributors_total: null,
+      },
+    }));
+
+    renderPage();
+
+    expect(await screen.findByText("Price (covered lines)")).toBeDefined();
+    expect(screen.getByText("No pricing available on covered lines.")).toBeDefined();
   });
 
   it("Coverage card renders Fewest distributors variant", async () => {
