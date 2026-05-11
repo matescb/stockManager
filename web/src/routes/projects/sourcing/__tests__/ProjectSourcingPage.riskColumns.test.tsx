@@ -42,6 +42,7 @@ describe("ProjectSourcingPage", () => {
     await sourceBom();
     const rohs = screen.getByText("Compliant");
     expect(rohs.className).toContain("text-success");
+    expect(rohs.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
   });
 
   it("lifecycle column is visible by default and renders Obsolete as red", async () => {
@@ -66,6 +67,7 @@ describe("ProjectSourcingPage", () => {
     expect(within(bomRowsTable).getByRole("columnheader", { name: /Lifecycle/ })).toBeDefined();
     const lifecycle = screen.getByLabelText("Lifecycle risk: Obsolete");
     expect(lifecycle.className).toContain("text-danger");
+    expect(lifecycle.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
   });
 
   it("renders Low lifecycle risk as a green pill in the BOM table", async () => {
@@ -88,6 +90,43 @@ describe("ProjectSourcingPage", () => {
     await sourceBom();
     const lifecycle = screen.getByLabelText("Lifecycle risk: Low risk");
     expect(lifecycle.className).toContain("text-success");
+  });
+
+  it("prefixes lifecycle risk tones with distinct hidden icons", async () => {
+    mockReads();
+    const base = sourcingResponse();
+    const tones = [
+      ["Active", "lucide-circle-check"],
+      ["Low-Med", "lucide-circle-alert"],
+      ["Medium", "lucide-triangle-alert"],
+      ["Obsolete", "lucide-octagon-alert"],
+      ["Review pending", "lucide-circle"],
+    ] as const;
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({
+      rows: tones.map(([risk], index) => ({
+        ...base.rows[0],
+        project_entry_id: `entry-tone-${index}`,
+        part_id: `part-tone-${index}`,
+        part_name: `Tone ${index}`,
+        mpn: `TONE-${index}`,
+        best_offer: {
+          ...base.rows[0].best_offer,
+          lifecycle_risk: risk,
+        },
+        risk_flags: [],
+      })),
+    }));
+
+    renderPage();
+
+    await sourceBom();
+    for (const [risk, iconClass] of tones) {
+      const pill = screen.getByLabelText(`Lifecycle risk: ${risk}`);
+      const icon = pill.querySelector("svg");
+      expect(icon?.getAttribute("aria-hidden")).toBe("true");
+      expect(icon?.getAttribute("class")).toContain(iconClass);
+      expect(pill.textContent).toBe(risk);
+    }
   });
 
   it("hides lead time by default but keeps per-row values available from the column menu", async () => {

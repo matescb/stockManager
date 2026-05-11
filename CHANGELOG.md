@@ -12,6 +12,9 @@ the canonical record.
   per-run timeout that logs exit 124 on timeout while preserving cadence.
 - **SA-15 / #507** TrustedParts, Mouser, and DigiKey outbound calls now share
   bounded retry backoff for 429/503 and transient connect/read timeout failures.
+- **SA-18 / #510** Project Sourcing Lifecycle, Supply chain, and RoHS risk
+  pills now include hidden Lucide icon prefixes so severity is not conveyed by
+  colour alone.
 - **SA-8 / #499** Decompose ProjectSourcingPage into a feature folder.
 - **SA-6 / #497** Project Sourcing now runs the audited BOM sourcing POST only
   from an explicit Source click, preserving the display cache without

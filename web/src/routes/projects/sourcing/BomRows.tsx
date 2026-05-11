@@ -1,8 +1,10 @@
 import { useState } from "react";
+import { AlertCircle, AlertTriangle, CheckCircle2, Circle, OctagonAlert } from "lucide-react";
 import { DataTable, type Column } from "@/components/DataTable";
 import { RiskLegendPopover } from "@/components/RiskLegendPopover";
 import { SourcingSourceLabel } from "@/components/SourcingSourceLabel";
 import { LIFECYCLE_LEGEND, SUPPLY_CHAIN_LEGEND } from "@/lib/riskLegends";
+import { lifecycleRiskTone, type RiskTone } from "@/lib/sourcing";
 import { BomDistributorsModal } from "./BomDistributorsModal";
 import {
   formatLeadTime,
@@ -19,11 +21,30 @@ import {
 } from "./sourcingHelpers";
 import type { SourcingBomLine } from "./sourcingTypes";
 
+const RISK_TONE_ICONS = {
+  good: CheckCircle2,
+  "low-warning": AlertCircle,
+  warning: AlertTriangle,
+  danger: OctagonAlert,
+  neutral: Circle,
+} satisfies Record<RiskTone, typeof CheckCircle2>;
+
+function RiskToneIcon({ tone }: { tone: RiskTone }) {
+  const Icon = RISK_TONE_ICONS[tone];
+  return <Icon size={12} aria-hidden="true" />;
+}
+
 function LifecycleRiskPill({ label = "Lifecycle risk", value }: { label?: string; value?: string | null }) {
   const trimmed = value?.trim();
   if (!trimmed) return null;
+  const tone = lifecycleRiskTone(trimmed);
   return (
-    <span className={`pill ${lifecycleRiskClass(trimmed)}`} title={trimmed} aria-label={`${label}: ${trimmed}`}>
+    <span
+      className={`pill inline-flex items-center gap-1 ${lifecycleRiskClass(trimmed)}`}
+      title={trimmed}
+      aria-label={`${label}: ${trimmed}`}
+    >
+      <RiskToneIcon tone={tone} />
       {trimmed}
     </span>
   );
@@ -33,18 +54,20 @@ function RohsRiskPill({ tone }: { tone: "good" | "danger" | "neutral" }) {
   if (tone === "neutral") return <span className="text-muted">—</span>;
   return tone === "danger" ? (
     <span
-      className="pill bg-danger/10 text-danger"
+      className="pill inline-flex items-center gap-1 bg-danger/10 text-danger"
       title={riskTooltip("rohs_non_compliant")}
       aria-label={riskTooltip("rohs_non_compliant")}
     >
+      <RiskToneIcon tone="danger" />
       Non-compliant
     </span>
   ) : (
     <span
-      className="pill bg-success/10 text-success"
+      className="pill inline-flex items-center gap-1 bg-success/10 text-success"
       title="TrustedParts found compliant EU RoHS data for this BOM line."
       aria-label="TrustedParts found compliant EU RoHS data for this BOM line."
     >
+      <RiskToneIcon tone="good" />
       Compliant
     </span>
   );

@@ -242,6 +242,12 @@ classes, tariff and RoHS pills use the same semantic palette, and the
 specifications block is a native collapsed `<details>` panel. No new
 global utility or pill variant is introduced.
 
+Project Sourcing BOM risk pills follow the same palette and also prefix
+Lifecycle, Supply chain, and RoHS status text with `lucide-react` icons.
+The icons are `aria-hidden="true"` so assistive tech reads the existing
+status text/labels, while greyscale and low-vision users still get a
+non-colour severity cue (SA-18 / #510).
+
 ## MpnLookup
 
 `web/src/components/MpnLookup.tsx`. Affordance attached to MPN inputs that
