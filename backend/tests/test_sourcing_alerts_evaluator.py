@@ -1046,13 +1046,16 @@ def test_evaluator_uses_cache_default_true_for_sourcing_alerts(
     monkeypatch,
 ) -> None:
     workspace, user = _workspace(db)
-    part = _part(db, workspace, user)
+    back_in_stock_part = _part(db, workspace, user, mpn="CACHE-BACK")
+    lifecycle_part = _part(db, workspace, user, mpn="CACHE-LIFE")
+    supply_chain_part = _part(db, workspace, user, mpn="CACHE-SUPPLY")
+    tariff_part = _part(db, workspace, user, mpn="CACHE-TARIFF")
     project = _project(db, workspace, user)
     _alert(
         db,
         workspace,
         user,
-        part=part,
+        part=back_in_stock_part,
         alert_type="back_in_stock",
         threshold={},
         last_state={"had_stock": False},
@@ -1061,7 +1064,7 @@ def test_evaluator_uses_cache_default_true_for_sourcing_alerts(
         db,
         workspace,
         user,
-        part=part,
+        part=lifecycle_part,
         alert_type="lifecycle_risk_changed",
         threshold={},
         last_state={"lifecycle_risk": "Active"},
@@ -1070,7 +1073,7 @@ def test_evaluator_uses_cache_default_true_for_sourcing_alerts(
         db,
         workspace,
         user,
-        part=part,
+        part=supply_chain_part,
         alert_type="supply_chain_risk_changed",
         threshold={},
         last_state={"supply_chain_risk": "Stable"},
@@ -1079,7 +1082,7 @@ def test_evaluator_uses_cache_default_true_for_sourcing_alerts(
         db,
         workspace,
         user,
-        part=part,
+        part=tariff_part,
         alert_type="tariff_status_changed",
         threshold={},
         last_state={"tariff": False},
@@ -1098,9 +1101,10 @@ def test_evaluator_uses_cache_default_true_for_sourcing_alerts(
 
     def fake_search(*args: Any, **kwargs: Any) -> Any:
         search_cached.append(kwargs.get("use_cached_data"))
+        mpn = kwargs["mpns"][0]
         return _search_out(
             stock=1,
-            mpn=part.mpn or "MPN",
+            mpn=mpn,
             lifecycle_risk="Obsolete",
             supply_chain_risk="Allocation",
             is_affected_by_tariff=True,
@@ -1120,6 +1124,212 @@ def test_evaluator_uses_cache_default_true_for_sourcing_alerts(
 
     assert search_cached == [True, True, True, True]
     assert bom_cached == [True]
+
+
+def test_evaluator_batches_alerts_with_same_canonical_query(
+    db: Session,
+    monkeypatch,
+) -> None:
+    workspace, user = _workspace(db)
+    part = _part(db, workspace, user, mpn="BATCH-MPN")
+    _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="back_in_stock",
+        threshold={},
+        last_state={"had_stock": False},
+    )
+    _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="out_of_authorized_stock",
+        threshold={},
+        last_state={"had_stock": True},
+    )
+    _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="price_changed",
+        threshold={"delta_pct": 10},
+        last_state={"last_price": "1.00", "last_currency": "USD"},
+    )
+    _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="lifecycle_risk_changed",
+        threshold={},
+        last_state={"lifecycle_risk": "Active"},
+    )
+    _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="supply_chain_risk_changed",
+        threshold={},
+        last_state={"supply_chain_risk": "Stable"},
+    )
+    calls: list[dict[str, Any]] = []
+
+    def fake_search(*args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return _search_out(
+            stock=10,
+            price="1.25",
+            mpn=kwargs["mpns"][0],
+            lifecycle_risk="Obsolete",
+            supply_chain_risk="Allocation",
+        )
+
+    monkeypatch.setattr(alerts_evaluator.sourcing_service, "search", fake_search)
+    _capture_mail(monkeypatch)
+
+    assert evaluate_all_alerts(db) == 5
+
+    assert len(calls) == 1
+    assert calls[0]["workspace"].id == workspace.id
+    assert calls[0]["mpns"] == ["BATCH-MPN"]
+    assert calls[0]["use_cached_data"] is True
+
+
+def test_evaluator_does_not_batch_across_workspaces(
+    db: Session,
+    monkeypatch,
+) -> None:
+    workspace_a, user_a = _workspace(db)
+    workspace_b, user_b = _workspace(db)
+    part_a = _part(db, workspace_a, user_a, mpn="SHARED-BATCH-MPN")
+    part_b = _part(db, workspace_b, user_b, mpn="SHARED-BATCH-MPN")
+    _alert(
+        db,
+        workspace_a,
+        user_a,
+        part=part_a,
+        alert_type="back_in_stock",
+        threshold={},
+        last_state={"had_stock": False},
+    )
+    _alert(
+        db,
+        workspace_b,
+        user_b,
+        part=part_b,
+        alert_type="back_in_stock",
+        threshold={},
+        last_state={"had_stock": False},
+    )
+    seen_workspace_ids: list[uuid.UUID] = []
+
+    def fake_search(*args: Any, **kwargs: Any) -> Any:
+        seen_workspace_ids.append(kwargs["workspace"].id)
+        return _search_out(stock=1, mpn=kwargs["mpns"][0])
+
+    monkeypatch.setattr(alerts_evaluator.sourcing_service, "search", fake_search)
+    _capture_mail(monkeypatch)
+
+    assert evaluate_all_alerts(db) == 2
+
+    assert set(seen_workspace_ids) == {workspace_a.id, workspace_b.id}
+    assert len(seen_workspace_ids) == 2
+
+
+def test_evaluator_does_not_batch_distinct_queries(
+    db: Session,
+    monkeypatch,
+) -> None:
+    workspace, user = _workspace(db)
+    parts = [
+        _part(db, workspace, user, mpn="DISTINCT-1"),
+        _part(db, workspace, user, mpn="DISTINCT-2"),
+        _part(db, workspace, user, mpn="DISTINCT-3"),
+    ]
+    for part in parts:
+        _alert(
+            db,
+            workspace,
+            user,
+            part=part,
+            alert_type="back_in_stock",
+            threshold={},
+            last_state={"had_stock": False},
+        )
+    seen_mpns: list[str] = []
+
+    def fake_search(*args: Any, **kwargs: Any) -> Any:
+        mpn = kwargs["mpns"][0]
+        seen_mpns.append(mpn)
+        return _search_out(stock=1, mpn=mpn)
+
+    monkeypatch.setattr(alerts_evaluator.sourcing_service, "search", fake_search)
+    _capture_mail(monkeypatch)
+
+    assert evaluate_all_alerts(db) == 3
+
+    assert seen_mpns == ["DISTINCT-1", "DISTINCT-2", "DISTINCT-3"]
+
+
+def test_evaluator_dispatches_to_each_alert_in_group(
+    db: Session,
+    monkeypatch,
+) -> None:
+    workspace, user = _workspace(db)
+    part = _part(db, workspace, user, mpn="DISPATCH-BATCH-MPN")
+    back_alert = _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="back_in_stock",
+        threshold={},
+        last_state={"had_stock": False},
+    )
+    price_alert = _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="price_changed",
+        threshold={"delta_pct": 10},
+        last_state={"last_price": "1.00", "last_currency": "USD"},
+    )
+    risk_alert = _alert(
+        db,
+        workspace,
+        user,
+        part=part,
+        alert_type="lifecycle_risk_changed",
+        threshold={},
+        last_state={"lifecycle_risk": "Active"},
+    )
+    calls: list[str] = []
+
+    def fake_search(*args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs["mpns"][0])
+        return _search_out(
+            stock=5,
+            price="1.25",
+            mpn=kwargs["mpns"][0],
+            lifecycle_risk="Obsolete",
+        )
+
+    monkeypatch.setattr(alerts_evaluator.sourcing_service, "search", fake_search)
+    sent = _capture_mail(monkeypatch)
+
+    assert evaluate_all_alerts(db) == 3
+
+    assert calls == ["DISPATCH-BATCH-MPN"]
+    assert len(sent) == 3
+    for alert in (back_alert, price_alert, risk_alert):
+        db.refresh(alert)
+        assert alert.last_notified_at is not None
 
 
 def test_workspace_isolation_two_alerts_same_mpn_different_workspaces(

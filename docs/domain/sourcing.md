@@ -274,7 +274,11 @@ Sources: `backend/alembic/versions/0044_sourcing_alerts.py:20`,
 `evaluate_all_alerts(db)` scans enabled, non-archived rows across workspaces, dispatches
 by `alert_type`, persists `last_checked_at` and `last_evaluation_state`, and commits
 per alert row. Evaluator failures roll back only the current row and are logged so later
-alerts still run. Source: `backend/app/domain/sourcing/alerts_evaluator.py:49-108`
+alerts still run. Search-backed part alerts are grouped by `(workspace_id,
+canonical_query_hash)` before evaluation, so alerts with the same canonical TrustedParts
+query share one `sourcing.service.search(..., use_cached_data=True)` result while still
+evaluating and dispatching independently. Source:
+`backend/app/domain/sourcing/alerts_evaluator.py:90-275`
 
 Alert notification dispatch is intentionally at-most-once. When a triggered alert has
 recipients, the evaluator renders the email, writes `last_notified_at`, and commits
