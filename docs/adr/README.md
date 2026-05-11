@@ -31,3 +31,5 @@ New ADRs follow the template in [STYLE.md](../STYLE.md#adr-pages-docsadrnnnn-slu
 | 0019 | [Self-hosted Umami for product analytics, env-gated tracker](0019-umami-self-hosted-analytics.md) |
 | 0020 | [TrustedParts sourcing provider split](0020-trustedparts-sourcing-provider-split.md) |
 | 0021 | [Periodic jobs run in a backend-cron sidecar](0021-periodic-jobs-scheduler.md) |
+| 0022 | [TrustedParts schema version pinning](0022-trustedparts-schema-version-pinning.md) |
+| 0023 | [Outbound provider backoff](0023-outbound-provider-backoff.md) |

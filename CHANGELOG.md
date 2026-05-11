@@ -10,6 +10,8 @@ the canonical record.
 
 - **SA-17 / #509** Production cron sidecar jobs now have a 600-second
   per-run timeout that logs exit 124 on timeout while preserving cadence.
+- **SA-15 / #507** TrustedParts, Mouser, and DigiKey outbound calls now share
+  bounded retry backoff for 429/503 and transient connect/read timeout failures.
 - **SA-8 / #499** Decompose ProjectSourcingPage into a feature folder.
 - **SA-6 / #497** Project Sourcing now runs the audited BOM sourcing POST only
   from an explicit Source click, preserving the display cache without

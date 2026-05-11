@@ -27,6 +27,24 @@ required for new requests. HTTP 200 responses with `ErrorMessage` become upstrea
 `Messages[]` entries are logged at INFO with a `tp_message` tag and do not fail
 the search.
 
+## Provider Transport
+
+TrustedParts, Mouser, and DigiKey outbound calls use the shared retrying provider
+transport. It retries only 429, 503, `httpx.ConnectError`, and
+`httpx.ReadTimeout`; it does not retry 400/401/403/404/422/500. The retry budget
+is three retries with 0.5s base delay, 8s cap, and full jitter. `Retry-After`
+seconds and HTTP-date headers are honored, capped to the same 8s maximum.
+
+Retry attempts log at INFO and exhausted retry budgets log at WARNING. The
+factory keeps `verify=True` on the underlying transport.
+
+Sources: `backend/app/domain/sourcing/providers/_retry_transport.py:15-229`,
+`backend/app/domain/sourcing/providers/factory.py:13-27`,
+`backend/app/domain/sourcing/client.py:67-81`,
+`backend/app/domain/parts/providers/mouser.py:16-21`,
+`backend/app/domain/parts/providers/digikey.py:45-106`,
+[ADR-0023](../adr/0023-outbound-provider-backoff.md)
+
 ## TrustedParts Gap Fields (TPS-4)
 
 The adapter maps the Inventory API v2 fields that were previously dropped into public

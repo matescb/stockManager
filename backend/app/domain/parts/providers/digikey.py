@@ -17,9 +17,8 @@ import time
 from typing import Any, Callable
 from urllib.parse import quote
 
-import httpx
-
 from app.domain.parts.providers.base import MpnLookupResult
+from app.domain.sourcing.providers import make_retrying_client
 
 _API_BASE = "https://api.digikey.com"
 _TOKEN_PATH = "/v1/oauth2/token"
@@ -43,7 +42,7 @@ _FOOTPRINT_KEYS = {
 
 def _post_token(client_id: str, client_secret: str) -> dict[str, Any]:
     """Network seam — tests monkeypatch this."""
-    with httpx.Client(timeout=_TIMEOUT_SEC) as client:
+    with make_retrying_client(provider_name="digikey", timeout=_TIMEOUT_SEC) as client:
         resp = client.post(
             f"{_API_BASE}{_TOKEN_PATH}",
             data={
@@ -77,7 +76,7 @@ def _get_product_details(
     """Network seam. Returns (status_code, json_body). Lets the caller
     distinguish 404 (no match) from 200 (found) without raising."""
     url = f"{_API_BASE}{_PRODUCT_DETAILS_PATH.format(mpn=quote(mpn, safe=''))}"
-    with httpx.Client(timeout=_TIMEOUT_SEC) as client:
+    with make_retrying_client(provider_name="digikey", timeout=_TIMEOUT_SEC) as client:
         resp = client.get(url, headers=_digikey_headers(token, client_id))
     try:
         body = resp.json()
@@ -96,7 +95,7 @@ def _post_keyword_search(
     url = f"{_API_BASE}{_KEYWORD_SEARCH_PATH}"
     payload = {"Keywords": keywords, "Limit": limit}
     headers = {**_digikey_headers(token, client_id), "Content-Type": "application/json"}
-    with httpx.Client(timeout=_TIMEOUT_SEC) as client:
+    with make_retrying_client(provider_name="digikey", timeout=_TIMEOUT_SEC) as client:
         resp = client.post(url, headers=headers, json=payload)
     try:
         body = resp.json()
