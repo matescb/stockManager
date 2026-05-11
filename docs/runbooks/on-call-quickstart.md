@@ -77,7 +77,15 @@ sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod ps
 ```
 
 Expect: `db` healthy, `backend` healthy, `web` running, `backend-init`
-exited with code 0.
+exited with code 0. Cron sidecars should also be running:
+
+- `backend-cron` runs `sourcing-cache-sweep` every 3600 seconds.
+- `backend-cron-alerts` runs `sourcing-alerts-evaluate` every 900 seconds.
+
+Both cron sidecars wrap each job run in `timeout 600`. Log line `timed out
+after 600s (exit=124)` means the job hit the 10-minute cap and was
+terminated; other non-zero exits are logged as `failed (exit=<code>)`. The
+sidecar loop stays alive after either case and sleeps until the next tick.
 
 If `backend` is `Restarting`:
 ```bash

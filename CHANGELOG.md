@@ -8,6 +8,8 @@ the canonical record.
 
 ## 2026-05 — feedback brief fixes
 
+- **SA-17 / #509** Production cron sidecar jobs now have a 600-second
+  per-run timeout that logs exit 124 on timeout while preserving cadence.
 - **SA-8 / #499** Decompose ProjectSourcingPage into a feature folder.
 - **SA-6 / #497** Project Sourcing now runs the audited BOM sourcing POST only
   from an explicit Source click, preserving the display cache without
