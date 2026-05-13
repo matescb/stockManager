@@ -67,13 +67,13 @@ function canSelectOffer(line: PurchasePlanLine, offer: PurchasePlanOffer): boole
 type OfferRow = {
   key: string;
   offer: PurchasePlanOffer;
+  isCurrent: boolean;
 };
 
 export default function OverrideOfferModal({ line, onSelect, onClose }: Props) {
   if (!line) return null;
 
   const rows: OfferRow[] = (line.available_offers ?? [])
-    .filter(offer => !isCurrentOffer(line, offer))
     .map((offer, index) => ({
       key: [
         offer.distributor ?? "unknown",
@@ -83,6 +83,7 @@ export default function OverrideOfferModal({ line, onSelect, onClose }: Props) {
         index,
       ].join("-"),
       offer,
+      isCurrent: isCurrentOffer(line, offer),
     }));
 
   const columns: Column<OfferRow>[] = [
@@ -90,7 +91,12 @@ export default function OverrideOfferModal({ line, onSelect, onClose }: Props) {
       key: "distributor",
       header: "Distributor",
       accessor: row => row.offer.distributor ?? "",
-      render: row => <div className="font-medium">{row.offer.distributor ?? "-"}</div>,
+      render: row => (
+        <div>
+          <div className="font-medium">{row.offer.distributor ?? "-"}</div>
+          {row.isCurrent ? <div className="text-xs text-muted">Current selection</div> : null}
+        </div>
+      ),
     },
     {
       key: "mpn",
@@ -155,10 +161,10 @@ export default function OverrideOfferModal({ line, onSelect, onClose }: Props) {
         <button
           type="button"
           className="btn"
-          disabled={!canSelectOffer(line, row.offer)}
+          disabled={row.isCurrent || !canSelectOffer(line, row.offer)}
           onClick={() => onSelect(line, row.offer)}
         >
-          Select
+          {row.isCurrent ? "Current" : "Select"}
         </button>
       ),
       align: "right",

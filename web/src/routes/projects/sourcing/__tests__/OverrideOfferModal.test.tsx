@@ -98,4 +98,34 @@ describe("OverrideOfferModal", () => {
     expect(onSelect.mock.calls[0][0].id).toBe("line-1");
     expect(onSelect.mock.calls[0][1].distributor).toBe("Mouser");
   });
+
+  it("keeps the current offer visible with a disabled hint row", () => {
+    render(
+      <OverrideOfferModal
+        line={{
+          ...line(),
+          available_offers: [
+            {
+              mpn: "STM32F103C8T6",
+              distributor: "DigiKey",
+              stock: 100,
+              unit_price: "2.00",
+              currency: "USD",
+              packaging: "Cut Tape",
+              moq: 1,
+              lead_time_days: 3,
+              url: "https://example.com/digikey/stm32",
+            },
+          ],
+        }}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Current selection")).toBeDefined();
+    expect(
+      (screen.getByRole("button", { name: "Current" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
 });

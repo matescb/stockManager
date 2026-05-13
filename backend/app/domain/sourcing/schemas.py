@@ -17,6 +17,8 @@ from pydantic import (
     field_validator,
 )
 
+from app.domain.sourcing.constants import INFINITE_LEAD_TIME_DAYS
+
 MAX_DISTRIBUTORS = 25
 
 
@@ -464,7 +466,11 @@ class SourcingBomOfferOut(BaseModel):
     fx_rate_date: date | None = None
     packaging: str | None = None
     moq: int | None = None
-    lead_time_days: int | None = None
+    lead_time_days: int | None = Field(
+        default=None,
+        ge=0,
+        lt=INFINITE_LEAD_TIME_DAYS,
+    )
     price_breaks: list[SourcingBomPriceBreakOut] = Field(default_factory=list)
     price_breaks_converted: list[SourcingBomPriceBreakOut] | None = None
     url: str | None = None

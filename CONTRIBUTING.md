@@ -13,6 +13,7 @@
 3. Run `pytest` (backend) and `npm run build` (frontend) before marking the PR ready for review.
 4. Add screenshots for any visible UI changes.
 5. Link the issue: use `Closes #N` if this PR fully resolves it, or `Refs #N` if further work remains.
+6. Keep PRs narrowly scoped. If an umbrella/backlog issue requires bundling otherwise independent changes, state why in the PR body and list the merge-order or revert-risk notes reviewers need.
 
 ## Multi-step issues rule
 

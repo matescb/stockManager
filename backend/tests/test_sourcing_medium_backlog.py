@@ -10,6 +10,7 @@ from fastapi import HTTPException
 
 from app.domain.sourcing import service as sourcing_service
 from app.domain.sourcing.budget import BudgetTracker
+from app.domain.sourcing.constants import INFINITE_LEAD_TIME_DAYS
 from app.domain.sourcing.schemas import (
     SourcingBomLineOut,
     SourcingBomOfferOut,
@@ -131,6 +132,62 @@ def test_bom_row_extended_cost_uses_converted_best_offer(monkeypatch):
     assert row.est_extended_cost == Decimal("5.0000")
 
 
+def test_bom_row_extended_cost_is_not_recomputed_without_fx():
+    offer = SourcingBomOfferOut(
+        mpn="NOFX",
+        distributor="DigiKey",
+        stock=100,
+        unit_price=Decimal("2.00"),
+        currency="USD",
+        price_breaks=[
+            SourcingBomPriceBreakOut(quantity=1, unit_price=Decimal("2.00")),
+            SourcingBomPriceBreakOut(quantity=5, unit_price=Decimal("1.00")),
+        ],
+    )
+    row = SourcingBomLineOut(
+        project_entry_id=uuid4(),
+        part_id=uuid4(),
+        part_name="No FX Line",
+        required=5,
+        available=0,
+        substitute_available=0,
+        short_by=5,
+        authorized_stock=100,
+        offers=[offer],
+        best_offer=offer,
+        est_extended_cost=Decimal("10.00"),
+    )
+
+    assert sourcing_service._apply_fx_to_bom_rows(None, [row], requested_currency=None) is None
+    assert row.est_extended_cost == Decimal("10.00")
+
+
+def test_offer_extended_cost_preserves_zero_shortage_and_quantizes_products():
+    offer = SourcingBomOfferOut(
+        mpn="QTY",
+        distributor="DigiKey",
+        stock=100,
+        unit_price=Decimal("0.333333"),
+        currency="USD",
+        price_breaks=[
+            SourcingBomPriceBreakOut(quantity=1, unit_price=Decimal("0.333333")),
+        ],
+    )
+
+    assert sourcing_service._offer_extended_cost(offer, 0) == Decimal("0")
+    assert sourcing_service._offer_extended_cost(offer, 3) == Decimal("1.0000")
+
+
+def test_infinite_lead_time_sentinel_is_not_valid_wire_output():
+    with pytest.raises(ValueError):
+        SourcingBomOfferOut(
+            mpn="SENTINEL",
+            distributor="DigiKey",
+            stock=1,
+            lead_time_days=INFINITE_LEAD_TIME_DAYS,
+        )
+
+
 def test_wire_prices_parse_as_decimal_without_float_round_trip():
     distributor = SourcingDistributor(
         name="DigiKey",
@@ -150,4 +207,3 @@ def test_budget_tracker_records_concurrent_updates():
         list(pool.map(lambda _index: tracker.record(workspace_id, 1), range(40)))
 
     assert tracker._window_total(workspace_id, 10) == 40
-

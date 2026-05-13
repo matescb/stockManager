@@ -6,7 +6,7 @@ import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from uuid import UUID
 
@@ -63,6 +63,7 @@ TRUSTEDPARTS_LINKS = SourcingAttributionLinks(
     attribution="https://www.trustedparts.com/en/about",
 )
 TARGET_ROHS_REGION = "EU"
+MONEY_4DP = Decimal("0.0001")
 _SOURCING_FILTER_ALERT_TYPES = {
     "back_in_stock",
     "out_of_authorized_stock",
@@ -1027,7 +1028,8 @@ def _apply_fx_to_bom_rows(
             )
             statuses.append(status)
             row_unavailable = row_unavailable or status == "unavailable"
-        row.est_extended_cost = _offer_extended_cost(row.best_offer, row.short_by)
+        if requested is not None:
+            row.est_extended_cost = _offer_extended_cost(row.best_offer, row.short_by)
         row.fx_status = "unavailable" if row_unavailable else None
 
     if requested is None:
@@ -1439,12 +1441,14 @@ def _offer_extended_cost(
     offer: SourcingBomOfferOut | None,
     qty: int,
 ) -> Decimal | None:
-    if offer is None or qty <= 0:
+    if offer is None or qty < 0:
         return None
+    if qty == 0:
+        return Decimal("0")
     unit_price = _offer_unit_price_at_qty(offer, qty)
     if unit_price is None:
         return None
-    return unit_price * Decimal(qty)
+    return (unit_price * Decimal(qty)).quantize(MONEY_4DP, rounding=ROUND_HALF_UP)
 
 
 def _offer_unit_price_at_qty(

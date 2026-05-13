@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
-import hashlib
+import hmac
 from typing import Any
 
+from app.core.config import settings
 from app.core.secrets import decrypt
 from app.core.version import git_sha
 from app.domain.sourcing.client import TrustedPartsClient
 
 
 def _workspace_user_agent_fragment(workspace_id: Any) -> str:
-    digest = hashlib.sha256(str(workspace_id).encode("utf-8")).hexdigest()[:12]
+    digest = hmac.new(
+        settings().SESSION_SECRET.encode("utf-8"),
+        str(workspace_id).encode("utf-8"),
+        "sha256",
+    ).hexdigest()[:12]
     return f"workspace_sha={digest}"
 
 
