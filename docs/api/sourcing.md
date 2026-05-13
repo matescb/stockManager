@@ -89,6 +89,7 @@ List current workspace sourcing alerts.
 - The service filters every query by `workspace_id`; archived rows are excluded unless requested.
 - `total` is counted after filters and before `limit`/`offset`.
 - `include_archived=true` is list-only. GET-by-id, PATCH, and DELETE treat archived rows as not found.
+- `threshold` is advertised in OpenAPI as a discriminated union keyed by `alert_type`, while responses omit the inner discriminator and keep the existing payload shape.
 - Source: `backend/app/api/routes/sourcing.py:156-193`.
 - Service: `backend/app/domain/sourcing/service.py:138-195`.
 
@@ -184,7 +185,9 @@ Patch mutable alert fields.
 
 **Request**
 
-Path: `alert_id` is a sourcing alert UUID in the current workspace. Body accepts the same fields as create except `alert_type`; sending `alert_type` returns `422`.
+Path: `alert_id` is a sourcing alert UUID in the current workspace. Body accepts the same mutable fields as create except `alert_type`; sending top-level `alert_type` returns `422`.
+
+`threshold: null` is accepted as a no-op and leaves the stored threshold unchanged. When a PATCH changes `threshold`, the threshold object is validated at request parsing as the same discriminated union used by create; include the threshold discriminator inside the object, for example `{ "threshold": { "alert_type": "stock_below", "qty": 20 } }`. The response still omits the inner `alert_type` and returns `{ "threshold": { "qty": 20 } }`.
 
 **Response** — `200 OK` (envelope: `{ data, status }`)
 
@@ -193,7 +196,7 @@ Shape matches one item from `GET /api/sourcing/alerts` `data.items`.
 **Errors**
 
 - `404 Not Found` — `alert_id` is missing, archived, or foreign to the workspace; target part/project or notify user is missing or foreign.
-- `422 Unprocessable Entity` — invalid threshold, invalid target scope, `alert_type` in the patch body, or malformed body.
+- `422 Unprocessable Entity` — invalid threshold shape under `body.threshold`, invalid target scope, top-level `alert_type` in the patch body, or malformed body.
 
 **Notes**
 

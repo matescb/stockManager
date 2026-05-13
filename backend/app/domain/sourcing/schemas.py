@@ -343,20 +343,20 @@ _THRESHOLD_ADAPTER = TypeAdapter(SourcingAlertThreshold)
 
 def validate_alert_threshold(
     alert_type: SourcingAlertType | str,
-    threshold: SourcingAlertThreshold | dict[str, Any],
+    value: SourcingAlertThreshold | dict[str, Any],
 ) -> SourcingAlertThreshold:
-    if isinstance(threshold, BaseModel) and getattr(threshold, "alert_type", None) == alert_type:
-        return threshold
-    if isinstance(threshold, BaseModel):
-        threshold = threshold.model_dump(mode="python")
-    return _THRESHOLD_ADAPTER.validate_python({"alert_type": alert_type, **threshold})
+    if isinstance(value, BaseModel) and getattr(value, "alert_type", None) == alert_type:
+        return value
+    if isinstance(value, BaseModel):
+        value = value.model_dump(mode="python")
+    return _THRESHOLD_ADAPTER.validate_python({"alert_type": alert_type, **value})
 
 
 def dump_alert_threshold(
     alert_type: SourcingAlertType | str,
-    threshold: SourcingAlertThreshold | dict[str, Any],
+    value: SourcingAlertThreshold | dict[str, Any],
 ) -> dict[str, Any]:
-    return validate_alert_threshold(alert_type, threshold).model_dump(mode="json")
+    return validate_alert_threshold(alert_type, value).model_dump(mode="json")
 
 
 class SourcingAlertIn(BaseModel):
@@ -395,7 +395,7 @@ class SourcingAlertPatch(BaseModel):
     alert_type: SourcingAlertType | None = None
     part_id: UUID | None = None
     project_id: UUID | None = None
-    threshold: dict[str, Any] | None = None
+    threshold: SourcingAlertThresholdIn | None = None
     country_code: str | None = Field(default=None, min_length=2, max_length=2)
     currency_code: str | None = Field(default=None, min_length=3, max_length=3)
     distributor_filter: list[str] | None = Field(default=None, max_length=MAX_DISTRIBUTORS)
@@ -427,7 +427,7 @@ class SourcingAlertOut(BaseModel):
     alert_type: SourcingAlertType
     part_id: UUID | None = None
     project_id: UUID | None = None
-    threshold: dict[str, Any]
+    threshold: SourcingAlertThreshold
     country_code: str | None = None
     currency_code: str | None = None
     distributor_filter: list[str] | None = None
@@ -440,6 +440,11 @@ class SourcingAlertOut(BaseModel):
     created_by: UUID | None = None
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("threshold", mode="before")
+    @classmethod
+    def _threshold_with_alert_type(cls, value: Any, info: ValidationInfo) -> Any:
+        return _threshold_with_parent_alert_type(value, info)
 
 
 class SourcingAlertListOut(BaseModel):

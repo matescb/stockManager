@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
-from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -285,6 +283,9 @@ def update_alert(
 
     alert = get_alert(db, workspace=workspace, alert_id=alert_id)
     data = payload.model_dump(exclude_unset=True)
+    threshold: SourcingAlertThreshold | dict[str, Any] = cast(dict[str, Any], alert.threshold)
+    if "threshold" in payload.model_fields_set and payload.threshold is not None:
+        threshold = payload.threshold
     values = _validated_alert_values(
         db,
         workspace=workspace,
@@ -292,7 +293,7 @@ def update_alert(
             alert_type=alert.alert_type,
             part_id=data.get("part_id", alert.part_id),
             project_id=data.get("project_id", alert.project_id),
-            threshold=data.get("threshold", alert.threshold),
+            threshold=threshold,
             country_code=data.get("country_code", alert.country_code),
             currency_code=data.get("currency_code", alert.currency_code),
             distributor_filter=data.get("distributor_filter", alert.distributor_filter),
@@ -365,7 +366,7 @@ def _validated_alert_values(
     if project_id is not None:
         assert_in_workspace(db, Project, project_id, workspace.id, label="project")
 
-    validated_threshold = _validated_threshold(alert_type, values.threshold)
+    validated_threshold = dump_alert_threshold(alert_type, values.threshold)
     validated_notify_user_ids = _validated_notify_user_ids(
         db,
         workspace_id=workspace.id,
@@ -388,21 +389,6 @@ def _validated_alert_values(
         "cooldown_seconds": values.cooldown_seconds,
         "enabled": values.enabled,
     }
-
-
-def _validated_threshold(
-    alert_type: SourcingAlertType | str,
-    threshold: SourcingAlertThreshold | dict[str, Any],
-) -> dict[str, Any]:
-    try:
-        return dump_alert_threshold(alert_type, threshold)
-    except ValidationError as exc:
-        raise_http(
-            422,
-            "sourcing_alert.invalid_threshold",
-            "invalid threshold for alert_type",
-            errors=json.loads(exc.json()),
-        )
 
 
 def _validated_notify_user_ids(
