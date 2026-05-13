@@ -145,7 +145,6 @@ export function sourcingResponse(overrides: Record<string, unknown> = {}) {
       total_bom_cost: "30.00",
       cost_per_single_bom: "15.00",
       purchase_to_pay_cost: "25.00",
-      est_purchase_cost: "25.00",
       blocking_lines_now: ["entry-2"],
       blocking_lines_after_purchase: ["entry-1"],
     },

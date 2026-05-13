@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from threading import Lock
 from typing import Callable, Literal
 from uuid import UUID
 
@@ -30,33 +31,44 @@ class BudgetTracker:
     def __init__(self, *, clock: Callable[[], float] | None = None) -> None:
         self._clock = clock or time.monotonic
         self._events: dict[tuple[UUID, int], list[tuple[float, int]]] = {}
+        self._lock = Lock()
 
     def record(self, workspace_id: UUID, parts_count: int) -> None:
         self._validate_parts_count(parts_count)
         now = self._clock()
-        for window_seconds in _WINDOWS:
-            self._events.setdefault((workspace_id, window_seconds), []).append((now, parts_count))
-        self._prune(workspace_id)
+        with self._lock:
+            for window_seconds in _WINDOWS:
+                self._events.setdefault((workspace_id, window_seconds), []).append(
+                    (now, parts_count)
+                )
+            self._prune(workspace_id)
 
     def check(self, workspace_id: UUID, parts_count: int) -> BudgetVerdict:
         self._validate_parts_count(parts_count)
-        self._prune(workspace_id)
+        with self._lock:
+            self._prune(workspace_id)
 
-        for window_seconds, limit in HARD_LIMITS:
-            if self._window_total(workspace_id, window_seconds) + parts_count > limit:
-                return BudgetVerdict(
-                    allow=False,
-                    mode="blocked",
-                    reason=f"hard limit exceeded for {self._window_label(window_seconds)} window",
-                )
+            for window_seconds, limit in HARD_LIMITS:
+                if self._window_total(workspace_id, window_seconds) + parts_count > limit:
+                    return BudgetVerdict(
+                        allow=False,
+                        mode="blocked",
+                        reason=(
+                            "hard limit exceeded for "
+                            f"{self._window_label(window_seconds)} window"
+                        ),
+                    )
 
-        for window_seconds, limit in SOFT_LIMITS:
-            if self._window_total(workspace_id, window_seconds) + parts_count > limit:
-                return BudgetVerdict(
-                    allow=True,
-                    mode="degraded",
-                    reason=f"soft limit exceeded for {self._window_label(window_seconds)} window",
-                )
+            for window_seconds, limit in SOFT_LIMITS:
+                if self._window_total(workspace_id, window_seconds) + parts_count > limit:
+                    return BudgetVerdict(
+                        allow=True,
+                        mode="degraded",
+                        reason=(
+                            "soft limit exceeded for "
+                            f"{self._window_label(window_seconds)} window"
+                        ),
+                    )
 
         return BudgetVerdict(
             allow=True,

@@ -214,7 +214,7 @@ def bom_buyability_report(
                         if capacity.can_build_after_purchase < build_quantity
                         else 0
                     ),
-                    est_purchase_cost=capacity.est_purchase_cost,
+                    est_purchase_cost=capacity.purchase_to_pay_cost,
                     partial=sourced.partial,
                 )
             )

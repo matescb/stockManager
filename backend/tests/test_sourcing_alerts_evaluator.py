@@ -1241,6 +1241,56 @@ def test_evaluator_does_not_batch_across_workspaces(
     assert len(seen_workspace_ids) == 2
 
 
+def test_provider_exception_in_one_workspace_does_not_block_other_workspaces(
+    db: Session,
+    monkeypatch,
+) -> None:
+    workspace_a, user_a = _workspace(db)
+    workspace_b, user_b = _workspace(db)
+    part_a = _part(db, workspace_a, user_a, mpn="BROKEN-PROVIDER")
+    part_b = _part(db, workspace_b, user_b, mpn="HEALTHY-PROVIDER")
+    alert_a = _alert(
+        db,
+        workspace_a,
+        user_a,
+        part=part_a,
+        alert_type="back_in_stock",
+        threshold={},
+        last_state={"had_stock": False},
+    )
+    alert_b = _alert(
+        db,
+        workspace_b,
+        user_b,
+        part=part_b,
+        alert_type="back_in_stock",
+        threshold={},
+        last_state={"had_stock": False},
+    )
+    db.commit()
+    seen_workspace_ids: list[uuid.UUID] = []
+
+    def fake_search(*args: Any, **kwargs: Any) -> Any:
+        workspace_id = kwargs["workspace"].id
+        seen_workspace_ids.append(workspace_id)
+        if workspace_id == workspace_a.id:
+            raise RuntimeError("provider unavailable")
+        return _search_out(stock=1, mpn=kwargs["mpns"][0])
+
+    monkeypatch.setattr(alerts_evaluator.sourcing_service, "search", fake_search)
+    sent = _capture_mail(monkeypatch)
+
+    assert evaluate_all_alerts(db) == 2
+
+    assert set(seen_workspace_ids) == {workspace_a.id, workspace_b.id}
+    assert len(sent) == 1
+    db.refresh(alert_a)
+    db.refresh(alert_b)
+    assert alert_a.last_checked_at is None
+    assert alert_b.last_checked_at is not None
+    assert alert_b.last_notified_at is not None
+
+
 def test_evaluator_does_not_batch_distinct_queries(
     db: Session,
     monkeypatch,

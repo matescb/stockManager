@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
+from app.domain.sourcing.constants import INFINITE_LEAD_TIME_DAYS
 from app.domain.sourcing.pricing import best_unit_price_at_qty
 from app.domain.sourcing.schemas import SourcingBomLineOut, SourcingBomOfferOut
 
@@ -24,7 +25,6 @@ _VALID_STRATEGIES: set[str] = {
     "preferred_first",
 }
 _INFINITE_PRICE = Decimal("Infinity")
-_INFINITE_LEAD_TIME = 10**9
 
 
 @dataclass(frozen=True)
@@ -291,7 +291,7 @@ def _fastest_key(candidate: _Candidate) -> tuple[int, Decimal, tuple[str, str, s
     lead_time = (
         candidate.offer.lead_time_days
         if candidate.offer.lead_time_days is not None
-        else _INFINITE_LEAD_TIME
+        else INFINITE_LEAD_TIME_DAYS
     )
     return lead_time, candidate.unit_price, _candidate_alpha_key(candidate)
 

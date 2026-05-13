@@ -17,7 +17,18 @@ from pydantic import (
     field_validator,
 )
 
+from app.domain.sourcing.constants import INFINITE_LEAD_TIME_DAYS
+
 MAX_DISTRIBUTORS = 25
+
+
+def _decimal_from_wire(value: Any) -> Decimal | None:
+    if value is None or isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
+
+
+WireDecimal = Annotated[Decimal, BeforeValidator(_decimal_from_wire)]
 
 
 class SourcingQuery(BaseModel):
@@ -31,7 +42,7 @@ class SourcingPriceBreak(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     quantity: int
-    unit_price: float
+    unit_price: WireDecimal
     formatted_amount: str | None = None
     text: str | None = None
 
@@ -60,7 +71,7 @@ class SourcingDistributor(BaseModel):
     moq: int | None = None
     lead_time_days: int | None = None
     stock: int | None = None
-    unit_price: float | None = None
+    unit_price: WireDecimal | None = None
     currency: str | None = None
     unit_price_converted: Decimal | None = None
     currency_displayed: str | None = None
@@ -455,7 +466,11 @@ class SourcingBomOfferOut(BaseModel):
     fx_rate_date: date | None = None
     packaging: str | None = None
     moq: int | None = None
-    lead_time_days: int | None = None
+    lead_time_days: int | None = Field(
+        default=None,
+        ge=0,
+        lt=INFINITE_LEAD_TIME_DAYS,
+    )
     price_breaks: list[SourcingBomPriceBreakOut] = Field(default_factory=list)
     price_breaks_converted: list[SourcingBomPriceBreakOut] | None = None
     url: str | None = None
@@ -519,11 +534,6 @@ class BuildCapacityOut(BaseModel):
             "Sum of short quantity times best-offer unit price across priced "
             "lines that are not blocking after authorized supply."
         ),
-    )
-    est_purchase_cost: Decimal | None = Field(
-        default=None,
-        deprecated=True,
-        description="Deprecated alias for purchase_to_pay_cost; remove after SX-8.",
     )
     blocking_lines_now: list[UUID]
     blocking_lines_after_purchase: list[UUID]

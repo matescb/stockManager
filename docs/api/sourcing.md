@@ -294,7 +294,6 @@ Path: `project_id` is a project UUID in the current workspace.
       "total_bom_cost": "2.00",
       "cost_per_single_bom": "1.00",
       "purchase_to_pay_cost": "2.00",
-      "est_purchase_cost": "2.00",
       "blocking_lines_now": [],
       "blocking_lines_after_purchase": []
     },
@@ -347,8 +346,7 @@ Sources: `backend/app/domain/sourcing/service.py:1322-1386`,
   rounded half-up to 2 decimal places, or `null` when no priced BOM cost is
   available. `capacity.purchase_to_pay_cost` sums
   `short_by * best_offer.unit_price` for priced rows that are not blocking after
-  authorized supply. `capacity.est_purchase_cost` is a deprecated alias of
-  `purchase_to_pay_cost` for one release.
+  authorized supply.
 - Capacity totals use converted/display prices when available and skip rows whose displayed currency does not match the selected total currency, so mixed native currencies are not added together.
 - `coverage.best_single_distributor`, `coverage.best_two_distributor_combo`, and the
   per-distributor matrix rows use legacy shortfall coverage: an offer covers a row

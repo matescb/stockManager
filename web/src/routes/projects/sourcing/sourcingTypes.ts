@@ -95,7 +95,6 @@ export type SourcingBomResponse = {
     total_bom_cost?: string | number | null;
     cost_per_single_bom?: string | number | null;
     purchase_to_pay_cost?: string | number | null;
-    est_purchase_cost?: string | number | null;
     blocking_lines_now: string[];
     blocking_lines_after_purchase: string[];
   };

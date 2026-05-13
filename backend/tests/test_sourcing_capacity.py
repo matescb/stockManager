@@ -517,7 +517,7 @@ def test_cost_totals_skip_incompatible_display_currency_rows():
     assert capacity.purchase_to_pay_cost == Decimal("15.00")
 
 
-def test_decimal_serialisation_for_both_costs():
+def test_decimal_serialisation_for_capacity_costs():
     capacity = compute_build_capacity(
         [
             _line(
@@ -539,5 +539,4 @@ def test_decimal_serialisation_for_both_costs():
     assert isinstance(payload["cost_per_single_bom"], str)
     assert payload["purchase_to_pay_cost"] == "62.50"
     assert isinstance(payload["purchase_to_pay_cost"], str)
-    assert payload["est_purchase_cost"] == "62.50"
-    assert isinstance(payload["est_purchase_cost"], str)
+    assert "est_purchase_cost" not in payload

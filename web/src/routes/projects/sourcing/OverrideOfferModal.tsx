@@ -1,3 +1,4 @@
+import { DataTable, type Column } from "@/components/DataTable";
 import { Modal } from "@/components/Modal";
 import type { PurchasePlanLine, PurchasePlanOffer } from "./purchasePlanTypes";
 
@@ -63,10 +64,112 @@ function canSelectOffer(line: PurchasePlanLine, offer: PurchasePlanOffer): boole
   );
 }
 
+type OfferRow = {
+  key: string;
+  offer: PurchasePlanOffer;
+  isCurrent: boolean;
+};
+
 export default function OverrideOfferModal({ line, onSelect, onClose }: Props) {
   if (!line) return null;
 
-  const offers = (line.available_offers ?? []).filter(offer => !isCurrentOffer(line, offer));
+  const rows: OfferRow[] = (line.available_offers ?? [])
+    .map((offer, index) => ({
+      key: [
+        offer.distributor ?? "unknown",
+        offer.mpn ?? "mpn",
+        offer.url ?? "no-url",
+        String(offer.unit_price ?? "no-price"),
+        index,
+      ].join("-"),
+      offer,
+      isCurrent: isCurrentOffer(line, offer),
+    }));
+
+  const columns: Column<OfferRow>[] = [
+    {
+      key: "distributor",
+      header: "Distributor",
+      accessor: row => row.offer.distributor ?? "",
+      render: row => (
+        <div>
+          <div className="font-medium">{row.offer.distributor ?? "-"}</div>
+          {row.isCurrent ? <div className="text-xs text-muted">Current selection</div> : null}
+        </div>
+      ),
+    },
+    {
+      key: "mpn",
+      header: "MPN",
+      accessor: row => row.offer.mpn ?? line.mpn_searched,
+      render: row => row.offer.mpn ?? line.mpn_searched,
+    },
+    {
+      key: "stock",
+      header: "Stock",
+      accessor: row => numericValue(row.offer.stock),
+      render: row => formatValue(row.offer.stock),
+      align: "right",
+    },
+    {
+      key: "unit_price",
+      header: "Unit price",
+      accessor: row => numericValue(row.offer.unit_price),
+      render: row => formatMoney(row.offer.unit_price, row.offer.currency),
+      align: "right",
+    },
+    {
+      key: "packaging",
+      header: "Packaging",
+      accessor: row => row.offer.packaging ?? "",
+      render: row => formatValue(row.offer.packaging),
+    },
+    {
+      key: "moq",
+      header: "MOQ",
+      accessor: row => numericValue(row.offer.moq),
+      render: row => formatValue(row.offer.moq),
+      align: "right",
+    },
+    {
+      key: "lead_time",
+      header: "Lead time",
+      accessor: row => row.offer.lead_time_days,
+      render: row => formatLeadTime(row.offer.lead_time_days),
+      align: "right",
+    },
+    {
+      key: "offer",
+      header: "Offer",
+      accessor: row => row.offer.url ?? "",
+      render: row => row.offer.url ? (
+        <a
+          className="text-accent hover:underline"
+          href={row.offer.url}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Open
+        </a>
+      ) : "-",
+    },
+    {
+      key: "action",
+      header: "Action",
+      headerLabel: "Action",
+      render: row => (
+        <button
+          type="button"
+          className="btn"
+          disabled={row.isCurrent || !canSelectOffer(line, row.offer)}
+          onClick={() => onSelect(line, row.offer)}
+        >
+          {row.isCurrent ? "Current" : "Select"}
+        </button>
+      ),
+      align: "right",
+    },
+  ];
 
   return (
     <Modal
@@ -90,71 +193,19 @@ export default function OverrideOfferModal({ line, onSelect, onClose }: Props) {
       </div>
 
       <div className="overflow-auto">
-        {offers.length === 0 ? (
+        {rows.length === 0 ? (
           <div className="p-4 text-sm text-muted">
             No cached alternate offers are available for this line.
           </div>
         ) : (
-          <table className="table text-sm">
-            <thead>
-              <tr>
-                <th>Distributor</th>
-                <th>MPN</th>
-                <th className="text-right">Stock</th>
-                <th className="text-right">Unit price</th>
-                <th>Packaging</th>
-                <th className="text-right">MOQ</th>
-                <th className="text-right">Lead time</th>
-                <th>Offer</th>
-                <th className="text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {offers.map((offer, index) => {
-                const key = `${offer.distributor ?? "unknown"}-${offer.mpn ?? "mpn"}-${index}`;
-                const isCurrent =
-                  offer.distributor === line.selected_distributor &&
-                  offer.unit_price === line.selected_unit_price &&
-                  offer.currency === line.selected_currency;
-                return (
-                  <tr key={key}>
-                    <td>
-                      <div className="font-medium">{offer.distributor ?? "-"}</div>
-                      {isCurrent && <div className="text-xs text-muted">Current selection</div>}
-                    </td>
-                    <td>{offer.mpn ?? line.mpn_searched}</td>
-                    <td className="text-right tabular-nums">{formatValue(offer.stock)}</td>
-                    <td className="text-right tabular-nums">{formatMoney(offer.unit_price, offer.currency)}</td>
-                    <td>{formatValue(offer.packaging)}</td>
-                    <td className="text-right tabular-nums">{formatValue(offer.moq)}</td>
-                    <td className="text-right tabular-nums">{formatLeadTime(offer.lead_time_days)}</td>
-                    <td>
-                      {offer.url ? (
-                        <a
-                          className="text-accent hover:underline"
-                          href={offer.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          Open
-                        </a>
-                      ) : "-"}
-                    </td>
-                    <td className="text-right">
-                      <button
-                        type="button"
-                        className="btn"
-                        disabled={!canSelectOffer(line, offer)}
-                        onClick={() => onSelect(line, offer)}
-                      >
-                        Select
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <DataTable
+            rows={rows}
+            columns={columns}
+            rowKey={row => row.key}
+            tableId="purchase-plan-override-offers"
+            exportFilename="override-offers"
+            searchPlaceholder="Search offers..."
+          />
         )}
       </div>
     </Modal>

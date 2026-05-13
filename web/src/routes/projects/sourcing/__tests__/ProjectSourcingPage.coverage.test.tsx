@@ -125,6 +125,71 @@ describe("ProjectSourcingPage", () => {
     expect(screen.getAllByText("100%").length).toBeGreaterThan(0);
   });
 
+  it("floors displayed coverage percentages instead of rounding up to 100%", async () => {
+    mockReads();
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({
+      rows: [
+        {
+          ...sourcingResponse().rows[0],
+          project_entry_id: "entry-1",
+        },
+        {
+          ...sourcingResponse().rows[1],
+          project_entry_id: "entry-2",
+        },
+        {
+          ...sourcingResponse().rows[1],
+          project_entry_id: "entry-3",
+          part_id: "part-3",
+          part_name: "Oscillator",
+          mpn: "ABCD1234",
+        },
+        {
+          ...sourcingResponse().rows[1],
+          project_entry_id: "entry-4",
+          part_id: "part-4",
+          part_name: "Connector",
+          mpn: "CONN-4",
+        },
+        {
+          ...sourcingResponse().rows[1],
+          project_entry_id: "entry-5",
+          part_id: "part-5",
+          part_name: "Ferrite",
+          mpn: "FB-5",
+        },
+      ],
+      coverage: {
+        ...sourcingResponse().coverage,
+        total_lines: 5,
+        rows: [
+          {
+            distributor: "DigiKey",
+            lines_covered: 199,
+            lines_uncovered: ["entry-5"],
+            coverage_pct: 0.995,
+            est_total_cost: "20.00",
+            worst_lead_time_days: 3,
+          },
+        ],
+        best_single_distributor: "DigiKey",
+        best_two_distributor_combo: ["DigiKey"],
+        lowest_total_price_combo: ["DigiKey"],
+        lowest_total_price_total: "20.00",
+        fewest_distributors_combo: ["DigiKey"],
+        fewest_distributors_total: "20.00",
+      },
+    }));
+
+    renderPage();
+    await clickSource();
+
+    await screen.findByText("Coverage matrix");
+    const table = screen.getAllByRole("table")[0];
+    expect(within(table).getByText("99%")).toBeDefined();
+    expect(within(table).queryByText("100%")).toBeNull();
+  });
+
   it("Coverage card labels partial variant totals as covered-line prices", async () => {
     mockReads();
     vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import uuid
 
 import pytest
@@ -7,6 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 import app.core.ratelimit as _ratelimit_mod
+from app.core.config import settings
 from app.core.secrets import decrypt
 from app.domain.sourcing import SourcingAuthError
 from app.domain.sourcing.schemas import SourcingQuery
@@ -148,6 +150,11 @@ def test_good_creds_returns_ok_and_latency(authed_client, monkeypatch):
 
     assert r.status_code == 200, r.text
     body = r.json()
+    workspace_hash = hmac.new(
+        settings().SESSION_SECRET.encode("utf-8"),
+        str(_current_workspace_id(authed_client)).encode("utf-8"),
+        "sha256",
+    ).hexdigest()[:12]
     assert body["data"]["ok"] is True
     assert body["data"]["message"] == "OK"
     assert body["data"]["latency_ms"] > 0
@@ -157,7 +164,7 @@ def test_good_creds_returns_ok_and_latency(authed_client, monkeypatch):
             "api_key": "api-key-456",
             "country_code": "CZ",
             "currency_code": "EUR",
-            "user_agent": f"stockManager/dev workspace={_current_workspace_id(authed_client)}",
+            "user_agent": f"stockManager/dev workspace_sha={workspace_hash}",
             "queries": [{"search_token": "TEST_PROBE_DO_NOT_BUY"}],
             "use_cached_data": False,
         }

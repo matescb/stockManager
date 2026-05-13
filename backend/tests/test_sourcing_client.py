@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -145,10 +146,10 @@ def test_happy_path_returns_offers(monkeypatch):
     assert distributor.packaging == "Cut Tape"
     assert distributor.moq == 1
     assert distributor.stock == 1200
-    assert distributor.unit_price == 2.5
+    assert distributor.unit_price == Decimal("2.5")
     assert distributor.currency == "EUR"
     assert distributor.price_breaks[1].quantity == 10
-    assert distributor.price_breaks[1].unit_price == 2.1
+    assert distributor.price_breaks[1].unit_price == Decimal("2.1")
     assert distributor.product_url == "https://example.com/product"
 
 

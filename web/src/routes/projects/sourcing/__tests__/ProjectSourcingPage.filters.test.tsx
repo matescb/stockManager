@@ -237,7 +237,6 @@ describe("ProjectSourcingPage", () => {
         total_bom_cost: null,
         cost_per_single_bom: null,
         purchase_to_pay_cost: null,
-        est_purchase_cost: null,
         blocking_lines_now: ["entry-1"],
         blocking_lines_after_purchase: ["entry-1"],
       },
