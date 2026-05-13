@@ -13,4 +13,5 @@ frontend conventions live in `docs/frontend/`; architecture rules live in
 - `BomRows.tsx` owns the sourced BOM table and distributor drill-down entry.
 - `SourcingStates.tsx` owns loading, empty, diagnostics, and retry states.
 - `sourcingTypes.ts` and `sourcingHelpers.ts` hold shared route-local types and pure helpers.
+- `PurchasePlanLinesTable.tsx` and `purchasePlanHelpers.ts` keep purchase-plan tables and pure helpers out of the review route.
 - Modal and purchase-plan files remain adjacent because they share sourcing DTOs.
