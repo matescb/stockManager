@@ -13,7 +13,7 @@ from app.api._helpers import assert_in_workspace
 from app.core.deps import CurrentUser, CurrentWorkspace, require_role
 from app.core.errors import ErrorCodes
 from app.core.ratelimit import limiter, workspace_key
-from app.core.responses import err, ok
+from app.core.responses import Envelope, err, ok
 from app.core.time import utcnow
 from app.domain.fx import rates as fx_rates
 from app.domain.fx._apply import apply_fx_to_offer
@@ -172,7 +172,7 @@ def list_sourcing_alerts(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-):
+) -> Envelope[SourcingAlertListOut]:
     alerts, total = sourcing_service.list_alerts_page(
         db,
         workspace=ws,
@@ -204,7 +204,7 @@ def create_sourcing_alert(
     ws: CurrentWorkspace,
     user: CurrentUser,
     db: Session = Depends(get_db),
-):
+) -> Envelope[SourcingAlertOut]:
     alert = sourcing_service.create_alert(
         db,
         workspace=ws,
@@ -222,7 +222,7 @@ def get_sourcing_alert(
     alert_id: UUID,
     ws: CurrentWorkspace,
     db: Session = Depends(get_db),
-):
+) -> Envelope[SourcingAlertOut]:
     alert = sourcing_service.get_alert(db, workspace=ws, alert_id=alert_id)
     return ok(_alert_payload(alert))
 
@@ -236,7 +236,7 @@ def update_sourcing_alert(
     payload: SourcingAlertPatch,
     ws: CurrentWorkspace,
     db: Session = Depends(get_db),
-):
+) -> Envelope[SourcingAlertOut]:
     alert = sourcing_service.update_alert(
         db,
         workspace=ws,
@@ -254,7 +254,7 @@ def delete_sourcing_alert(
     alert_id: UUID,
     ws: CurrentWorkspace,
     db: Session = Depends(get_db),
-):
+) -> Envelope[SourcingAlertOut]:
     alert = sourcing_service.archive_alert(db, workspace=ws, alert_id=alert_id)
     return ok(_alert_payload(alert))
 
