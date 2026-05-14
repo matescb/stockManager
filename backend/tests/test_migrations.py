@@ -33,14 +33,17 @@ File new issues per migration.
 from __future__ import annotations
 
 import os
+import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
-from alembic import command
 from alembic.config import Config as AlembicConfig
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
+from alembic import command
 
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
 
@@ -80,6 +83,29 @@ def _alembic_config(url: str) -> AlembicConfig:
     cfg.set_main_option("script_location", str(_BACKEND_ROOT / "alembic"))
     cfg.set_main_option("sqlalchemy.url", url)
     return cfg
+
+
+@contextmanager
+def _migration_database_url(url: str):
+    previous = os.environ.get("DATABASE_URL")
+    os.environ["DATABASE_URL"] = url
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = previous
+
+
+def _upgrade(cfg: AlembicConfig, url: str, revision: str) -> None:
+    with _migration_database_url(url):
+        command.upgrade(cfg, revision)
+
+
+def _downgrade(cfg: AlembicConfig, url: str, revision: str) -> None:
+    with _migration_database_url(url):
+        command.downgrade(cfg, revision)
 
 
 def _ensure_db_exists(url: str) -> None:
@@ -164,6 +190,59 @@ def round_trip_url() -> str:
     return url
 
 
+def test_workspace_member_role_check_constraint_enforced(round_trip_url: str) -> None:
+    cfg = _alembic_config(round_trip_url)
+    user_id = uuid.uuid4()
+    workspace_id = uuid.uuid4()
+    member_id = uuid.uuid4()
+
+    _reset_schema(round_trip_url)
+    _upgrade(cfg, round_trip_url, "head")
+
+    eng = create_engine(round_trip_url, future=True)
+    try:
+        with eng.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO users "
+                    "(id, email, name, password_hash, locale, timezone, created_at) "
+                    "VALUES "
+                    "(:id, :email, 'Migration Tester', 'x', 'en', 'UTC', now())"
+                ),
+                {"id": user_id, "email": f"migration-{user_id.hex}@example.com"},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO workspaces "
+                    "(id, name, kind, owner_user_id, currency_default, "
+                    "lot_control_enabled, serial_tracking_enabled, "
+                    "catalog_enabled, parts_provider, created_at) "
+                    "VALUES "
+                    "(:id, 'Migration Workspace', 'organization', :owner_user_id, "
+                    "'USD', true, false, false, 'none', now())"
+                ),
+                {"id": workspace_id, "owner_user_id": user_id},
+            )
+
+        with pytest.raises(IntegrityError):
+            with eng.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO workspace_members "
+                        "(id, workspace_id, user_id, role, status, created_at) "
+                        "VALUES "
+                        "(:id, :workspace_id, :user_id, 'superuser', 'active', now())"
+                    ),
+                    {
+                        "id": member_id,
+                        "workspace_id": workspace_id,
+                        "user_id": user_id,
+                    },
+                )
+    finally:
+        eng.dispose()
+
+
 # ---------------------------------------------------------------------------
 # The actual round-trip tests. All marked slow — excluded by default
 # pytest invocation; run with `pytest -m slow`.
@@ -180,11 +259,11 @@ def test_upgrade_head_then_downgrade_base_then_upgrade_head(
     cfg = _alembic_config(round_trip_url)
 
     _reset_schema(round_trip_url)
-    command.upgrade(cfg, "head")
+    _upgrade(cfg, round_trip_url, "head")
     initial_snap = _snapshot_schema(round_trip_url)
 
-    command.downgrade(cfg, "base")
-    command.upgrade(cfg, "head")
+    _downgrade(cfg, round_trip_url, "base")
+    _upgrade(cfg, round_trip_url, "head")
     final_snap = _snapshot_schema(round_trip_url)
 
     assert initial_snap == final_snap, (
@@ -205,8 +284,8 @@ def test_downgrade_to_base_leaves_only_alembic_version(
     cfg = _alembic_config(round_trip_url)
 
     _reset_schema(round_trip_url)
-    command.upgrade(cfg, "head")
-    command.downgrade(cfg, "base")
+    _upgrade(cfg, round_trip_url, "head")
+    _downgrade(cfg, round_trip_url, "base")
 
     eng = create_engine(round_trip_url, future=True)
     try:
@@ -237,11 +316,11 @@ def test_per_revision_round_trip(round_trip_url: str) -> None:
     revisions = list(reversed(list(script.walk_revisions())))
 
     _reset_schema(round_trip_url)
-    command.upgrade(cfg, "base")  # establishes alembic_version table
+    _upgrade(cfg, round_trip_url, "base")  # establishes alembic_version table
 
     for rev in revisions:
         # Upgrade to this revision.
-        command.upgrade(cfg, rev.revision)
+        _upgrade(cfg, round_trip_url, rev.revision)
         before = _snapshot_schema(round_trip_url)
 
         # Downgrade to parent (or base if this is the first rev).
@@ -250,10 +329,10 @@ def test_per_revision_round_trip(round_trip_url: str) -> None:
         # repo's chain is linear so it shouldn't happen, but pin it.
         if isinstance(target, tuple):
             pytest.skip(f"merge revision {rev.revision} not supported")
-        command.downgrade(cfg, target)
+        _downgrade(cfg, round_trip_url, target)
 
         # Re-upgrade and snapshot again.
-        command.upgrade(cfg, rev.revision)
+        _upgrade(cfg, round_trip_url, rev.revision)
         after = _snapshot_schema(round_trip_url)
 
         assert before == after, (
