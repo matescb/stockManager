@@ -184,6 +184,9 @@ Migrations stopped corresponding 1:1 with phase docs after `0005` —
 the per-phase doc model retired with Phase 10. Post-`0005` migrations
 are described in `CHANGELOG.md` instead.
 
+Known non-contiguous Alembic revision IDs are documented in
+[`backend/alembic/versions/_GAPS.md`](../backend/alembic/versions/_GAPS.md).
+
 ### Cyclic foreign keys
 
 The `parts ↔ projects` circular FK is broken with `use_alter=True` on
