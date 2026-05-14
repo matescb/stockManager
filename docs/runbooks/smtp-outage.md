@@ -2,10 +2,10 @@
 
 Audience: engineer / on-call
 
-The transactional-mail backend (`backend/app/core/mail.py`) is sending
-two kinds of message: signup verification emails and workspace
-invitation emails. When the SMTP path fails, signups and invitations
-stall — but the rest of the app keeps working.
+The transactional-mail backend (`backend/app/core/mail.py`) sends signup
+verification emails, workspace invitation emails, and sourcing-alert
+emails. When the SMTP path fails, signups, invitations, and alert
+delivery stall — but the rest of the app keeps working.
 
 - **When to run**:
   - Users report that they signed up but never received the verification
@@ -31,6 +31,7 @@ stall — but the rest of the app keeps working.
 | New user signup → click verification link → activate account | **Yes** — verification email never arrives |
 | Admin sends invitation → invitee receives email | **Yes** |
 | Invitee accepts an invitation link they already received | No — `POST /api/invitations/accept` doesn't send mail |
+| Sourcing alert email delivery | **Yes** — alert evaluation continues, but SMTP delivery can fail |
 
 In prod the SMTP backend is the **only** option. The
 `_require_smtp_in_prod` validator (`backend/app/core/config.py`) refuses
@@ -41,6 +42,25 @@ or set to a dev default — the container fails to boot. Belt-and-braces:
 invoked under `APP_ENV == "prod"`. So an "SMTP outage" here means the
 configured SMTP host is reachable + accepted the boot config but is
 returning errors at send-time. See [ADR-0018](../adr/0018-prod-smtp-fail-closed.md).
+
+## Retry stance
+
+SMTP sends are single-shot from the app. `_send_smtp` opens one SMTP
+connection with `timeout=10`, performs STARTTLS/login/sendmail once, logs
+the exception, and re-raises it; the generic alert-mail path uses the
+same one-connection send sequence. Sources:
+`backend/app/core/mail.py:165-179`,
+`backend/app/core/mail.py:182-203`.
+
+Do not wait for an in-process retry queue or repeatedly trigger the same
+signup/invitation while SMTP is down. For signup and invitation mail,
+mitigate manually below, then retry the user action once the provider or
+credential problem is fixed. For sourcing alerts, `_send_alert_email`
+logs `sourcing_alert.smtp_failed` and continues; alert bookkeeping is
+committed before SMTP delivery, so the cooldown controls the next
+automatic attempt. Sources:
+`backend/app/domain/sourcing/alerts_evaluator.py:135-141`,
+`backend/app/domain/sourcing/alerts_evaluator.py:544-572`.
 
 ## Pre-flight
 
