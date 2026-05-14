@@ -72,18 +72,14 @@ def test_non_admin_cannot_invite():
     owner = TestClient(app)
     _signup(owner)
     invitee_email = f"member-{uuid.uuid4().hex[:6]}@x.com"
-    inv = owner.post("/api/invitations", json={"email": invitee_email, "role": "member"}).json()["data"]
+    inv = owner.post(
+        "/api/invitations", json={"email": invitee_email, "role": "member"}
+    ).json()["data"]
 
     invitee = TestClient(app)
     _do_signup_verify(invitee, email=invitee_email, name="M")
     invitee.post("/api/invitations/accept", json={"token": inv["token"]})
-    # Switch to the shared workspace
-    members_in_admin = owner.get("/api/workspaces/members").json()["data"]
-    shared_ws = members_in_admin[0]["user_id"]  # not actually used; cookie was set on signup
-    # Force switch via cookie
     me = invitee.get("/api/auth/me").json()["data"]
-    target_ws = next(w["id"] for w in me["workspaces"] if w["name"] != "Newbie's workspace") if False else owner.get("/api/workspaces/members").json()["data"]
-    # simpler: extract from list_workspaces
     wss = invitee.get("/api/workspaces").json()["data"]
     shared = next(w for w in wss if w["id"] != me["workspaces"][0]["id"])
     invitee.post(f"/api/workspaces/{shared['id']}/switch")
@@ -103,7 +99,9 @@ def test_invitation_email_must_match(admin):
 
 def test_revoke_invitation_blocks_acceptance(admin):
     invitee_email = f"r-{uuid.uuid4().hex[:6]}@x.com"
-    inv = admin.post("/api/invitations", json={"email": invitee_email, "role": "member"}).json()["data"]
+    inv = admin.post(
+        "/api/invitations", json={"email": invitee_email, "role": "member"}
+    ).json()["data"]
     r = admin.delete(f"/api/invitations/{inv['id']}")
     assert r.status_code == 200
 
@@ -122,7 +120,9 @@ def test_cannot_demote_last_owner(admin):
 
 def test_cannot_already_member(admin):
     invitee_email = f"dup-{uuid.uuid4().hex[:6]}@x.com"
-    inv = admin.post("/api/invitations", json={"email": invitee_email, "role": "member"}).json()["data"]
+    inv = admin.post(
+        "/api/invitations", json={"email": invitee_email, "role": "member"}
+    ).json()["data"]
     invitee = TestClient(app)
     _do_signup_verify(invitee, email=invitee_email, name="x")
     invitee.post("/api/invitations/accept", json={"token": inv["token"]})
@@ -138,14 +138,12 @@ def test_cannot_already_member(admin):
 
 def test_token_is_stored_as_hash_not_plaintext(admin):
     """The composite token returned to the caller must NOT appear in plaintext
-    in the DB.  The DB has only the SHA-256 digest (token_hash) and the
-    HMAC-SHA-256 digest (token_hmac).
+    in the DB.  The DB has only the HMAC-SHA-256 digest (token_hmac).
 
     SEC2-013: the create response now returns a composite token of the form
     "{invitation_id}:{plaintext_token}" so the accept flow can look up by
     PK rather than by hash (no timing oracle).
     """
-    import hashlib
     import hmac as _hmac
 
     invitee_email = f"hash-{uuid.uuid4().hex[:6]}@x.com"
@@ -167,11 +165,9 @@ def test_token_is_stored_as_hash_not_plaintext(admin):
     with SessionLocal() as s:
         row = s.get(WorkspaceInvitation, uuid.UUID(inv["id"]))
         assert row is not None
-        # The plaintext is gone — the model only has token_hash and token_hmac.
+        # The plaintext and legacy SHA-256 digest are gone; only token_hmac remains.
         assert not hasattr(row, "token") or getattr(row, "token", None) is None
-        assert row.token_hash == hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
-        # token_hash is NOT the plaintext.
-        assert row.token_hash != plaintext
+        assert not hasattr(row, "token_hash")
         # token_hmac is present and is the HMAC-SHA-256 of the plaintext.
         assert row.token_hmac is not None
         key = settings().SESSION_SECRET.encode("utf-8")
