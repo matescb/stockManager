@@ -12,7 +12,6 @@ import {
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:5173";
 const OVERRIDE_LINE_ID = "11111111-1111-4111-8111-111111111111";
-const OTHER_LINE_ID = "22222222-2222-4222-8222-222222222222";
 
 function uniqueName(prefix: string): string {
   return `${prefix} ${randomUUID().slice(0, 8)}`;
@@ -165,7 +164,7 @@ test(
     });
 
     await page.goto(`/projects/${project.id}/data`);
-    await page.getByRole("link", { name: "BOM" }).click();
+    await page.getByRole("link", { name: "BOM", exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/projects/${project.id}/bom$`));
     await expect(page.getByText(seededPart.name).first()).toBeVisible();
 
@@ -284,7 +283,7 @@ test(
       });
     });
 
-    await page.getByRole("link", { name: "BOM" }).click();
+    await page.getByRole("link", { name: "BOM", exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/projects/${project.id}/bom$`));
     await expect(page.getByRole("button", { name: "Add Part" })).toBeVisible();
     await attachScreenshot(testInfo, page, "sa-9-bom-page");
