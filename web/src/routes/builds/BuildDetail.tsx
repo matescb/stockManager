@@ -19,25 +19,40 @@ type ConsumeRow = { part_id: string; quantity: number; storage_location_id?: str
 
 export default function BuildDetail() {
   const { buildId } = useParams<{ buildId: string }>();
-  const qc = useQueryClient();
-  const nav = useNavigate();
-  const { workspaceId } = useAuth();
 
+  if (!buildId) {
+    return <div className="text-red-600 text-sm p-4">Missing build id.</div>;
+  }
+
+  return <BuildDetailQuery key={buildId} buildId={buildId} />;
+}
+
+function BuildDetailQuery({ buildId }: { buildId: string }) {
   const { data, isError, error } = useQuery({
     queryKey: useWsKey("build", buildId),
     queryFn: () => api.get<DetailOut>(`/builds/${buildId}`),
-    enabled: !!buildId,
   });
-  const projectId = data?.build.project_id;
+
+  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load build. {error instanceof ApiError ? error.userMessage : ""}</div>;
+  if (!data) return <div className="text-muted">Loading…</div>;
+
+  return <BuildDetailBody buildId={buildId} detail={data} />;
+}
+
+function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailOut }) {
+  const qc = useQueryClient();
+  const nav = useNavigate();
+  const { workspaceId } = useAuth();
+  const { build, shortage } = detail;
+  const projectId = build.project_id;
+
   const { data: project } = useQuery({
     queryKey: useWsKey("project", projectId),
     queryFn: () => api.get<Project>(`/projects/${projectId}`),
-    enabled: !!projectId,
   });
   const { data: entries } = useQuery({
     queryKey: useWsKey("project", projectId, "entries"),
     queryFn: () => api.get<ProjectEntry[]>(`/projects/${projectId}/entries`),
-    enabled: !!projectId,
   });
   const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts?limit=200") });
   const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
@@ -88,9 +103,6 @@ export default function BuildDetail() {
   });
 
 
-  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load build. {error instanceof ApiError ? error.userMessage : ""}</div>;
-  if (!data) return <div className="text-muted">Loading…</div>;
-  const { build, shortage } = data;
   const isEditable = build.status === "planned" || build.status === "in_progress";
   const shortageByEntry = new Map(shortage.map(s => [s.project_entry_id, s]));
   const reservationsActive = isEditable && !build.archived_at;
