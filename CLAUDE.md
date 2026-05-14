@@ -181,6 +181,13 @@ them, that's the bug.
 - **No `verify=False` on httpx clients.** CI greps for `verify=False`,
   `trust_env=False`, `ssl=False` under `backend/app/`. Annotate with
   `# noqa: tls-verify` if intentional (e.g. internal test doubles).
+- **Universal `audit_log` for workspace mutations.** Every successful
+  workspace-scoped API mutation writes one row through
+  `domain/audit/service.py::log` in the same transaction as the business
+  change. Include stable target IDs when available and keep comments to
+  low-sensitivity summaries such as changed field names. Never put
+  plaintext credentials, provider API keys, verification tokens, raw bag
+  codes, or other secrets in `audit_log.comment`.
 
 ## Things that have bitten us — don't undo
 

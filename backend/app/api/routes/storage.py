@@ -11,6 +11,7 @@ from app.core.errors import ErrorCodes, raise_http
 from app.core.pagination import decode_cursor, paginate
 from app.core.responses import ok
 from app.core.time import utcnow
+from app.domain.audit.service import log as _audit_log
 from app.domain.stock.models import StockEntry
 from app.domain.stock.service import (
     StockConflictError,
@@ -69,6 +70,14 @@ def create_storage(payload: StorageIn, db: DbSession, ws: CurrentWorkspace, user
     )
     db.add(s)
     db.flush()
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="storage.created",
+        target_type="storage_location",
+        target_ids=[s.id],
+    )
     return ok(_serialize(s))
 
 
@@ -107,6 +116,15 @@ def patch_storage(storage_id: UUID, payload: StoragePatch, db: DbSession, ws: Cu
     for k, v in data.items():
         setattr(s, k, v)
     s.updated_by = user.id
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="storage.updated",
+        target_type="storage_location",
+        target_ids=[s.id],
+        comment="fields=" + ",".join(sorted(data)),
+    )
     return ok(_serialize(s))
 
 
@@ -146,6 +164,14 @@ def archive_storage(storage_id: UUID, db: DbSession, ws: CurrentWorkspace, user:
             blocking=blocking,
         )
     s.archived_at = utcnow()
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="storage.archived",
+        target_type="storage_location",
+        target_ids=[s.id],
+    )
     return ok(None, "archived")
 
 
@@ -155,6 +181,14 @@ def restore_storage(storage_id: UUID, db: DbSession, ws: CurrentWorkspace, user:
         db, StorageLocation, storage_id, ws=ws, user=user, role="admin", label="storage",
     )
     s.archived_at = None
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="storage.restored",
+        target_type="storage_location",
+        target_ids=[s.id],
+    )
     return ok(None, "restored")
 
 

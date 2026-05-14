@@ -34,3 +34,4 @@ New ADRs follow the template in [STYLE.md](../STYLE.md#adr-pages-docsadrnnnn-slu
 | 0022 | [TrustedParts schema version pinning](0022-trustedparts-schema-version-pinning.md) |
 | 0023 | [Outbound provider backoff](0023-outbound-provider-backoff.md) |
 | 0024 | [`/api/auth/verify` is CSRF-exempt](0024-auth-verify-csrf-exemption.md) |
+| 0025 | [Universal `audit_log` coverage for workspace mutations](0025-universal-audit-log-policy.md) |

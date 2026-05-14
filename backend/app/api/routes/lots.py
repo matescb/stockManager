@@ -12,6 +12,7 @@ from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.errors import ErrorCodes, raise_http
 from app.core.pagination import decode_cursor, paginate
 from app.core.responses import ok
+from app.domain.audit.service import log as _audit_log
 from app.domain.lots.models import Lot
 from app.domain.lots.schemas import LotAdjustIn, LotPatch
 from app.domain.stock.models import StockEntry
@@ -94,6 +95,15 @@ def patch_lot(lot_id: UUID, payload: LotPatch, db: DbSession, ws: CurrentWorkspa
     for k, v in data.items():
         setattr(l, k, v)
     l.updated_by = user.id
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="lot.updated",
+        target_type="lot",
+        target_ids=[l.id],
+        comment="fields=" + ",".join(sorted(data)),
+    )
     q = current_quantity(db, workspace_id=ws.id, part_id=l.part_id, lot_id=l.id)
     return ok(_serialize(l, quantity=q))
 
