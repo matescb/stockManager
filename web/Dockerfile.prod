@@ -23,7 +23,7 @@ COPY web/ ./
 # init no-ops, no events, no network egress. The DSN is intentionally
 # public (Sentry's threat model treats it as an identifier, not a key).
 ARG VITE_SENTRY_DSN=
-ARG VITE_SENTRY_TRACES_SAMPLE_RATE
+ARG VITE_SENTRY_TRACES_SAMPLE_RATE=0.05
 ARG VITE_SENTRY_REPLAYS_SESSION_SAMPLE_RATE=0.0
 ARG VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE=0.0
 # Release identifier (git SHA) — used as Sentry's `release` tag so Sentry
