@@ -8,10 +8,18 @@ import type { Part } from "@/types";
 
 export default function PartLayout() {
   const { partId } = useParams<{ partId: string }>();
+
+  if (!partId) {
+    return <div className="text-red-600 text-sm p-4">Missing part id.</div>;
+  }
+
+  return <PartLayoutQuery key={partId} partId={partId} />;
+}
+
+function PartLayoutQuery({ partId }: { partId: string }) {
   const { data: part, isError, error } = useQuery({
     queryKey: useWsKey("part", partId),
     queryFn: () => api.get<Part>(`/parts/${partId}`),
-    enabled: !!partId,
   });
 
   if (isError) return <div className="text-red-600 text-sm p-4">Failed to load part. {error instanceof ApiError ? error.userMessage : ""}</div>;

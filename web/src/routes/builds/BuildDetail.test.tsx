@@ -97,17 +97,53 @@ function makeClient() {
   });
 }
 
-function renderBuildDetail() {
-  return render(
-    <QueryClientProvider client={makeClient()}>
-      <MemoryRouter initialEntries={["/builds/build-1"]}>
-        <Routes>
-          <Route path="/builds/:buildId" element={<BuildDetail />} />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
-  );
+function renderBuildDetail(initialEntry = "/builds/build-1", routePath = "/builds/:buildId") {
+  const client = makeClient();
+  return {
+    client,
+    ...render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[initialEntry]}>
+          <Routes>
+            <Route path={routePath} element={<BuildDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ),
+  };
 }
+
+function containsUndefined(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (Array.isArray(value)) return value.some(containsUndefined);
+  if (value && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).some(containsUndefined);
+  }
+  return false;
+}
+
+describe("BuildDetail query keys", () => {
+  it("does not mount queries without a build id route param", () => {
+    const { client } = renderBuildDetail("/builds", "/builds");
+
+    expect(screen.getByText("Missing build id.")).toBeTruthy();
+    expect(client.getQueryCache().getAll()).toHaveLength(0);
+    expect(api.get).not.toHaveBeenCalled();
+  });
+
+  it("does not register undefined key segments while the build is loading", () => {
+    vi.mocked(api.get).mockImplementation((path: string) => {
+      if (path === "/builds/build-1") return new Promise<never>(() => {});
+      return Promise.resolve(null);
+    });
+
+    const { client } = renderBuildDetail();
+    const keys = client.getQueryCache().getAll().map(query => query.queryKey);
+
+    expect(keys).toEqual([["ws", "ws-1", "build", "build-1"]]);
+    expect(keys.some(containsUndefined)).toBe(false);
+  });
+});
 
 beforeEach(() => {
   cleanup();
