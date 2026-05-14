@@ -244,7 +244,7 @@ The next push to `main` triggers the first end-to-end automated deploy.
 - **`backend-tests`** — postgres:16-alpine service container, `pip install -e ".[dev]"`, `pytest -q --tb=short`. Runs on every push and PR.
 - **`web-build`** — `npm ci && npm run build`, followed on `push` to `main` by a Sentry sourcemap upload step (`npx @sentry/cli sourcemaps upload`). The build's `tsc -b` step also catches TypeScript errors. Runs on every push and PR; the sourcemap upload is gated on push to `main` only. `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, and `SENTRY_PROJECT` are GitHub Actions secrets used by the upload step — they must **not** appear in `.env.prod` or `docker-compose.prod.yml` build args (INFRA2-010).
 - **`prod-validate`** (INFRA2-012) — validates the prod artefacts that the two test jobs above don't exercise: (1) `docker compose -f docker-compose.prod.yml config -q` catches YAML/schema/variable errors in `docker-compose.prod.yml` (including the single-line JSON-array `command:` form that previously broke in production); (2) `docker buildx build` of `backend/Dockerfile` and `web/Dockerfile.prod` catches Dockerfile regressions; (3) `docker run nginx:alpine nginx -t` lints `deploy/nginx-web.conf`. Uses a throw-away CI env file derived from `deploy/.env.prod.example` — no real secrets are required. Runs on every push and PR.
-- **`deploy`** — gated on `github.event_name == 'push' && github.ref == 'refs/heads/main'` and `needs: [backend-tests, web-build, prod-validate]`. Uses OpenSSH on the GitHub runner to SSH in and run the pull/up/prune script. Concurrency-grouped on `ci-refs/heads/main` with `cancel-in-progress: false` so consecutive pushes queue rather than abort an in-flight `docker compose up --build`.
+- **`deploy`** — gated on `github.event_name == 'push' && github.ref == 'refs/heads/main'` and `needs: [backend-tests, web-build, prod-validate]`. Verifies the VPS ED25519 host-key fingerprint, then uses `appleboy/ssh-action@v1.2.5` to SSH in and run the pull/up/prune script. Concurrency-grouped on `ci-refs/heads/main` with `cancel-in-progress: false` so consecutive pushes queue rather than abort an in-flight `docker compose up --build`.
 
 The deploy script body is intentionally tiny:
 
@@ -263,10 +263,12 @@ tree dirty. `image prune -f` keeps disk usage in check across rebuilds.
 
 The deploy job pins the VPS ED25519 host key with the
 `DEPLOY_HOST_FINGERPRINT` GitHub Actions secret. It scans only the ED25519 host
-key, verifies the scanned `SHA256:...` fingerprint against the secret, writes a
-temporary `known_hosts` file, and then connects with `StrictHostKeyChecking=yes`
-and `HostKeyAlgorithms=ssh-ed25519`. If the VPS host key rotates (rebuild, key
-regeneration), capture the new value on the host with
+key and verifies the scanned `SHA256:...` fingerprint against the secret before
+authentication. `appleboy/drone-ssh` negotiates the VPS ECDSA host key on the
+current server, so the workflow derives that ECDSA fingerprint only after the
+trusted ED25519 check passes and feeds it to the action for the actual SSH
+connection. If the VPS host key rotates (rebuild, key regeneration), capture the
+new ED25519 value on the host with
 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`, verify it from a separate
 trusted network, and update the secret before the next deploy. See
 [`docs/runbooks/secret-rotation.md`](runbooks/secret-rotation.md).
@@ -280,6 +282,7 @@ the human-readable tag the SHA was resolved from. Bump them with:
 gh api repos/actions/checkout/git/refs/tags/v4 --jq .object.sha
 gh api repos/actions/setup-python/git/refs/tags/v5 --jq .object.sha
 gh api repos/actions/setup-node/git/refs/tags/v4 --jq .object.sha
+gh api repos/appleboy/ssh-action/git/refs/tags/v1.2.5 --jq .object.sha
 ```
 
 Replace the SHA in the `uses:` line; keep the tag in the trailing comment.

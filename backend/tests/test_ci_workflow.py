@@ -72,18 +72,26 @@ def test_deploy_gates_on_green_main():
     assert "web-build" in needs, "deploy does not depend on web-build"
 
 
-def _deploy_ssh_step() -> dict:
+def _deploy_step_by_name(name: str) -> dict:
     data = _load()
     deploy = data["jobs"]["deploy"]
     for step in deploy["steps"]:
-        if step.get("name") == "SSH deploy":
+        if step.get("name") == name:
             return step
-    raise AssertionError("deploy job does not define the SSH deploy step")
+    raise AssertionError(f"deploy job does not define step {name!r}")
+
+
+def _deploy_host_key_step() -> dict:
+    return _deploy_step_by_name("Verify deploy ED25519 host key")
+
+
+def _deploy_ssh_step() -> dict:
+    return _deploy_step_by_name("SSH deploy")
 
 
 def test_deploy_bootstraps_missing_password_pepper_before_compose_up():
     step = _deploy_ssh_step()
-    script = step["run"]
+    script = step["with"]["script"]
 
     assert "PASSWORD_PEPPER was missing in .env.prod" in script
     assert "secrets.token_hex(32)" in script
@@ -93,25 +101,27 @@ def test_deploy_bootstraps_missing_password_pepper_before_compose_up():
 
 def test_deploy_does_not_use_ignored_ssh_action_script_stop():
     step = _deploy_ssh_step()
-    assert "appleboy/ssh-action" not in step.get("uses", "")
-    assert "script_stop" not in step
-    assert "script_stop" not in step.get("run", "")
+    assert "appleboy/ssh-action" in step.get("uses", "")
+    assert "script_stop" not in step.get("with", {})
 
 
-def test_deploy_uses_openssh_with_ed25519_host_fingerprint_pin():
-    step = _deploy_ssh_step()
-    env = step.get("env", {})
-    script = step["run"]
+def test_deploy_verifies_ed25519_host_fingerprint_before_ssh_action():
+    precheck = _deploy_host_key_step()
+    deploy = _deploy_ssh_step()
+    env = precheck.get("env", {})
+    script = precheck["run"]
 
     assert env.get("DEPLOY_HOST_FINGERPRINT") == (
         "${{ secrets.DEPLOY_HOST_FINGERPRINT }}"
     )
     assert 'ssh-keyscan -T 10 -t ed25519 "${DEPLOY_HOST}"' in script
-    assert 'actual_fingerprint=$(ssh-keygen -lf "${known_hosts}"' in script
+    assert 'actual_fingerprint=$(ssh-keygen -lf "${ed25519_known_hosts}"' in script
     assert '"${actual_fingerprint}" != "${DEPLOY_HOST_FINGERPRINT}"' in script
-    assert "-o StrictHostKeyChecking=yes" in script
-    assert '-o UserKnownHostsFile="${known_hosts}"' in script
-    assert "-o HostKeyAlgorithms=ssh-ed25519" in script
+    assert 'ssh-keyscan -T 10 -t ecdsa "${DEPLOY_HOST}"' in script
+    assert "ecdsa_fingerprint=" in script
+    assert deploy["with"]["fingerprint"] == (
+        "${{ steps.deploy_host_key.outputs.ecdsa_fingerprint }}"
+    )
 
 
 # ── INFRA-004: reproducible backend builds via uv lockfile ──────────────────

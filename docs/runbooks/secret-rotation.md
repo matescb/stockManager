@@ -258,9 +258,9 @@ rotation, and before the first deploy to a migrated VPS.
    git push origin main
    ```
 7. Confirm the `deploy` CI job reaches the remote script.  A host-key mismatch
-   fails before any deploy command runs on the VPS.  The workflow intentionally
-   forces `HostKeyAlgorithms=ssh-ed25519`, so this secret must stay tied to
-   `/etc/ssh/ssh_host_ed25519_key.pub`; see `docs/deployment.md`.
+   fails before any deploy command runs on the VPS.  The trusted secret must
+   stay tied to `/etc/ssh/ssh_host_ed25519_key.pub`; see
+   `docs/deployment.md`.
 
 ---
 
