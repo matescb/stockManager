@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -183,11 +184,19 @@ def _snapshot_schema(url: str) -> dict:
 
 
 @pytest.fixture(scope="module")
-def round_trip_url() -> str:
+def round_trip_url() -> Iterator[str]:
     url = _migration_db_url()
     _ensure_db_exists(url)
     _reset_schema(url)
-    return url
+    previous_url = os.environ.get("DATABASE_URL")
+    os.environ["DATABASE_URL"] = url
+    try:
+        yield url
+    finally:
+        if previous_url is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = previous_url
 
 
 def test_workspace_member_role_check_constraint_enforced(round_trip_url: str) -> None:
@@ -302,6 +311,48 @@ def test_downgrade_to_base_leaves_only_alembic_version(
         f"downgrade base left tables behind: {leftover}. Some "
         "migration's downgrade() is incomplete."
     )
+
+
+@pytest.mark.slow
+def test_invitation_token_hash_drop_round_trips(round_trip_url: str) -> None:
+    """0049 drops the legacy SHA-256 invitation token_hash column."""
+    cfg = _alembic_config(round_trip_url)
+
+    def invitation_columns() -> set[str]:
+        eng = create_engine(round_trip_url, future=True)
+        try:
+            insp = inspect(eng)
+            return {col["name"] for col in insp.get_columns("workspace_invitations")}
+        finally:
+            eng.dispose()
+
+    def invitation_unique_constraints() -> set[str]:
+        eng = create_engine(round_trip_url, future=True)
+        try:
+            insp = inspect(eng)
+            return {
+                constraint["name"]
+                for constraint in insp.get_unique_constraints("workspace_invitations")
+            }
+        finally:
+            eng.dispose()
+
+    _reset_schema(round_trip_url)
+    command.upgrade(cfg, "0048")
+    assert "token_hash" in invitation_columns()
+    assert "uq_workspace_invitation_token_hash" in invitation_unique_constraints()
+
+    command.upgrade(cfg, "0049")
+    assert "token_hash" not in invitation_columns()
+    assert "uq_workspace_invitation_token_hash" not in invitation_unique_constraints()
+
+    command.downgrade(cfg, "0048")
+    assert "token_hash" in invitation_columns()
+    assert "uq_workspace_invitation_token_hash" in invitation_unique_constraints()
+
+    command.upgrade(cfg, "0049")
+    assert "token_hash" not in invitation_columns()
+    assert "uq_workspace_invitation_token_hash" not in invitation_unique_constraints()
 
 
 @pytest.mark.slow

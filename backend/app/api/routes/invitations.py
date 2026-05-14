@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import hmac as _hmac
 import secrets
 from uuid import UUID
@@ -28,17 +27,6 @@ from app.domain.workspaces.schemas import AcceptIn, InviteIn
 router = APIRouter()
 
 
-def _hash_token(plaintext: str) -> str:
-    """SHA-256 hex digest of the plaintext token.
-
-    Used only to populate `token_hash` at creation time (for backward
-    compatibility — the unique index on `token_hash` still exists).
-    Accept flow no longer queries by this value; it uses `_hmac_token`
-    + `hmac.compare_digest` instead (SEC2-013).
-    """
-    return hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
-
-
 def _hmac_token(plaintext: str) -> str:
     """HMAC-SHA-256 (keyed on SESSION_SECRET) hex digest of the plaintext.
 
@@ -56,7 +44,7 @@ def _serialize(inv: WorkspaceInvitation, *, plaintext_token: str | None = None) 
 
     `plaintext_token` is set ONLY in the create response — the only
     moment the plaintext exists. Subsequent reads (list, revoke) never
-    have it, because the DB stores only the hash. The caller is
+    have it, because the DB stores only the keyed digest. The caller is
     responsible for delivering the plaintext to the invitee out-of-band
     immediately (typically via the link embedded in the response).
 
@@ -142,9 +130,8 @@ def create_invitation(
         return ok(_serialize(existing))
 
     # Mint a new token. 32 bytes urlsafe ≈ 256 bits of entropy — well
-    # past brute-force feasibility. Both the SHA-256 hash (for backward
-    # compatibility / unique index) and the HMAC digest (SEC2-013, used
-    # at accept time with compare_digest) go to the DB; the plaintext
+    # past brute-force feasibility. Only the HMAC digest (SEC2-013, used
+    # at accept time with compare_digest) goes to the DB; the plaintext
     # goes back to the caller exactly once via the response.
     plaintext = secrets.token_urlsafe(32)
     # Cache workspace_id as a plain Python value before the savepoint so
@@ -155,7 +142,6 @@ def create_invitation(
         workspace_id=ws_id,
         email=email,
         role=payload.role,
-        token_hash=_hash_token(plaintext),
         token_hmac=_hmac_token(plaintext),
         invited_by=user.id,
     )
@@ -398,4 +384,10 @@ def accept_invitation(request: Request, payload: AcceptIn, db: DbSession, user: 
             target_ids=[inv_id],
             comment=f"email={inv_email} role={inv_role}",
         )
-    return ok({"workspace_id": str(inv_workspace_id), "workspace_name": workspace.name if workspace else None, "role": inv_role})
+    return ok(
+        {
+            "workspace_id": str(inv_workspace_id),
+            "workspace_name": workspace.name if workspace else None,
+            "role": inv_role,
+        }
+    )

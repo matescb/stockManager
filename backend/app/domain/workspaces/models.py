@@ -143,7 +143,6 @@ class WorkspaceMember(Base):
 class WorkspaceInvitation(Base):
     __tablename__ = "workspace_invitations"
     __table_args__ = (
-        UniqueConstraint("token_hash", name="uq_workspace_invitation_token_hash"),
         # Partial unique index: at most one pending invitation per
         # (workspace, email) pair. Added by migration 0023 (BE2-020 / #65).
         # The partial condition (status = 'pending') allows a new invite
@@ -166,9 +165,6 @@ class WorkspaceInvitation(Base):
     )
     email = Column(String(320), nullable=False, index=True)
     role = Column(String(40), nullable=False, default="member")
-    # SHA-256 hex digest of the plaintext token. Kept for backward
-    # compatibility; new rows also set token_hmac. See token_hmac below.
-    token_hash = Column(String(64), nullable=False)
     # HMAC-SHA-256 (keyed on SESSION_SECRET) of the plaintext token.
     # SEC2-013: the accept flow looks up by id (PK) and then calls
     # hmac.compare_digest against this column — no timing oracle.

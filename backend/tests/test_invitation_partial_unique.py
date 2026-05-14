@@ -87,7 +87,6 @@ def test_accept_then_reinvite_same_email_succeeds(admin):
             workspace_id=uuid.UUID(ws_id),
             email=invitee_email,
             role="member",
-            token_hash="new-hash-" + uuid.uuid4().hex,
             status="pending",
         )
         s.add(inv2)
@@ -114,7 +113,6 @@ def test_duplicate_pending_same_email_rejected_at_db(admin):
             workspace_id=uuid.UUID(ws_id),
             email=invitee_email,
             role="viewer",
-            token_hash="conflict-hash-" + uuid.uuid4().hex,
             status="pending",
         )
         s.add(inv2)
