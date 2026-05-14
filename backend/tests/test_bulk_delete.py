@@ -12,13 +12,18 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
+from app.domain.custom_fields.models import CustomField
 from app.main import app
 
 
 def _signup(c: TestClient) -> None:
     r = c.post(
         "/api/auth/signup",
-        json={"email": f"u-{uuid.uuid4().hex[:8]}@x.com", "name": "u", "password": "TestPass-2026-Stronk"},
+        json={
+            "email": f"u-{uuid.uuid4().hex[:8]}@x.com",
+            "name": "u",
+            "password": "TestPass-2026-Stronk",
+        },
     )
     assert r.status_code == 200, r.text
 
@@ -37,6 +42,12 @@ def _create(c: TestClient, name: str, mpn: str | None = None) -> str:
     r = c.post("/api/parts", json=body)
     assert r.status_code == 201, r.text
     return r.json()["data"]["id"]
+
+
+def _workspace_id(c: TestClient) -> uuid.UUID:
+    r = c.get("/api/auth/me")
+    assert r.status_code == 200, r.text
+    return uuid.UUID(r.json()["data"]["workspaces"][0]["id"])
 
 
 def test_bulk_delete_archives_listed_parts(authed):
@@ -97,22 +108,22 @@ def test_bulk_delete_rejects_too_many(authed):
     assert r.status_code == 422
 
 
-def test_list_parts_includes_image_url(authed):
+def test_list_parts_includes_image_url(authed, db):
     """When a part has an image_url custom_field, the list endpoint
     surfaces it as Part.image_url so the parts table can render a
     thumbnail without a per-row custom_field fetch."""
     pid = _create(authed, "Resistor", mpn="RC0402JR-070R")
-    # Backdoor: write the custom_field directly via the API.
-    r = authed.post(
-        "/api/custom-fields",
-        json={
-            "object_type": "part",
-            "object_id": pid,
-            "key": "image_url",
-            "value": "/api/parts/assets/abc/image.png",
-        },
+    db.add(
+        CustomField(
+            workspace_id=_workspace_id(authed),
+            object_type="part",
+            object_id=uuid.UUID(pid),
+            key="image_url",
+            value="/api/parts/assets/abc/image.png",
+            source="provider",
+        )
     )
-    assert r.status_code in (200, 201), r.text
+    db.flush()
     listed = authed.get("/api/parts").json()["data"]
     row = next(r for r in listed if r["id"] == pid)
     assert row["image_url"] == "/api/parts/assets/abc/image.png"

@@ -10,8 +10,8 @@
  * is the only thing to update when we add a new provider field, and we
  * don't need a DB migration to re-categorise historical rows.
  *
- * Reserved keys (`image_url`, `datasheet_url`) are surfaced separately
- * by the layout header / Media affordances and are NOT in either tab.
+ * Reserved keys (`image_url`, `datasheet_url`, `source_url`) are provider
+ * metadata and are NOT in either tab.
  */
 
 const CATALOG_LITERAL_KEYS = new Set<string>([
@@ -40,7 +40,9 @@ const CATALOG_REGEX_KEYS: RegExp[] = [
   /^Unit price \(\d+\+\)$/,
 ];
 
-const RESERVED_KEYS = new Set<string>(["image_url", "datasheet_url", "source_url"]);
+export const PROVIDER_RESERVED_KEYS = ["image_url", "datasheet_url", "source_url"] as const;
+
+const RESERVED_KEYS = new Set<string>(PROVIDER_RESERVED_KEYS);
 
 export function isReservedKey(key: string): boolean {
   return RESERVED_KEYS.has(key);

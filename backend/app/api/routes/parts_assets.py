@@ -28,6 +28,7 @@ from app.core.responses import ok
 from app.core.secrets import decrypt
 from app.core.time import utcnow
 from app.domain.custom_fields.models import CustomField
+from app.domain.parts.provider_fields import PROVIDER_ASSET_CUSTOM_FIELD_KINDS
 from app.domain.parts.providers import make_provider
 from app.domain.parts.services.assets import fetch_provider_asset
 from app.domain.parts.services.provider_cache import lookup_fresh
@@ -118,12 +119,6 @@ def get_provider_asset(
     return FileResponse(abs_path, media_type=served_mime, headers=headers)
 
 
-# Reserved keys that surface elsewhere on PartInfo (Media card). These
-# are also treated as `source='provider'` rows but we keep them out of
-# the spec body when listing.
-_PROVIDER_RESERVED_KEYS = ("image_url", "datasheet_url")
-
-
 @router.post("/{part_id}/refresh-from-provider")
 @limiter.limit("60/minute", key_func=workspace_key)
 def refresh_from_provider(
@@ -202,12 +197,12 @@ def refresh_from_provider(
             desired[key] = value
     # Download provider assets locally — same fallback semantics as
     # bulk-import: failed downloads keep the upstream URL.
-    if r.get("image_url"):
-        local = fetch_provider_asset(r["image_url"], str(ws.id), "image")
-        desired["image_url"] = local or r["image_url"]
-    if r.get("datasheet_url"):
-        local = fetch_provider_asset(r["datasheet_url"], str(ws.id), "datasheet")
-        desired["datasheet_url"] = local or r["datasheet_url"]
+    for key, asset_kind in PROVIDER_ASSET_CUSTOM_FIELD_KINDS.items():
+        if r.get(key):
+            local = fetch_provider_asset(r[key], str(ws.id), asset_kind)
+            desired[key] = local or r[key]
+    if r.get("source_url"):
+        desired["source_url"] = str(r["source_url"])
 
     existing_rows = list(
         db.execute(

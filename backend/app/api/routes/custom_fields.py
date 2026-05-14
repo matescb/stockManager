@@ -11,6 +11,7 @@ from app.core.errors import ErrorCodes, raise_http
 from app.core.responses import ok
 from app.domain.custom_fields.models import CustomField
 from app.domain.custom_fields.schemas import CustomFieldIn
+from app.domain.parts.provider_fields import is_provider_reserved_custom_field_key
 
 router = APIRouter()
 
@@ -40,7 +41,12 @@ def list_for(object_type: str, object_id: UUID, db: DbSession, ws: CurrentWorksp
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-def create_or_update(payload: CustomFieldIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+def create_or_update(
+    payload: CustomFieldIn,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     """Upsert. Provider/override transitions:
 
     * existing.source='provider' and the value changes →
@@ -56,6 +62,14 @@ def create_or_update(payload: CustomFieldIn, db: DbSession, ws: CurrentWorkspace
     domain/parts/services/provider.py. Without this guard a caller could
     POST {source: "provider"} and forge a provider-origin row.
     """
+    if is_provider_reserved_custom_field_key(payload.key):
+        raise_http(
+            400,
+            code=ErrorCodes.CUSTOM_FIELD_RESERVED_KEY,
+            message=f"{payload.key!r} is reserved for provider-managed data",
+            key=payload.key,
+        )
+
     # Polymorphic FK validation: object_id must name a row in the current
     # workspace, and object_type must be a known resource. Without this
     # guard a caller in workspace B can store custom fields keyed to a
