@@ -203,14 +203,23 @@ listener three times.
 
 ## Playwright smoke
 
-`web/playwright.config.ts` + `web/e2e/smoke.spec.ts`. One spec, one
-project (`chromium`), `fullyParallel: false`, `workers: 1`. Opt-in via
-`npm run test:e2e`; the default `npm test` (vitest) keeps doing what it
-does (`playwright.config.ts:9-11`).
+`web/playwright.config.ts` + `web/e2e/smoke.spec.ts` cover one
+intentional full-stack dev-compose flow: signup → create part → add
+stock → confirm ledger row. The suite uses one project (`chromium`),
+`fullyParallel: false`, and `workers: 1`. Opt-in via `npm run test:e2e`;
+the default `npm test` (vitest) keeps doing what it does
+(`playwright.config.ts:9-11`).
 
 The CI job is `playwright-e2e` (GitHub Actions). It brings up the dev
 docker-compose stack, polls `/api/health`, then invokes
 `npx playwright test --grep @smoke` (`playwright.config.ts:7-13`).
+
+`web/e2e/prod-smoke.spec.ts` is the separate prod-compose smoke used by
+the `prod-validate` job. It boots `docker-compose.prod.yml`, loads the
+SPA through the web container's nginx port, and fetches `/api/health`
+through the same origin. It intentionally stays unauthenticated because
+`APP_ENV=prod` marks session cookies `Secure`, while CI reaches the stack
+over plain HTTP loopback.
 
 ```ts
 // web/e2e/smoke.spec.ts:18-57 (excerpt)
@@ -245,9 +254,9 @@ Two E2E gotchas worth pinning here:
   the form lives. The "Stock" tab is read-only
   (`smoke.spec.ts:48-49`).
 
-The suite is intentionally minimal: the v2 plan called out page-level
-component tests as out of scope. This is the one end-to-end signal that
-the routing + API + ledger glue all line up
+The dev-compose suite is intentionally minimal: the v2 plan called out
+page-level component tests as out of scope. This is the one end-to-end
+signal that the routing + API + ledger glue all line up
 (`smoke.spec.ts:11-14`).
 
 `PLAYWRIGHT_BASE_URL` overrides the default `http://localhost:5173`
