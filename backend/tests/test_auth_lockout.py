@@ -11,6 +11,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from fastapi import status
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -125,6 +126,40 @@ def test_unknown_email_also_gets_locked():
     r = _fail_login(c, ghost, n=1)[0]
     assert r.status_code == 429, r.text
     assert r.json()["code"] == "auth.account_locked"
+
+
+def test_lockout_shape_uniform_across_known_and_unknown():
+    """Known-account and phantom-email lockouts must return the same body shape."""
+    from app.core.auth import LOCKOUT_MAX_FAILURES
+
+    def response_shape(value):
+        if isinstance(value, dict):
+            return {key: response_shape(nested) for key, nested in sorted(value.items())}
+        if isinstance(value, list):
+            return [response_shape(item) for item in value]
+        return type(value).__name__
+
+    c = TestClient(app)
+    known = f"known-{uuid.uuid4().hex[:8]}@x.com"
+    unknown = f"ghost-{uuid.uuid4().hex[:8]}@nowhere.com"
+    signup_user(c, email=known)
+
+    _fail_login(c, known, n=LOCKOUT_MAX_FAILURES)
+    _fail_login(c, unknown, n=LOCKOUT_MAX_FAILURES)
+
+    known_response = c.post("/api/auth/login", json={"email": known, "password": "WrongPass!!X"})
+    unknown_response = c.post(
+        "/api/auth/login",
+        json={"email": unknown, "password": "WrongPass!!X"},
+    )
+
+    assert known_response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+    assert unknown_response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+    known_body = known_response.json()
+    unknown_body = unknown_response.json()
+    assert response_shape(known_body) == response_shape(unknown_body)
+    assert known_body["code"] == unknown_body["code"] == "auth.account_locked"
+    assert known_body["status"] == unknown_body["status"]
 
 
 def test_lockout_response_envelope():
