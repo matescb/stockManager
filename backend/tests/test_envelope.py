@@ -21,7 +21,6 @@ import uuid
 
 import pytest
 
-
 # 2xx smoke matrix — one representative GET per top-level router that
 # the authed_client fixture can hit out of the box (i.e. no setup
 # beyond signup). Each entry is (label, path).
@@ -39,6 +38,24 @@ _AUTHED_2XX_ROUTES: list[tuple[str, str]] = [
     ("tags.list", "/api/tags"),
     ("search", "/api/search?q=anything"),
     ("health", "/api/health"),
+]
+
+
+_PYDANTIC_422_REQUESTS: list[tuple[str, str, str, dict[str, object], set[str]]] = [
+    (
+        "auth.signup.empty_body",
+        "post",
+        "/api/auth/signup",
+        {},
+        {"body.email", "body.name", "body.password"},
+    ),
+    (
+        "auth.login.empty_body",
+        "post",
+        "/api/auth/login",
+        {},
+        {"body.email", "body.password"},
+    ),
 ]
 
 
@@ -115,18 +132,35 @@ def test_409_envelope_spreads_extras(authed_client):
     assert "message" not in body
 
 
-def test_422_envelope(client):
-    """POSTing malformed JSON to `/api/auth/signup` triggers the
-    pydantic validation handler, which returns the validation_error
-    envelope with an `errors: [{field, message}]` list."""
-    r = client.post("/api/auth/signup", json={})
+@pytest.mark.parametrize(
+    "label,method,path,json_body,expected_fields",
+    _PYDANTIC_422_REQUESTS,
+    ids=[r[0] for r in _PYDANTIC_422_REQUESTS],
+)
+def test_validation_error_envelope(
+    client,
+    label: str,
+    method: str,
+    path: str,
+    json_body: dict[str, object],
+    expected_fields: set[str],
+):
+    """Pydantic validation errors return the app error envelope, not
+    FastAPI's default `{"detail": [...]}` body."""
+    r = getattr(client, method)(path, json=json_body)
     assert r.status_code == 422, r.text
     body = r.json()
+    assert set(body.keys()) == {"data", "status", "errors", "request_id"}, (
+        f"{label}: unexpected top-level keys {set(body.keys())}"
+    )
     assert body["data"] is None
-    assert body["status"]["category"] == "validation_error"
+    assert body["status"] == {"category": "validation_error", "message": "validation failed"}
+    assert body["request_id"] == r.headers.get("x-request-id")
     assert isinstance(body.get("errors"), list)
-    assert body["errors"], "errors list should not be empty for empty signup body"
+    assert body["errors"], f"{label}: errors list should not be empty"
     for entry in body["errors"]:
-        assert set(entry.keys()) >= {"field", "message"}
+        assert set(entry.keys()) == {"field", "message"}
         assert isinstance(entry["field"], str)
         assert isinstance(entry["message"], str)
+    fields = {entry["field"] for entry in body["errors"]}
+    assert expected_fields <= fields, f"{label}: expected {expected_fields}, got {fields}"
