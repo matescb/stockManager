@@ -325,9 +325,6 @@ test.describe("stock history ordering", () => {
       const detail = new PartDetailPage(page, part.id);
 
       for (const quantity of [1, 2, 3]) {
-        if (quantity > 1) {
-          await page.waitForTimeout(5); // FIXME-allowed: #688 needs distinct ledger timestamps for ordering.
-        }
         await seedStock(request, {
           part_id: part.id,
           quantity,
