@@ -15,9 +15,11 @@ Two backends are available:
   are populated.
 
 Call :func:`send_verification_email` from route code — it picks the
-right backend automatically based on the current settings. Background
-jobs that need transactional mail call :func:`send` so they stay on the
-same stdout/dev and SMTP/prod path.
+right backend automatically based on the current settings. Use
+:func:`send_account_exists_email` for duplicate signup attempts so the
+HTTP response can remain non-enumerating while the mailbox owner gets a
+private signal. Background jobs that need transactional mail call
+:func:`send` so they stay on the same stdout/dev and SMTP/prod path.
 
 Design notes:
 - All functions are synchronous; FastAPI routes calling them must use
@@ -135,6 +137,26 @@ def send_verification_email(*, to: str, verification_link: str) -> None:
         _send_smtp(to=to, verification_link=verification_link)
     else:
         _send_stdout(to=to, verification_link=verification_link)
+
+
+def send_account_exists_email(*, to: str) -> None:
+    """Notify an existing user that a signup was attempted for their email."""
+    send(
+        to=to,
+        subject="Stock Manager account already exists",
+        text_body=(
+            "Someone tried to sign up for Stock Manager with this email address.\n\n"
+            "An account already exists for this address, so no new account was created.\n"
+            "If this was you, sign in with your existing account. If you did not try "
+            "to sign up, you can safely ignore this email."
+        ),
+        html_body=(
+            "<p>Someone tried to sign up for Stock Manager with this email address.</p>"
+            "<p>An account already exists for this address, so no new account was created.</p>"
+            "<p>If this was you, sign in with your existing account. If you did not try "
+            "to sign up, you can safely ignore this email.</p>"
+        ),
+    )
 
 
 def _send_stdout(*, to: str, verification_link: str) -> None:
