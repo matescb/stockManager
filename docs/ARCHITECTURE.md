@@ -226,13 +226,13 @@ rules are:
    resolver registry (`_polymorphic_resolvers()`) is the single place to
    register new object types.
 
-2. **Orphan cleanup** — when a parent row is hard-deleted, call
-   `purge_polymorphic(db, workspace_id=…, object_type=…, object_id=…)`
-   from `backend/app/domain/_polymorphic_cleanup.py`. Every DELETE inside
-   filters by `workspace_id` (workspace-isolation invariant from CLAUDE.md).
-   The function returns a `dict[str, int]` of row counts per table; log it
-   for observability. Currently parents are soft-archived rather than
-   hard-deleted, so orphans accumulate only on rare explicit hard-deletes.
+2. **Orphan cleanup** — registered parent models have SQLAlchemy
+   `before_delete` listeners from
+   `backend/app/domain/_polymorphic_cleanup.py`. A hard-delete purges
+   `attachments`, `custom_fields`, and `tag_links` in the same transaction.
+   Every DELETE inside filters by `workspace_id` (workspace-isolation
+   invariant from CLAUDE.md). Manual cleanup uses the same helper,
+   `purge_polymorphic(db, workspace_id=…, object_type=…, object_id=…)`.
 
 3. **Indexes** — migration 0033 added `(workspace_id, object_id)` indexes
    on all three tables so the cleanup query and the orphan-report script

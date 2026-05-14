@@ -19,7 +19,7 @@ Common shape:
 | Column | Notes |
 |---|---|
 | `workspace_id` | FK, **CASCADE**. Inherited from `WorkspaceOwned`. |
-| `object_type` | `varchar(40)`. The discriminator. Values like `part`, `order`, `project`, `build`, `lot`, `storage_location`. No DB enum — the value is decided at the call site. |
+| `object_type` | `varchar(40)`. The discriminator. Registered values are `part`, `order`, `project`, `build`, `lot`, `storage_location`. No DB enum — the value is decided at the call site. |
 | `object_id` | `UUID`. **No FK.** Free-form. |
 | `archived_at` | Universal soft-archive. |
 
@@ -35,7 +35,7 @@ If `object_id` had a FK, that FK would be to one parent table. A polymorphic tab
 - The "exactly one of N FKs is non-NULL" invariant has to be enforced by application code anyway — a CHECK constraint is verbose and brittle.
 - Cross-cutting reads (e.g. "all attachments for this object") get a uniform shape.
 
-Trade-off: **no automatic ON DELETE behaviour.** A hard-deleted parent leaves the child rows as orphans. The cleanup is the application's responsibility — see below.
+Trade-off: **no DB-level ON DELETE behaviour.** The application owns cleanup through SQLAlchemy `before_delete` listeners — see below.
 
 ## Orphan-cleanup helper
 
@@ -60,7 +60,7 @@ Behaviour:
 - Bulk DELETE rather than per-row ORM fetch — stays fast for objects with hundreds of attachments/fields/links.
 - Idempotent: a second call with the same parameters returns `{0, 0, 0}`.
 
-Source: `backend/app/domain/_polymorphic_cleanup.py:35-79`. Currently exported as the canonical helper but **no caller in the tree invokes it yet** (`grep purge_polymorphic backend/app` matches only the helper itself). It exists for the day a route hard-deletes a parent — soft-archive (the universal pattern) doesn't need it.
+Source: `backend/app/domain/_polymorphic_cleanup.py`. The helper is used by the registered `before_delete` listeners for `Part`, `Order`, `Project`, `Build`, `Lot`, and `StorageLocation`; `backend/app/domain/all_models.py` and `backend/app/api/_helpers.py` register the listeners at import time. Soft-archive paths do not invoke it.
 
 ## Indexing
 
@@ -103,6 +103,8 @@ There is no dedicated `polymorphic/service.py`. The helpers live at module level
 | Operation | Entry point | Notes |
 |---|---|---|
 | Bulk orphan cleanup | `domain/_polymorphic_cleanup.py::purge_polymorphic` | Workspace-filtered bulk DELETE on all three tables. Returns per-table counts. |
+| Hard-delete listener registration | `domain/_polymorphic_cleanup.py::register_polymorphic_cleanup_listeners` | Idempotently attaches `before_delete` listeners for registered parent models. |
+| One-off orphan backfill | `scripts/purge_polymorphic_orphans.py` | Dry-run by default; pass `--apply` to delete orphan rows for registered object types. |
 | Attachment CRUD | `api/routes/attachments.py` | TODO(verify): list the create/list/delete operations. |
 | Custom-field CRUD | `api/routes/custom_fields.py` | TODO(verify): same. |
 | Tag CRUD + link/unlink | `api/routes/tags.py` | TODO(verify): same. |

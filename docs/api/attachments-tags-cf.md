@@ -2,7 +2,7 @@
 
 Audience: engineer
 
-The three polymorphic surfaces — file attachments, tag links, and key/value custom fields — that hang off any first-class entity (`part`, `project`, `order`, `build`, `lot`, `storage`, …). Each shares an `(object_type, object_id)` pair pinned by `assert_polymorphic_in_workspace` to the caller's workspace.
+The three polymorphic surfaces — file attachments, tag links, and key/value custom fields — that hang off registered first-class entities (`part`, `project`, `order`, `build`, `lot`, `storage_location`). Each shares an `(object_type, object_id)` pair pinned by `assert_polymorphic_in_workspace` to the caller's workspace.
 
 ## Conventions
 

@@ -23,6 +23,7 @@ The test in step (1) does not replace step (2) — it only catches the
 case where step (1) was forgotten.
 """
 
+from app.domain._polymorphic_cleanup import register_polymorphic_cleanup_listeners
 from app.domain.attachments.models import Attachment  # noqa: F401
 from app.domain.audit.models import AuditLog  # noqa: F401
 from app.domain.builds.models import Build  # noqa: F401
@@ -58,3 +59,5 @@ from app.domain.workspaces.models import (  # noqa: F401
     WorkspaceInvitation,
     WorkspaceMember,
 )
+
+register_polymorphic_cleanup_listeners()

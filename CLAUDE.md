@@ -172,6 +172,12 @@ them, that's the bug.
   and the asset-side reserved-keys subset is `_PROVIDER_RESERVED_KEYS`
   in `backend/app/api/routes/parts_assets.py`. Adding a new catalog
   field needs the FE list AND the relevant server-side touchpoint.
+- **Polymorphic cleanup on hard delete.** `attachments`, `custom_fields`,
+  and `tag_links` have no FK on `object_id`. Hard-deleting a registered
+  parent (`part`, `order`, `project`, `build`, `lot`, `storage_location`)
+  relies on `domain/_polymorphic_cleanup.py` `before_delete` listeners,
+  registered by `domain/all_models.py` and the API helper import path; do
+  not bypass them with bulk ORM deletes.
 - **No `verify=False` on httpx clients.** CI greps for `verify=False`,
   `trust_env=False`, `ssl=False` under `backend/app/`. Annotate with
   `# noqa: tls-verify` if intentional (e.g. internal test doubles).
