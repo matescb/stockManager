@@ -10,7 +10,8 @@ from app.api._helpers import _polymorphic_resolvers, assert_polymorphic_in_works
 from app.domain.builds.models import Build
 from app.domain.lots.models import Lot
 from app.domain.orders.models import Order
-from app.domain.parts.models import Part, PartMetaMember, PartSubstitute
+from app.domain.parts.models import Part, PartCadKey, PartMetaMember, PartSubstitute
+from app.domain.projects.bom_import import ParsedRow, _match_part
 from app.domain.projects.models import Project
 from app.domain.sourcing.budget import BUDGET
 from app.domain.sourcing.models import SourcingCache
@@ -149,6 +150,76 @@ def test_project_entry_rejects_cross_workspace_part_id():
     # pin — it was already correct, this asserts it stays that way).
     r = a.post(f"/api/projects/{proj}/entries/{entry}/match", json={"part_id": secret})
     assert r.status_code == 404, r.text
+
+
+def test_part_cad_keys_ws(db):
+    """CAD-key matching must use the caller workspace, not just cad_key."""
+    a = TestClient(app)
+    b = TestClient(app)
+    ws_a = uuid.UUID(_signup(a, f"a-{uuid.uuid4().hex[:6]}@x.com"))
+    ws_b = uuid.UUID(_signup(b, f"b-{uuid.uuid4().hex[:6]}@x.com"))
+
+    part_a = uuid.UUID(_create_part(a, "A-cad-key-part"))
+    part_b = uuid.UUID(_create_part(b, "B-cad-key-part"))
+    db.add_all(
+        [
+            PartCadKey(workspace_id=ws_a, part_id=part_a, cad_key="SHARED-CAD-KEY"),
+            PartCadKey(workspace_id=ws_b, part_id=part_b, cad_key="SHARED-CAD-KEY"),
+            PartCadKey(workspace_id=ws_a, part_id=part_a, cad_key="A-ONLY-CAD-KEY"),
+        ]
+    )
+    db.flush()
+
+    matched_b = _match_part(
+        db,
+        workspace_id=ws_b,
+        row=ParsedRow(cad_key="SHARED-CAD-KEY"),
+    )
+
+    assert matched_b is not None
+    assert matched_b.id == part_b
+    assert _match_part(
+        db,
+        workspace_id=ws_b,
+        row=ParsedRow(cad_key="A-ONLY-CAD-KEY"),
+    ) is None
+    assert _match_part(
+        db,
+        workspace_id=ws_a,
+        row=ParsedRow(cad_key="A-ONLY-CAD-KEY"),
+    ).id == part_a
+
+
+def test_part_cad_keys_workspace_trigger_rejects_mismatch():
+    """migration 0055: direct SQL cannot desync part_cad_keys.workspace_id."""
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
+
+    from app.infra.db import SessionLocal
+
+    a = TestClient(app)
+    b = TestClient(app)
+    ws_b = _signup(b, f"b-{uuid.uuid4().hex[:6]}@x.com")
+    _signup(a, f"a-{uuid.uuid4().hex[:6]}@x.com")
+    part_a = _create_part(a, "A-cad-trigger-part")
+
+    with SessionLocal() as s:
+        with pytest.raises((IntegrityError, ProgrammingError, DBAPIError)):
+            s.execute(
+                text(
+                    "INSERT INTO part_cad_keys ("
+                    "id, workspace_id, part_id, cad_key, source"
+                    ") VALUES ("
+                    ":id, :workspace_id, :part_id, 'CAD-X', 'manual'"
+                    ")"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "workspace_id": ws_b,
+                    "part_id": part_a,
+                },
+            )
+            s.commit()
 
 
 # ---------------------------------------------------------------------------

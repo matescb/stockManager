@@ -84,7 +84,7 @@ Hard-delete is not exposed; FKs use `SET NULL` so a hypothetical hard-delete wou
 
 ## Adjacent tables
 
-`part_cad_keys` (`backend/app/domain/parts/models.py:91`) — secondary CAD-footprint identifiers per part. `source` distinguishes manual vs imported. CASCADE on `part_id`.
+`part_cad_keys` (`backend/app/domain/parts/models.py:91`) — secondary CAD-footprint identifiers per part. `source` distinguishes manual vs imported. The table carries `workspace_id` for direct isolation filtering, and migration `0054` adds a trigger so `workspace_id` must match the owning `part_id`. CASCADE on `workspace_id` and `part_id`. See [workspace-isolation](workspace-isolation.md).
 
 `part_meta_members` (`backend/app/domain/parts/models.py:100`) — a meta-part's registered concrete members. Composite unique `(meta_part_id, part_id)`. CASCADE on either side. See [builds-and-bom](builds-and-bom.md) for how members are used during consume.
 

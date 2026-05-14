@@ -56,7 +56,8 @@ class Part(WorkspaceOwned, Base):
         ),
     )
 
-    part_type = Column(String(20), nullable=False, default="local")  # linked|local|meta|sub_assembly
+    # linked|local|meta|sub_assembly
+    part_type = Column(String(20), nullable=False, default="local")
     name = Column(String(300), nullable=False)
     internal_part_number = Column(String(120), nullable=True)
     manufacturer = Column(String(200), nullable=True)
@@ -65,7 +66,11 @@ class Part(WorkspaceOwned, Base):
     notes_markdown = Column(Text, nullable=True)
     footprint = Column(String(120), nullable=True)
     linked_external_id = Column(String(200), nullable=True)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
+    project_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     low_stock_report_quantity = Column(Integer, nullable=True)
     attrition_percentage = Column(Numeric(8, 4), nullable=False, default=0)
     attrition_min_quantity = Column(Integer, nullable=False, default=0)
@@ -90,9 +95,23 @@ class Part(WorkspaceOwned, Base):
 
 class PartCadKey(Base):
     __tablename__ = "part_cad_keys"
+    __table_args__ = (
+        Index("ix_part_cad_keys_ws_cad_key", "workspace_id", "cad_key"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    part_id = Column(UUID(as_uuid=True), ForeignKey("parts.id", ondelete="CASCADE"), nullable=False, index=True)
+    workspace_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    part_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("parts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     cad_key = Column(String(300), nullable=False, index=True)
     source = Column(String(40), nullable=False, default="manual")
 
