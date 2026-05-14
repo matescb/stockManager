@@ -13,23 +13,25 @@ that's mostly a smoke check — the load-bearing guarantee is the trigger.
 from __future__ import annotations
 
 import threading
-import time
 import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 
 from app.main import app
-
-
 from tests._factories import (
     add_stock as _factory_add_stock,
+)
+from tests._factories import (
     create_part as _create_part,
+)
+from tests._factories import (
     create_storage as _create_storage,
+)
+from tests._factories import (
     signup_user,
 )
-
 
 pytestmark = pytest.mark.real_db
 
@@ -195,3 +197,72 @@ def test_concurrent_removes_cannot_both_drain_below_zero(authed):
     assert total >= 0, f"lot went negative: {total}; results={results}"
     # And specifically: either 40 (one removed) or 100 (none removed).
     assert total in (40, 100), f"unexpected total {total}; results={results}"
+
+
+def test_current_quantity_under_concurrent_inserts(authed):
+    """Concurrent append-only inserts must reconcile with current_quantity()."""
+    from app.domain.stock.models import StockEntry
+    from app.domain.stock.schemas import AddStockIn
+    from app.domain.stock.service import add_stock as service_add_stock
+    from app.domain.stock.service import current_quantity
+    from app.infra.db import SessionLocal
+
+    part_id = uuid.UUID(_create_part(authed, "P-current-quantity"))
+    workspace_id = uuid.UUID(
+        authed.get("/api/auth/me").json()["data"]["workspaces"][0]["id"]
+    )
+    thread_count = 8
+    ops_per_thread = 50
+    expected_total = thread_count * ops_per_thread
+
+    barrier = threading.Barrier(thread_count)
+    errors: list[str] = []
+    errors_lock = threading.Lock()
+
+    def do_adds(worker_idx: int) -> None:
+        with SessionLocal() as session:
+            try:
+                barrier.wait(timeout=15)
+                for _ in range(ops_per_thread):
+                    service_add_stock(
+                        session,
+                        workspace_id=workspace_id,
+                        user_id=None,
+                        payload=AddStockIn(part_id=part_id, quantity=1),
+                    )
+                    session.commit()
+            except Exception as exc:  # pragma: no cover - asserted below
+                session.rollback()
+                with errors_lock:
+                    errors.append(f"worker {worker_idx}: {exc!r}")
+
+    threads = [
+        threading.Thread(target=do_adds, args=(idx,))
+        for idx in range(thread_count)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+
+    assert not any(thread.is_alive() for thread in threads)
+    assert errors == []
+
+    with SessionLocal() as session:
+        current = current_quantity(
+            session,
+            workspace_id=workspace_id,
+            part_id=part_id,
+        )
+        row_count, ledger_sum = session.execute(
+            select(
+                func.count(StockEntry.id),
+                func.coalesce(func.sum(StockEntry.quantity_delta), 0),
+            )
+            .where(StockEntry.workspace_id == workspace_id)
+            .where(StockEntry.part_id == part_id)
+            .where(StockEntry.status == "on_hand")
+        ).one()
+
+    assert row_count == expected_total
+    assert current == int(ledger_sum) == expected_total
