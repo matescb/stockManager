@@ -523,7 +523,11 @@ jobs:
 
       - name: Web image smoke test (SPA bundle present)
         run: |
-          IMAGE=$(docker buildx build --load -f web/Dockerfile.prod -q .)
+          IMAGE=$(docker buildx build --load -f web/Dockerfile.prod \
+            --build-arg VITE_SENTRY_TRACES_SAMPLE_RATE=0.05 \
+            --build-arg VITE_SENTRY_REPLAYS_SESSION_SAMPLE_RATE=0.0 \
+            --build-arg VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE=0.0 \
+            -q .)
           docker run --rm "$IMAGE" test -f /usr/share/nginx/html/index.html
 
       - name: Start prod compose smoke stack

@@ -138,7 +138,7 @@ def _init_sentry() -> None:
         dsn=cfg.SENTRY_DSN,
         environment=cfg.APP_ENV,
         release=cfg.SENTRY_RELEASE or None,
-        traces_sample_rate=cfg.SENTRY_TRACES_SAMPLE_RATE,
+        traces_sample_rate=cfg.SENTRY_TRACES_SAMPLE_RATE or 0.0,
         # `send_default_pii=True` ships user IP + request headers + body.
         # Combined with the `before_send` scrubber below, this is the
         # right balance: triage gets enough context, plaintext credentials

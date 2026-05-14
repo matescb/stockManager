@@ -18,15 +18,44 @@ import {
 } from "react-router-dom";
 
 const dsn = import.meta.env.VITE_SENTRY_DSN ?? "";
-const tracesRaw = import.meta.env.VITE_SENTRY_TRACES_SAMPLE_RATE ?? "1.0";
-const tracesSampleRate = Number.isFinite(parseFloat(tracesRaw))
-  ? parseFloat(tracesRaw)
-  : 1.0;
+const tracesSampleRate = parseSampleRate(
+  import.meta.env.VITE_SENTRY_TRACES_SAMPLE_RATE,
+  "VITE_SENTRY_TRACES_SAMPLE_RATE",
+  import.meta.env.PROD ? "required" : "default-zero",
+);
+const replaysSessionSampleRate = parseSampleRate(
+  import.meta.env.VITE_SENTRY_REPLAYS_SESSION_SAMPLE_RATE,
+  "VITE_SENTRY_REPLAYS_SESSION_SAMPLE_RATE",
+  "default-zero",
+);
+const replaysOnErrorSampleRate = parseSampleRate(
+  import.meta.env.VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE,
+  "VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE",
+  "default-zero",
+);
 const requestHeaderDenylist = new Set(["cookie", "authorization", "x-workspace-id"]);
 const requestUrlHeaders = new Set(["referer", "referrer"]);
 const breadcrumbUrlKeys = new Set(["url", "from", "to"]);
 const sensitiveTextPattern =
   /(["']?\b(?:password|passwd|pass|token|secret|api[_-]?key|authorization|cookie|session(?:[_-]?id)?)["']?\s*[:=]\s*["']?)([^"',&\s;}\]]+)/gi;
+
+function parseSampleRate(
+  raw: string | undefined,
+  envName: string,
+  mode: "required" | "default-zero",
+): number {
+  if (raw === undefined || raw.trim() === "") {
+    if (mode === "required") {
+      throw new Error(`${envName} is required for production Sentry init`);
+    }
+    return 0.0;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0.0 || value > 1.0) {
+    throw new Error(`${envName} must be a number between 0.0 and 1.0`);
+  }
+  return value;
+}
 
 function stripQueryString(rawUrl: string): string {
   const fragmentIndex = rawUrl.indexOf("#");
@@ -156,16 +185,17 @@ Sentry.init({
       blockAllMedia: true,
     }),
   ],
-  // Tracing. 1.0 captures every transaction; once we have steady traffic
-  // and Sentry quota becomes a concern, drop to 0.1–0.2 in prod.
+  // Tracing is explicit in prod. docker-compose.prod.yml and the
+  // Dockerfile both fail closed if this build-time env is missing.
   tracesSampleRate,
   // Distributed tracing headers are only attached for requests to URLs
   // matching this list — keeps third-party calls (Mouser, DigiKey)
   // unaffected.
   tracePropagationTargets: ["localhost", /^https:\/\/parts\.matescb\.cz\/api/],
-  // Session Replay sample rates.
-  replaysSessionSampleRate: 0.1,
-  replaysOnErrorSampleRate: 1.0,
+  // Session Replay is opt-in. Defaults are 0.0 so DOM capture only turns
+  // on after an explicit operator decision and ADR update.
+  replaysSessionSampleRate,
+  replaysOnErrorSampleRate,
   // Enables `Sentry.logger.*` for structured log search in Sentry.
   enableLogs: true,
 });
