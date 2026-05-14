@@ -6,8 +6,15 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from app.api._helpers import _polymorphic_resolvers, assert_polymorphic_in_workspace
+from app.domain.builds.models import Build
+from app.domain.lots.models import Lot
+from app.domain.orders.models import Order
+from app.domain.parts.models import Part
+from app.domain.projects.models import Project
 from app.domain.sourcing.budget import BUDGET
 from app.domain.sourcing.models import SourcingCache
+from app.domain.storage.models import StorageLocation
 from app.main import app
 from tests._factories import (
     add_stock as _factory_add_stock,
@@ -221,6 +228,59 @@ def _create_sourcing_alert(client: TestClient) -> str:
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
+
+
+# ---------------------------------------------------------------------------
+# polymorphic parent resolution registry
+# ---------------------------------------------------------------------------
+
+
+def test_polymorphic_resolvers_complete(db):
+    c = TestClient(app)
+    workspace_id = uuid.UUID(_signup(c, f"a-{uuid.uuid4().hex[:6]}@x.com"))
+
+    expected_types = {
+        "build": Build,
+        "lot": Lot,
+        "order": Order,
+        "part": Part,
+        "project": Project,
+        "storage_location": StorageLocation,
+    }
+    assert _polymorphic_resolvers() == expected_types
+
+    part = Part(workspace_id=workspace_id, name="Resolver Part", part_type="local")
+    project = Project(workspace_id=workspace_id, name="Resolver Project")
+    db.add_all([part, project])
+    db.flush()
+
+    parents = {
+        "build": Build(
+            workspace_id=workspace_id,
+            project_id=project.id,
+            name="Resolver Build",
+        ),
+        "lot": Lot(workspace_id=workspace_id, part_id=part.id, source_type="manual"),
+        "order": Order(workspace_id=workspace_id, name="Resolver Order"),
+        "part": part,
+        "project": project,
+        "storage_location": StorageLocation(
+            workspace_id=workspace_id,
+            name="Resolver Storage",
+        ),
+    }
+    db.add_all(parents.values())
+    db.flush()
+
+    for object_type, parent in parents.items():
+        resolved = assert_polymorphic_in_workspace(
+            db,
+            object_type,
+            parent.id,
+            workspace_id,
+        )
+        assert type(resolved) is expected_types[object_type]
+        assert resolved.id == parent.id
 
 
 # ---------------------------------------------------------------------------
