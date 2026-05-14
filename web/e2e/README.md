@@ -35,9 +35,13 @@ Chromium is the only browser target.
 
 - `authedPage` signs up a real user through `/api/auth/signup` and returns `{ page, request, email, workspaceId, userId }`.
 - `authedRequest` is `page.request`; it shares the signed-in page cookie jar. Do not use Playwright's top-level `request` fixture for authenticated setup.
-- `seedPart`, `seedStorage`, and `seedStock` call public `/api/*` endpoints with the real session cookie. There are no backend test-mode endpoints or database shortcuts.
-- `seedProject`, `seedBomLine`, and `seedScanImport` are typed stubs for the follow-up E2E issues.
+- `seedPart`, `seedStorage`, `seedStock`, and `seedScanImport` call public `/api/*` endpoints with the real session cookie. There are no backend test-mode endpoints or database shortcuts.
+- `seedProject` and `seedBomLine` are typed stubs for the follow-up E2E issues.
 - Provider helpers use `page.route()` and return backend-shaped envelopes (`{ data, status }`), matching `web/src/lib/api.ts`.
+
+## Page Objects
+
+Use `pages/PartDetailPage.ts` for part-detail tab navigation, stock mutations, and shared locators. POMs expose helpers and locators only; assertions stay in specs.
 
 ## Selectors
 
@@ -54,7 +58,7 @@ Every new `data-testid` needs a PR-body justification.
 
 `waitForTimeout` is banned in `*.spec.ts` and CI greps for it. Use web-first assertions, `expect.poll`, URL waits, response waits, or route handlers.
 
-Escape hatch: if a later issue has a reviewed timing case with no observable signal, document the issue number inline and keep the delay outside `*.spec.ts`; the lint remains hard.
+Escape hatch: `stock.spec.ts` has the reviewed #688 ledger-ordering exception, marked inline with `FIXME-allowed`; do not add another without reviewer sign-off.
 
 ## Debugging
 

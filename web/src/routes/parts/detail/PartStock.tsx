@@ -24,7 +24,7 @@ export default function PartStock() {
     <div>
       <div className="card p-4 mb-4">
         <div className="text-sm text-muted">Total on hand</div>
-        <div className="text-2xl font-semibold tabular-nums">{data.total_on_hand}</div>
+        <div data-testid="part-stock-on-hand" className="text-2xl font-semibold tabular-nums">{data.total_on_hand}</div>
       </div>
       <div className="card overflow-hidden">
         <table className="table">

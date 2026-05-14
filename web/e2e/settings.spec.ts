@@ -7,12 +7,12 @@ test(
     const { page } = authedPage;
 
     await page.goto("/settings/account");
-    await expect(page.getByRole("heading", { name: "Account", level: 1 })).toBeVisible({
+    await expect(page.getByRole("main").getByRole("heading", { name: "Account", level: 1 })).toBeVisible({
       timeout: 5_000,
     });
 
     await page.goto("/settings/workspace");
-    await expect(page.getByRole("heading", { name: "Workspace", level: 1 })).toBeVisible({
+    await expect(page.getByRole("main").getByRole("heading", { name: "Workspace", level: 1 })).toBeVisible({
       timeout: 5_000,
     });
   },
