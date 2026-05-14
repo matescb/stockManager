@@ -14,6 +14,7 @@ import {
   formatMoney,
   groupLines,
   isRefreshFresh,
+  purchasePlanOverrideMatchesOffer,
   purchasePlanActionErrorMessage,
   recomputePlanFromLines,
   refreshedLabel,
@@ -100,6 +101,30 @@ export default function PurchasePlanReviewPage() {
     setBusyAction("refresh");
     try {
       const next = await api.post<PurchasePlan>(`/sourcing/purchase-plans/${plan.id}/refresh`);
+      setOverrides(current => {
+        const pruned: typeof current = {};
+        const dropped: string[] = [];
+        const linesById = new Map(next.lines.map(line => [line.id, line]));
+        for (const [lineId, override] of Object.entries(current)) {
+          const refreshedLine = linesById.get(lineId);
+          const stillAvailable = refreshedLine
+            ? (refreshedLine.available_offers ?? []).some(offer =>
+                purchasePlanOverrideMatchesOffer(refreshedLine, override, offer),
+              )
+            : false;
+          if (stillAvailable) {
+            pruned[lineId] = override;
+          } else {
+            dropped.push(lineId);
+          }
+        }
+        if (dropped.length > 0) {
+          toast.info(
+            `Removed ${dropped.length} override${dropped.length === 1 ? "" : "s"} no longer available after refresh.`,
+          );
+        }
+        return pruned;
+      });
       queryClient.setQueryData(purchasePlanKey, next);
       setRefreshAttention(false);
       toast.success("Prices refreshed");

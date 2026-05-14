@@ -8,6 +8,8 @@ the canonical record.
 
 ## 2026-05 — feedback brief fixes
 
+- **SA-2b / #538** Refresh now prunes overrides whose target offer disappeared
+  upstream; info toast surfaces the count.
 - **SA-10b / #539** Convert-orders route now uses explicit `raise_http` +
   `ErrorCodes.*` instead of the legacy `_error_response` mapper.
 - **SA-8b / #535** Split PurchasePlanReviewPage to keep sourcing files under 300-LOC headroom cap.
