@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy import select
 
 from app.core.config import settings
+from app.core.cookies import WORKSPACE_COOKIE_NAME, workspace_cookie_attrs
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
 from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter
@@ -664,12 +665,9 @@ def switch_workspace(
     #   stays Lax because login-like top-level redirects do depend
     #   on it.
     response.set_cookie(
-        key="stockmgr_workspace",
+        key=WORKSPACE_COOKIE_NAME,
         value=str(workspace_id),
-        httponly=True,
-        secure=settings().APP_ENV == "prod",
-        samesite="strict",
         max_age=365 * 24 * 3600,
-        path="/",
+        **workspace_cookie_attrs(),
     )
     return ok({"workspace_id": str(workspace_id)})
