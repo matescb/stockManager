@@ -266,6 +266,59 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
 
+  backend-cron-sessions:
+    build: ./backend
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: "0.5"
+    pids_limit: 256
+    oom_kill_disable: false
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    environment:
+      # Same runtime config shape as backend. Keep POSTGRES_* discrete so
+      # DATABASE_URL is assembled inside Settings without leaking the password
+      # through docker inspect interpolation.
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      SESSION_SECRET: ${SESSION_SECRET}
+      SESSION_PURGE_INTERVAL_SECONDS: ${SESSION_PURGE_INTERVAL_SECONDS:-3600}
+      UPLOAD_DIR: /data/uploads
+      APP_ENV: prod
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      WORKSPACE_SECRETS_KEY: ${WORKSPACE_SECRETS_KEY}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.0}
+      SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+      VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      MAIL_FROM: ${MAIL_FROM}
+      APP_BASE_URL: ${APP_BASE_URL}
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test -d /tmp/stockmanager-job-heartbeats && find /tmp/stockmanager-job-heartbeats -name session-purge -mmin +0 -mmin -90 -print -quit | grep -q ."]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 11m
+    # Runs the session retention purge through the shared backend CLI.
+    # SESSION_PURGE_INTERVAL_SECONDS defaults to the previous one-hour
+    # lifespan cadence; setting it to 0 disables the loop.
+    command: ["sh", "-c", "interval=$${SESSION_PURGE_INTERVAL_SECONDS:-3600}; if [ $$interval -le 0 ]; then echo 'session-purge disabled'; sleep infinity; fi; while true; do timeout 600 python -m app.cli.run_job session-purge; rc=$$?; if [ $$rc -eq 124 ]; then echo 'session-purge timed out after 600s (exit=124)'; elif [ $$rc -ne 0 ]; then echo \"session-purge failed (exit=$$rc)\"; fi; sleep $$interval; done"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
   web:
     build:
       # Context is the repo root so the Dockerfile can COPY both `web/` (sources)
