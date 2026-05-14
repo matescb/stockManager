@@ -12,6 +12,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 
 from app.api._helpers import assert_in_workspace, require_resource_access
 from app.api.routes._activity import _DEFAULT_LIMIT, _MAX_LIMIT, build_activity
@@ -39,6 +40,10 @@ from app.domain.parts.schemas import (
     PartPatch,
     SubstituteIn,
 )
+from app.domain.parts.services.mpn_unique import (
+    active_part_by_mpn as _active_part_by_mpn,
+)
+from app.domain.parts.services.mpn_unique import is_mpn_unique_violation
 from app.domain.stock.models import StockEntry
 from app.domain.stock.service import (
     bulk_current_quantities,
@@ -50,6 +55,17 @@ from app.domain.storage.models import StorageLocation
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _raise_mpn_conflict(existing: Part) -> None:
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "message": f"MPN already used by part \"{existing.name}\"",
+            "existing_id": str(existing.id),
+            "existing_name": existing.name,
+        },
+    )
 
 
 @router.get("")
@@ -165,20 +181,9 @@ def create_part(
         name = mpn
 
     if mpn:
-        existing = (
-            db.query(Part)
-            .filter(Part.workspace_id == ws.id, Part.mpn == mpn, Part.archived_at.is_(None))
-            .first()
-        )
+        existing = _active_part_by_mpn(db, workspace_id=ws.id, mpn=mpn)
         if existing:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "message": f"MPN already used by part \"{existing.name}\"",
-                    "existing_id": str(existing.id),
-                    "existing_name": existing.name,
-                },
-            )
+            _raise_mpn_conflict(existing)
 
     # default_storage_location_id is caller-supplied; it must point at a
     # storage row in this workspace. Without this guard a caller in
@@ -209,12 +214,20 @@ def create_part(
         created_by=user.id,
         updated_by=user.id,
     )
-    db.add(p)
-    # `get_db` commits on clean route exit (BE2-010). No explicit
-    # db.commit() here — a route-local commit would split the
-    # transaction boundary and partial state could outlive a later
-    # raise.
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.add(p)
+            # `get_db` commits on clean route exit (BE2-010). No explicit
+            # db.commit() here — a route-local commit would split the
+            # transaction boundary and partial state could outlive a later
+            # raise.
+            db.flush()
+    except IntegrityError as exc:
+        if mpn and is_mpn_unique_violation(exc):
+            existing = _active_part_by_mpn(db, workspace_id=ws.id, mpn=mpn)
+            if existing is not None:
+                _raise_mpn_conflict(existing)
+        raise
     return ok(_serialize(p, on_hand=0, reserved=0))
 
 

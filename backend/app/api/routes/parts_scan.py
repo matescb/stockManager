@@ -19,16 +19,21 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 
 from app.api.routes._parts_shared import get_part as _get_part
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import ok
 from app.core.secrets import decrypt
-from app.domain.parts.models import BulkImportIdempotency, Part
+from app.domain.parts.models import BulkImportIdempotency
 from app.domain.parts.providers import make_provider
 from app.domain.parts.schemas import QuickRemoveBagIn, ScanImportIn, ScanImportRow
 from app.domain.parts.services.bag_signature import compute_bag_signature
+from app.domain.parts.services.mpn_unique import (
+    active_part_by_mpn as _active_part_by_mpn,
+)
+from app.domain.parts.services.mpn_unique import is_mpn_unique_violation
 from app.domain.parts.services.provider_cache import lookup_with_cache
 from app.domain.parts.services.provider_import import create_from_provider_lookup
 from app.domain.stock.models import StockEntry
@@ -263,13 +268,7 @@ def bulk_import_from_scan(
 
         # Duplicate check — workspace-scoped, case-sensitive (mirrors how
         # GET /parts?mpn= matches).
-        existing = db.execute(
-            select(Part)
-            .where(Part.workspace_id == ws.id)
-            .where(Part.mpn == mpn)
-            .where(Part.archived_at.is_(None))
-            .limit(1)
-        ).scalars().first()
+        existing = _active_part_by_mpn(db, workspace_id=ws.id, mpn=mpn)
         if existing is not None:
             out_rows.append({
                 "mpn": mpn,
@@ -351,6 +350,27 @@ def bulk_import_from_scan(
                     db, ws=ws, user=user, row=row, mpn=mpn,
                     provider_name=provider.name, lookup_result=r,
                 )
+        except IntegrityError as exc:
+            if is_mpn_unique_violation(exc):
+                existing = _active_part_by_mpn(db, workspace_id=ws.id, mpn=mpn)
+                if existing is not None:
+                    out_rows.append({
+                        "mpn": mpn,
+                        "status": "duplicate",
+                        "part_id": str(existing.id),
+                    })
+                    continue
+            try:
+                import sentry_sdk
+                sentry_sdk.capture_exception(exc)
+            except Exception:
+                pass
+            out_rows.append({
+                "mpn": mpn,
+                "status": "row_failed",
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+            continue
         except Exception as exc:
             try:
                 import sentry_sdk
