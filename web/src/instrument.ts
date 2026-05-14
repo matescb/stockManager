@@ -22,6 +22,31 @@ const tracesRaw = import.meta.env.VITE_SENTRY_TRACES_SAMPLE_RATE ?? "1.0";
 const tracesSampleRate = Number.isFinite(parseFloat(tracesRaw))
   ? parseFloat(tracesRaw)
   : 1.0;
+const requestHeaderDenylist = new Set(["cookie", "authorization", "x-workspace-id"]);
+const requestUrlHeaders = new Set(["referer", "referrer"]);
+const breadcrumbUrlKeys = new Set(["url", "from", "to"]);
+
+function stripQueryString(rawUrl: string): string {
+  const fragmentIndex = rawUrl.indexOf("#");
+  const beforeFragment = fragmentIndex === -1 ? rawUrl : rawUrl.slice(0, fragmentIndex);
+  const fragment = fragmentIndex === -1 ? "" : rawUrl.slice(fragmentIndex);
+  const queryIndex = beforeFragment.indexOf("?");
+  const fragmentQueryIndex = fragment.indexOf("?");
+
+  const cleanBeforeFragment =
+    queryIndex === -1 ? beforeFragment : beforeFragment.slice(0, queryIndex);
+  const cleanFragment =
+    fragmentQueryIndex === -1 ? fragment : fragment.slice(0, fragmentQueryIndex);
+  return `${cleanBeforeFragment}${cleanFragment}`;
+}
+
+function scrubUrlKeys(values: Record<string, unknown>, keys: ReadonlySet<string>) {
+  for (const key of Object.keys(values)) {
+    if (keys.has(key.toLowerCase()) && typeof values[key] === "string") {
+      values[key] = stripQueryString(values[key]);
+    }
+  }
+}
 
 Sentry.init({
   dsn,
@@ -55,13 +80,17 @@ Sentry.init({
   beforeSend(event) {
     const req = event.request;
     if (req) {
+      if (typeof req.url === "string") {
+        req.url = stripQueryString(req.url);
+      }
+      delete (req as Record<string, unknown>).query_string;
       if (req.headers) {
-        const drop = new Set(["cookie", "authorization", "x-workspace-id"]);
         for (const k of Object.keys(req.headers)) {
-          if (drop.has(k.toLowerCase())) {
+          if (requestHeaderDenylist.has(k.toLowerCase())) {
             delete (req.headers as Record<string, unknown>)[k];
           }
         }
+        scrubUrlKeys(req.headers as Record<string, unknown>, requestUrlHeaders);
       }
       const method = (req.method ?? "").toUpperCase();
       if (method && method !== "GET") {
@@ -69,6 +98,11 @@ Sentry.init({
           delete req.data;
           (req as Record<string, unknown>).body_redacted = true;
         }
+      }
+    }
+    for (const breadcrumb of event.breadcrumbs ?? []) {
+      if (breadcrumb.data) {
+        scrubUrlKeys(breadcrumb.data, breadcrumbUrlKeys);
       }
     }
     return event;
