@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
@@ -133,6 +135,37 @@ _is_prod = settings().APP_ENV == "prod"
 _log = logging.getLogger(__name__)
 
 
+def _argv_option_value(argv: Sequence[str], option: str) -> str | None:
+    """Return a uvicorn CLI option value from either --opt=value or --opt value."""
+    for idx, arg in enumerate(argv):
+        if arg == option:
+            if idx + 1 < len(argv):
+                return argv[idx + 1]
+            return ""
+        prefix = f"{option}="
+        if arg.startswith(prefix):
+            return arg[len(prefix):]
+    return None
+
+
+def assert_proxy_headers_trusted(argv: Sequence[str] | None = None) -> None:
+    """Fail prod startup when uvicorn won't trust reverse-proxy client headers."""
+    if settings().APP_ENV != "prod":
+        return
+
+    args = tuple(sys.argv if argv is None else argv)
+    if "--proxy-headers" not in args or "--no-proxy-headers" in args:
+        raise RuntimeError(
+            "APP_ENV=prod requires uvicorn --proxy-headers so request.client.host "
+            "is derived from Apache/nginx X-Forwarded-For."
+        )
+    if _argv_option_value(args, "--forwarded-allow-ips") != "*":
+        raise RuntimeError(
+            "APP_ENV=prod requires uvicorn --forwarded-allow-ips=* so proxy "
+            "headers from the compose-network reverse proxy are trusted."
+        )
+
+
 async def _periodic_session_purge(interval_seconds: int) -> None:
     """Background task: every `interval_seconds` purge sessions whose
     `expires_at` is in the past. DB-007 / issue #98.
@@ -172,6 +205,7 @@ async def _periodic_session_purge(interval_seconds: int) -> None:
 async def lifespan(_app: FastAPI):
     """Spawn the background session-purge task on startup; cancel it on
     shutdown. DB-007 / issue #98."""
+    assert_proxy_headers_trusted()
     interval = settings().SESSION_PURGE_INTERVAL_SECONDS
     task: asyncio.Task | None = None
     if interval > 0:
