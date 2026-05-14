@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac as _hmac
 import secrets
+from datetime import timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, status
@@ -21,10 +22,23 @@ from app.core.responses import ok
 from app.core.time import utcnow
 from app.domain.audit.service import log as _audit_log
 from app.domain.users.models import User
-from app.domain.workspaces.models import Workspace, WorkspaceInvitation, WorkspaceMember
+from app.domain.workspaces.models import (
+    INVITATION_TTL,
+    Workspace,
+    WorkspaceInvitation,
+    WorkspaceMember,
+)
 from app.domain.workspaces.schemas import AcceptIn, InviteIn
 
 router = APIRouter()
+
+
+def _invitation_expires_at():
+    return utcnow() + INVITATION_TTL
+
+
+def _iso_utc(value):
+    return value.astimezone(timezone.utc).isoformat()
 
 
 def _hmac_token(plaintext: str) -> str:
@@ -66,8 +80,9 @@ def _serialize(inv: WorkspaceInvitation, *, plaintext_token: str | None = None) 
         # Only the create response carries the composite token; all other
         # serialisations return None here.
         "token": composite_token,
-        "created_at": inv.created_at.isoformat(),
-        "accepted_at": inv.accepted_at.isoformat() if inv.accepted_at else None,
+        "created_at": _iso_utc(inv.created_at),
+        "expires_at": _iso_utc(inv.expires_at),
+        "accepted_at": _iso_utc(inv.accepted_at) if inv.accepted_at else None,
     }
 
 
@@ -144,6 +159,7 @@ def create_invitation(
         role=payload.role,
         token_hmac=_hmac_token(plaintext),
         invited_by=user.id,
+        expires_at=_invitation_expires_at(),
     )
     db.add(inv)
     # Wrap in a savepoint so an IntegrityError from concurrent creates
@@ -297,6 +313,12 @@ def accept_invitation(request: Request, payload: AcceptIn, db: DbSession, user: 
             ErrorCodes.INVITATION_NOT_PENDING,
             f"invitation is {inv.status}",
             invitation_status=inv.status,
+        )
+    if inv.expires_at <= utcnow():
+        raise_http(
+            status.HTTP_410_GONE,
+            ErrorCodes.INVITATION_EXPIRED,
+            "invitation has expired",
         )
     if inv.email.lower() != user.email.lower():
         raise_http(
