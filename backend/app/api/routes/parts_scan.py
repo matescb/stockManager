@@ -499,27 +499,30 @@ def _import_one_scan_row(
                 serial_number=row.lot_serial,
             )
         try:
-            add_stock(
-                db,
-                workspace_id=ws.id,
-                user_id=user.id,
-                payload=AddStockIn(
-                    part_id=p.id,
-                    quantity=row.quantity,
-                    storage_location_id=row.storage_location_id,
-                    lot=lot_payload,
-                    comments=row.comments,
-                    bag_signature=row.bag_signature,
-                ),
-            )
+            with db.begin_nested():
+                add_stock(
+                    db,
+                    workspace_id=ws.id,
+                    user_id=user.id,
+                    payload=AddStockIn(
+                        part_id=p.id,
+                        quantity=row.quantity,
+                        storage_location_id=row.storage_location_id,
+                        lot=lot_payload,
+                        comments=row.comments,
+                        bag_signature=row.bag_signature,
+                    ),
+                )
             qty_added = row.quantity
         except StockError as exc:
             # Don't fail the whole row — the part is created, but surface
             # the stock issue so the UI can flag it. StockError is
-            # caught here (inside the savepoint) rather than letting it
-            # bubble out, because we don't want a stock-add failure to
-            # roll back the Part + provider specs the operator already
-            # sees as "created" in the response.
+            # caught here rather than letting it bubble out, because we
+            # don't want a stock-add failure to roll back the Part +
+            # provider specs the operator already sees as "created" in
+            # the response. The inner savepoint above still rolls back
+            # any partial stock writes, including a Lot flushed before
+            # the StockEntry fails.
             stock_error = str(exc)
 
     return p, qty_added, stock_error
