@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import sys
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
@@ -20,6 +21,41 @@ from app.core.logging import configure_logging
 # tries to log. uvicorn replays logs through the root logger so this
 # captures its lifecycle messages too.
 configure_logging()
+
+_SENTRY_SENSITIVE_TEXT_RE = re.compile(
+    r"""(?ix)
+    (?P<prefix>
+        ["']?
+        \b(?:password|passwd|pass|token|secret|api[_-]?key|authorization|cookie|session(?:[_-]?id)?)
+        ["']?
+        \s*[:=]\s*
+        ["']?
+    )
+    (?P<value>[^"',&\s;}\]]+)
+    """
+)
+
+
+def _scrub_sensitive_text(value: str) -> str:
+    return _SENTRY_SENSITIVE_TEXT_RE.sub(r"\g<prefix>[Filtered]", value)
+
+
+def _scrub_event_strings(event: dict) -> None:
+    if isinstance(event.get("message"), str):
+        event["message"] = _scrub_sensitive_text(event["message"])
+
+    exception = event.get("exception")
+    if not isinstance(exception, dict):
+        return
+    values = exception.get("values")
+    if not isinstance(values, list):
+        return
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        for key in ("value", "message"):
+            if isinstance(item.get(key), str):
+                item[key] = _scrub_sensitive_text(item[key])
 
 
 # Top-level (testable) Sentry event scrubber. Runs as `before_send` so
@@ -45,6 +81,9 @@ configure_logging()
 # session-identifying on every method, so the header scrub runs first and
 # applies regardless of method.
 def _scrub_event(event, _hint):
+    if isinstance(event, dict):
+        _scrub_event_strings(event)
+
     request = event.get("request")
     if not isinstance(request, dict):
         return event

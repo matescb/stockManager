@@ -150,6 +150,37 @@ def test_scrubber_handles_event_without_request():
     assert out == {"message": "hello"}
 
 
+def test_strips_exception_value_secrets():
+    event = {
+        "message": "provider failed api_key=frontend-key token=invite-token",
+        "exception": {
+            "values": [
+                {
+                    "type": "RuntimeError",
+                    "value": (
+                        "lookup failed password=plain-pass "
+                        "api_key=provider-key token=raw-token"
+                    ),
+                    "message": 'request failed with "secret":"json-secret"',
+                }
+            ]
+        },
+    }
+
+    out = _scrub_event(event, None)
+    serialized = str(out)
+
+    assert "plain-pass" not in serialized
+    assert "provider-key" not in serialized
+    assert "raw-token" not in serialized
+    assert "json-secret" not in serialized
+    assert "frontend-key" not in serialized
+    assert "invite-token" not in serialized
+    assert out["exception"]["values"][0]["value"] == (
+        "lookup failed password=[Filtered] api_key=[Filtered] token=[Filtered]"
+    )
+
+
 def test_scrubber_handles_request_without_method():
     """Defensive — older SDK shapes or partial captures might not set
     `method`. We treat that as 'unknown, do nothing destructive'."""

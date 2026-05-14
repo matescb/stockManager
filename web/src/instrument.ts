@@ -25,6 +25,8 @@ const tracesSampleRate = Number.isFinite(parseFloat(tracesRaw))
 const requestHeaderDenylist = new Set(["cookie", "authorization", "x-workspace-id"]);
 const requestUrlHeaders = new Set(["referer", "referrer"]);
 const breadcrumbUrlKeys = new Set(["url", "from", "to"]);
+const sensitiveTextPattern =
+  /(["']?\b(?:password|passwd|pass|token|secret|api[_-]?key|authorization|cookie|session(?:[_-]?id)?)["']?\s*[:=]\s*["']?)([^"',&\s;}\]]+)/gi;
 
 function stripQueryString(rawUrl: string): string {
   const fragmentIndex = rawUrl.indexOf("#");
@@ -44,6 +46,32 @@ function scrubUrlKeys(values: Record<string, unknown>, keys: ReadonlySet<string>
   for (const key of Object.keys(values)) {
     if (keys.has(key.toLowerCase()) && typeof values[key] === "string") {
       values[key] = stripQueryString(values[key]);
+    }
+  }
+}
+
+function scrubSensitiveText(value: string): string {
+  return value.replace(sensitiveTextPattern, "$1[Filtered]");
+}
+
+function scrubEventStrings(event: Record<string, unknown>) {
+  if (typeof event.message === "string") {
+    event.message = scrubSensitiveText(event.message);
+  }
+
+  const exception = event.exception as { values?: unknown } | undefined;
+  if (!exception || !Array.isArray(exception.values)) {
+    return;
+  }
+  for (const item of exception.values) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const exceptionValue = item as Record<string, unknown>;
+    for (const key of ["value", "message"]) {
+      if (typeof exceptionValue[key] === "string") {
+        exceptionValue[key] = scrubSensitiveText(exceptionValue[key]);
+      }
     }
   }
 }
@@ -78,6 +106,8 @@ Sentry.init({
   // session-identifying on every method, so the header scrub applies
   // regardless of body method.
   beforeSend(event) {
+    scrubEventStrings(event as unknown as Record<string, unknown>);
+
     const req = event.request;
     if (req) {
       if (typeof req.url === "string") {
