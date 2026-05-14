@@ -13,6 +13,7 @@ from app.core.auth import (
     clear_login_failures,
     create_session_row,
     hash_password,
+    hash_session_token,
     record_login_failure,
     revoke_all_user_sessions,
     revoke_session,
@@ -27,7 +28,8 @@ from app.core.mail import send_verification_email
 from app.core.ratelimit import limiter
 from app.core.responses import Envelope, ok
 from app.core.time import utcnow
-from app.domain.users.models import PendingUser, User
+from app.domain.audit.service import log as _audit_log
+from app.domain.users.models import PendingUser, User, UserSession
 from app.domain.users.schemas import LoginIn, SignupIn, VerifyIn
 from app.domain.workspaces.models import Workspace, WorkspaceMember
 
@@ -63,6 +65,49 @@ def _hmac_token(plaintext: str) -> str:
     """
     key = settings().SESSION_SECRET.encode("utf-8")
     return _hmac.new(key, plaintext.encode("utf-8"), "sha256").hexdigest()
+
+
+def _workspace_for_logout_audit(db, request: Request, user: User) -> Workspace | None:
+    raw = request.headers.get("X-Workspace-Id") or request.cookies.get("stockmgr_workspace")
+    if raw:
+        try:
+            workspace_id = UUID(raw)
+        except ValueError:
+            workspace_id = None
+        if workspace_id:
+            membership = (
+                db.query(WorkspaceMember)
+                .filter(
+                    WorkspaceMember.user_id == user.id,
+                    WorkspaceMember.workspace_id == workspace_id,
+                    WorkspaceMember.status == "active",
+                )
+                .first()
+            )
+            if membership:
+                return db.get(Workspace, workspace_id)
+
+    membership = (
+        db.query(WorkspaceMember)
+        .filter(WorkspaceMember.user_id == user.id, WorkspaceMember.status == "active")
+        .order_by(WorkspaceMember.created_at.asc())
+        .first()
+    )
+    return db.get(Workspace, membership.workspace_id) if membership else None
+
+
+def _logout_audit_context(db, request: Request, token: str) -> tuple[User, Workspace] | None:
+    digest = hash_session_token(token)
+    session = db.get(UserSession, digest)
+    if session is None:
+        return None
+    user = db.get(User, session.user_id)
+    if user is None:
+        return None
+    workspace = _workspace_for_logout_audit(db, request, user)
+    if workspace is None:
+        return None
+    return user, workspace
 
 
 # ---------------------------------------------------------------------------
@@ -375,6 +420,18 @@ def logout(request: Request, response: Response, db: DbSession) -> Envelope[None
     cookie_name = settings().SESSION_COOKIE_NAME
     token = request.cookies.get(cookie_name)
     if token:
+        audit_context = _logout_audit_context(db, request, token)
+        if audit_context is not None:
+            user, workspace = audit_context
+            _audit_log(
+                db,
+                ws=workspace,
+                user=user,
+                action="user.logout",
+                target_type="user",
+                target_ids=[user.id],
+                request_id=getattr(request.state, "request_id", None),
+            )
         revoke_session(db, token)
     response.delete_cookie(cookie_name, path="/")
     log.info("logout")
