@@ -16,6 +16,19 @@ import AuthShell from "./AuthShell";
 
 type State = "verifying" | "success" | "error";
 
+function verificationErrorMessage(e: unknown): string {
+  if (!(e instanceof ApiError)) {
+    return "Verification failed — please try again.";
+  }
+  if (e.status === 410) {
+    return "Verification link expired.";
+  }
+  if (e.status === 404) {
+    return "Verification link not found.";
+  }
+  return e.userMessage;
+}
+
 export default function Verify() {
   const [params] = useSearchParams();
   const nav = useNavigate();
@@ -46,11 +59,7 @@ export default function Verify() {
       .catch((e: unknown) => {
         if (cancelled) return;
         setState("error");
-        setErrMsg(
-          e instanceof ApiError
-            ? e.userMessage
-            : "Verification failed — please try again.",
-        );
+        setErrMsg(verificationErrorMessage(e));
       });
 
     return () => {
