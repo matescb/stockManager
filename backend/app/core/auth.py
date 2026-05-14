@@ -180,6 +180,7 @@ def revoke_session(db: Session, token: str) -> None:
     row = db.query(UserSession).filter(UserSession.token_hash == digest).first()
     if row:
         db.delete(row)
+        db.commit()
 
 
 def revoke_all_user_sessions(db: Session, user_id) -> int:
