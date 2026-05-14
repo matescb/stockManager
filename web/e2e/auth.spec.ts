@@ -26,7 +26,7 @@ async function logoutViaApi(page: Page) {
 async function signup(page: Page, testInfo: TestInfo, label: string) {
   const email = uniqueEmail(testInfo, label);
   await page.goto("/signup");
-  await page.getByLabel("Name").fill(`E2E ${label}`);
+  await page.getByLabel("Name", { exact: true }).fill(`E2E ${label}`);
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password (min 8)").fill(DEFAULT_PASSWORD);
   await page.getByLabel("Workspace name (optional)").fill(`E2E ${label} workspace`);
@@ -147,7 +147,7 @@ test(
   { tag: ["@core"] },
   async ({ page }, testInfo) => {
     await page.goto("/signup");
-    await page.getByLabel("Name").fill("E2E Signup Validation");
+    await page.getByLabel("Name", { exact: true }).fill("E2E Signup Validation");
     await page.getByLabel("Email").fill("not-an-email");
     await page.getByLabel("Password (min 8)").fill(DEFAULT_PASSWORD);
     await page.getByRole("button", { name: "Create account" }).click();
