@@ -6,9 +6,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy import and_, or_, select
+from sqlalchemy.exc import IntegrityError
 
 from app.api._helpers import assert_child_in_parent, assert_in_workspace, require_resource_access
 from app.api.routes._activity import _DEFAULT_LIMIT, _MAX_LIMIT, build_activity
+from app.api.routes._stock_integrity import raise_integrity_as_409
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.core.time import utcnow
@@ -314,6 +316,8 @@ def receive_order(order_id: UUID, payload: ReceiveIn, db: DbSession, ws: Current
         # the route raises (BE2-010), so we don't need an explicit
         # db.rollback() here.
         raise HTTPException(status_code=400, detail=str(exc))
+    except IntegrityError as exc:
+        raise_integrity_as_409(exc)
     return ok(result)
 
 
