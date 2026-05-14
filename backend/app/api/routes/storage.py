@@ -13,8 +13,10 @@ from app.core.responses import ok
 from app.core.time import utcnow
 from app.domain.stock.models import StockEntry
 from app.domain.stock.service import (
+    StockConflictError,
     history_for_storage,
     stock_for_storage,
+    validate_storage_constraint_flag_update,
 )
 from app.domain.storage.models import StorageLocation
 from app.domain.storage.schemas import StorageIn, StoragePatch
@@ -85,7 +87,24 @@ def get_storage(storage_id: UUID, db: DbSession, ws: CurrentWorkspace):
 @router.patch("/{storage_id}")
 def patch_storage(storage_id: UUID, payload: StoragePatch, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     s = _get(db, ws.id, storage_id)
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    try:
+        validate_storage_constraint_flag_update(
+            db,
+            workspace_id=ws.id,
+            storage=s,
+            requested_single_part_only=data.get("single_part_only"),
+            requested_existing_parts_only=data.get("existing_parts_only"),
+        )
+    except StockConflictError as exc:
+        raise_http(
+            status.HTTP_409_CONFLICT,
+            code=ErrorCodes.STORAGE_CONSTRAINT_VIOLATION,
+            message=str(exc),
+            constraint=exc.constraint,
+            storage_location_id=str(exc.storage_location_id),
+        )
+    for k, v in data.items():
         setattr(s, k, v)
     s.updated_by = user.id
     return ok(_serialize(s))

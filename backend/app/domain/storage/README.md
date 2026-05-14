@@ -11,7 +11,7 @@ Owns `StorageLocation` — the place a part / lot lives. Hierarchical (`parent_i
 | `models.py` | `StorageLocation` |
 | `schemas.py` | Pydantic shapes for storage CRUD |
 
-(No `service.py` — CRUD lives in the route module; constraint enforcement on stock writes lives in `domain/stock/service.py::_enforce_storage_constraints`.)
+(No `service.py` — CRUD lives in the route module; constraint enforcement lives in `domain/stock/service.py`.)
 
 ## Public surface
 
@@ -20,7 +20,7 @@ This module's surface is its model + schemas; reads/writes are done by callers v
 ## Hard rules (this module)
 
 1. **`parts.default_storage_location_id` cross-workspace is blocked by a Postgres BEFORE trigger** (`parts_default_storage_workspace_check`, migration 0036). The only DB-enforced workspace check in the codebase. See [ADR-0002](../../../../docs/adr/0002-code-enforced-workspace-isolation.md).
-2. **Storage constraints (capacity / allowed part types) are enforced on stock writes**, not on `StorageLocation` updates. The check lives in `domain/stock/service.py::_enforce_storage_constraints`.
+2. **Storage constraints are enforced in the stock domain**. Stock writes call `domain/stock/service.py::enforce_storage_constraints`; `StorageLocation` PATCH calls `validate_storage_constraint_flag_update` when enabling flags.
 3. **Workspace isolation is code-enforced** for every other reference. See [ADR-0002](../../../../docs/adr/0002-code-enforced-workspace-isolation.md).
 
 ## See also
@@ -31,6 +31,6 @@ This module's surface is its model + schemas; reads/writes are done by callers v
 
 ## Don't
 
-- Don't enforce capacity / part-type constraints in routes — keep it inside `domain/stock/service.py::_enforce_storage_constraints` so add / move / receive all share one path.
+- Don't reimplement capacity / part-type checks in routes — keep them inside `domain/stock/service.py` so add / move / receive and PATCH rechecks share one path.
 - Don't follow `parts.default_storage_location_id` without re-checking workspace; the trigger only catches *writes*, not joins.
 - Don't allow a storage location to become its own ancestor via `parent_id` — guard at the schema level.
