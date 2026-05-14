@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
+import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import QueryStateBoundary from "@/components/QueryStateBoundary";
@@ -24,20 +25,38 @@ export default function PartMembers() {
   const [pick, setPick] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
-  async function add() {
-    if (!pick) return;
-    setErr(null);
-    try {
-      await api.post(`/parts/${partId}/members`, { member_part_id: pick });
+  const addMutation = useApiMutation<unknown, string>({
+    mutationKey: ["part", partId, "members", "add"],
+    mutationFn: (memberPartId) =>
+      api.post(`/parts/${partId}/members`, { member_part_id: memberPartId }),
+    onSuccess: () => {
       setPick("");
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId, "members") });
-    } catch (e) {
+    },
+    onError: (e) => {
       setErr(e instanceof ApiError ? e.userMessage : "Failed");
-    }
+    },
+  });
+
+  const removeMutation = useApiMutation<unknown, string>({
+    mutationKey: ["part", partId, "members", "remove"],
+    mutationFn: (memberPartId) => api.delete(`/parts/${partId}/members/${memberPartId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId, "members") });
+    },
+    onError: (e) => {
+      setErr(e instanceof ApiError ? e.userMessage : "Failed");
+    },
+  });
+
+  function add() {
+    if (!pick) return;
+    setErr(null);
+    addMutation.mutate(pick);
   }
-  async function remove(mid: string) {
-    await api.delete(`/parts/${partId}/members/${mid}`);
-    qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId, "members") });
+  function remove(mid: string) {
+    setErr(null);
+    removeMutation.mutate(mid);
   }
 
   return (
@@ -58,7 +77,13 @@ export default function PartMembers() {
                 {p?.name ?? m.member_part_id}
                 {p?.mpn && <span className="text-muted ml-2">{p.mpn}</span>}
               </span>
-              <button className="btn-danger text-xs" onClick={() => remove(m.member_part_id)}>Remove</button>
+              <button
+                className="btn-danger text-xs"
+                onClick={() => remove(m.member_part_id)}
+                disabled={removeMutation.isPending}
+              >
+                Remove
+              </button>
             </li>
           );
         })}
@@ -71,7 +96,7 @@ export default function PartMembers() {
             <option key={p.id} value={p.id}>{p.name}{p.mpn ? ` — ${p.mpn}` : ""}</option>
           ))}
         </select>
-        <button className="btn-primary" onClick={add}>Add</button>
+        <button className="btn-primary" onClick={add} disabled={!pick || addMutation.isPending}>Add</button>
       </div>
       </QueryStateBoundary>
     </div>

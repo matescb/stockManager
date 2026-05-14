@@ -72,6 +72,21 @@ export default function BuildDetail() {
     },
   });
 
+  const archiveMutation = useApiMutation<unknown, { wasArchived: boolean }>({
+    mutationKey: ["build", buildId, "archive"],
+    mutationFn: ({ wasArchived }) =>
+      api.post(`/builds/${buildId}/${wasArchived ? "restore" : "archive"}`),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "build", buildId) });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "builds") });
+      toast.success(vars.wasArchived ? "Build restored." : "Build archived.");
+      if (!vars.wasArchived) nav("/builds");
+    },
+    onError: (e) => {
+      toast.error(e instanceof ApiError ? e.userMessage : "Archive failed");
+    },
+  });
+
 
   if (isError) return <div className="text-red-600 text-sm p-4">Failed to load build. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (!data) return <div className="text-muted">Loading…</div>;
@@ -120,11 +135,8 @@ export default function BuildDetail() {
     consumeMutation.mutate({ lines });
   }
 
-  async function doArchive() {
-    await api.post(`/builds/${buildId}/${build.archived_at ? "restore" : "archive"}`);
-    qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "build", buildId) });
-    qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "builds") });
-    if (!build.archived_at) nav("/builds");
+  function doArchive() {
+    archiveMutation.mutate({ wasArchived: !!build.archived_at });
   }
 
   function setRow(entryId: string, rowIdx: number, patch: Partial<ConsumeRow>) {
@@ -182,7 +194,9 @@ export default function BuildDetail() {
             {isEditable && (
               <button className="btn" onClick={fillSuggested}>Auto-fill</button>
             )}
-            <button className="btn" onClick={doArchive}>{build.archived_at ? "Restore" : "Archive"}</button>
+            <button className="btn" onClick={doArchive} disabled={archiveMutation.isPending}>
+              {build.archived_at ? "Restore" : "Archive"}
+            </button>
           </div>
         }
       />
