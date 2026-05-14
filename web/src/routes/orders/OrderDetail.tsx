@@ -27,6 +27,7 @@ type ReceiveLine = {
   order_entry_id: string;
   quantity: number;
   storage_location_id?: string;
+  lot_name?: string;
   serial_number?: string;
 };
 
@@ -60,7 +61,7 @@ export default function OrderDetail() {
   const [newPrice, setNewPrice] = useState<string>("");
 
   // Per-entry receive state
-  const [receiveLines, setReceiveLines] = useState<Record<string, { qty: number; storage: string; serial?: string }>>({});
+  const [receiveLines, setReceiveLines] = useState<Record<string, { qty: number; storage: string; lotName?: string; serial?: string }>>({});
   const [receivedOn, setReceivedOn] = useState("");
   // Inline error surface — preserved for the handful of branches that
   // still want a banner (e.g. "enter a quantity on at least one row");
@@ -163,6 +164,7 @@ export default function OrderDetail() {
         order_entry_id: entryId,
         quantity: v.qty,
         storage_location_id: v.storage || undefined,
+        lot_name: v.lotName?.trim() || undefined,
         serial_number: v.serial?.trim() || undefined,
       }));
     if (lines.length === 0) {
@@ -295,13 +297,14 @@ export default function OrderDetail() {
                 <th className="w-24">Outstanding</th>
                 <th className="w-28">Receive</th>
                 <th className="w-64">Storage</th>
+                <th className="w-40">Lot name</th>
                 <th className="w-40">Serial #</th>
               </tr>
             </thead>
             <tbody>
               {entries.filter(e => e.part_id && e.quantity_received < e.quantity_ordered).map(e => {
                 const outstanding = e.quantity_ordered - e.quantity_received;
-                const cur = receiveLines[e.id] ?? { qty: 0, storage: "", serial: "" };
+                const cur = receiveLines[e.id] ?? { qty: 0, storage: "", lotName: "", serial: "" };
                 const part = partsById.get(e.part_id!);
                 return (
                   <tr key={e.id}>
@@ -332,6 +335,14 @@ export default function OrderDetail() {
                           <option key={s.id} value={s.id}>{s.name}</option>
                         ))}
                       </select>
+                    </td>
+                    <td>
+                      <input
+                        className="input"
+                        value={cur.lotName ?? ""}
+                        onChange={ev => setReceiveLines(s => ({ ...s, [e.id]: { ...cur, lotName: ev.target.value } }))}
+                        placeholder={`${order.name}#${e.order_index + 1}`}
+                      />
                     </td>
                     <td>
                       <input

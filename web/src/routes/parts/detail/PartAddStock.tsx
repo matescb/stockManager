@@ -25,7 +25,7 @@ type AddStockRequest = {
     unit_price?: number;
     total_price?: number;
   };
-  lot?: { name?: string; serial_number?: string };
+  lot?: { name?: string; expiration_date?: string; serial_number?: string };
   comments?: string;
 };
 
@@ -45,6 +45,7 @@ export default function PartAddStock() {
   const [totalPrice, setTotalPrice] = useState<string>("");
   const [currency, setCurrency] = useState("USD");
   const [lotName, setLotName] = useState("");
+  const [lotExpiration, setLotExpiration] = useState("");
   const [serial, setSerial] = useState("");
   const [comments, setComments] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -89,7 +90,13 @@ export default function PartAddStock() {
         total_price: priceMode === "entire_lot" ? Number(totalPrice) : undefined,
       };
     }
-    if (lotName || serial) payload.lot = { name: lotName || undefined, serial_number: serial || undefined };
+    if (lotName || lotExpiration || serial) {
+      payload.lot = {
+        name: lotName || undefined,
+        expiration_date: lotExpiration || undefined,
+        serial_number: serial || undefined,
+      };
+    }
     addMutation.mutate(payload);
   }
 
@@ -157,10 +164,15 @@ export default function PartAddStock() {
           </div>
         )}
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div>
           <label className="label" htmlFor="add-stock-lot-name">Lot name (optional)</label>
           <input id="add-stock-lot-name" className="input" value={lotName} onChange={e => setLotName(e.target.value)} placeholder="LOT-2026-001" />
+        </div>
+        <div>
+          <label className="label" htmlFor="add-stock-lot-expiration">Lot expiration (optional)</label>
+          <input id="add-stock-lot-expiration" className="input" type="date" value={lotExpiration} onChange={e => setLotExpiration(e.target.value)} />
+          <p className="mt-1 text-xs text-muted">Use the date printed on the supplier lot or bag label.</p>
         </div>
         <div>
           <label className="label" htmlFor="add-stock-serial">Serial number (optional)</label>
