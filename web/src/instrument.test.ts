@@ -42,7 +42,7 @@ describe("Sentry beforeSend", () => {
           },
         },
       ],
-    } as Parameters<typeof beforeSend>[0];
+    } as unknown as Parameters<typeof beforeSend>[0];
 
     const scrubbed = await Promise.resolve(beforeSend(event, {}));
 
@@ -55,5 +55,48 @@ describe("Sentry beforeSend", () => {
     expect(scrubbed?.breadcrumbs?.[0]?.data?.to).toBe("/projects#bom");
     expect(JSON.stringify(scrubbed)).not.toContain("secret");
     expect(JSON.stringify(scrubbed)).not.toContain("?");
+  });
+
+  it("test_beforesend_strips_exception_value_secrets", async () => {
+    vi.resetModules();
+
+    const Sentry = await import("@sentry/react");
+    vi.mocked(Sentry.init).mockClear();
+
+    await import("./instrument");
+
+    const options = vi.mocked(Sentry.init).mock.calls[0]?.[0];
+    const beforeSend = options?.beforeSend;
+    expect(beforeSend).toBeTypeOf("function");
+    if (!beforeSend) {
+      throw new Error("Sentry beforeSend was not configured");
+    }
+
+    const event = {
+      type: undefined,
+      message: "provider failed api_key=frontend-key token=invite-token",
+      exception: {
+        values: [
+          {
+            type: "Error",
+            value: "lookup failed password=plain-pass api_key=provider-key token=raw-token",
+            message: 'request failed with "secret":"json-secret"',
+          },
+        ],
+      },
+    } as unknown as Parameters<typeof beforeSend>[0];
+
+    const scrubbed = await Promise.resolve(beforeSend(event, {}));
+    const serialized = JSON.stringify(scrubbed);
+
+    expect(serialized).not.toContain("plain-pass");
+    expect(serialized).not.toContain("provider-key");
+    expect(serialized).not.toContain("raw-token");
+    expect(serialized).not.toContain("json-secret");
+    expect(serialized).not.toContain("frontend-key");
+    expect(serialized).not.toContain("invite-token");
+    expect(scrubbed?.exception?.values?.[0]?.value).toBe(
+      "lookup failed password=[Filtered] api_key=[Filtered] token=[Filtered]",
+    );
   });
 });
