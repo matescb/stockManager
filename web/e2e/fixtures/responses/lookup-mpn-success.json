@@ -1,0 +1,22 @@
+{
+  "data": {
+    "found": true,
+    "result": {
+      "mpn": "RC0603FR-0710KL",
+      "manufacturer": "Yageo",
+      "description": "RES SMD 10K OHM 1% 1/10W 0603",
+      "category": "Resistors",
+      "footprint": "0603",
+      "datasheet_url": "https://example.invalid/datasheets/rc0603fr-0710kl.pdf",
+      "image_url": "https://example.invalid/images/rc0603fr-0710kl.jpg",
+      "source_url": "https://example.invalid/parts/rc0603fr-0710kl",
+      "specs": [
+        { "key": "Resistance", "value": "10 kOhms" },
+        { "key": "Tolerance", "value": "1%" }
+      ]
+    },
+    "message": null,
+    "provider": "mouser"
+  },
+  "status": { "category": "ok", "message": "OK" }
+}

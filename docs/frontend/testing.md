@@ -4,7 +4,7 @@ Audience: engineer
 
 How the FE test suite is organised: vitest with a node default + jsdom
 opt-in convention, the `crypto.subtle` patch, the `__dom__/` boundary,
-and the Playwright smoke spec.
+and the Playwright E2E tiers.
 
 ## Tooling
 
@@ -13,8 +13,8 @@ and the Playwright smoke spec.
 - **@testing-library/react** + **@testing-library/user-event** — DOM
   rendering and synthetic user input.
 - **jsdom** — opt-in environment for tests that render React.
-- **Playwright** (`^1.48.2`) — single E2E smoke spec, opt-in via
-  `npm run test:e2e`.
+- **Playwright** (`^1.48.2`) — E2E smoke/core/nightly tiers under
+  `web/e2e/`, opt-in via `npm run e2e:*`.
 
 ## Running
 
@@ -23,7 +23,9 @@ cd web
 npm test                # vitest run — all unit + DOM tests
 npm run test:watch      # vitest --watch
 npm run test:ui         # vitest UI
-npm run test:e2e        # playwright (assumes docker compose up at :5173)
+npm run e2e:smoke       # deploy-gating Playwright smoke tier
+npm run e2e:core        # advisory Playwright core tier
+npm run e2e:nightly     # scheduled/manual Playwright nightly tier
 ```
 
 CI runs `vitest run --coverage`; output lives in `web/coverage/` and is
@@ -201,18 +203,22 @@ and assert on the listener (line 191-220). `retry: false` is the same
 default as production, so a thrown `ApiError(401)` doesn't fire the
 listener three times.
 
-## Playwright smoke
+## Playwright E2E
 
-`web/playwright.config.ts` + `web/e2e/smoke.spec.ts` cover one
-intentional full-stack dev-compose flow: signup → create part → add
-stock → confirm ledger row. The suite uses one project (`chromium`),
-`fullyParallel: false`, and `workers: 1`. Opt-in via `npm run test:e2e`;
-the default `npm test` (vitest) keeps doing what it does
-(`playwright.config.ts:9-11`).
+`web/playwright.config.ts` exposes three Chromium-only E2E projects:
+`smoke`, `core`, and `nightly`. The smoke project covers one intentional
+full-stack dev-compose flow: signup → create part → add stock → confirm
+ledger row. Use structured Playwright tags (`{ tag: ["@core"] }`) for new
+specs; see `web/e2e/README.md` for the fixture and tag rules. Opt in via
+`npm run e2e:smoke`, `npm run e2e:core`, or `npm run e2e:nightly`; the
+default `npm test` (vitest) keeps doing what it does.
 
 The CI job is `playwright-e2e` (GitHub Actions). It brings up the dev
 docker-compose stack, polls `/api/health`, then invokes
-`npx playwright test --grep @smoke` (`playwright.config.ts:7-13`).
+`npx playwright test --project=smoke`. The advisory `playwright-core` job
+uses the same setup but is label-gated on `area:frontend` or
+`area:testing`; the scheduled `playwright-nightly` workflow runs the
+nightly project at 03:00 UTC and on manual dispatch.
 
 `web/e2e/prod-smoke.spec.ts` is the separate prod-compose smoke used by
 the `prod-validate` job. It boots `docker-compose.prod.yml`, loads the
@@ -222,37 +228,37 @@ through the same origin. It intentionally stays unauthenticated because
 over plain HTTP loopback.
 
 ```ts
-// web/e2e/smoke.spec.ts:18-57 (excerpt)
-test("@smoke signup → create part → add stock → ledger row visible", async ({ page }) => {
-  const email = `e2e-${Date.now()}-${…}@x.com`;     // .test TLD is reserved (RFC 6761),
-                                                      // pydantic EmailStr 422s on it.
-  await page.goto("/signup");
-  await page.getByLabel(/email/i).fill(email);
-  // …
-  await page.waitForURL(/\/parts(\b|$)/, { timeout: 10_000 });
+// web/e2e/smoke.spec.ts (excerpt)
+import { test, expect } from "./fixtures";
 
-  await page.getByRole("link", { name: /\+ part/i }).first().click();
-  await page.getByLabel(/^name$/i).fill("E2E Smoke Resistor");
-  await page.getByRole("button", { name: /^create$/i }).click();
-  await expect(page.getByText("E2E Smoke Resistor").first()).toBeVisible({ timeout: 10_000 });
+test(
+  "signup → create part → add stock → ledger row visible",
+  { tag: ["@smoke"] },
+  async ({ authedPage }) => {
+    const { page } = authedPage;
+    await page.goto("/parts");
+    await page.getByRole("link", { name: /\+ part/i }).first().click();
+    await page.getByLabel(/^name$/i).fill("E2E Smoke Resistor");
+    await page.getByRole("button", { name: /^create$/i }).click();
+    await expect(page.getByText("E2E Smoke Resistor").first()).toBeVisible({ timeout: 10_000 });
 
-  await page.getByRole("link", { name: "Add stock", exact: true }).click();
-  await page.getByLabel(/quantity/i).fill("42");
-  await page.getByRole("button", { name: /^add$/i }).click();
+    await page.getByRole("link", { name: "Add stock", exact: true }).click();
+    await page.getByLabel(/quantity/i).fill("42");
+    await page.getByRole("button", { name: /^add$/i }).click();
 
-  await expect(page.getByText("42").first()).toBeVisible({ timeout: 10_000 });
-});
+    await expect(page.getByText("42").first()).toBeVisible({ timeout: 10_000 });
+  },
+);
 ```
 
 Two E2E gotchas worth pinning here:
 
 - `.test` is a reserved TLD (RFC 6761) and pydantic's `EmailStr` rejects
-  it with 422; use `.com` (`smoke.spec.ts:19-21`).
+  it with 422; shared fixtures use `x.com`.
 - `PartsList` renders a `<Link>` (role=link) "+ Part" — match by link
-  role, not button (`smoke.spec.ts:35-36`).
+  role, not button.
 - The "Add stock" SubNav tab routes to `/parts/{id}/add`, which is where
-  the form lives. The "Stock" tab is read-only
-  (`smoke.spec.ts:48-49`).
+  the form lives. The "Stock" tab is read-only.
 
 The dev-compose suite is intentionally minimal: the v2 plan called out
 page-level component tests as out of scope. This is the one end-to-end
@@ -260,7 +266,7 @@ signal that the routing + API + ledger glue all line up
 (`smoke.spec.ts:11-14`).
 
 `PLAYWRIGHT_BASE_URL` overrides the default `http://localhost:5173`
-(`playwright.config.ts:21`).
+(`web/playwright.config.ts`).
 
 ## Coverage exclusions
 

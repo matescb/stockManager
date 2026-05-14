@@ -160,6 +160,31 @@ The round-trip uses a sibling DB (`<your_test_db>_migration_rt`)
 created on first run so concurrent test runs don't trample each
 other. Override the URL via `MIGRATION_TEST_DATABASE_URL` if needed.
 
+### E2E tests
+
+Playwright tests live under `web/e2e/`; see
+[`web/e2e/README.md`](../web/e2e/README.md) for fixture and tag rules.
+
+CI has three E2E tiers:
+
+| Tier | CI job | Contract |
+|------|--------|----------|
+| `@smoke` | `playwright-e2e` in `.github/workflows/ci.yml` | Deploy-gating full-stack smoke path. |
+| `@core` | `playwright-core` in `.github/workflows/ci.yml` | Advisory, label-gated on `area:frontend` / `area:testing`. |
+| `@nightly` | `.github/workflows/playwright-nightly.yml` | Scheduled/manual heavy flows with a 30-day report artifact. |
+
+Local smoke loop:
+
+```bash
+make dev-up
+cd web && npx playwright test --project=smoke
+```
+
+E2E seeding goes through public `/api/*` routes with a real session cookie
+from `authedPage`. Do not add backend test-mode endpoints or database
+shortcuts for Playwright setup; the point is to exercise the same API
+envelope, auth, and workspace rules the browser uses.
+
 ## Migrations
 
 The schema is managed by Alembic. Migrations are linear (one chain,

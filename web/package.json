@@ -13,6 +13,11 @@
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "test:e2e": "playwright test",
+    "e2e": "playwright test",
+    "e2e:smoke": "playwright test --project=smoke",
+    "e2e:core": "playwright test --project=core --pass-with-no-tests",
+    "e2e:nightly": "playwright test --project=nightly --pass-with-no-tests",
+    "e2e:ui": "playwright test --ui",
     "typecheck": "tsc -b",
     "lint": "eslint src"
   },
