@@ -38,9 +38,13 @@ The active leak this prevents — `adjust_stock` validates caller-supplied `lot_
 
 The same defence-in-depth pattern is replicated in `remove_stock` (`backend/app/domain/stock/service.py:508-515`), `move_stock` (`backend/app/domain/stock/service.py:563-576`), `builds.consume` (`backend/app/domain/builds/service.py:367-380`), and `orders.receive` (`backend/app/domain/orders/service.py:103,118-119`).
 
-## The one DB-enforced exception
+## DB-enforced exceptions
 
-`parts.default_storage_location_id` is *additionally* enforced by a Postgres BEFORE trigger.
+Most workspace isolation is enforced in code. Two part-domain edges are
+additionally enforced by Postgres BEFORE triggers because direct SQL could
+otherwise persist a cross-workspace reference.
+
+### `parts.default_storage_location_id`
 
 - Migration: `backend/alembic/versions/0036_parts_default_storage_ws_trigger.py`.
 - Trigger name: `parts_default_storage_workspace_check`.
@@ -54,16 +58,29 @@ Why this column gets the trigger and others don't (`backend/alembic/versions/003
 
 This is the single column that's a known foot-gun for migration-time data manipulation (it was added late, has fan-out implications for stock-add validation via `default_storage_mandatory`), so it earned the belt-and-braces.
 
-## Tables that are *not* workspace-scoped
+### `part_cad_keys.workspace_id`
 
-Three tables intentionally lack a `workspace_id` column. The model docstrings carry the rationale in case a well-meaning refactor tries to "fix" them:
+- Migration: `backend/alembic/versions/0054_part_cad_keys_workspace_id.py`.
+- Trigger name: `part_cad_keys_workspace_check`.
+- Function: `check_part_cad_keys_workspace()`.
+- Fires: `BEFORE INSERT OR UPDATE OF workspace_id, part_id ON part_cad_keys`.
+- Behaviour: checks that `part_cad_keys.part_id` points at a `parts` row in
+  `part_cad_keys.workspace_id`; mismatches raise `ERRCODE = '23514'`.
+
+The table stores `workspace_id` directly so BOM CAD-key matching can filter
+`part_cad_keys.workspace_id` before joining to `parts`. The trigger keeps that
+stored workspace aligned with the owning part for migration/admin writes.
+
+## Tables without `workspace_id`
+
+These tables intentionally lack a `workspace_id` column. The model docstrings carry the rationale in case a well-meaning refactor tries to "fix" them:
 
 - `users` — predates workspaces. Login is pre-workspace.
 - `pending_users` — created by signup before any workspace exists (`backend/app/domain/users/models.py:91-95`).
 - `user_login_failures` — protects the user credential, not a workspace resource (`backend/app/domain/users/models.py:62-64`).
 - `user_sessions` — keyed by token hash; user-scoped, not workspace-scoped.
 
-Everything else inherits `WorkspaceOwned` (`backend/app/domain/_mixins.py:11-21`) which means `workspace_id` is `nullable=False` with `ON DELETE CASCADE`.
+Everything else either inherits `WorkspaceOwned` (`backend/app/domain/_mixins.py:11-21`) which means `workspace_id` is `nullable=False` with `ON DELETE CASCADE`, or is an explicit child table whose workspace contract is documented here.
 
 ## Polymorphic tables
 

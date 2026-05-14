@@ -255,6 +255,7 @@ def _match_part(db: Session, *, workspace_id: UUID, row: ParsedRow) -> Part | No
         cad = db.execute(
             select(Part)
             .join(PartCadKey, PartCadKey.part_id == Part.id)
+            .where(PartCadKey.workspace_id == workspace_id)
             .where(Part.workspace_id == workspace_id)
             .where(PartCadKey.cad_key == row.cad_key)
             .limit(1)
