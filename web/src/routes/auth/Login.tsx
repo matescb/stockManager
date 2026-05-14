@@ -12,9 +12,6 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
-  // SEC2-014: the server returns retry_after_seconds on a 429 lockout
-  // response. Show a countdown so the user knows how long to wait.
-  const [retryAfter, setRetryAfter] = useState<number | null>(null);
 
   // `from` is set by `<Gate>` (and by the 401 handler in auth.tsx) when
   // an authed page bounced the user here. Replay the original target on
@@ -31,14 +28,7 @@ export default function Login() {
     },
     onError: (e) => {
       if (e instanceof ApiError) {
-        // SEC2-014: per-account lockout returns 429 with retry_after_seconds.
-        const body = e.body as Record<string, unknown> | null;
-        if (e.status === 429 && body && typeof body.retry_after_seconds === "number") {
-          setRetryAfter(body.retry_after_seconds);
-          setErr("Too many failed login attempts. Please try again later.");
-        } else {
-          setErr(e.userMessage);
-        }
+        setErr("Login failed. Check your credentials and try again.");
       } else {
         setErr("Login failed");
       }
@@ -50,7 +40,6 @@ export default function Login() {
   function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
-    setRetryAfter(null);
     loginMutation.mutate({ email, password });
   }
 
@@ -60,11 +49,6 @@ export default function Login() {
         {err && (
           <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-danger text-sm">
             {err}
-            {retryAfter !== null && (
-              <span className="block mt-1 text-xs">
-                Try again in {Math.ceil(retryAfter / 60)} minute{retryAfter > 60 ? "s" : ""}.
-              </span>
-            )}
           </div>
         )}
         <div>
