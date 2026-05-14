@@ -57,6 +57,12 @@ stack traces de-minify.
   VPS builds without the token produce no `.map` files.
   `find -name '*.map' -delete` in `web/Dockerfile.prod` is
   belt-and-braces for edge-case local builds.
+- **Structured log audit** — `enableLogs: true` is on in
+  `web/src/instrument.ts:105-106`, but AUD-070 found no
+  `Sentry.logger.*` call sites in `web/src` or `backend/app`.
+  `web/.eslintrc.cjs` rejects future `Sentry.logger.*` calls that pass
+  sensitive identifiers such as tokens, passwords, cookies, sessions,
+  DSNs, or workspace IDs.
 
 ## Invariants introduced
 
@@ -73,6 +79,10 @@ stack traces de-minify.
   bodies never reach Sentry. Tested at
   `backend/tests/test_sentry_scrubber.py` (TODO(verify): exact test
   filename).
+- **`Sentry.logger.*` calls must not receive secrets.** If structured
+  logs are added, pass only redacted scalar metadata. The frontend
+  lint guard in `web/.eslintrc.cjs` blocks common sensitive identifier
+  names at review time.
 - **Empty DSN → SDK no-op.** Dev environments stay quiet; no events,
   no network egress.
 
