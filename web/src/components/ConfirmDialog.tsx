@@ -28,6 +28,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { Modal } from "./Modal";
 
 type Severity = "default" | "danger" | "warning";
 
@@ -84,22 +85,6 @@ export function ConfirmDialogProvider({ children }: { children: ReactNode }) {
     }
   }, [state]);
 
-  // Esc closes (cancels) the dialog. Capture-phase so app-wide handlers
-  // don't swallow it first.
-  useEffect(() => {
-    if (state.kind === "none") return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        if (state.kind === "confirm") state.resolve(false);
-        if (state.kind === "prompt") state.resolve(null);
-        setState({ kind: "none" });
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [state]);
-
   const confirm = useCallback((opts: ConfirmOptions) => {
     return new Promise<boolean>((resolve) => {
       // If something else is already open, drop it (resolve false) and
@@ -119,6 +104,14 @@ export function ConfirmDialogProvider({ children }: { children: ReactNode }) {
         if (prev.kind === "prompt") prev.resolve(null);
         return { kind: "prompt", opts, resolve };
       });
+    });
+  }, []);
+
+  const cancelActiveDialog = useCallback(() => {
+    setState((prev) => {
+      if (prev.kind === "confirm") prev.resolve(false);
+      if (prev.kind === "prompt") prev.resolve(null);
+      return { kind: "none" };
     });
   }, []);
 
@@ -147,10 +140,7 @@ export function ConfirmDialogProvider({ children }: { children: ReactNode }) {
               if (state.kind === "confirm") closeWith(true);
               if (state.kind === "prompt") closeWith(inputValue);
             }}
-            onCancel={() => {
-              if (state.kind === "confirm") closeWith(false);
-              if (state.kind === "prompt") closeWith(null);
-            }}
+            onCancel={cancelActiveDialog}
           />,
           document.body,
         )}
@@ -180,6 +170,7 @@ function DialogShell({
     state.kind === "prompt" ? "Enter a value" : severity === "danger" ? "Confirm delete" : "Confirm";
   const defaultConfirmLabel =
     isPrompt ? "OK" : severity === "danger" ? "Delete" : severity === "warning" ? "Continue" : "OK";
+  const title = opts.title ?? defaultTitle;
 
   const confirmClass =
     severity === "danger"
@@ -187,52 +178,51 @@ function DialogShell({
       : severity === "warning"
         ? "btn border-warning/50 bg-warning/10 text-warning hover:bg-warning/20"
         : "btn-primary";
+  const confirmButtonRef = useRef<HTMLButtonElement>(null);
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      role="dialog"
-      aria-modal="true"
-      onMouseDown={(e) => {
-        // Click outside the panel cancels.
-        if (e.target === e.currentTarget) onCancel();
-      }}
+    <Modal
+      open
+      onClose={onCancel}
+      title={title}
+      initialFocusRef={isPrompt ? inputRef : confirmButtonRef}
+      size="sm"
+      className="card max-w-md w-full p-4 space-y-3 shadow-lg"
     >
-      <div className="card max-w-md w-full p-4 space-y-3 shadow-lg">
-        <h2 className="text-base font-semibold text-text">
-          {opts.title ?? defaultTitle}
-        </h2>
-        <p className="text-sm text-text whitespace-pre-wrap">{opts.message}</p>
-        {state.kind === "prompt" && (
-          <input
-            ref={inputRef}
-            className="input"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                onConfirm();
-              }
-            }}
-            placeholder={(state.opts as PromptOptions).placeholder}
-          />
-        )}
-        <div className="flex justify-end gap-2 pt-2">
-          <button type="button" className="btn-ghost" onClick={onCancel}>
-            {opts.cancelLabel ?? "Cancel"}
-          </button>
-          <button
-            type="button"
-            className={confirmClass}
-            onClick={onConfirm}
-            autoFocus={!isPrompt}
-          >
-            {opts.confirmLabel ?? defaultConfirmLabel}
-          </button>
-        </div>
+      <h2 className="text-base font-semibold text-text">
+        {title}
+      </h2>
+      <p className="text-sm text-text whitespace-pre-wrap">{opts.message}</p>
+      {state.kind === "prompt" && (
+        <input
+          ref={inputRef}
+          className="input"
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              onConfirm();
+            }
+          }}
+          placeholder={(state.opts as PromptOptions).placeholder}
+        />
+      )}
+      <div className="flex justify-end gap-2 pt-2">
+        <button type="button" className="btn-ghost" onClick={onCancel}>
+          {opts.cancelLabel ?? "Cancel"}
+        </button>
+        <button
+          ref={confirmButtonRef}
+          type="button"
+          className={confirmClass}
+          onClick={onConfirm}
+          autoFocus={!isPrompt}
+        >
+          {opts.confirmLabel ?? defaultConfirmLabel}
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }
 
