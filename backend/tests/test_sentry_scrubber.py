@@ -138,6 +138,48 @@ def test_scrubber_strips_sensitive_headers_on_post():
     assert "data" not in out["request"]
 
 
+def test_strips_apikey_query():
+    event = _event(
+        "POST",
+        "https://api.mouser.com/api/v1/search/partnumber?apiKey=MOUSER-SECRET#frag?tab=x",
+        data={"mpn": "RC0402JR-070R"},
+        headers={
+            "Referer": (
+                "https://api.mouser.com/api/v1/search/partnumber"
+                "?apiKey=HEADER-SECRET"
+            ),
+        },
+    )
+    event["request"]["query_string"] = "apiKey=MOUSER-SECRET"
+    event["message"] = "Mouser failed url=https://api.mouser.com/search?apiKey=MSG-SECRET"
+    event["exception"] = {
+        "values": [
+            {
+                "type": "HTTPStatusError",
+                "value": (
+                    "Server error for url "
+                    "https://api.mouser.com/api/v1/search/partnumber?apiKey=EXC-SECRET"
+                ),
+            }
+        ]
+    }
+
+    out = _scrub_event(event, None)
+    serialized = str(out)
+
+    assert out["request"]["url"] == "https://api.mouser.com/api/v1/search/partnumber#frag"
+    assert "query_string" not in out["request"]
+    assert out["request"]["headers"]["Referer"] == (
+        "https://api.mouser.com/api/v1/search/partnumber"
+    )
+    assert "MOUSER-SECRET" not in serialized
+    assert "HEADER-SECRET" not in serialized
+    assert "MSG-SECRET" not in serialized
+    assert "EXC-SECRET" not in serialized
+    assert "apiKey=[Filtered]" in out["message"]
+    assert "apiKey=[Filtered]" in out["exception"]["values"][0]["value"]
+
+
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
