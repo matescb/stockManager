@@ -134,6 +134,17 @@ _is_prod = settings().APP_ENV == "prod"
 
 _log = logging.getLogger(__name__)
 
+CORS_ALLOW_HEADERS = [
+    "Accept",
+    "Accept-Language",
+    "Baggage",
+    "Content-Language",
+    "Content-Type",
+    "Sentry-Trace",
+    "X-Request-Id",
+    "X-Workspace-Id",
+]
+
 
 def _argv_option_value(argv: Sequence[str], option: str) -> str | None:
     """Return a uvicorn CLI option value from either --opt=value or --opt value."""
@@ -163,6 +174,18 @@ def assert_proxy_headers_trusted(argv: Sequence[str] | None = None) -> None:
         raise RuntimeError(
             "APP_ENV=prod requires uvicorn --forwarded-allow-ips=* so proxy "
             "headers from the compose-network reverse proxy are trusted."
+        )
+
+
+def assert_cors_origins_not_wildcard() -> None:
+    """Fail prod startup when credentialed CORS is configured for every origin."""
+    cfg = settings()
+    if cfg.APP_ENV != "prod":
+        return
+    if "*" in cfg.cors_origin_list:
+        raise RuntimeError(
+            "APP_ENV=prod rejects CORS_ORIGINS=* because wildcard origins cannot "
+            "be used with credentialed CORS. Configure explicit frontend origins."
         )
 
 
@@ -205,6 +228,7 @@ async def _periodic_session_purge(interval_seconds: int) -> None:
 async def lifespan(_app: FastAPI):
     """Spawn the background session-purge task on startup; cancel it on
     shutdown. DB-007 / issue #98."""
+    assert_cors_origins_not_wildcard()
     assert_proxy_headers_trusted()
     interval = settings().SESSION_PURGE_INTERVAL_SECONDS
     task: asyncio.Task | None = None
@@ -385,7 +409,7 @@ app.add_middleware(
     allow_origins=settings().cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=CORS_ALLOW_HEADERS,
 )
 
 # Added last → outermost. Sees every request before CORS/CSRF run.
