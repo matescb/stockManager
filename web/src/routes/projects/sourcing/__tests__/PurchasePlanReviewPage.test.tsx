@@ -13,6 +13,7 @@ vi.mock("sonner", () => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),
+    info: vi.fn(),
   },
 }));
 
@@ -281,7 +282,46 @@ describe("PurchasePlanReviewPage", () => {
     expect(toast.success).toHaveBeenCalledWith("Prices refreshed");
   });
 
-  it("preserves overrides across a successful refresh", async () => {
+  it("prunes overrides whose offer disappears after refresh", async () => {
+    const base = plan();
+    const refreshed = plan({
+      lines: [
+        {
+          ...base.lines[0],
+          selected_distributor: "DigiKey",
+          selected_qty: 16,
+          selected_unit_price: "1.15",
+          available_offers: base.lines[0].available_offers?.slice(0, 1) ?? [],
+        },
+        base.lines[1],
+      ],
+      unfilled_count: 0,
+    });
+    const post = vi.spyOn(api, "post")
+      .mockResolvedValueOnce(refreshed)
+      .mockResolvedValueOnce({
+        orders: [{ id: "order-1", name: "Draft", supplier: "DigiKey", status: "draft", entries: [] }],
+      });
+    renderPage({ initialPlan: base });
+
+    await selectArrowOffer();
+    await userEvent.click(screen.getByRole("button", { name: /Refresh prices/ }));
+
+    await waitFor(() => {
+      expect(toast.info).toHaveBeenCalledWith(
+        "Removed 1 override no longer available after refresh.",
+      );
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: /Create draft orders/ }));
+
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/orders"));
+    expect(post).toHaveBeenNthCalledWith(2, "/sourcing/purchase-plans/plan-12345678/orders", {
+      overrides: {},
+    });
+  });
+
+  it("keeps overrides whose offer is still present after refresh", async () => {
     const refreshed = plan({
       est_total_cost: "18.40",
       lines: [
@@ -320,9 +360,10 @@ describe("PurchasePlanReviewPage", () => {
         },
       },
     });
+    expect(toast.info).not.toHaveBeenCalled();
   });
 
-  it("shows error toast on refresh failure", async () => {
+  it("does not prune when refresh fails", async () => {
     const apiError = new ApiError(
       502,
       { data: null, status: { category: "trustedparts_unavailable", message: "TrustedParts unavailable" } },
@@ -340,6 +381,7 @@ describe("PurchasePlanReviewPage", () => {
     await userEvent.click(screen.getByRole("button", { name: /Refresh prices/ }));
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("TrustedParts unavailable. Retry later."));
+    expect(toast.info).not.toHaveBeenCalled();
 
     await userEvent.click(screen.getByRole("button", { name: /Create draft orders/ }));
 

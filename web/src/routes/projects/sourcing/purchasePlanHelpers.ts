@@ -1,5 +1,10 @@
 import { ApiError } from "@/lib/api";
-import type { PurchasePlan, PurchasePlanLine, PurchasePlanOffer } from "./purchasePlanTypes";
+import type {
+  PurchasePlan,
+  PurchasePlanLine,
+  PurchasePlanOffer,
+  PurchasePlanOrderOverride,
+} from "./purchasePlanTypes";
 
 export const STALE_MS = 10 * 60 * 1000;
 
@@ -64,6 +69,22 @@ export function unitPriceForOffer(offer: PurchasePlanOffer, qty: number): string
     selected = candidate;
   }
   return selected.unitPrice;
+}
+
+export function purchasePlanOverrideMatchesOffer(
+  line: PurchasePlanLine,
+  override: PurchasePlanOrderOverride,
+  offer: PurchasePlanOffer,
+): boolean {
+  if ((offer.distributor ?? "").toLowerCase() !== override.selected_distributor.toLowerCase()) return false;
+  const stock = numberOrNull(offer.stock);
+  if (stock == null || stock < override.selected_qty) return false;
+  const moq = numberOrNull(offer.moq);
+  if (moq != null && override.selected_qty < moq) return false;
+  if (override.selected_qty < line.shortage_qty) return false;
+  if ((offer.currency ?? "").toUpperCase() !== override.selected_currency.toUpperCase()) return false;
+  const unitPrice = unitPriceForOffer(offer, override.selected_qty);
+  return unitPrice != null && numberOrNull(unitPrice) === numberOrNull(override.selected_unit_price);
 }
 
 export function recomputePlanFromLines(plan: PurchasePlan, lines: PurchasePlanLine[]): PurchasePlan {
