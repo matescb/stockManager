@@ -33,7 +33,7 @@ from app.core.cookies import (
 from app.core.deps import CurrentUser, DbSession
 from app.core.errors import ErrorCodes, raise_http
 from app.core.logging import get_logger
-from app.core.mail import send_verification_email
+from app.core.mail import send_account_exists_email, send_verification_email
 from app.core.ratelimit import limiter
 from app.core.responses import Envelope, ok
 from app.core.time import utcnow
@@ -58,6 +58,10 @@ def _verify_password_for_login(hash_: str, password: str) -> PasswordVerifyResul
     if verify_password is _verify_password:
         return verify_password_with_rehash(hash_, password)
     return PasswordVerifyResult(valid=verify_password(hash_, password))
+
+
+_SIGNUP_VERIFICATION_DATA = {"status": "verification_sent"}
+_SIGNUP_VERIFICATION_MESSAGE = "verification email sent"
 
 
 def _set_session_cookie(response: Response, token: str) -> None:
@@ -158,9 +162,8 @@ def signup(
             str(exc),
         )
 
-    # Reject if there is already a verified User with this email.
     existing = db.query(User).filter(User.email == payload.email).first()
-    if existing:
+    if existing and not settings().SIGNUP_REQUIRE_EMAIL_VERIFICATION:
         log.warning("signup conflict", extra={"email": payload.email})
         raise_http(
             status.HTTP_409_CONFLICT,
@@ -200,6 +203,19 @@ def signup(
         )
 
     # --- Prod path: email-verification two-step flow ---
+    if existing:
+        try:
+            send_account_exists_email(to=payload.email)
+        except Exception as exc:
+            log.error("failed to send duplicate-signup email to %s: %s", payload.email, exc)
+            raise_http(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "mail.send_failed",
+                "could not send signup email — please try again later",
+            )
+        log.info("signup existing account notice sent", extra={"user_id": str(existing.id)})
+        response.status_code = status.HTTP_202_ACCEPTED
+        return ok(_SIGNUP_VERIFICATION_DATA, _SIGNUP_VERIFICATION_MESSAGE)
 
     # Reap expired pending rows for this email before checking for an
     # active pending one, so old unverified attempts don't block a retry.
@@ -224,10 +240,7 @@ def signup(
     if existing_pending:
         log.info("signup resent existing pending", extra={"email": payload.email})
         response.status_code = status.HTTP_202_ACCEPTED
-        return ok(
-            {"status": "verification_sent"},
-            "verification email sent",
-        )
+        return ok(_SIGNUP_VERIFICATION_DATA, _SIGNUP_VERIFICATION_MESSAGE)
 
     # Mint a verification token, store its HMAC, send the link.
     plaintext_token = secrets.token_urlsafe(32)
@@ -251,15 +264,12 @@ def signup(
         raise_http(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "mail.send_failed",
-            "could not send verification email — please try again later",
+            "could not send signup email — please try again later",
         )
 
     log.info("signup pending", extra={"pending_id": str(pending.id)})
     response.status_code = status.HTTP_202_ACCEPTED
-    return ok(
-        {"status": "verification_sent"},
-        "verification email sent",
-    )
+    return ok(_SIGNUP_VERIFICATION_DATA, _SIGNUP_VERIFICATION_MESSAGE)
 
 
 # ---------------------------------------------------------------------------

@@ -16,7 +16,6 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
@@ -24,7 +23,6 @@ from app.domain.users.models import PendingUser, User
 from app.domain.workspaces.models import Workspace, WorkspaceMember
 from app.infra.db import SessionLocal
 from app.main import app
-
 
 PASSWORD = "StrongVerify-2026!!"
 
@@ -227,18 +225,18 @@ def test_duplicate_signup_same_email_returns_202_without_new_row(db):
     )
 
 
-def test_signup_rejects_already_verified_email():
-    """Signing up with an email that already has a verified User returns 409."""
+def test_signup_with_already_verified_email_returns_202():
+    """Signing up with an email that already has a verified User does not enumerate."""
     email = f"v-{uuid.uuid4().hex[:8]}@x.com"
     # First: complete the full verification flow to create a User.
     _full_signup_verify(email=email)
 
-    # Second attempt should 409.
     c2 = TestClient(app)
     with (
         patch.object(settings(), "SIGNUP_REQUIRE_EMAIL_VERIFICATION", True),
-        patch("app.api.routes.auth.send_verification_email"),
+        patch("app.api.routes.auth.send_account_exists_email") as account_exists_email,
     ):
         r = c2.post("/api/auth/signup", json={"email": email, "name": "T2", "password": PASSWORD})
-    assert r.status_code == 409, r.text
-    assert r.json()["code"] == "auth.email_taken"
+    assert r.status_code == 202, r.text
+    assert r.json()["data"]["status"] == "verification_sent"
+    account_exists_email.assert_called_once_with(to=email)
