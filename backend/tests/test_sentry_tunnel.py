@@ -17,12 +17,19 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.routes import sentry_tunnel as sentry_tunnel_route
 from app.main import app
+
+_ALLOWED_ENDPOINTS = (("o123.ingest.sentry.io", "456"),)
 
 
 @pytest.fixture
 def client() -> TestClient:
     return TestClient(app)
+
+
+def _allow_test_dsn(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sentry_tunnel_route, "ALLOWED_ENDPOINTS", _ALLOWED_ENDPOINTS)
 
 
 # ---------------------------------------------------------------------------
@@ -33,16 +40,11 @@ def client() -> TestClient:
 def test_sentry_tunnel_returns_204_when_no_dsn_configured(client, monkeypatch):
     """No DSN on the server → 204 No Content. SDK retries see this as a
     soft acknowledgement and back off."""
-    from app.core.config import settings
+    monkeypatch.setattr(sentry_tunnel_route, "ALLOWED_ENDPOINTS", ())
 
-    monkeypatch.setenv("SENTRY_DSN", "")
-    monkeypatch.setenv("VITE_SENTRY_DSN", "")
-    settings.cache_clear()
-    try:
-        r = client.post("/api/sentry-tunnel", content=b"anything")
-        assert r.status_code == 204, r.text
-    finally:
-        settings.cache_clear()
+    r = client.post("/api/sentry-tunnel", content=b"anything")
+
+    assert r.status_code == 204, r.text
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +57,7 @@ def test_sentry_tunnel_rejects_oversize_envelope(client, monkeypatch):
     from app.core.config import settings
 
     # A configured DSN is required to reach the size-check path.
-    monkeypatch.setenv("VITE_SENTRY_DSN", "https://abc@o123.ingest.sentry.io/456")
+    _allow_test_dsn(monkeypatch)
     monkeypatch.setenv("SENTRY_TUNNEL_MAX_BYTES", "1024")
     settings.cache_clear()
     try:
@@ -72,7 +74,7 @@ def test_sentry_tunnel_accepts_envelope_at_cap_boundary(client, monkeypatch):
     that arbitrary bytes are valid envelopes)."""
     from app.core.config import settings
 
-    monkeypatch.setenv("VITE_SENTRY_DSN", "https://abc@o123.ingest.sentry.io/456")
+    _allow_test_dsn(monkeypatch)
     monkeypatch.setenv("SENTRY_TUNNEL_MAX_BYTES", "1024")
     settings.cache_clear()
     try:
@@ -91,61 +93,43 @@ def test_sentry_tunnel_accepts_envelope_at_cap_boundary(client, monkeypatch):
 
 
 def test_sentry_tunnel_rejects_empty_envelope(client, monkeypatch):
-    from app.core.config import settings
+    _allow_test_dsn(monkeypatch)
 
-    monkeypatch.setenv("VITE_SENTRY_DSN", "https://abc@o123.ingest.sentry.io/456")
-    settings.cache_clear()
-    try:
-        r = client.post("/api/sentry-tunnel", content=b"")
-        assert r.status_code == 400, r.text
-    finally:
-        settings.cache_clear()
+    r = client.post("/api/sentry-tunnel", content=b"")
+
+    assert r.status_code == 400, r.text
 
 
 def test_sentry_tunnel_rejects_malformed_header(client, monkeypatch):
-    from app.core.config import settings
+    _allow_test_dsn(monkeypatch)
 
-    monkeypatch.setenv("VITE_SENTRY_DSN", "https://abc@o123.ingest.sentry.io/456")
-    settings.cache_clear()
-    try:
-        r = client.post("/api/sentry-tunnel", content=b"not-json\nrest")
-        assert r.status_code == 400, r.text
-    finally:
-        settings.cache_clear()
+    r = client.post("/api/sentry-tunnel", content=b"not-json\nrest")
+
+    assert r.status_code == 400, r.text
 
 
 def test_sentry_tunnel_rejects_dsn_mismatch(client, monkeypatch):
     """Envelope claims a DSN that's not in the server's allow-list →
     403. Without this, the route is an open egress to any Sentry-shaped
     URL the client cares to put in an envelope header."""
-    from app.core.config import settings
+    _allow_test_dsn(monkeypatch)
 
-    monkeypatch.setenv("VITE_SENTRY_DSN", "https://abc@o123.ingest.sentry.io/456")
-    settings.cache_clear()
-    try:
-        # Foreign DSN (different host + project_id).
-        envelope_header = json.dumps(
-            {"dsn": "https://xyz@o999.ingest.sentry.io/000"}
-        )
-        body = envelope_header.encode() + b"\n{}"
-        r = client.post("/api/sentry-tunnel", content=body)
-        assert r.status_code == 403, r.text
-    finally:
-        settings.cache_clear()
+    # Foreign DSN (different host + project_id).
+    envelope_header = json.dumps({"dsn": "https://xyz@o999.ingest.sentry.io/000"})
+    body = envelope_header.encode() + b"\n{}"
+    r = client.post("/api/sentry-tunnel", content=body)
+
+    assert r.status_code == 403, r.text
 
 
 def test_sentry_tunnel_rejects_envelope_missing_dsn(client, monkeypatch):
-    from app.core.config import settings
+    _allow_test_dsn(monkeypatch)
 
-    monkeypatch.setenv("VITE_SENTRY_DSN", "https://abc@o123.ingest.sentry.io/456")
-    settings.cache_clear()
-    try:
-        envelope_header = json.dumps({"event_id": "abc"})  # no `dsn`
-        body = envelope_header.encode() + b"\n{}"
-        r = client.post("/api/sentry-tunnel", content=body)
-        assert r.status_code == 400, r.text
-    finally:
-        settings.cache_clear()
+    envelope_header = json.dumps({"event_id": "abc"})  # no `dsn`
+    body = envelope_header.encode() + b"\n{}"
+    r = client.post("/api/sentry-tunnel", content=body)
+
+    assert r.status_code == 400, r.text
 
 
 # ---------------------------------------------------------------------------
