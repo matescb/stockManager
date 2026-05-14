@@ -101,22 +101,56 @@ class PartMetaMember(Base):
     __tablename__ = "part_meta_members"
     __table_args__ = (
         UniqueConstraint("meta_part_id", "part_id", name="uq_meta_member"),
+        Index("ix_part_meta_members_ws_meta", "workspace_id", "meta_part_id"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    meta_part_id = Column(UUID(as_uuid=True), ForeignKey("parts.id", ondelete="CASCADE"), nullable=False, index=True)
-    part_id = Column(UUID(as_uuid=True), ForeignKey("parts.id", ondelete="CASCADE"), nullable=False, index=True)
+    workspace_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    meta_part_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("parts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    part_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("parts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
 
 class PartSubstitute(Base):
     __tablename__ = "part_substitutes"
     __table_args__ = (
         UniqueConstraint("part_id", "substitute_part_id", name="uq_part_sub"),
+        Index("ix_part_substitutes_ws_part", "workspace_id", "part_id"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    part_id = Column(UUID(as_uuid=True), ForeignKey("parts.id", ondelete="CASCADE"), nullable=False, index=True)
-    substitute_part_id = Column(UUID(as_uuid=True), ForeignKey("parts.id", ondelete="CASCADE"), nullable=False, index=True)
+    workspace_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    part_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("parts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    substitute_part_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("parts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     direction = Column(String(20), nullable=False, default="bidirectional")
 
 
