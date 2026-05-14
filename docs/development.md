@@ -247,6 +247,55 @@ it's on `main`** — it has already been auto-deployed to prod, and
 editing breaks the alembic chain on the next `alembic upgrade head`. Add
 a new migration instead.
 
+### Migration patterns: expanding CHECK constraints
+
+When expanding a CHECK constraint on a populated table, don't drop the old
+constraint and add the replacement in one step. That pattern removes the
+guard while Postgres scans the table and takes the heavier lock path that
+AUD-042 flagged in
+`backend/alembic/versions/0047_alerts_add_data_alerts.py:40-50`.
+
+Use a second constraint name, validate it, then do the short name swap:
+
+```python
+_OLD_CK = "sourcing_alerts_alert_type_check"
+_NEW_CK = "sourcing_alerts_alert_type_check_v2"
+
+op.execute(
+    sa.text(
+        f"""
+        ALTER TABLE sourcing_alerts
+        ADD CONSTRAINT {_NEW_CK}
+        CHECK ({_alert_type_check(_ORIGINAL_ALERT_TYPES + _NEW_ALERT_TYPES)})
+        NOT VALID
+        """
+    )
+)
+op.execute(
+    sa.text(f"ALTER TABLE sourcing_alerts VALIDATE CONSTRAINT {_NEW_CK}")
+)
+op.drop_constraint(_OLD_CK, "sourcing_alerts", type_="check")
+op.execute(
+    sa.text(
+        f"ALTER TABLE sourcing_alerts RENAME CONSTRAINT {_NEW_CK} TO {_OLD_CK}"
+    )
+)
+```
+
+Why this order:
+
+- `ADD CONSTRAINT ... NOT VALID` installs the new rule for future writes
+  without scanning historical rows during the add.
+- `VALIDATE CONSTRAINT` scans existing rows while the old constraint still
+  protects writes.
+- Dropping the old constraint and renaming the new one are the short final
+  switch. Deploy application code that writes the newly allowed values only
+  after this migration has run.
+
+This is for future CHECK expansions. Do not retrofit merged migrations only
+to change their locking pattern; write a new migration only when the schema
+itself must change.
+
 ### Migration patterns: widen vs shrink varchar
 
 Postgres treats `varchar(N) → varchar(M)` asymmetrically:
