@@ -5,9 +5,10 @@ parts_provider_api_secret / scanner_license_key were stored as
 plaintext columns. A DB dump (legitimate backup, replica, log) leaked
 every workspace's third-party credentials.
 
-Uses Fernet (AES-128-CBC + HMAC-SHA256, with timestamp + version) keyed
-off `WORKSPACE_SECRETS_KEY` (a base64-encoded 32-byte Fernet key from
-env). Generate one with:
+Uses MultiFernet (AES-128-CBC + HMAC-SHA256, with timestamp + version)
+keyed off `WORKSPACE_SECRETS_KEY` (one or more comma-separated
+base64-encoded 32-byte Fernet keys from env). Encryptions use the first
+key; decryptions accept any listed key. Generate a key with:
 
     python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 
@@ -36,7 +37,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 
 from app.core.logging import get_logger
 
@@ -44,7 +45,7 @@ log = get_logger(__name__)
 
 
 @lru_cache(maxsize=1)
-def _fernet() -> Fernet:
+def _fernet() -> MultiFernet:
     from app.core.config import settings
 
     key = settings().WORKSPACE_SECRETS_KEY
@@ -56,10 +57,15 @@ def _fernet() -> Fernet:
             "key. Encrypted workspace credentials will not survive a "
             "process restart. Set the env var to persist them. Generate "
             "one with: "
-            "python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+            "python -c \"from cryptography.fernet import Fernet; "
+            "print(Fernet.generate_key().decode())\""
         )
-        return Fernet(Fernet.generate_key())
-    return Fernet(key.encode("ascii"))
+        return MultiFernet([Fernet(Fernet.generate_key())])
+
+    keys = [part.strip() for part in key.split(",") if part.strip()]
+    if not keys:
+        raise ValueError("WORKSPACE_SECRETS_KEY must contain at least one Fernet key")
+    return MultiFernet([Fernet(part.encode("ascii")) for part in keys])
 
 
 def encrypt(plaintext: str | None) -> str | None:
