@@ -8,21 +8,15 @@ from __future__ import annotations
 
 from typing import Optional, Protocol, TypedDict
 
+from app.domain.provider_errors import ProviderError, ProviderUpstreamError
 
-class ProviderUpstreamError(Exception):
-    """Provider transport/server failure that callers should surface as 5xx."""
-
-    def __init__(
-        self,
-        provider: str,
-        message: str,
-        *,
-        status_code: int = 502,
-    ) -> None:
-        super().__init__(message)
-        self.provider = provider
-        self.message = message
-        self.status_code = status_code
+__all__ = [
+    "MpnLookupResult",
+    "PartsProvider",
+    "ProviderError",
+    "ProviderUpstreamError",
+    "make_provider",
+]
 
 
 class MpnLookupResult(TypedDict, total=False):

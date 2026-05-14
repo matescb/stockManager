@@ -10,6 +10,14 @@ from typing import Any
 import httpx
 from pydantic import ValidationError as PydanticValidationError
 
+from app.domain.provider_errors import (
+    ProviderAuthError,
+    ProviderError,
+    ProviderRateLimitError,
+    ProviderTimeoutError,
+    ProviderUpstreamError,
+    ProviderValidationError,
+)
 from app.domain.sourcing._generated.trustedparts_v2 import (
     InventoryApiResponse,
     InventoryDistributorResult,
@@ -40,28 +48,43 @@ MAX_SEARCH_TOKEN_LENGTH = 100
 logger = logging.getLogger(__name__)
 
 
-class SourcingClientError(Exception):
+class SourcingClientError(ProviderError):
     """Base error for TrustedParts sourcing client failures."""
 
+    provider_name = "trustedparts"
 
-class SourcingAuthError(SourcingClientError):
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(self.provider_name, message, status_code=status_code)
+
+
+class SourcingAuthError(SourcingClientError, ProviderAuthError):
     """TrustedParts rejected the supplied credentials."""
 
+    default_status_code = ProviderAuthError.default_status_code
 
-class SourcingRateLimitError(SourcingClientError):
+
+class SourcingRateLimitError(SourcingClientError, ProviderRateLimitError):
     """TrustedParts rate-limited the request."""
 
+    default_status_code = ProviderRateLimitError.default_status_code
 
-class SourcingUpstreamError(SourcingClientError):
+
+class SourcingUpstreamError(SourcingClientError, ProviderUpstreamError):
     """TrustedParts returned a server-side error."""
 
+    default_status_code = ProviderUpstreamError.default_status_code
 
-class SourcingTimeoutError(SourcingClientError):
+
+class SourcingTimeoutError(SourcingClientError, ProviderTimeoutError):
     """TrustedParts did not respond before the client timeout."""
 
+    default_status_code = ProviderTimeoutError.default_status_code
 
-class SourcingValidationError(SourcingClientError):
+
+class SourcingValidationError(SourcingClientError, ProviderValidationError):
     """TrustedParts returned a response this client cannot parse."""
+
+    default_status_code = ProviderValidationError.default_status_code
 
 
 def _post_tp(
