@@ -21,7 +21,7 @@ class _FakeSession:
         self.closed = True
 
 
-def test_run_job_dispatches_allow_listed_job() -> None:
+def test_run_job_dispatches_allow_listed_job(tmp_path) -> None:
     session = _FakeSession()
     calls: list[Session] = []
 
@@ -41,6 +41,7 @@ def test_run_job_dispatches_allow_listed_job() -> None:
             )
         },
         session_factory=lambda: session,  # type: ignore[return-value]
+        heartbeat_dir=tmp_path,
     )
 
     assert affected == 4
@@ -48,6 +49,7 @@ def test_run_job_dispatches_allow_listed_job() -> None:
     assert session.committed is True
     assert session.rolled_back is False
     assert session.closed is True
+    assert (tmp_path / "example").read_text(encoding="utf-8") == "ok\n"
 
 
 def test_run_job_rejects_unknown_job() -> None:
@@ -76,7 +78,7 @@ def test_sourcing_alerts_evaluate_registered() -> None:
     assert "cooldown" in spec.idempotency
 
 
-def test_sourcing_alerts_evaluate_dispatches_to_module(monkeypatch) -> None:
+def test_sourcing_alerts_evaluate_dispatches_to_module(monkeypatch, tmp_path) -> None:
     session = _FakeSession()
     calls: list[Session] = []
 
@@ -92,6 +94,7 @@ def test_sourcing_alerts_evaluate_dispatches_to_module(monkeypatch) -> None:
     affected = run_job(
         "sourcing-alerts-evaluate",
         session_factory=lambda: session,  # type: ignore[return-value]
+        heartbeat_dir=tmp_path,
     )
 
     assert affected == 7
@@ -99,3 +102,4 @@ def test_sourcing_alerts_evaluate_dispatches_to_module(monkeypatch) -> None:
     assert session.committed is True
     assert session.rolled_back is False
     assert session.closed is True
+    assert (tmp_path / "sourcing-alerts-evaluate").exists()

@@ -201,6 +201,12 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test -d /tmp/stockmanager-job-heartbeats && find /tmp/stockmanager-job-heartbeats -name sourcing-cache-sweep -mmin -90 -print -quit | grep -q ."]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 11m
     # Runs the hourly TrustedParts cache retention sweep through the shared
     # backend CLI. Each run is capped at 600s; failures are logged and the
     # loop sleeps on the same cadence before trying again.
@@ -247,6 +253,12 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test -d /tmp/stockmanager-job-heartbeats && find /tmp/stockmanager-job-heartbeats -name sourcing-alerts-evaluate -mmin -90 -print -quit | grep -q ."]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 11m
     # Runs the 15-minute sourcing alert evaluator through the shared backend
     # CLI. Alert-level cooldowns enforce per-alert notification frequency.
     # Each run is capped at 600s; failures are logged and the loop continues.
@@ -295,6 +307,12 @@ services:
     # parts.matescb.cz → 127.0.0.1:8091. See deploy/parts.matescb.cz.conf.
     ports:
       - "127.0.0.1:8091:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     cap_add: ["CHOWN", "SETUID", "SETGID", "NET_BIND_SERVICE"]

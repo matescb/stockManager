@@ -7,6 +7,7 @@ import logging
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 SessionFactory = Callable[[], Session]
 JobCallable = Callable[[Session], int]
+HEARTBEAT_DIR = Path("/tmp/stockmanager-job-heartbeats")
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,7 @@ def run_job(
     *,
     jobs: Mapping[str, JobSpec] = JOBS,
     session_factory: SessionFactory = _default_session_factory,
+    heartbeat_dir: Path = HEARTBEAT_DIR,
 ) -> int:
     """Run one registered job and return the job's affected-row count."""
     job = jobs.get(job_name)
@@ -95,6 +98,7 @@ def run_job(
     finally:
         db.close()
 
+    _write_heartbeat(job.name, heartbeat_dir=heartbeat_dir)
     logger.info(
         "job=%s status=ok affected=%s cadence=%s owner=%s",
         job.name,
@@ -103,6 +107,14 @@ def run_job(
         job.owner,
     )
     return affected
+
+
+def _write_heartbeat(job_name: str, *, heartbeat_dir: Path = HEARTBEAT_DIR) -> None:
+    heartbeat_dir.mkdir(parents=True, exist_ok=True)
+    heartbeat_path = heartbeat_dir / job_name
+    tmp_path = heartbeat_dir / f".{job_name}.tmp"
+    tmp_path.write_text("ok\n", encoding="utf-8")
+    tmp_path.replace(heartbeat_path)
 
 
 def _parser() -> argparse.ArgumentParser:
