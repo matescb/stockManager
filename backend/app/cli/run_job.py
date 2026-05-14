@@ -70,6 +70,12 @@ def _run_sourcing_alerts_evaluate(db: Session) -> int:
     return evaluate_all_alerts(db)
 
 
+def _run_session_purge(db: Session) -> int:
+    from app.core.auth import purge_expired_sessions
+
+    return purge_expired_sessions(db)
+
+
 JOBS: dict[str, JobSpec] = {
     "sourcing-cache-sweep": JobSpec(
         name="sourcing-cache-sweep",
@@ -89,6 +95,13 @@ JOBS: dict[str, JobSpec] = {
             "cooldown is a no-op."
         ),
         run=_run_sourcing_alerts_evaluate,
+    ),
+    "session-purge": JobSpec(
+        name="session-purge",
+        owner="backend/auth-security",
+        cadence="hourly",
+        idempotency="Deletes only session rows whose expires_at is already in the past.",
+        run=_run_session_purge,
     ),
 }
 

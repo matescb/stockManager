@@ -38,8 +38,8 @@ class UserSession(Base):
     # `expires_at` (the absolute lifetime) is still in the future.
     last_used_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     # `ix_user_sessions_expires_at` (alembic 0019) lives in the migration
-    # rather than `index=True` here so the periodic purge in
-    # `app/main.py::_periodic_session_purge` is an index range scan,
+    # rather than `index=True` here so the `session-purge` CLI job is an
+    # index range scan,
     # not a seq scan. DB-007 / issue #98. Don't add `index=True` —
     # SQLAlchemy would emit a redundant CREATE INDEX in a future
     # autogenerate run.

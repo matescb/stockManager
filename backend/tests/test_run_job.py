@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import logging
+import uuid
+from datetime import timedelta
 
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.cli.run_job import JOBS, JobSpec, UnknownJobError, main, run_job
+from app.core.time import utcnow
+from app.domain.users.models import User, UserSession
 
 
 class _FakeSession:
@@ -89,6 +93,58 @@ def test_sourcing_alerts_evaluate_registered() -> None:
     assert spec.cadence == "every 15 minutes"
     assert "enabled, non-archived sourcing_alerts" in spec.idempotency
     assert "cooldown" in spec.idempotency
+
+
+def test_session_purge_registered() -> None:
+    spec = JOBS["session-purge"]
+
+    assert spec.name == "session-purge"
+    assert spec.owner == "backend/auth-security"
+    assert spec.cadence == "hourly"
+    assert "expires_at" in spec.idempotency
+
+
+def test_session_purge_idempotent(db, tmp_path) -> None:
+    user = User(
+        id=uuid.uuid4(),
+        email=f"{uuid.uuid4()}@example.test",
+        name="Session Purge",
+        password_hash="hash",
+    )
+    now = utcnow()
+    db.add(user)
+    db.add_all(
+        [
+            UserSession(
+                token_hash="a" * 64,
+                user_id=user.id,
+                expires_at=now - timedelta(seconds=1),
+            ),
+            UserSession(
+                token_hash="b" * 64,
+                user_id=user.id,
+                expires_at=now + timedelta(hours=1),
+            ),
+        ]
+    )
+    db.flush()
+
+    first = run_job(
+        "session-purge",
+        session_factory=lambda: db,
+        heartbeat_dir=tmp_path,
+    )
+    second = run_job(
+        "session-purge",
+        session_factory=lambda: db,
+        heartbeat_dir=tmp_path,
+    )
+
+    remaining = db.query(UserSession).all()
+    assert first == 1
+    assert second == 0
+    assert [row.token_hash for row in remaining] == ["b" * 64]
+    assert (tmp_path / "session-purge").read_text(encoding="utf-8") == "ok\n"
 
 
 def test_sourcing_alerts_evaluate_dispatches_to_module(monkeypatch, tmp_path) -> None:

@@ -295,18 +295,10 @@ def purge_expired_sessions(db: Session, *, now: datetime | None = None) -> int:
     purged. Backed by `ix_user_sessions_expires_at` (alembic 0019), so
     the DELETE is an index range scan, not a full table scan.
 
-    DB-007 / issue #98. Called on a one-hour cadence by the lifespan
-    hook in `app/main.py`. The plan was to keep these rows around
-    forever (sessions were only deleted on explicit logout); a
-    long-running prod accumulates every expired row otherwise.
-
-    Single-worker invariant (CLAUDE.md): uvicorn runs `--workers 1` in
-    prod, so the periodic task fires from exactly one process. If a
-    future deploy moves to multiple workers, every worker will run the
-    DELETE — that's still correct (idempotent + no contention because
-    the rows being deleted are already past expiry, no live request
-    can hold a lock on them) but a future Redis/multi-worker rewrite
-    should pick an explicit leader.
+    DB-007 / issue #98. Called on a one-hour cadence by the
+    `session-purge` CLI job in the backend cron sidecar. The plan was to
+    keep these rows around forever (sessions were only deleted on explicit
+    logout); a long-running prod accumulates every expired row otherwise.
     """
     from app.domain.users.models import UserSession
 
