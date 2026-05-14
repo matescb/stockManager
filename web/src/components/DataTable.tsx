@@ -1,7 +1,7 @@
 import React, { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Rows3, Rows4 } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { useOptionalAuth } from "@/lib/auth";
+import { useOptionalAuth } from "@/lib/authContext";
 
 // ---------------------------------------------------------------------
 // CSV-export helpers — extracted so they can be unit-tested without
