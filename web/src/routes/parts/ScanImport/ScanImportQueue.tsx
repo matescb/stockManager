@@ -258,7 +258,7 @@ function ScanCard({
   onQuickRemove: (qty: number) => void;
 }) {
   return (
-    <div className="rounded-md border border-border bg-panel2/40 p-3">
+    <div data-testid={row.state.kind === "bag_rescan" ? "scan-row-bag-rescan" : undefined} className="rounded-md border border-border bg-panel2/40 p-3">
       <div className="flex items-start justify-between gap-2">
         <div className="font-mono text-sm">{row.bag.mpn}</div>
         <button

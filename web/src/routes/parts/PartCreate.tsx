@@ -175,7 +175,7 @@ export default function PartCreate() {
         </div>
       )}
       {conflict && (
-        <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
+        <div data-testid="mpn-conflict-banner" className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
           MPN <span className="font-mono">{form.mpn}</span> is already used
           by part <strong>{conflict.name}</strong>.{" "}
           <Link to={`/parts/${conflict.id}/info`} className="text-accent underline">

@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { expect, type APIRequestContext } from "@playwright/test";
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:5173";
@@ -24,6 +26,9 @@ export type SeedPartPayload = {
   default_storage_location_id?: string | null;
   default_storage_mandatory?: boolean;
   serialized?: boolean;
+  archived?: boolean;
+  initial_qty?: number;
+  storage_location_id?: string | null;
 };
 
 export type SeedStoragePayload = {
@@ -70,8 +75,14 @@ export type SeedBomLinePayload = {
 };
 
 export type SeedScanImportPayload = {
-  rows: Array<Record<string, unknown>>;
-  idempotency_key?: string | null;
+  bag_code: string;
+  qty?: number;
+  storage_location_id?: string | null;
+  part_id?: string;
+  part?: SeedPartPayload;
+  mpn?: string;
+  bag_signature?: string;
+  raw_bag_code?: string | null;
 };
 
 export type SeededPart = { id: string; name: string; [key: string]: unknown };
@@ -82,6 +93,27 @@ export type SeededStockEntry = {
   quantity_delta: number;
   [key: string]: unknown;
 };
+
+type BagSignatureFixture = {
+  bags: Array<{
+    expected_signature: string;
+    expected_mpn?: string;
+    expected_quantity?: number;
+    raws: string[];
+  }>;
+};
+
+const bagSignatureFixture = JSON.parse(
+  readFileSync(new URL("../../src/lib/__fixtures__/bagSignatures.json", import.meta.url), "utf8"),
+) as BagSignatureFixture;
+
+function randomSuffix(): string {
+  return randomUUID().slice(0, 8);
+}
+
+function fixtureForRawBag(rawBagCode: string) {
+  return bagSignatureFixture.bags.find((bag) => bag.raws.includes(rawBagCode));
+}
 
 function sameOriginHeaders() {
   return {
@@ -114,11 +146,41 @@ export async function seedPart(
   authedRequest: APIRequestContext,
   payload: SeedPartPayload = {},
 ): Promise<SeededPart> {
-  return postJson<SeededPart>(authedRequest, "/api/parts", {
-    name: "E2E Seed Part",
+  const {
+    archived = false,
+    initial_qty,
+    storage_location_id,
+    ...partPayload
+  } = payload;
+  const part = await postJson<SeededPart>(authedRequest, "/api/parts", {
+    name: `E2E Seed Part ${randomSuffix()}`,
     part_type: "local",
-    ...payload,
+    ...partPayload,
   });
+
+  if (initial_qty !== undefined) {
+    if (initial_qty <= 0) {
+      throw new Error("seedPart initial_qty must be greater than zero when provided.");
+    }
+    if (!storage_location_id) {
+      throw new Error("seedPart initial_qty requires storage_location_id.");
+    }
+    await seedStock(authedRequest, {
+      part_id: part.id,
+      quantity: initial_qty,
+      storage_location_id,
+    });
+  }
+
+  if (archived) {
+    await postJson<{
+      archived_ids: string[];
+      already_archived_ids: string[];
+      not_found_ids: string[];
+    }>(authedRequest, "/api/parts/bulk-delete", { part_ids: [part.id] });
+  }
+
+  return part;
 }
 
 export async function seedStorage(
@@ -126,7 +188,7 @@ export async function seedStorage(
   payload: SeedStoragePayload = {},
 ): Promise<SeededStorage> {
   return postJson<SeededStorage>(authedRequest, "/api/storage", {
-    name: "E2E Seed Bin",
+    name: `E2E Seed Bin ${randomSuffix()}`,
     ...payload,
   });
 }
@@ -158,10 +220,26 @@ export async function seedBomLine(
 }
 
 export async function seedScanImport(
-  _authedRequest: APIRequestContext,
-  _payload: SeedScanImportPayload,
-): Promise<never> {
-  throw new Error(
-    "seedScanImport is reserved for E2E-5 and is intentionally not implemented in E2E-1.",
-  );
+  authedRequest: APIRequestContext,
+  payload: SeedScanImportPayload,
+): Promise<SeededStockEntry> {
+  const fixture = fixtureForRawBag(payload.bag_code);
+  const bagSignature = payload.bag_signature ?? fixture?.expected_signature;
+  if (!bagSignature) {
+    throw new Error("seedScanImport requires bag_signature or a bag_code from bagSignatures.json.");
+  }
+
+  const partId = payload.part_id ?? (await seedPart(authedRequest, {
+    name: `E2E Bag Part ${randomSuffix()}`,
+    mpn: payload.mpn ?? fixture?.expected_mpn ?? `E2E-BAG-${randomSuffix()}`,
+    ...payload.part,
+  })).id;
+
+  return seedStock(authedRequest, {
+    part_id: partId,
+    quantity: payload.qty ?? fixture?.expected_quantity ?? 1,
+    storage_location_id: payload.storage_location_id ?? null,
+    bag_signature: bagSignature,
+    raw_bag_code: payload.raw_bag_code === undefined ? payload.bag_code : payload.raw_bag_code,
+  });
 }
