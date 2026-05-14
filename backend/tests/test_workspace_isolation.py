@@ -249,7 +249,7 @@ def test_custom_fields_unknown_object_type_returns_400():
     part_a = _create_part(a)
     r = a.post(
         "/api/custom-fields",
-        json={"object_type": "lot", "object_id": part_a, "key": "k", "value": "v"},
+        json={"object_type": "not_a_type", "object_id": part_a, "key": "k", "value": "v"},
     )
     assert r.status_code == 400, r.text
 

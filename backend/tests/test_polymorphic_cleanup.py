@@ -5,6 +5,8 @@ Covers:
   belonging to the given (workspace_id, object_type, object_id).
 - Cross-workspace safety: purge with workspace_id=B deletes 0 rows from
   workspace A's data.
+- SQLAlchemy before_delete listeners purge rows when polymorphic parents
+  are hard-deleted.
 """
 from __future__ import annotations
 
@@ -14,12 +16,17 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.main import app
 from app.domain._polymorphic_cleanup import purge_polymorphic
 from app.domain.attachments.models import Attachment
+from app.domain.builds.models import Build
 from app.domain.custom_fields.models import CustomField
-from app.domain.tags.models import TagLink
-
+from app.domain.lots.models import Lot
+from app.domain.orders.models import Order
+from app.domain.parts.models import Part
+from app.domain.projects.models import Project
+from app.domain.storage.models import StorageLocation
+from app.domain.tags.models import Tag, TagLink
+from app.main import app
 
 DEFAULT_PASSWORD = "TestPass-2026-Stronk"
 
@@ -71,6 +78,101 @@ def _row_count(db, Model, workspace_id, object_id):
             Model.object_id == uuid.UUID(object_id),
         )
     ).scalars().all().__len__()
+
+
+def _add_polymorphic_rows(
+    db,
+    *,
+    workspace_id: uuid.UUID,
+    object_type: str,
+    object_id: uuid.UUID,
+) -> None:
+    tag = Tag(
+        workspace_id=workspace_id,
+        name=f"tag-{uuid.uuid4().hex[:8]}",
+        color="#f00",
+    )
+    db.add(tag)
+    db.flush()
+    db.add_all(
+        [
+            Attachment(
+                workspace_id=workspace_id,
+                object_type=object_type,
+                object_id=object_id,
+                file_name="file.pdf",
+                file_type="datasheet",
+                mime_type="application/pdf",
+                size_bytes=12,
+                storage_key=f"{workspace_id}/{uuid.uuid4()}-file.pdf",
+            ),
+            CustomField(
+                workspace_id=workspace_id,
+                object_type=object_type,
+                object_id=object_id,
+                key=f"field-{uuid.uuid4().hex[:8]}",
+                value="v",
+            ),
+            TagLink(
+                workspace_id=workspace_id,
+                tag_id=tag.id,
+                object_type=object_type,
+                object_id=object_id,
+            ),
+        ]
+    )
+    db.flush()
+
+
+def _polymorphic_counts(
+    db,
+    *,
+    workspace_id: uuid.UUID,
+    object_type: str,
+    object_id: uuid.UUID,
+) -> dict[str, int]:
+    counts = {}
+    for name, Model in (
+        ("attachments", Attachment),
+        ("custom_fields", CustomField),
+        ("tag_links", TagLink),
+    ):
+        counts[name] = len(
+            db.execute(
+                select(Model).where(
+                    Model.workspace_id == workspace_id,
+                    Model.object_type == object_type,
+                    Model.object_id == object_id,
+                )
+            ).scalars().all()
+        )
+    return counts
+
+
+def _make_parent(db, *, workspace_id: uuid.UUID, object_type: str):
+    if object_type == "part":
+        parent = Part(workspace_id=workspace_id, name="Parent Part", part_type="local")
+    elif object_type == "project":
+        parent = Project(workspace_id=workspace_id, name="Parent Project")
+    elif object_type == "order":
+        parent = Order(workspace_id=workspace_id, name="Parent Order")
+    elif object_type == "storage_location":
+        parent = StorageLocation(workspace_id=workspace_id, name="Parent Bin")
+    elif object_type == "build":
+        project = Project(workspace_id=workspace_id, name="Build Project")
+        db.add(project)
+        db.flush()
+        parent = Build(workspace_id=workspace_id, project_id=project.id, name="Parent Build")
+    elif object_type == "lot":
+        part = Part(workspace_id=workspace_id, name="Lot Part", part_type="local")
+        db.add(part)
+        db.flush()
+        parent = Lot(workspace_id=workspace_id, part_id=part.id, source_type="manual")
+    else:
+        raise AssertionError(f"unknown test object_type {object_type}")
+    db.add(parent)
+    db.flush()
+    return parent
 
 
 # ---------------------------------------------------------------------------
@@ -169,3 +271,70 @@ def test_purge_polymorphic_is_idempotent(db):
     assert second["custom_fields"] == 0
     assert second["attachments"] == 0
     assert second["tag_links"] == 0
+
+
+@pytest.mark.parametrize(
+    "object_type",
+    ["part", "order", "project", "build", "lot", "storage_location"],
+)
+def test_hard_delete_parent_purges_polymorphic_rows(db, object_type):
+    c = TestClient(app)
+    ws_id = _signup(c)
+    ws_uuid = uuid.UUID(ws_id)
+    parent = _make_parent(db, workspace_id=ws_uuid, object_type=object_type)
+    _add_polymorphic_rows(
+        db,
+        workspace_id=ws_uuid,
+        object_type=object_type,
+        object_id=parent.id,
+    )
+
+    assert _polymorphic_counts(
+        db,
+        workspace_id=ws_uuid,
+        object_type=object_type,
+        object_id=parent.id,
+    ) == {"attachments": 1, "custom_fields": 1, "tag_links": 1}
+
+    db.delete(parent)
+    db.flush()
+
+    assert _polymorphic_counts(
+        db,
+        workspace_id=ws_uuid,
+        object_type=object_type,
+        object_id=parent.id,
+    ) == {"attachments": 0, "custom_fields": 0, "tag_links": 0}
+
+
+def test_polymorphic_cleanup_listener_registration_is_idempotent(db, monkeypatch):
+    from app.domain import _polymorphic_cleanup as cleanup
+
+    cleanup.register_polymorphic_cleanup_listeners()
+    cleanup.register_polymorphic_cleanup_listeners()
+
+    calls = 0
+    real_purge = cleanup._purge_polymorphic
+
+    def counted_purge(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return real_purge(*args, **kwargs)
+
+    monkeypatch.setattr(cleanup, "_purge_polymorphic", counted_purge)
+
+    c = TestClient(app)
+    ws_id = _signup(c)
+    ws_uuid = uuid.UUID(ws_id)
+    parent = _make_parent(db, workspace_id=ws_uuid, object_type="part")
+    _add_polymorphic_rows(
+        db,
+        workspace_id=ws_uuid,
+        object_type="part",
+        object_id=parent.id,
+    )
+
+    db.delete(parent)
+    db.flush()
+
+    assert calls == 1

@@ -11,6 +11,9 @@ from sqlalchemy.orm import Session
 from app.core.deps import _ROLE_RANK, _membership_role
 from app.core.errors import ErrorCodes, raise_http
 from app.domain._mixins import WorkspaceOwned
+from app.domain._polymorphic_cleanup import register_polymorphic_cleanup_listeners
+
+register_polymorphic_cleanup_listeners()
 
 # Generic type variable bound to WorkspaceOwned. Replaces the previous
 # `Any`-typed signatures so a typo (`Parts` instead of `Part`) is caught
@@ -62,10 +65,20 @@ def _polymorphic_resolvers() -> dict[str, type[WorkspaceOwned]]:
     # every attachment upload / custom-field write / tag link. Adding a
     # new entry requires a process restart — that's fine, this list is
     # static at deploy time.
+    from app.domain.builds.models import Build
+    from app.domain.lots.models import Lot
+    from app.domain.orders.models import Order
     from app.domain.parts.models import Part
+    from app.domain.projects.models import Project
+    from app.domain.storage.models import StorageLocation
 
     return {
+        "build": Build,
+        "lot": Lot,
+        "order": Order,
         "part": Part,
+        "project": Project,
+        "storage_location": StorageLocation,
     }
 
 
