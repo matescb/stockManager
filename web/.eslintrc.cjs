@@ -36,6 +36,15 @@ module.exports = {
     // provider catalog / DataTable cells. Tighten in a follow-up.
     "@typescript-eslint/no-explicit-any": "off",
     "no-empty": ["warn", { allowEmptyCatch: true }],
+    "no-restricted-syntax": [
+      "error",
+      {
+        selector:
+          "CallExpression[callee.object.object.name='Sentry'][callee.object.property.name='logger'] Identifier[name=/token|secret|password|passwd|credential|authorization|cookie|session|csrf|dsn|apiKey|workspaceId/i]",
+        message:
+          "Do not pass sensitive identifiers to Sentry.logger.*; log a redacted scalar or omit the field.",
+      },
+    ],
   },
   ignorePatterns: [
     "dist/",
