@@ -18,9 +18,10 @@ async function login(page: Page, email: string, password = DEFAULT_PASSWORD) {
   await page.getByRole("button", { name: "Sign in" }).click();
 }
 
-async function logoutViaApi(page: Page) {
-  const response = await page.request.post("/api/auth/logout");
-  expect(response.ok()).toBe(true);
+async function clearSession(page: Page) {
+  await page.context().clearCookies();
+  const response = await page.request.get("/api/auth/me");
+  expect(response.status()).toBe(401);
 }
 
 async function signup(page: Page, testInfo: TestInfo, label: string) {
@@ -51,7 +52,7 @@ test(
   { tag: ["@core"] },
   async ({ authedPage }) => {
     const { page, email } = authedPage;
-    await logoutViaApi(page);
+    await clearSession(page);
 
     await page.goto("/login");
     await login(page, email);
@@ -66,7 +67,7 @@ test(
   { tag: ["@core"] },
   async ({ authedPage }) => {
     const { page, email } = authedPage;
-    await logoutViaApi(page);
+    await clearSession(page);
 
     await page.goto("/login");
     await login(page, email, "WrongPass!!X");
@@ -128,7 +129,7 @@ test(
     const part = await seedPart(request, { name: "E2E Auth Deep Link Part" });
     const target = `/parts/${part.id}/info?panel=specs#deep-link`;
 
-    await logoutViaApi(page);
+    await clearSession(page);
     await page.goto(target);
 
     await expect(page).toHaveURL(/\/login$/);
