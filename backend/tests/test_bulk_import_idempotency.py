@@ -139,6 +139,24 @@ def test_different_key_same_mpns_hits_duplicate_branch(authed):
     assert body["rows"][0]["status"] == "duplicate"
 
 
+def test_distinct_orders_distinct_hashes():
+    """Implicit content keys preserve row order so distinct submits do not
+    collapse onto the same idempotency cache row."""
+    from app.api.routes.parts_scan import _bulk_import_content_key
+    from app.domain.parts.schemas import ScanImportRow
+
+    rows_ab = [
+        ScanImportRow(mpn="RC0402JR-070R", quantity=1),
+        ScanImportRow(mpn="RC0603FR-0710K", quantity=2),
+    ]
+    rows_ba = list(reversed(rows_ab))
+
+    assert _bulk_import_content_key("workspace-a", rows_ab) != _bulk_import_content_key(
+        "workspace-a",
+        rows_ba,
+    )
+
+
 def test_idempotency_cache_write_is_upsert_not_plain_insert():
     """Direct unit-level check: the bulk-import route must use
     `INSERT … ON CONFLICT DO NOTHING` for the cache write so a race
