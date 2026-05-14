@@ -21,6 +21,11 @@ from app.core.auth import (
     verify_password,
 )
 from app.core.config import settings
+from app.core.cookies import (
+    WORKSPACE_COOKIE_NAME,
+    session_cookie_attrs,
+    workspace_cookie_attrs,
+)
 from app.core.deps import CurrentUser, DbSession
 from app.core.errors import ErrorCodes, raise_http
 from app.core.logging import get_logger
@@ -48,14 +53,8 @@ def _set_session_cookie(response: Response, token: str) -> None:
     response.set_cookie(
         key=settings().SESSION_COOKIE_NAME,
         value=token,
-        httponly=True,
-        # Mark Secure in prod where the proxy terminates TLS, so browsers
-        # never re-send the cookie over plaintext. Stays off in dev where
-        # we serve plain HTTP on localhost.
-        secure=settings().APP_ENV == "prod",
-        samesite="lax",
         max_age=settings().SESSION_LIFETIME_DAYS * 24 * 3600,
-        path="/",
+        **session_cookie_attrs(),
     )
 
 
@@ -72,7 +71,7 @@ def _hmac_token(plaintext: str) -> str:
 
 
 def _workspace_for_logout_audit(db, request: Request, user: User) -> Workspace | None:
-    raw = request.headers.get("X-Workspace-Id") or request.cookies.get("stockmgr_workspace")
+    raw = request.headers.get("X-Workspace-Id") or request.cookies.get(WORKSPACE_COOKIE_NAME)
     if raw:
         try:
             workspace_id = UUID(raw)
@@ -445,7 +444,8 @@ def logout(request: Request, response: Response, db: DbSession) -> Envelope[None
                 request_id=getattr(request.state, "request_id", None),
             )
         revoke_session(db, token)
-    response.delete_cookie(cookie_name, path="/")
+    response.delete_cookie(cookie_name, **session_cookie_attrs())
+    response.delete_cookie(WORKSPACE_COOKIE_NAME, **workspace_cookie_attrs())
     log.info("logout")
     return ok(None, "logged out")
 
