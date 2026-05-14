@@ -117,6 +117,7 @@ class ErrorCodes:
     INVITATION_ALREADY_MEMBER = "invitation.already_member"
     INVITATION_NOT_PENDING = "invitation.not_pending"
     INVITATION_EMAIL_MISMATCH = "invitation.email_mismatch"
+    INVITATION_EXPIRED = "invitation.expired"
 
     # Sentry tunnel
     SENTRY_TUNNEL_TOO_LARGE = "sentry_tunnel.too_large"

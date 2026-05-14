@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -43,6 +44,7 @@ def test_admin_creates_invitation_user_accepts(admin):
     assert r.status_code == 201, r.text
     inv = r.json()["data"]
     assert inv["status"] == "pending"
+    assert inv["expires_at"]
     token = inv["token"]
     assert token
 
@@ -109,6 +111,42 @@ def test_revoke_invitation_blocks_acceptance(admin):
     _do_signup_verify(invitee, email=invitee_email, name="x")
     r = invitee.post("/api/invitations/accept", json={"token": inv["token"]})
     assert r.status_code == 400
+
+
+def test_invite_has_expires_at(admin):
+    invitee_email = f"expiry-{uuid.uuid4().hex[:6]}@x.com"
+    r = admin.post("/api/invitations", json={"email": invitee_email, "role": "member"})
+    assert r.status_code == 201, r.text
+    inv = r.json()["data"]
+    assert inv["expires_at"]
+
+    rows = admin.get("/api/invitations").json()["data"]
+    listed = next(row for row in rows if row["id"] == inv["id"])
+    assert listed["expires_at"] == inv["expires_at"]
+
+
+def test_expired_invite_rejected(admin):
+    from app.core.time import utcnow
+    from app.domain.workspaces.models import WorkspaceInvitation
+    from app.infra.db import SessionLocal
+
+    invitee_email = f"expired-{uuid.uuid4().hex[:6]}@x.com"
+    inv = admin.post(
+        "/api/invitations", json={"email": invitee_email, "role": "member"}
+    ).json()["data"]
+
+    with SessionLocal() as s:
+        row = s.get(WorkspaceInvitation, uuid.UUID(inv["id"]))
+        assert row is not None
+        row.expires_at = utcnow() - timedelta(seconds=1)
+        s.commit()
+
+    invitee = TestClient(app)
+    _do_signup_verify(invitee, email=invitee_email, name="Expired")
+    r = invitee.post("/api/invitations/accept", json={"token": inv["token"]})
+    assert r.status_code == 410, r.text
+    body = r.json()
+    assert body["code"] == "invitation.expired"
 
 
 def test_cannot_demote_last_owner(admin):

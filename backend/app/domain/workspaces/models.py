@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 
 import sqlalchemy as sa
 from sqlalchemy import (
@@ -23,6 +24,8 @@ from app.domain.workspaces.master_lists import (
     DEFAULT_ACTIVE_DISTRIBUTORS,
 )
 from app.infra.db import Base
+
+INVITATION_TTL = timedelta(days=14)
 
 
 class Workspace(Base):
@@ -179,6 +182,12 @@ class WorkspaceInvitation(Base):
         nullable=True,
     )
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    expires_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: utcnow() + INVITATION_TTL,
+        server_default=text("now() + INTERVAL '14 days'"),
+    )
     accepted_at = Column(DateTime(timezone=True), nullable=True)
     accepted_by = Column(
         UUID(as_uuid=True),
