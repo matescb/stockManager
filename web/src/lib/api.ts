@@ -24,6 +24,7 @@ export type ApiErr = {
   status: { category: string; message: string };
   code?: string;
   errors?: { field: string; message: string }[];
+  request_id?: string;
 };
 
 const BASE = "/api";
@@ -50,16 +51,43 @@ export function categoryToUserMessage(category: string | undefined | null): stri
   }
 }
 
+function normalizeRequestId(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed || undefined;
+}
+
+function requestIdFromBody(body: ApiErr | null): string | undefined {
+  return normalizeRequestId(body?.request_id);
+}
+
+function messageWithRequestId(message: string, requestId: string | undefined): string {
+  return requestId ? `${message} Request ID: ${requestId}` : message;
+}
+
 export class ApiError extends Error {
   status: number;
   body: ApiErr | null;
+  /** Backend correlation id from `request_id` / `X-Request-Id`, safe to show to users. */
+  request_id: string | undefined;
+  /** Camel-case alias for call sites that do not mirror the API envelope field name. */
+  requestId: string | undefined;
   /** Safe, human-readable message for display in toasts and banners. */
   userMessage: string;
-  constructor(status: number, body: ApiErr | null, message: string) {
+  constructor(
+    status: number,
+    body: ApiErr | null,
+    message: string,
+    requestId?: string | null,
+  ) {
     super(message);
     this.status = status;
     this.body = body;
-    this.userMessage = categoryToUserMessage(body?.status?.category);
+    this.request_id = requestIdFromBody(body) ?? normalizeRequestId(requestId);
+    this.requestId = this.request_id;
+    this.userMessage = messageWithRequestId(
+      categoryToUserMessage(body?.status?.category),
+      this.request_id,
+    );
   }
 
   get code(): string | undefined {
@@ -83,7 +111,7 @@ async function rawRequest(path: string, init: RequestInit = {}): Promise<unknown
     // envelope; narrow on the shape rather than reaching through `any`.
     const errBody = (body && typeof body === "object" ? (body as ApiErr) : null);
     const msg = errBody?.status?.message || res.statusText;
-    throw new ApiError(res.status, errBody, msg);
+    throw new ApiError(res.status, errBody, msg, res.headers.get("x-request-id"));
   }
   // Successful envelope — body is `{data, status}`. Pull `.data` after a
   // structural check so a non-conforming response surfaces as `null`

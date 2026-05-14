@@ -20,12 +20,12 @@ beforeEach(() => {
   vi.restoreAllMocks();
 });
 
-function mockFetch(status: number, body: unknown) {
+function mockFetch(status: number, body: unknown, headers: Record<string, string> = {}) {
   global.fetch = vi.fn().mockResolvedValue({
     ok: status >= 200 && status < 300,
     status,
     statusText: "ok",
-    headers: new Headers({ "content-type": "application/json" }),
+    headers: new Headers({ "content-type": "application/json", ...headers }),
     json: async () => body,
   } as Response);
 }
@@ -203,5 +203,40 @@ describe("ApiError.userMessage", () => {
     expect(caught).not.toBeNull();
     expect(caught!.userMessage).toBe("Not found.");
     expect(caught!.message).toBe("part not found");
+  });
+
+  it("exposes request_id from the error envelope and includes it in userMessage", () => {
+    const err = new ApiError(
+      500,
+      {
+        data: null,
+        status: { category: "server_error", message: "boom" },
+        request_id: "req-aud-062",
+      },
+      "boom",
+    );
+    expect(err.request_id).toBe("req-aud-062");
+    expect(err.requestId).toBe("req-aud-062");
+    expect(err.userMessage).toContain("Request ID: req-aud-062");
+  });
+
+  it("falls back to X-Request-Id when the error body omits request_id", async () => {
+    mockFetch(
+      429,
+      {
+        data: null,
+        status: { category: "rate_limited", message: "rate limit exceeded" },
+      },
+      { "x-request-id": "req-from-header" },
+    );
+    let caught: ApiError | null = null;
+    try {
+      await api.parsed.get("/whatever", Schema);
+    } catch (e) {
+      if (e instanceof ApiError) caught = e;
+    }
+    expect(caught).not.toBeNull();
+    expect(caught!.request_id).toBe("req-from-header");
+    expect(caught!.userMessage).toContain("Request ID: req-from-header");
   });
 });
