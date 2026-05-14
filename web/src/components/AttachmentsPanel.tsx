@@ -7,6 +7,7 @@ import { useWsKey } from "@/lib/queryKeys";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { InlineQueryError } from "@/components/QueryStateBoundary";
 import { formatDateTime } from "@/lib/format";
+import { isSafeSameOriginPath } from "@/lib/url";
 
 type Attachment = {
   id: string;
@@ -282,33 +283,39 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
         <div className="text-muted text-sm">No attachments yet.</div>
       ) : (
         <ul className="divide-y divide-border">
-          {data.map(a => (
-            <li key={a.id} className="py-2 flex items-center gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="truncate font-medium text-sm">{a.file_name}</span>
-                  <span className="pill text-[10px] uppercase">{a.file_type}</span>
+          {data.map(a => {
+            const downloadUrl = `/api/attachments/${a.id}/download`;
+            const safeDownloadUrl = isSafeSameOriginPath(downloadUrl) ? downloadUrl : null;
+            return (
+              <li key={a.id} className="py-2 flex items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate font-medium text-sm">{a.file_name}</span>
+                    <span className="pill text-[10px] uppercase">{a.file_type}</span>
+                  </div>
+                  <div className="text-xs text-muted">
+                    {humanSize(a.size_bytes)} · {formatDateTime(a.created_at)}
+                  </div>
                 </div>
-                <div className="text-xs text-muted">
-                  {humanSize(a.size_bytes)} · {formatDateTime(a.created_at)}
-                </div>
-              </div>
-              <a
-                className="btn text-xs"
-                href={`/api/attachments/${a.id}/download`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <Download className="inline w-3 h-3 mr-1" />
-                Download
-              </a>
-              {canWrite && (
-                <button className="btn-danger text-xs" onClick={() => doDelete(a)}>
-                  <Trash2 className="inline w-3 h-3" />
-                </button>
-              )}
-            </li>
-          ))}
+                {safeDownloadUrl && (
+                  <a
+                    className="btn text-xs"
+                    href={safeDownloadUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <Download className="inline w-3 h-3 mr-1" />
+                    Download
+                  </a>
+                )}
+                {canWrite && (
+                  <button className="btn-danger text-xs" onClick={() => doDelete(a)}>
+                    <Trash2 className="inline w-3 h-3" />
+                  </button>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

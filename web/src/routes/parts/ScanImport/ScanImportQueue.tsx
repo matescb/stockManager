@@ -26,6 +26,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { bagLotName, bagComments, type BagCode } from "@/lib/bagCode";
+import { isSafeHttpOrSameOriginUrl, isSafeHttpUrl } from "@/lib/url";
 import { PROVIDER_LABEL, manufacturerMatches, type LookupState, type Row } from "./types";
 
 // ─── BagRescanCard ────────────────────────────────────────────────────────────
@@ -125,6 +126,8 @@ function FoundDetails({
   const mfrMismatch = !manufacturerMatches(bag.manufacturer, r.manufacturer);
   const lotName = bagLotName(bag);
   const comments = bagComments(bag);
+  const safeSourceUrl = isSafeHttpUrl(r.source_url) ? r.source_url : null;
+  const safeImageUrl = isSafeHttpOrSameOriginUrl(r.image_url) ? r.image_url : null;
   return (
     <div>
       <div className="flex items-start gap-2">
@@ -156,10 +159,10 @@ function FoundDetails({
               </span>
             )}
             {r.category && <span className="text-muted">{r.category}</span>}
-            {r.source_url && (
+            {safeSourceUrl && (
               <a
                 className="text-accent hover:underline inline-flex items-center gap-1"
-                href={r.source_url}
+                href={safeSourceUrl}
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -168,9 +171,9 @@ function FoundDetails({
             )}
           </div>
         </div>
-        {r.image_url ? (
+        {safeImageUrl ? (
           <img
-            src={r.image_url}
+            src={safeImageUrl}
             alt=""
             className="w-12 h-12 rounded border border-border object-contain bg-white"
             onError={e => {

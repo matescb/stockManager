@@ -1,5 +1,6 @@
 import { DataTable, type Column } from "@/components/DataTable";
 import { Modal } from "@/components/Modal";
+import { isSafeHttpUrl } from "@/lib/url";
 import type { PurchasePlanLine, PurchasePlanOffer } from "./purchasePlanTypes";
 
 type Props = {
@@ -142,16 +143,19 @@ export default function OverrideOfferModal({ line, onSelect, onClose }: Props) {
       key: "offer",
       header: "Offer",
       accessor: row => row.offer.url ?? "",
-      render: row => row.offer.url ? (
-        <a
-          className="text-accent hover:underline"
-          href={row.offer.url}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Open
-        </a>
-      ) : "-",
+      render: row => {
+        const safeOfferUrl = isSafeHttpUrl(row.offer.url) ? row.offer.url : null;
+        return safeOfferUrl ? (
+          <a
+            className="text-accent hover:underline"
+            href={safeOfferUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Open
+          </a>
+        ) : "-";
+      },
     },
     {
       key: "action",

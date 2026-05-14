@@ -7,6 +7,7 @@ import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
+import { isSafeHttpUrl } from "@/lib/url";
 import type { Order, OrderEntry } from "@/types";
 
 const CREATE_NEW = "__create_new__";
@@ -160,6 +161,7 @@ export function CreateOrderLineModal({
   });
 
   if (!open || !source) return null;
+  const safeProductUrl = isSafeHttpUrl(source.productUrl) ? source.productUrl : null;
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -308,9 +310,9 @@ export function CreateOrderLineModal({
             />
           </label>
 
-          {source.productUrl && (
+          {safeProductUrl && (
             <a
-              href={source.productUrl}
+              href={safeProductUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-sm text-accent hover:underline"

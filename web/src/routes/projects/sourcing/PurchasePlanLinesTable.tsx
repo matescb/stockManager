@@ -1,5 +1,6 @@
 import { DataTable, type Column } from "@/components/DataTable";
 import { SourcingSourceLabel } from "@/components/SourcingSourceLabel";
+import { isSafeHttpUrl } from "@/lib/url";
 import {
   extendedCost,
   formatLeadTime,
@@ -72,11 +73,14 @@ export default function PurchasePlanLinesTable({
       key: "link",
       header: "Offer",
       accessor: line => line.selected_url ?? "",
-      render: line => line.selected_url ? (
-        <a className="text-accent hover:underline" href={line.selected_url} target="_blank" rel="noopener noreferrer">
-          Open
-        </a>
-      ) : "-",
+      render: line => {
+        const safeSelectedUrl = isSafeHttpUrl(line.selected_url) ? line.selected_url : null;
+        return safeSelectedUrl ? (
+          <a className="text-accent hover:underline" href={safeSelectedUrl} target="_blank" rel="noopener noreferrer">
+            Open
+          </a>
+        ) : "-";
+      },
     },
     {
       key: "override",

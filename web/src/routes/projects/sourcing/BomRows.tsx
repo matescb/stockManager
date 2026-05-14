@@ -5,6 +5,7 @@ import { RiskLegendPopover } from "@/components/RiskLegendPopover";
 import { SourcingSourceLabel } from "@/components/SourcingSourceLabel";
 import { LIFECYCLE_LEGEND, SUPPLY_CHAIN_LEGEND } from "@/lib/riskLegends";
 import { lifecycleRiskTone, type RiskTone } from "@/lib/sourcing";
+import { isSafeHttpUrl } from "@/lib/url";
 import { BomDistributorsModal } from "./BomDistributorsModal";
 import {
   formatLeadTime,
@@ -95,17 +96,21 @@ export function BomRows({ rows, workspaceCurrency }: { rows: SourcingBomLine[]; 
       key: "distributor",
       header: "Distributor",
       accessor: row => row.best_offer?.distributor ?? "",
-      render: row => row.best_offer?.url ? (
-        <a
-          className="text-accent hover:underline"
-          href={row.best_offer.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={event => event.stopPropagation()}
-        >
-          {row.best_offer.distributor}
-        </a>
-      ) : row.best_offer?.distributor ?? "—",
+      render: row => {
+        const offerUrl = row.best_offer?.url;
+        const safeOfferUrl = isSafeHttpUrl(offerUrl) ? offerUrl : null;
+        return safeOfferUrl ? (
+          <a
+            className="text-accent hover:underline"
+            href={safeOfferUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={event => event.stopPropagation()}
+          >
+            {row.best_offer?.distributor}
+          </a>
+        ) : row.best_offer?.distributor ?? "—";
+      },
     },
     {
       key: "cost",

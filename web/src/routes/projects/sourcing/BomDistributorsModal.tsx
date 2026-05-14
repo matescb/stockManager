@@ -5,6 +5,7 @@ import { DataTable, type Column } from "@/components/DataTable";
 import { Modal } from "@/components/Modal";
 import { PoweredByTrustedParts } from "@/components/PoweredByTrustedParts";
 import { lifecycleRiskTone, riskToneClass } from "@/lib/sourcing";
+import { isSafeHttpUrl } from "@/lib/url";
 import type {
   SourcingBomLine,
   SourcingBomOffer,
@@ -200,17 +201,20 @@ export function BomDistributorsModal({ open, onClose, line, workspaceCurrency }:
       key: "distributor",
       header: "Distributor",
       accessor: row => row.distributor,
-      render: row => row.link ? (
-        <a
-          href={row.link}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-accent hover:underline"
-        >
-          {row.distributor}
-          <ExternalLink size={14} aria-hidden="true" />
-        </a>
-      ) : row.distributor,
+      render: row => {
+        const safeLink = isSafeHttpUrl(row.link) ? row.link : null;
+        return safeLink ? (
+          <a
+            href={safeLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-accent hover:underline"
+          >
+            {row.distributor}
+            <ExternalLink size={14} aria-hidden="true" />
+          </a>
+        ) : row.distributor;
+      },
     },
     {
       key: "stock",

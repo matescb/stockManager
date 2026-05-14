@@ -4,6 +4,7 @@ import { api, ApiError, getConflictDetail } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
 import { useQuery } from "@tanstack/react-query";
 import { useWsKey } from "@/lib/queryKeys";
+import { isSafeHttpOrSameOriginUrl } from "@/lib/url";
 import type { MpnLookupResult, ProviderSpec, StorageLocation } from "@/types";
 import MpnLookup from "@/components/MpnLookup";
 import { InlineQueryError } from "@/components/QueryStateBoundary";
@@ -61,6 +62,8 @@ export default function PartCreate() {
   const [refreshFailed, setRefreshFailed] = useState<{ partId: string } | null>(null);
   const storageQuery = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
   const { data: storage } = storageQuery;
+  const safeDatasheetUrl = isSafeHttpOrSameOriginUrl(datasheetUrl) ? datasheetUrl : null;
+  const safeImageUrl = isSafeHttpOrSameOriginUrl(imageUrl) ? imageUrl : null;
 
   // FE2-006: gate concurrent submits via mutationKey so a double-click
   // on Create can't post two parts; the 409 conflict-link branch stays
@@ -219,18 +222,18 @@ export default function PartCreate() {
             <input id="part-create-mpn" className="input flex-1" value={form.mpn} onChange={e => set("mpn", e.target.value)} />
             {form.part_type === "linked" && <MpnLookup mpn={form.mpn} onResult={applyLookup} />}
           </div>
-          {datasheetUrl && (
+          {safeDatasheetUrl && (
             <div className="text-xs text-muted mt-1">
-              Datasheet: <a className="underline" href={datasheetUrl} target="_blank" rel="noopener noreferrer">{datasheetUrl}</a>
+              Datasheet: <a className="underline" href={safeDatasheetUrl} target="_blank" rel="noopener noreferrer">{safeDatasheetUrl}</a>
             </div>
           )}
         </div>
       </div>
-      {(imageUrl || specs.length > 0) && (
+      {(safeImageUrl || specs.length > 0) && (
         <div className="rounded-md border border-border bg-panel2/50 p-3 space-y-2 text-sm">
           <div className="flex items-start gap-3">
-            {imageUrl && (
-              <img src={imageUrl} alt="Part" className="h-16 w-16 object-contain rounded bg-panel" />
+            {safeImageUrl && (
+              <img src={safeImageUrl} alt="Part" className="h-16 w-16 object-contain rounded bg-panel" />
             )}
             <div className="flex-1 text-xs text-muted">
               Found via provider lookup. After Create, the part will be linked

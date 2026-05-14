@@ -1,3 +1,5 @@
+import { isSafeHttpUrl } from "@/lib/url";
+
 const DEFAULT_TRUSTEDPARTS_URL = "https://www.trustedparts.com";
 
 type Props = {
@@ -18,11 +20,14 @@ export function PoweredByTrustedParts({
     size === "md" ? "text-sm" : "",
     className ?? "",
   ].filter(Boolean).join(" ");
+  const href = primaryUrl && isSafeHttpUrl(primaryUrl)
+    ? primaryUrl
+    : DEFAULT_TRUSTEDPARTS_URL;
 
   return (
     <a
       className={classes}
-      href={primaryUrl ?? DEFAULT_TRUSTEDPARTS_URL}
+      href={href}
       target="_blank"
       rel="noopener noreferrer"
     >
