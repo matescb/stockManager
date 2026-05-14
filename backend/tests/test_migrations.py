@@ -136,10 +136,17 @@ def _reset_schema(url: str) -> None:
         eng.dispose()
 
 
+def _normalize_column_default(default: object) -> str | None:
+    if default is None:
+        return None
+    return " ".join(str(default).split())
+
+
 def _snapshot_schema(url: str) -> dict:
     """Capture a deterministic schema snapshot. Includes table names,
-    column shapes, indexes, and foreign keys — everything that a
-    correct `downgrade()` followed by `upgrade()` should round-trip.
+    column shapes including server defaults, indexes, and foreign keys
+    — everything that a correct `downgrade()` followed by `upgrade()`
+    should round-trip.
 
     Keys are sorted at every level so dict-equality compares the
     structural shape, not insertion order."""
@@ -153,6 +160,7 @@ def _snapshot_schema(url: str) -> dict:
                     c["name"],
                     str(c["type"]),
                     bool(c.get("nullable", True)),
+                    _normalize_column_default(c.get("default")),
                 )
                 for c in insp.get_columns(table)
             )
@@ -353,6 +361,54 @@ def test_invitation_token_hash_drop_round_trips(round_trip_url: str) -> None:
     command.upgrade(cfg, "0049")
     assert "token_hash" not in invitation_columns()
     assert "uq_workspace_invitation_token_hash" not in invitation_unique_constraints()
+
+
+@pytest.mark.slow
+def test_snapshot_schema_captures_server_default(round_trip_url: str) -> None:
+    _reset_schema(round_trip_url)
+    eng = create_engine(round_trip_url, future=True)
+    try:
+        with eng.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE TABLE default_snapshot_probe ("
+                    "id integer PRIMARY KEY, "
+                    "status text NOT NULL DEFAULT 'pending'"
+                    ")"
+                )
+            )
+
+        before = _snapshot_schema(round_trip_url)
+
+        with eng.begin() as conn:
+            conn.execute(
+                text(
+                    "ALTER TABLE default_snapshot_probe "
+                    "ALTER COLUMN status SET DEFAULT 'ready'"
+                )
+            )
+
+        after = _snapshot_schema(round_trip_url)
+    finally:
+        eng.dispose()
+
+    assert before != after
+    assert before["default_snapshot_probe"]["columns"] != after[
+        "default_snapshot_probe"
+    ]["columns"]
+    before_status_default = next(
+        column[3]
+        for column in before["default_snapshot_probe"]["columns"]
+        if column[0] == "status"
+    )
+    after_status_default = next(
+        column[3]
+        for column in after["default_snapshot_probe"]["columns"]
+        if column[0] == "status"
+    )
+    assert before_status_default != after_status_default
+    assert before_status_default is not None
+    assert "pending" in before_status_default
 
 
 @pytest.mark.slow
