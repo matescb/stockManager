@@ -2,7 +2,7 @@
 
 The DB only ever holds the SHA-256 digest of the cookie; the plaintext
 lives only on the client cookie. A session idle past
-core/deps._SESSION_IDLE_WINDOW (24h) is rejected even when its
+Settings.SESSION_IDLE_HOURS (24h by default) is rejected even when its
 absolute `expires_at` is still in the future.
 """
 from __future__ import annotations

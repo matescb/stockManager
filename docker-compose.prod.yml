@@ -80,6 +80,7 @@ services:
       POSTGRES_HOST: db
       POSTGRES_PORT: "5432"
       SESSION_SECRET: ${SESSION_SECRET}
+      SESSION_IDLE_HOURS: ${SESSION_IDLE_HOURS:-24}
       UPLOAD_DIR: /data/uploads
       APP_ENV: prod
       CORS_ORIGINS: ${CORS_ORIGINS}
@@ -184,6 +185,7 @@ services:
       POSTGRES_HOST: db
       POSTGRES_PORT: "5432"
       SESSION_SECRET: ${SESSION_SECRET}
+      SESSION_IDLE_HOURS: ${SESSION_IDLE_HOURS:-24}
       UPLOAD_DIR: /data/uploads
       APP_ENV: prod
       CORS_ORIGINS: ${CORS_ORIGINS}
@@ -236,6 +238,7 @@ services:
       POSTGRES_HOST: db
       POSTGRES_PORT: "5432"
       SESSION_SECRET: ${SESSION_SECRET}
+      SESSION_IDLE_HOURS: ${SESSION_IDLE_HOURS:-24}
       UPLOAD_DIR: /data/uploads
       APP_ENV: prod
       CORS_ORIGINS: ${CORS_ORIGINS}

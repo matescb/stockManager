@@ -3,7 +3,7 @@ from __future__ import annotations
 import urllib.parse
 from functools import lru_cache
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     SESSION_SECRET: str = "dev-secret-change-me"
     SESSION_COOKIE_NAME: str = "stockmgr_session"
     SESSION_LIFETIME_DAYS: int = 30
+    # Sliding-expiry idle window. A session idle longer than this is
+    # rejected even when the absolute lifetime has not elapsed.
+    SESSION_IDLE_HOURS: int = Field(default=24, gt=0)
     # Cadence (seconds) of the in-process expired-session purge driven
     # by the FastAPI lifespan hook. DB-007 / issue #98. Knob exists so
     # tests can shorten it; ops should not need to touch it. 0 disables
@@ -156,7 +159,8 @@ class Settings(BaseSettings):
             raise ValueError(
                 "WORKSPACE_SECRETS_KEY is required when APP_ENV=prod. "
                 "Generate one with: "
-                'python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
+                'python -c "from cryptography.fernet import Fernet; '
+                'print(Fernet.generate_key().decode())"'
             )
         return self
 
