@@ -29,7 +29,7 @@ router = APIRouter()
 def _serialize_entry(e):
     return {
         "id": str(e.id),
-        "part_id": str(e.part_id),
+        "part_id": str(e.part_id) if e.part_id else None,
         "lot_id": str(e.lot_id) if e.lot_id else None,
         "storage_location_id": str(e.storage_location_id) if e.storage_location_id else None,
         "quantity_delta": e.quantity_delta,
@@ -61,7 +61,11 @@ def add(
         if expected != payload.bag_signature:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={"message": "bag_signature does not match recomputed digest of raw_bag_code"},
+                detail={
+                    "message": (
+                        "bag_signature does not match recomputed digest of raw_bag_code"
+                    )
+                },
             )
     try:
         e = add_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
