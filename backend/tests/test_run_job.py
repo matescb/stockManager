@@ -1,15 +1,25 @@
 from __future__ import annotations
 
+import logging
+
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.cli.run_job import JOBS, JobSpec, UnknownJobError, main, run_job
 
 
 class _FakeSession:
-    def __init__(self) -> None:
+    def __init__(self, *, execute_error: Exception | None = None) -> None:
         self.committed = False
         self.rolled_back = False
         self.closed = False
+        self.executed: list[tuple[str, dict[str, object] | None]] = []
+        self.execute_error = execute_error
+
+    def execute(self, statement, params=None) -> None:
+        self.executed.append((str(statement), params))
+        if self.execute_error is not None:
+            raise self.execute_error
 
     def commit(self) -> None:
         self.committed = True
@@ -46,6 +56,9 @@ def test_run_job_dispatches_allow_listed_job(tmp_path) -> None:
 
     assert affected == 4
     assert calls == [session]
+    assert session.executed == [
+        ("SELECT pg_advisory_xact_lock(hashtext(:job_name))", {"job_name": "example"})
+    ]
     assert session.committed is True
     assert session.rolled_back is False
     assert session.closed is True
@@ -103,3 +116,46 @@ def test_sourcing_alerts_evaluate_dispatches_to_module(monkeypatch, tmp_path) ->
     assert session.rolled_back is False
     assert session.closed is True
     assert (tmp_path / "sourcing-alerts-evaluate").exists()
+
+
+class _FakeLockDenied(Exception):
+    sqlstate = "55P03"
+
+
+def test_run_job_skips_when_advisory_lock_denied(caplog, tmp_path) -> None:
+    session = _FakeSession(
+        execute_error=OperationalError(
+            "SELECT pg_advisory_xact_lock(hashtext(:job_name))",
+            {"job_name": "example"},
+            _FakeLockDenied(),
+        )
+    )
+    calls: list[Session] = []
+
+    def _job(db: Session) -> int:
+        calls.append(db)
+        return 4
+
+    with caplog.at_level(logging.INFO, logger="app.cli.run_job"):
+        affected = run_job(
+            "example",
+            jobs={
+                "example": JobSpec(
+                    name="example",
+                    owner="tests",
+                    cadence="manual",
+                    idempotency="test-only",
+                    run=_job,
+                )
+            },
+            session_factory=lambda: session,  # type: ignore[return-value]
+            heartbeat_dir=tmp_path,
+        )
+
+    assert affected == 0
+    assert calls == []
+    assert session.committed is False
+    assert session.rolled_back is True
+    assert session.closed is True
+    assert not (tmp_path / "example").exists()
+    assert "job=example status=skipped reason=lock_denied" in caplog.text
