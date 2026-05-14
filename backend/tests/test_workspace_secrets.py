@@ -146,6 +146,7 @@ def test_prod_with_valid_workspace_secrets_key_boots(monkeypatch):
     monkeypatch.setenv("APP_ENV", "prod")
     monkeypatch.setenv("WORKSPACE_SECRETS_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("PASSWORD_PEPPER", "test-pepper")
+    monkeypatch.setenv("SENTRY_TRACES_SAMPLE_RATE", "0.05")
     # Required by `_require_smtp_in_prod` (issue #281).
     monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
     monkeypatch.setenv("SMTP_USER", "user")

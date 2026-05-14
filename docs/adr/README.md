@@ -36,3 +36,4 @@ New ADRs follow the template in [STYLE.md](../STYLE.md#adr-pages-docsadrnnnn-slu
 | 0024 | [`/api/auth/verify` is CSRF-exempt](0024-auth-verify-csrf-exemption.md) |
 | 0025 | [Universal `audit_log` coverage for workspace mutations](0025-universal-audit-log-policy.md) |
 | 0026 | [Sentry traces are explicitly sampled; Replay is opt-in](0026-sentry-sampling-and-replay.md) |
+| 0027 | [Preserve ledger history on part delete](0027-ledger-history-on-part-delete.md) |

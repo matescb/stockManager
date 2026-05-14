@@ -92,7 +92,7 @@ class StockEntryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    part_id: UUID
+    part_id: UUID | None
     lot_id: UUID | None
     storage_location_id: UUID | None
     quantity_delta: int

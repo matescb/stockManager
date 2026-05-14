@@ -46,8 +46,12 @@ class StockEntry(Base):
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
-    part_id = Column(UUID(as_uuid=True), ForeignKey("parts.id", ondelete="CASCADE"), nullable=False)
+    workspace_id = Column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    part_id = Column(
+        UUID(as_uuid=True), ForeignKey("parts.id", ondelete="SET NULL"), nullable=True
+    )
     lot_id = Column(UUID(as_uuid=True), ForeignKey("lots.id", ondelete="SET NULL"), nullable=True)
     storage_location_id = Column(
         UUID(as_uuid=True), ForeignKey("storage_locations.id", ondelete="SET NULL"), nullable=True
@@ -57,7 +61,11 @@ class StockEntry(Base):
     unit_price = Column(Numeric(18, 6), nullable=True)
     currency = Column(String(3), nullable=True)
     operation_type = Column(String(40), nullable=False)
-    related_entry_id = Column(UUID(as_uuid=True), ForeignKey("stock_entries.id", ondelete="SET NULL"), nullable=True)
+    related_entry_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("stock_entries.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     # Cross-table refs: FK + ON DELETE SET NULL added in alembic 0018
     # (DB-001 / BE2-002). Constraint names are pinned so downgrade can
     # drop them by name.
@@ -71,7 +79,9 @@ class StockEntry(Base):
         ForeignKey("order_entries.id", ondelete="SET NULL", name="fk_stock_entries_order_entry_id"),
         nullable=True,
     )
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
+    project_id = Column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
+    )
     build_id = Column(
         UUID(as_uuid=True),
         ForeignKey("builds.id", ondelete="SET NULL", name="fk_stock_entries_build_id"),
@@ -83,5 +93,7 @@ class StockEntry(Base):
     # operator can consume from this bag's lot instead of double-importing.
     bag_signature = Column(String(64), nullable=True)
     occurred_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
-    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_by = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)

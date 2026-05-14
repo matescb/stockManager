@@ -47,11 +47,18 @@ def list_storage(
 ):
     stmt = select(StorageLocation).where(StorageLocation.workspace_id == ws.id)
     stmt = stmt.where(
-        StorageLocation.archived_at.is_(None) if not archived else StorageLocation.archived_at.is_not(None)
+        StorageLocation.archived_at.is_(None)
+        if not archived
+        else StorageLocation.archived_at.is_not(None)
     )
     if q:
         like = f"%{q}%"
-        stmt = stmt.where(or_(StorageLocation.name.ilike(like), StorageLocation.description.ilike(like)))
+        stmt = stmt.where(
+            or_(
+                StorageLocation.name.ilike(like),
+                StorageLocation.description.ilike(like),
+            )
+        )
     stmt = stmt.order_by(StorageLocation.name).limit(limit)
     return ok([_serialize(s) for s in db.execute(stmt).scalars()])
 
@@ -84,7 +91,11 @@ def create_storage(payload: StorageIn, db: DbSession, ws: CurrentWorkspace, user
 def _get(db, ws_id, sid) -> StorageLocation:
     s = db.get(StorageLocation, sid)
     if not s or s.workspace_id != ws_id:
-        raise_http(status.HTTP_404_NOT_FOUND, code=ErrorCodes.STORAGE_NOT_FOUND, message="storage not found")
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            code=ErrorCodes.STORAGE_NOT_FOUND,
+            message="storage not found",
+        )
     return s
 
 
@@ -94,7 +105,13 @@ def get_storage(storage_id: UUID, db: DbSession, ws: CurrentWorkspace):
 
 
 @router.patch("/{storage_id}")
-def patch_storage(storage_id: UUID, payload: StoragePatch, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+def patch_storage(
+    storage_id: UUID,
+    payload: StoragePatch,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     s = _get(db, ws.id, storage_id)
     data = payload.model_dump(exclude_unset=True)
     try:
@@ -149,7 +166,7 @@ def archive_storage(storage_id: UUID, db: DbSession, ws: CurrentWorkspace, user:
     )
     blocking = [
         {
-            "part_id": str(r["part_id"]),
+            "part_id": str(r["part_id"]) if r["part_id"] else None,
             "lot_id": str(r["lot_id"]) if r["lot_id"] else None,
             "quantity": int(r["quantity"]),
         }
@@ -199,7 +216,7 @@ def storage_parts(storage_id: UUID, db: DbSession, ws: CurrentWorkspace):
     return ok(
         [
             {
-                "part_id": str(r["part_id"]),
+                "part_id": str(r["part_id"]) if r["part_id"] else None,
                 "lot_id": str(r["lot_id"]) if r["lot_id"] else None,
                 "quantity": r["quantity"],
             }
@@ -211,7 +228,7 @@ def storage_parts(storage_id: UUID, db: DbSession, ws: CurrentWorkspace):
 def _serialize_storage_entry(e: StockEntry) -> dict:
     return {
         "id": str(e.id),
-        "part_id": str(e.part_id),
+        "part_id": str(e.part_id) if e.part_id else None,
         "lot_id": str(e.lot_id) if e.lot_id else None,
         "quantity_delta": e.quantity_delta,
         "operation_type": e.operation_type,
@@ -248,7 +265,12 @@ def storage_history(
             limit=limit,
             asc=False,
         )
-        return ok({"items": [_serialize_storage_entry(e) for e in rows], "next_cursor": next_cursor})
+        return ok(
+            {
+                "items": [_serialize_storage_entry(e) for e in rows],
+                "next_cursor": next_cursor,
+            }
+        )
 
     # Legacy bare-list path — unchanged (FE uses ?limit=200).
     rows = history_for_storage(db, workspace_id=ws.id, storage_location_id=s.id, limit=limit)

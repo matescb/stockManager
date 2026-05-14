@@ -465,7 +465,12 @@ jobs:
       # copy errors. SENTRY_AUTH_TOKEN is intentionally absent — the Vite
       # plugin no-ops on an empty token (INFRA2-010).
       - name: Build web prod image
-        run: docker buildx build --load -f web/Dockerfile.prod .
+        run: |
+          docker buildx build --load -f web/Dockerfile.prod \
+            --build-arg VITE_SENTRY_TRACES_SAMPLE_RATE=0.05 \
+            --build-arg VITE_SENTRY_REPLAYS_SESSION_SAMPLE_RATE=0.0 \
+            --build-arg VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE=0.0 \
+            .
 
       # Lint the in-container nginx config. Catches syntax errors in
       # deploy/nginx-web.conf before they reach the running stack.
