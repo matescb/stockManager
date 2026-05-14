@@ -161,7 +161,7 @@ function FoundDetails({
                 className="text-accent hover:underline inline-flex items-center gap-1"
                 href={r.source_url}
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
               >
                 <ExternalLink size={12} /> Product page
               </a>

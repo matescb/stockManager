@@ -106,7 +106,7 @@ export default function PartSourcing() {
             <a
               href={externalUrl}
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               className="btn inline-flex items-center gap-1.5 text-sm"
             >
               <ExternalLink size={14} />

@@ -168,7 +168,7 @@ export default function PartSpecs() {
             className="text-accent hover:underline"
             href={(PROVIDER_SEARCH_URL[part.linked_provider!] ?? PROVIDER_SEARCH_URL.mouser)(part.mpn ?? "")}
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
           >
             product page
           </a>.

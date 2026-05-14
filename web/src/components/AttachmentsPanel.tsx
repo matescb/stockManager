@@ -297,7 +297,7 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
                 className="btn text-xs"
                 href={`/api/attachments/${a.id}/download`}
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
               >
                 <Download className="inline w-3 h-3 mr-1" />
                 Download

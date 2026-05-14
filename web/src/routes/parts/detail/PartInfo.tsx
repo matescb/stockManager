@@ -162,7 +162,7 @@ export default function PartInfo() {
           <a
             href={withDownloadName(datasheetUrl, part.mpn || part.name)}
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 text-accent hover:underline text-sm"
           >
             <FileText size={14} /> Datasheet <ExternalLink size={12} />
