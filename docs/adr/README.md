@@ -33,3 +33,4 @@ New ADRs follow the template in [STYLE.md](../STYLE.md#adr-pages-docsadrnnnn-slu
 | 0021 | [Periodic jobs run in a backend-cron sidecar](0021-periodic-jobs-scheduler.md) |
 | 0022 | [TrustedParts schema version pinning](0022-trustedparts-schema-version-pinning.md) |
 | 0023 | [Outbound provider backoff](0023-outbound-provider-backoff.md) |
+| 0024 | [`/api/auth/verify` is CSRF-exempt](0024-auth-verify-csrf-exemption.md) |
