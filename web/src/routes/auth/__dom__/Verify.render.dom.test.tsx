@@ -96,4 +96,34 @@ describe("Verify — ApiError render", () => {
     // The raw server string must NOT appear anywhere in the rendered output.
     expect(screen.queryByText(new RegExp(RAW_SERVER_MSG))).toBeNull();
   });
+
+  it("shows an expired-link message for 410", async () => {
+    mockPost.mockRejectedValue(
+      new ApiError(
+        410,
+        { data: null, status: { category: "not_found", message: "expired" } },
+        "expired",
+      ),
+    );
+
+    renderVerify("?id=x&token=y");
+
+    expect(await screen.findByText("Verification link expired.")).toBeDefined();
+    expect(screen.queryByText("Verification link not found.")).toBeNull();
+  });
+
+  it("shows an unknown-link message for 404", async () => {
+    mockPost.mockRejectedValue(
+      new ApiError(
+        404,
+        { data: null, status: { category: "not_found", message: "unknown" } },
+        "unknown",
+      ),
+    );
+
+    renderVerify("?id=x&token=y");
+
+    expect(await screen.findByText("Verification link not found.")).toBeDefined();
+    expect(screen.queryByText("Verification link expired.")).toBeNull();
+  });
 });
