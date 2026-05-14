@@ -155,6 +155,31 @@ def test_compose_prod_backend_cron_command_shape():
     assert "uvicorn" not in joined
 
 
+def test_compose_prod_has_web_and_cron_healthchecks():
+    """docker compose ps must expose health for web and cron sidecars."""
+    assert _COMPOSE_PROD_PATH.exists(), (
+        f"missing compose file at {_COMPOSE_PROD_PATH}"
+    )
+    data = yaml.safe_load(_COMPOSE_PROD_PATH.read_text())
+    services = data["services"]
+
+    web_healthcheck = services["web"].get("healthcheck", {})
+    web_test = " ".join(web_healthcheck.get("test", []))
+    assert "wget -qO- http://127.0.0.1/" in web_test
+
+    cron_healthcheck = services["backend-cron"].get("healthcheck", {})
+    cron_test = " ".join(cron_healthcheck.get("test", []))
+    assert "find /tmp/stockmanager-job-heartbeats" in cron_test
+    assert "sourcing-cache-sweep" in cron_test
+    assert "-mmin -90" in cron_test
+
+    alerts_healthcheck = services["backend-cron-alerts"].get("healthcheck", {})
+    alerts_test = " ".join(alerts_healthcheck.get("test", []))
+    assert "find /tmp/stockmanager-job-heartbeats" in alerts_test
+    assert "sourcing-alerts-evaluate" in alerts_test
+    assert "-mmin -90" in alerts_test
+
+
 def test_compose_prod_backend_cron_alerts_command_shape():
     """backend-cron-alerts must use the shared CLI scheduler path."""
     assert _COMPOSE_PROD_PATH.exists(), (
