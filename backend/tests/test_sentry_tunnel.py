@@ -1,7 +1,7 @@
 """Tests for the /api/sentry-tunnel hardening (Sec CRIT-5).
 
-The route is unauthenticated by design (Sentry SDKs don't carry a session
-cookie). What we pin here:
+The route allows unauthenticated same-origin SDK posts so login-screen
+errors can still report. What we pin here:
 - 204 short-circuit when no DSN is configured (no upstream egress).
 - 400 on empty / malformed / DSN-missing envelopes.
 - 403 on a DSN that doesn't match the server's allow-list.
@@ -13,6 +13,7 @@ cookie). What we pin here:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -141,7 +142,11 @@ def test_sentry_tunnel_route_has_rate_limit_decorator():
     """slowapi's `enabled=False` outside prod means we can't trip the
     limit in tests, but we can verify the decorator was applied — its
     presence is the load-bearing check."""
-    from app.api.routes.sentry_tunnel import sentry_tunnel
+    import app.api.routes.sentry_tunnel as sentry_tunnel_mod
+
+    sentry_tunnel = sentry_tunnel_mod.sentry_tunnel
+    source = Path(sentry_tunnel_mod.__file__).read_text()
+    assert '@limiter.limit("30/minute")' in source
 
     # slowapi attaches a `limiter_kwargs` attribute on the wrapped
     # callable. The exact attribute name is internal; check for any of
