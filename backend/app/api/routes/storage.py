@@ -123,14 +123,19 @@ def archive_storage(storage_id: UUID, db: DbSession, ws: CurrentWorkspace, user:
     # 409 listing what's still inside so the operator can move it first.
     # Runs after the auth gate so an attacker probing for ws-membership
     # doesn't learn whether a foreign storage has stock.
+    # AUD-063: reservations do not carry storage_location_id today, but if
+    # that changes, archiving must not hide a location with reserved stock.
     on_hand = stock_for_storage(db, workspace_id=ws.id, storage_location_id=s.id)
+    reserved = stock_for_storage(
+        db, workspace_id=ws.id, storage_location_id=s.id, status="reserved"
+    )
     blocking = [
         {
             "part_id": str(r["part_id"]),
             "lot_id": str(r["lot_id"]) if r["lot_id"] else None,
             "quantity": int(r["quantity"]),
         }
-        for r in on_hand
+        for r in [*on_hand, *reserved]
         if int(r["quantity"]) > 0
     ]
     if blocking:
