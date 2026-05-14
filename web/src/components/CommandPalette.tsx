@@ -49,7 +49,7 @@ export default function CommandPalette() {
 
   const searchQuery = useQuery({
     queryKey: useWsKey("cp-search", q),
-    queryFn: () => api.get<SearchData>(`/search?q=${encodeURIComponent(q)}`),
+    queryFn: ({ signal }) => api.get<SearchData>(`/search?q=${encodeURIComponent(q)}`, { signal }),
     enabled: open && q.trim().length >= 2,
     staleTime: 30_000,
   });

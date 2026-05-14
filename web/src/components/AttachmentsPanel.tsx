@@ -127,8 +127,8 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
   const queryKey = useWsKey("attachments", objectType, objectId);
   const attachmentsQuery = useQuery({
     queryKey,
-    queryFn: () =>
-      api.get<Attachment[]>(`/attachments/by-object/${objectType}/${objectId}`),
+    queryFn: ({ signal }) =>
+      api.get<Attachment[]>(`/attachments/by-object/${objectType}/${objectId}`, { signal }),
   });
   const { data, isLoading, isError } = attachmentsQuery;
 

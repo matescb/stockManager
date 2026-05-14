@@ -84,7 +84,7 @@ export default function ScanImport() {
 
   const storagesQuery = useQuery({
     queryKey: useWsKey("storage"),
-    queryFn: () => api.get<StorageLocation[]>("/storage"),
+    queryFn: ({ signal }) => api.get<StorageLocation[]>("/storage", { signal }),
   });
   const { data: storages } = storagesQuery;
 

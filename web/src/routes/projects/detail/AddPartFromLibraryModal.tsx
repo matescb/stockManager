@@ -38,13 +38,13 @@ export default function AddPartFromLibraryModal({ open, projectId, onClose }: Pr
 
   const partsQuery = useQuery({
     queryKey: useWsKey("parts", "library-picker", debouncedSearch),
-    queryFn: () => {
+    queryFn: ({ signal }) => {
       const params = new URLSearchParams({ limit: "20" });
       if (debouncedSearch) {
         params.set("q", debouncedSearch);
         params.set("search", debouncedSearch);
       }
-      return api.get<Part[]>(`/parts?${params.toString()}`);
+      return api.get<Part[]>(`/parts?${params.toString()}`, { signal });
     },
     enabled: open,
   });

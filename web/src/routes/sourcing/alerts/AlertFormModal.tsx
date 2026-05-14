@@ -139,29 +139,29 @@ export default function AlertFormModal({
 
   const workspaceQuery = useQuery({
     queryKey: useWsKey("ws", "current"),
-    queryFn: () => api.get<WorkspaceSourcingSettings>("/workspaces/current"),
+    queryFn: ({ signal }) => api.get<WorkspaceSourcingSettings>("/workspaces/current", { signal }),
     enabled: open,
   });
   const membersQuery = useQuery({
     queryKey: useWsKey("ws", "members"),
-    queryFn: () => api.get<WorkspaceMemberOption[]>("/workspaces/members"),
+    queryFn: ({ signal }) => api.get<WorkspaceMemberOption[]>("/workspaces/members", { signal }),
     enabled: open,
   });
   const partsQuery = useQuery({
     queryKey: useWsKey("parts", "alert-picker", debouncedPartSearch),
-    queryFn: () => {
+    queryFn: ({ signal }) => {
       const params = new URLSearchParams({ limit: "20" });
       if (debouncedPartSearch) {
         params.set("q", debouncedPartSearch);
         params.set("search", debouncedPartSearch);
       }
-      return api.get<Part[]>(`/parts?${params.toString()}`);
+      return api.get<Part[]>(`/parts?${params.toString()}`, { signal });
     },
     enabled: open && !isProjectAlert(alertType),
   });
   const projectsQuery = useQuery({
     queryKey: useWsKey("projects", "alert-picker"),
-    queryFn: () => api.get<Project[]>("/projects?limit=200"),
+    queryFn: ({ signal }) => api.get<Project[]>("/projects?limit=200", { signal }),
     enabled: open && isProjectAlert(alertType),
   });
 

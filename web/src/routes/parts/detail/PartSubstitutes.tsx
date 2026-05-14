@@ -13,9 +13,9 @@ export default function PartSubstitutes() {
   const { partId } = useParams();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
-  const subsQuery = useQuery({ queryKey: useWsKey("part", partId, "subs"), queryFn: () => api.get<Sub[]>(`/parts/${partId}/substitutes`) });
+  const subsQuery = useQuery({ queryKey: useWsKey("part", partId, "subs"), queryFn: ({ signal }) => api.get<Sub[]>(`/parts/${partId}/substitutes`, { signal }) });
   const { data: subs } = subsQuery;
-  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts?limit=200") });
+  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: ({ signal }) => api.get<Part[]>("/parts?limit=200", { signal }) });
   const partsById = new Map(parts?.map(p => [p.id, p]) ?? []);
   const [pick, setPick] = useState("");
 

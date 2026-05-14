@@ -23,7 +23,7 @@ export default function PartSettings() {
   const { partId } = useParams();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
-  const storageQuery = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const storageQuery = useQuery({ queryKey: useWsKey("storage"), queryFn: ({ signal }) => api.get<StorageLocation[]>("/storage", { signal }) });
   const { data: storage } = storageQuery;
   const [low, setLow] = useState(part.low_stock_report_quantity?.toString() ?? "");
   const [attrPct, setAttrPct] = useState(String(part.attrition_percentage));

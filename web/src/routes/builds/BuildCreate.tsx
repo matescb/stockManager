@@ -19,7 +19,7 @@ export default function BuildCreate() {
   const [params] = useSearchParams();
   const projectsQuery = useQuery({
     queryKey: useWsKey("projects"),
-    queryFn: () => api.get<Project[]>("/projects"),
+    queryFn: ({ signal }) => api.get<Project[]>("/projects", { signal }),
   });
   const { data: projects } = projectsQuery;
   const [name, setName] = useState("");

@@ -19,7 +19,7 @@ export default function PartLayout() {
 function PartLayoutQuery({ partId }: { partId: string }) {
   const { data: part, isError, error } = useQuery({
     queryKey: useWsKey("part", partId),
-    queryFn: () => api.get<Part>(`/parts/${partId}`),
+    queryFn: ({ signal }) => api.get<Part>(`/parts/${partId}`, { signal }),
   });
 
   if (isError) return <div className="text-red-600 text-sm p-4">Failed to load part. {error instanceof ApiError ? error.userMessage : ""}</div>;

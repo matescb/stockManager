@@ -125,7 +125,13 @@ describe("ReplenishmentCostReport", () => {
     await user.selectOptions(screen.getByLabelText("Sort"), "name");
 
     expect(await screen.findByText("Name asc")).toBeDefined();
-    expect(getSpy).toHaveBeenCalledWith("/reports/replenishment-cost?sort=delta_pct");
-    expect(getSpy).toHaveBeenCalledWith("/reports/replenishment-cost?sort=name");
+    expect(getSpy).toHaveBeenCalledWith(
+      "/reports/replenishment-cost?sort=delta_pct",
+      expect.any(Object),
+    );
+    expect(getSpy).toHaveBeenCalledWith(
+      "/reports/replenishment-cost?sort=name",
+      expect.any(Object),
+    );
   });
 });

@@ -16,10 +16,10 @@ export default function PartMembers() {
   const { workspaceId } = useAuth();
   const membersQuery = useQuery({
     queryKey: useWsKey("part", partId, "members"),
-    queryFn: () => api.get<Member[]>(`/parts/${partId}/members`),
+    queryFn: ({ signal }) => api.get<Member[]>(`/parts/${partId}/members`, { signal }),
   });
   const { data: members } = membersQuery;
-  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts?limit=200") });
+  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: ({ signal }) => api.get<Part[]>("/parts?limit=200", { signal }) });
   const partsById = new Map(parts?.map(p => [p.id, p]) ?? []);
 
   const [pick, setPick] = useState("");

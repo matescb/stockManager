@@ -17,7 +17,7 @@ export function StorageDetailLayout() {
   const { storageId } = useParams<{ storageId: string }>();
   const { data, isError, error } = useQuery({
     queryKey: useWsKey("storage", storageId),
-    queryFn: () => api.get<StorageLocation>(`/storage/${storageId}`),
+    queryFn: ({ signal }) => api.get<StorageLocation>(`/storage/${storageId}`, { signal }),
     enabled: !!storageId,
   });
   if (isError) return <div className="text-red-600 text-sm p-4">Failed to load storage location. {error instanceof ApiError ? error.userMessage : ""}</div>;
@@ -67,9 +67,9 @@ export function StorageInfo() {
   const partsKey = useWsKey("parts");
   const { data: rows, isError, error } = useQuery({
     queryKey: storagePartsKey,
-    queryFn: () => api.get<{ part_id: string; lot_id: string | null; quantity: number }[]>(`/storage/${storageId}/parts`),
+    queryFn: ({ signal }) => api.get<{ part_id: string; lot_id: string | null; quantity: number }[]>(`/storage/${storageId}/parts`, { signal }),
   });
-  const { data: parts } = useQuery({ queryKey: partsKey, queryFn: () => api.get<Part[]>("/parts?limit=200") });
+  const { data: parts } = useQuery({ queryKey: partsKey, queryFn: ({ signal }) => api.get<Part[]>("/parts?limit=200", { signal }) });
   // Derived data — safe to compute even when rows/parts are undefined.
   // Hoisted above the `isError` early-return so the hook count stays
   // stable across renders (Rules of Hooks — see #284).
@@ -102,10 +102,10 @@ export function StorageHistory() {
   const { storageId } = useParams();
   const historyQuery = useQuery({
     queryKey: useWsKey("storage", storageId, "history"),
-    queryFn: () => api.get<StockEntry[]>(`/storage/${storageId}/history?limit=200`),
+    queryFn: ({ signal }) => api.get<StockEntry[]>(`/storage/${storageId}/history?limit=200`, { signal }),
   });
   const { data } = historyQuery;
-  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts?limit=200") });
+  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: ({ signal }) => api.get<Part[]>("/parts?limit=200", { signal }) });
   const partName = new Map(parts?.map(p => [p.id, p.name]) ?? []);
   return (
     <QueryStateBoundary query={historyQuery} resourceLabel="storage history">
@@ -130,7 +130,7 @@ export function StorageSettings() {
   const { storageId } = useParams();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
-  const { data } = useQuery({ queryKey: useWsKey("storage", storageId), queryFn: () => api.get<StorageLocation>(`/storage/${storageId}`), enabled: !!storageId });
+  const { data } = useQuery({ queryKey: useWsKey("storage", storageId), queryFn: ({ signal }) => api.get<StorageLocation>(`/storage/${storageId}`, { signal }), enabled: !!storageId });
   if (!data) return null;
   // Patch fields are a finite set on the backend StorageLocationPatch
   // model — boolean flags + a few text fields. `unknown` would be too
@@ -167,7 +167,7 @@ export function StorageOther() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
-  const { data } = useQuery({ queryKey: useWsKey("storage", storageId), queryFn: () => api.get<StorageLocation>(`/storage/${storageId}`), enabled: !!storageId });
+  const { data } = useQuery({ queryKey: useWsKey("storage", storageId), queryFn: ({ signal }) => api.get<StorageLocation>(`/storage/${storageId}`, { signal }), enabled: !!storageId });
   const archiveMutation = useApiMutation<unknown, { wasArchived: boolean }>({
     mutationKey: ["storage", storageId, "archive"],
     mutationFn: ({ wasArchived }) =>

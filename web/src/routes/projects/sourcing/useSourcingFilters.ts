@@ -17,7 +17,7 @@ export function useSourcingFilters(budgetDisabledUntil: number | null) {
   const [defaultsApplied, setDefaultsApplied] = useState(false);
   const { data: workspace } = useQuery({
     queryKey: useWsKey("ws", "current"),
-    queryFn: () => api.get<SourcingWorkspaceSettings>("/workspaces/current"),
+    queryFn: ({ signal }) => api.get<SourcingWorkspaceSettings>("/workspaces/current", { signal }),
   });
 
   useEffect(() => {

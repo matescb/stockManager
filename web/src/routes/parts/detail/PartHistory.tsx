@@ -10,13 +10,13 @@ export default function PartHistory() {
   const { partId } = useParams();
   const { data, isError, error } = useQuery({
     queryKey: useWsKey("part", partId, "history"),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       // history endpoint is global; filter client-side by part for now
-      const rows = await api.get<StockEntry[]>("/stock/history?limit=1000");
+      const rows = await api.get<StockEntry[]>("/stock/history?limit=1000", { signal });
       return rows.filter(r => r.part_id === partId);
     },
   });
-  const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: ({ signal }) => api.get<StorageLocation[]>("/storage", { signal }) });
   const sName = new Map(storage?.map(s => [s.id, s.name]) ?? []);
   if (isError) return <div className="text-red-600 text-sm p-4">Failed to load history. {error instanceof ApiError ? error.userMessage : ""}</div>;
   return (

@@ -103,7 +103,7 @@ describe("AddPartFromLibraryModal", () => {
     expect(await screen.findByText("STM32")).toBeDefined();
     expect(screen.getByText("STM32F103C8T6 - ST")).toBeDefined();
     expect(screen.getByText("Regulator")).toBeDefined();
-    expect(api.get).toHaveBeenCalledWith("/parts?limit=20");
+    expect(api.get).toHaveBeenCalledWith("/parts?limit=20", expect.any(Object));
   });
 
   it("uses the debounced search term in the parts request", async () => {
@@ -114,7 +114,7 @@ describe("AddPartFromLibraryModal", () => {
     await user.type(await screen.findByLabelText("Search library"), "STM");
 
     await waitFor(() => {
-      expect(api.get).toHaveBeenCalledWith(expect.stringContaining("search=STM"));
+      expect(api.get).toHaveBeenCalledWith(expect.stringContaining("search=STM"), expect.any(Object));
     });
   });
 

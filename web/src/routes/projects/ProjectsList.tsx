@@ -13,7 +13,7 @@ export default function ProjectsList({ archived = false }: { archived?: boolean 
   const nav = useNavigate();
   const query = useQuery({
     queryKey: useWsKey("projects", { archived }),
-    queryFn: () => api.get<Project[]>(`/projects${archived ? "?archived=true" : ""}`),
+    queryFn: ({ signal }) => api.get<Project[]>(`/projects${archived ? "?archived=true" : ""}`, { signal }),
   });
   const { data } = query;
   return (

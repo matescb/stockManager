@@ -57,8 +57,8 @@ export default function PartInfo() {
   const { workspaceId } = useAuth();
   const cfQuery = useQuery({
     queryKey: useWsKey("part", part.id, "custom-fields"),
-    queryFn: () =>
-      api.get<CustomFieldRow[]>(`/custom-fields/by-object/part/${part.id}`),
+    queryFn: ({ signal }) =>
+      api.get<CustomFieldRow[]>(`/custom-fields/by-object/part/${part.id}`, { signal }),
   });
   const { data: cf } = cfQuery;
   const lookupBy = (k: string) => cf?.find(r => r.key === k)?.value || null;

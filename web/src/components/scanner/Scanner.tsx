@@ -43,7 +43,7 @@ export default function Scanner({ onScan, className, symbologies }: Props) {
   // scanner mounts and the settings page.
   const wsQuery = useQuery({
     queryKey: useWsKey("ws", "current"),
-    queryFn: () => api.get<WsScanner>("/workspaces/current"),
+    queryFn: ({ signal }) => api.get<WsScanner>("/workspaces/current", { signal }),
   });
   const { data: ws, isLoading, isError } = wsQuery;
 
@@ -118,7 +118,7 @@ function ScanditScannerWithKey({
 }) {
   const { data, isLoading, error } = useQuery({
     queryKey: useWsKey("ws", "scanner", "license-key"),
-    queryFn: () => api.get<{ license_key: string }>("/workspaces/current/scanner-license-key"),
+    queryFn: ({ signal }) => api.get<{ license_key: string }>("/workspaces/current/scanner-license-key", { signal }),
   });
   if (isLoading) return <div className={className}>Fetching license…</div>;
   if (error || !data?.license_key) {

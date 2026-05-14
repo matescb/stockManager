@@ -136,10 +136,10 @@ export default function SourcingRiskReport() {
   const [selectedFlags, setSelectedFlags] = useState<SourcingRiskFlag[]>([]);
   const { data, isLoading, isError, error } = useQuery({
     queryKey: useWsKey("report", "sourcing-risk", onlyWithFlags),
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api.get<SourcingRiskReportOut>(
         `/reports/sourcing-risk?only_with_flags=${String(onlyWithFlags)}`
-      ),
+      , { signal }),
   });
 
   const rows = useMemo(

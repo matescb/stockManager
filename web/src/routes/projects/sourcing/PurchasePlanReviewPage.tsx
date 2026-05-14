@@ -42,7 +42,7 @@ export default function PurchasePlanReviewPage() {
   const initialPlan = locationState.plan?.id === planId ? locationState.plan : undefined;
   const planQuery = useQuery({
     queryKey: purchasePlanKey,
-    queryFn: () => api.get<PurchasePlan>(`/projects/${projectId}/purchase-plans/${planId}`),
+    queryFn: ({ signal }) => api.get<PurchasePlan>(`/projects/${projectId}/purchase-plans/${planId}`, { signal }),
     enabled: !!projectId && !!planId,
     initialData: initialPlan,
     staleTime: 5 * 60 * 1000,

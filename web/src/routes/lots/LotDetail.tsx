@@ -11,8 +11,8 @@ import type { Lot, Part, StockEntry, StorageLocation } from "@/types";
 
 export function LotLayout() {
   const { lotId } = useParams<{ lotId: string }>();
-  const { data, isError, error } = useQuery({ queryKey: useWsKey("lot", lotId), queryFn: () => api.get<Lot>(`/lots/${lotId}`), enabled: !!lotId });
-  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts?limit=200") });
+  const { data, isError, error } = useQuery({ queryKey: useWsKey("lot", lotId), queryFn: ({ signal }) => api.get<Lot>(`/lots/${lotId}`, { signal }), enabled: !!lotId });
+  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: ({ signal }) => api.get<Part[]>("/parts?limit=200", { signal }) });
   if (isError) return <div className="text-red-600 text-sm p-4">Failed to load lot. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (!data) return <div className="text-muted">Loading…</div>;
   const part = parts?.find(p => p.id === data.part_id);
@@ -37,7 +37,7 @@ export function LotLayout() {
 
 export function LotInfo() {
   const { lotId } = useParams();
-  const { data } = useQuery({ queryKey: useWsKey("lot", lotId), queryFn: () => api.get<Lot>(`/lots/${lotId}`), enabled: !!lotId });
+  const { data } = useQuery({ queryKey: useWsKey("lot", lotId), queryFn: ({ signal }) => api.get<Lot>(`/lots/${lotId}`, { signal }), enabled: !!lotId });
   if (!data) return null;
   return (
     <div className="card p-4 max-w-2xl space-y-2 text-sm">
@@ -63,7 +63,7 @@ export function LotMove() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
-  const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: ({ signal }) => api.get<StorageLocation[]>("/storage", { signal }) });
   // The Lot resource itself doesn't carry a single storage_location_id
   // (a lot can be split across bins via prior moves), so we read the
   // part's stock breakdown to discover which bins currently hold this
@@ -71,7 +71,7 @@ export function LotMove() {
   // the source bin's StorageInfo / StorageHistory go stale on success.
   const { data: partStock } = useQuery({
     queryKey: useWsKey("part", lot.part_id, "stock"),
-    queryFn: () => api.get<PartStockResp>(`/parts/${lot.part_id}/stock`),
+    queryFn: ({ signal }) => api.get<PartStockResp>(`/parts/${lot.part_id}/stock`, { signal }),
   });
   const [dest, setDest] = useState("");
   const [qty, setQty] = useState<number>(0);
@@ -144,7 +144,7 @@ export function LotAdjust() {
 
 export function LotHistory() {
   const { lotId } = useParams();
-  const { data, isError, error } = useQuery({ queryKey: useWsKey("lot", lotId, "history"), queryFn: () => api.get<StockEntry[]>(`/lots/${lotId}/history?limit=200`) });
+  const { data, isError, error } = useQuery({ queryKey: useWsKey("lot", lotId, "history"), queryFn: ({ signal }) => api.get<StockEntry[]>(`/lots/${lotId}/history?limit=200`, { signal }) });
   if (isError) return <div className="text-red-600 text-sm p-4">Failed to load history. {error instanceof ApiError ? error.userMessage : ""}</div>;
   return (
     <div className="card overflow-hidden">

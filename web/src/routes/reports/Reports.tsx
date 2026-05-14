@@ -226,15 +226,15 @@ function KpiCard({
 function KpiStrip() {
   const { data: lowStock } = useQuery({
     queryKey: useWsKey("report", "low-stock"),
-    queryFn: () => api.get<LowStockRow[]>("/reports/low-stock"),
+    queryFn: ({ signal }) => api.get<LowStockRow[]>("/reports/low-stock", { signal }),
   });
   const { data: stockValue } = useQuery({
     queryKey: useWsKey("report", "stock-value"),
-    queryFn: () => api.get<StockValue>("/reports/stock-value"),
+    queryFn: ({ signal }) => api.get<StockValue>("/reports/stock-value", { signal }),
   });
   const { data: expiring } = useQuery({
     queryKey: useWsKey("report", "expiring", 30),
-    queryFn: () => api.get<Expiring>("/reports/expiring-lots?days=30"),
+    queryFn: ({ signal }) => api.get<Expiring>("/reports/expiring-lots?days=30", { signal }),
   });
 
   const lowCount = lowStock?.length ?? 0;
@@ -286,10 +286,10 @@ export function LowStockReport() {
   const [orderLineSource, setOrderLineSource] = useState<CreateOrderLineSource | null>(null);
   const { data, isLoading, isError, error } = useQuery<LowStockRow[] | LowStockWithSourcing>({
     queryKey: useWsKey("report", "low-stock", includeSourcing),
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       includeSourcing
-        ? api.get<LowStockWithSourcing>("/reports/low-stock?include_sourcing=true")
-        : api.get<LowStockRow[]>("/reports/low-stock"),
+        ? api.get<LowStockWithSourcing>("/reports/low-stock?include_sourcing=true", { signal })
+        : api.get<LowStockRow[]>("/reports/low-stock", { signal }),
   });
 
   const restockMutation = useApiMutation<void, { name: string; lines: { part_id: string; quantity: number }[] }>({
@@ -463,7 +463,7 @@ export function LowStockReport() {
 export function StockValueReport() {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: useWsKey("report", "stock-value"),
-    queryFn: () => api.get<StockValue>("/reports/stock-value"),
+    queryFn: ({ signal }) => api.get<StockValue>("/reports/stock-value", { signal }),
   });
   if (isError) return <div className="text-red-600 text-sm p-4">Failed to load stock value report. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (isLoading) return <div className="text-muted">Loading…</div>;
@@ -511,12 +511,12 @@ export function BomShortageReport() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
-  const { data: projects } = useQuery({ queryKey: useWsKey("projects"), queryFn: () => api.get<Project[]>("/projects") });
+  const { data: projects } = useQuery({ queryKey: useWsKey("projects"), queryFn: ({ signal }) => api.get<Project[]>("/projects", { signal }) });
   const [projectId, setProjectId] = useState("");
   const [qty, setQty] = useState(1);
   const { data } = useQuery({
     queryKey: useWsKey("report", "bom", projectId, qty),
-    queryFn: () => api.get<Shortage>(`/reports/bom-shortage?project_id=${projectId}&quantity=${qty}`),
+    queryFn: ({ signal }) => api.get<Shortage>(`/reports/bom-shortage?project_id=${projectId}&quantity=${qty}`, { signal }),
     enabled: !!projectId && qty > 0,
   });
 
@@ -601,7 +601,7 @@ export function ExpiringLotsReport() {
   const [days, setDays] = useState(90);
   const { data } = useQuery({
     queryKey: useWsKey("report", "expiring", days),
-    queryFn: () => api.get<Expiring>(`/reports/expiring-lots?days=${days}`),
+    queryFn: ({ signal }) => api.get<Expiring>(`/reports/expiring-lots?days=${days}`, { signal }),
   });
   return (
     <div className="space-y-3">

@@ -142,7 +142,7 @@ export function ActiveListsCard({
 
   const masterQuery = useQuery({
     queryKey: ["workspaces", "master-lists"],
-    queryFn: () => api.get<MasterLists>("/workspaces/master-lists"),
+    queryFn: ({ signal }) => api.get<MasterLists>("/workspaces/master-lists", { signal }),
   });
 
   const options = useMemo(() => {

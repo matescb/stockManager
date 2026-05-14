@@ -12,7 +12,7 @@ export default function StorageList({ archived = false }: { archived?: boolean }
   const nav = useNavigate();
   const storageQuery = useQuery({
     queryKey: useWsKey("storage", { archived }),
-    queryFn: () => api.get<StorageLocation[]>(`/storage${archived ? "?archived=true" : ""}`),
+    queryFn: ({ signal }) => api.get<StorageLocation[]>(`/storage${archived ? "?archived=true" : ""}`, { signal }),
   });
   const { data } = storageQuery;
   return (

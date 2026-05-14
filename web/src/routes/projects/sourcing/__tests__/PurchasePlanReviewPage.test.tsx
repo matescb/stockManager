@@ -200,7 +200,10 @@ describe("PurchasePlanReviewPage", () => {
     renderPage({ initialPlan: null });
 
     expect(await screen.findByRole("heading", { name: /Purchase plan #\s*plan-123/ })).toBeDefined();
-    expect(api.get).toHaveBeenCalledWith("/projects/project-123/purchase-plans/plan-12345678");
+    expect(api.get).toHaveBeenCalledWith(
+      "/projects/project-123/purchase-plans/plan-12345678",
+      expect.any(Object),
+    );
   });
 
   it("reload preserves the plan view from the fresh query cache", async () => {

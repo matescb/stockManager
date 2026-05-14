@@ -11,9 +11,9 @@ import PartsTopNav from "@/components/PartsTopNav";
 import QueryStateBoundary from "@/components/QueryStateBoundary";
 
 export default function LotsList() {
-  const query = useQuery({ queryKey: useWsKey("lots"), queryFn: () => api.get<Lot[]>("/lots") });
+  const query = useQuery({ queryKey: useWsKey("lots"), queryFn: ({ signal }) => api.get<Lot[]>("/lots", { signal }) });
   const { data } = query;
-  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts?limit=200") });
+  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: ({ signal }) => api.get<Part[]>("/parts?limit=200", { signal }) });
   const partName = new Map(parts?.map(p => [p.id, p.name]) ?? []);
   const nav = useNavigate();
 

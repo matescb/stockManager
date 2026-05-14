@@ -118,7 +118,7 @@ export default function ReplenishmentCostReport() {
   const [sort, setSort] = useState<SortMode>("delta_pct");
   const { data, isError, isLoading, error } = useQuery({
     queryKey: useWsKey("report", "replenishment-cost", sort),
-    queryFn: () => api.get<ReplenishmentCostReport>(`/reports/replenishment-cost?sort=${sort}`),
+    queryFn: ({ signal }) => api.get<ReplenishmentCostReport>(`/reports/replenishment-cost?sort=${sort}`, { signal }),
   });
 
   if (isError) {

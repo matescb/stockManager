@@ -77,11 +77,11 @@ export default function AlertsPage() {
   });
   const partsQuery = useQuery({
     queryKey: useWsKey("parts", "alert-scope-map"),
-    queryFn: () => api.get<Part[]>("/parts?limit=200"),
+    queryFn: ({ signal }) => api.get<Part[]>("/parts?limit=200", { signal }),
   });
   const projectsQuery = useQuery({
     queryKey: useWsKey("projects", "alert-scope-map"),
-    queryFn: () => api.get<Project[]>("/projects?limit=200"),
+    queryFn: ({ signal }) => api.get<Project[]>("/projects?limit=200", { signal }),
   });
   const partMap = useMemo(() => mapById(partsQuery.data), [partsQuery.data]);
   const projectMap = useMemo(() => mapById(projectsQuery.data), [projectsQuery.data]);

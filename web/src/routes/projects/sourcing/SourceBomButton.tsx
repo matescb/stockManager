@@ -21,7 +21,7 @@ type Props = {
 export function SourceBomButton({ projectId, className }: Props) {
   const { data: workspace } = useQuery({
     queryKey: useWsKey("ws", "current"),
-    queryFn: () => api.get<SourcingWorkspaceSettings>("/workspaces/current"),
+    queryFn: ({ signal }) => api.get<SourcingWorkspaceSettings>("/workspaces/current", { signal }),
   });
   const disabled = workspace?.has_sourcing_api_key === false;
   const classes = className ?? "btn-primary";

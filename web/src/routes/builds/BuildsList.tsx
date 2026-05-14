@@ -20,12 +20,12 @@ export default function BuildsList({ archived = false }: { archived?: boolean })
   const nav = useNavigate();
   const query = useQuery({
     queryKey: useWsKey("builds", { archived }),
-    queryFn: () => api.get<Build[]>(`/builds${archived ? "?archived=true" : ""}`),
+    queryFn: ({ signal }) => api.get<Build[]>(`/builds${archived ? "?archived=true" : ""}`, { signal }),
   });
   const { data } = query;
   const { data: projects } = useQuery({
     queryKey: useWsKey("projects"),
-    queryFn: () => api.get<Project[]>("/projects"),
+    queryFn: ({ signal }) => api.get<Project[]>("/projects", { signal }),
   });
   const projectsById = new Map(projects?.map(p => [p.id, p]) ?? []);
 

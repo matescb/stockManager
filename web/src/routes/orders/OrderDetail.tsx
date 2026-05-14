@@ -44,11 +44,11 @@ export default function OrderDetail() {
 
   const { data, isError, error } = useQuery({
     queryKey: useWsKey("order", orderId),
-    queryFn: () => api.get<DetailOut>(`/orders/${orderId}`),
+    queryFn: ({ signal }) => api.get<DetailOut>(`/orders/${orderId}`, { signal }),
     enabled: !!orderId,
   });
-  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts?limit=200") });
-  const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: ({ signal }) => api.get<Part[]>("/parts?limit=200", { signal }) });
+  const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: ({ signal }) => api.get<StorageLocation[]>("/storage", { signal }) });
 
   const partsById = new Map(parts?.map(p => [p.id, p]) ?? []);
   const storageById = new Map(storage?.map(s => [s.id, s]) ?? []);
