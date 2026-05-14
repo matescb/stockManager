@@ -8,13 +8,13 @@ the browser sends a same-origin request that we forward upstream.
 Reference: https://docs.sentry.io/platforms/javascript/troubleshooting/#using-the-tunnel-option
 
 Security posture:
-* No auth gate — Sentry's SDK is unauthenticated by design (the public DSN
-  is the identifier, ingest.sentry.io accepts any envelope tagged with a
-  valid project key).
+* Same-origin browser SDK posts are allowed pre-auth so login-screen errors
+  still reach Sentry. Requests without a trusted Origin must carry a valid
+  session cookie before we do any tunnel work.
 * Host allow-list against `SENTRY_DSN` / `VITE_SENTRY_DSN`. Without it,
   this endpoint would be an open egress to anywhere Sentry-shaped — we
   cap it to our own DSN's host + project id.
-* Rate-limited to 60/min/IP (Sec CRIT-5). Real Sentry SDKs do their own
+* Rate-limited to 30/min/IP (Sec CRIT-5). Real Sentry SDKs do their own
   client-side rate limiting and never hit this; the limit only catches
   abuse, not legitimate traffic.
 * Body cap at SENTRY_TUNNEL_MAX_BYTES (200 KiB default). Envelopes are
@@ -30,8 +30,10 @@ import httpx
 from fastapi import APIRouter, Request, Response, status
 
 from app.core.config import settings
+from app.core.deps import get_current_user
 from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter
+from app.infra import db as infra_db
 
 router = APIRouter()
 
@@ -91,9 +93,53 @@ async def _read_bounded_envelope(request: Request, max_bytes: int) -> bytes:
     return bytes(body)
 
 
+def _origin_host(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        parsed = urlparse(value)
+    except Exception:
+        return None
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _has_trusted_origin(request: Request) -> bool:
+    origin = _origin_host(request.headers.get("origin"))
+    if origin is None:
+        return False
+    allowed = {
+        host
+        for host in (_origin_host(candidate) for candidate in settings().cors_origin_list)
+        if host
+    }
+    return origin in allowed
+
+
+def _require_session_or_trusted_origin(request: Request) -> None:
+    if _has_trusted_origin(request):
+        return
+
+    if not request.cookies.get(settings().SESSION_COOKIE_NAME):
+        raise_http(
+            status.HTTP_401_UNAUTHORIZED,
+            ErrorCodes.AUTH_NOT_AUTHENTICATED,
+            "not authenticated",
+        )
+
+    db = infra_db.SessionLocal()
+    try:
+        get_current_user(request, db)
+    finally:
+        db.close()
+
+
 @router.post("/sentry-tunnel")
-@limiter.limit("60/minute")
+@limiter.limit("30/minute")
 async def sentry_tunnel(request: Request) -> Response:
+    _require_session_or_trusted_origin(request)
+
     allowed = ALLOWED_ENDPOINTS
     if not allowed:
         # No DSN on the server — there's nothing to forward to. Return a

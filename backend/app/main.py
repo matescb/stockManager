@@ -317,8 +317,8 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
 _CSRF_PROTECTED_METHODS = frozenset({"POST", "PATCH", "PUT", "DELETE"})
 
 # Routes that are deliberately reachable cross-origin or pre-auth.
-# - /api/sentry-tunnel: Sentry's SDK is unauthenticated by design and
-#   the host allow-list inside the route is the actual gate.
+# - /api/sentry-tunnel: the route enforces its own session-or-trusted-Origin
+#   gate so pre-auth same-origin SDK events can still be reported.
 # - /api/auth/login + /signup: not yet authenticated; the threat
 #   here is brute force, handled by slowapi rate limiting.
 _CSRF_EXEMPT_PATHS = frozenset({
@@ -439,7 +439,8 @@ app.include_router(bom_presets.router, prefix="/api/bom-presets", tags=["bom_pre
 app.include_router(invitations.router, prefix="/api/invitations", tags=["invitations"])
 # Sentry tunnel: same-origin proxy for /api/sentry-tunnel to Sentry's
 # ingest endpoint, so ad-blockers don't drop the SDK's events. NOT gated
-# on workspace membership — the SDK fires from the login screen too.
+# on workspace membership — the SDK fires from the login screen too — but
+# the route enforces its own session-or-trusted-Origin gate.
 app.include_router(sentry_tunnel.router, prefix="/api", tags=["sentry"])
 app.include_router(attachments.router, prefix="/api/attachments", tags=["attachments"], dependencies=_member_gate)
 app.include_router(custom_fields.router, prefix="/api/custom-fields", tags=["custom_fields"], dependencies=_member_gate)
