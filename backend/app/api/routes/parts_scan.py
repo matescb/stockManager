@@ -65,16 +65,15 @@ _BULK_IMPORT_IDEMPOTENCY_TTL_H = 24       # hours before cache rows are swept
 def _bulk_import_content_key(ws_id: str, rows) -> str:
     """Derive a deterministic 64-hex-char SHA-256 key from request content.
 
-    Serialises every field of every row (sorted by a stable key) so that
+    Serialises every field of every row in request order so that
     two calls with different quantities / storage locations / lot names hash
-    to different keys even when the MPNs and bag signatures are identical.
-    Order-independent: rows are sorted by (bag_signature or "", mpn) before
-    serialisation so the operator may re-order rows between retries.
+    to different keys even when the MPNs and bag signatures are identical,
+    and distinct ordered submissions are not collapsed onto the same cache key.
     """
-    row_blobs = sorted(
+    row_blobs = [
         json.dumps(r.model_dump(), sort_keys=True, default=str)
         for r in rows
-    )
+    ]
     raw = f"{ws_id}|{'||'.join(row_blobs)}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
@@ -108,8 +107,9 @@ def bulk_import_from_scan(
     *after* that commit, the client did not see the response body — but
     the rows are durably persisted. Retrying with the same `idempotency_key`
     returns the cached envelope verbatim (no new Parts created). Retrying
-    *without* an idempotency key will re-derive the same content-hash and
-    likewise return the cached result (BE2-003).
+    *without* an idempotency key will re-derive the same order-sensitive
+    content-hash for identical row bytes and use it for the cache write
+    (BE2-003).
 
     Bounded latency (BE2-003):
     - Row cap: max 50 rows per request (ScanImportIn.rows max_length=50).
@@ -124,10 +124,9 @@ def bulk_import_from_scan(
     #
     # The key is FE-supplied (UUID4 generated once per submit attempt,
     # re-sent unchanged on retry) or falls back to a SHA-256 content
-    # hash of the full row payload so that true retries of identical
-    # bytes are deduplicated even without an explicit key. The content
-    # hash includes all fields (quantity, storage_location_id, etc.) so
-    # two calls that differ in any detail are treated as distinct.
+    # hash of the full ordered row payload. The content hash includes
+    # all fields (quantity, storage_location_id, etc.) and preserves row
+    # order so two calls that differ in any detail are treated as distinct.
     # ------------------------------------------------------------------
     explicit_key = (payload.idempotency_key or "").strip() or None
     idempotency_key = explicit_key or _bulk_import_content_key(str(ws.id), payload.rows)
