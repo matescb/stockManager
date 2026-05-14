@@ -1,0 +1,53 @@
+name: playwright-nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  playwright-nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: ./.github/actions/playwright-setup
+
+      - name: Forbid waitForTimeout in spec files
+        run: |
+          if grep -rn "waitForTimeout" web/e2e --include="*.spec.ts"; then
+            echo "::error::waitForTimeout is banned in spec files. Use waitFor/expect.poll/route handlers instead."
+            exit 1
+          fi
+
+      - name: Run Playwright nightly suite
+        working-directory: web
+        env:
+          PLAYWRIGHT_BASE_URL: "http://localhost:5173"
+          CI: "true"
+        run: npx playwright test --project=nightly --pass-with-no-tests
+
+      - name: Upload Playwright nightly report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: always()
+        with:
+          name: playwright-nightly-report
+          path: |
+            web/playwright-report/
+            web/test-results/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Dump backend logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.dev.yml logs --tail=100 backend || true
+
+      - name: Tear down dev stack
+        if: always()
+        run: docker compose -f docker-compose.dev.yml down -v

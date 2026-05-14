@@ -8,6 +8,9 @@ the canonical record.
 
 ## 2026-05 — feedback brief fixes
 
+- **E2E-1 / #686** Playwright E2E now has smoke/core/nightly project
+  tiers, shared authenticated fixtures and seed/mock helpers, an advisory
+  label-gated `playwright-core` CI job, and a scheduled nightly workflow.
 - **SA-2b / #538** Refresh now prunes overrides whose target offer disappeared
   upstream; info toast surfaces the count.
 - **SA-10b / #539** Convert-orders route now uses explicit `raise_http` +
