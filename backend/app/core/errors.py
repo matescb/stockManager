@@ -209,4 +209,5 @@ class ErrorCodes:
     CATALOG_NOT_FOUND = "catalog.not_found"
 
     # Custom fields router.
+    CUSTOM_FIELD_RESERVED_KEY = "custom_field.reserved_key"
     CUSTOM_FIELD_NOT_OVERRIDE = "custom_field.not_override"
