@@ -25,6 +25,8 @@ stack traces de-minify.
 - **Backend init** — `_init_sentry()` in `backend/app/main.py:62-99`.
   DSN from `SENTRY_DSN` env (empty → no-op).
   `FastApiIntegration` + `StarletteIntegration` registered.
+  Prod refuses to boot without an explicit
+  `SENTRY_TRACES_SAMPLE_RATE`; `deploy/.env.prod.example` pins `0.05`.
   `before_send` scrubber at `backend/app/main.py:23` strips the
   `Cookie`, `Authorization`, and `X-Workspace-Id` headers and drops
   the request body on workspace settings PATCH/switch endpoints.
@@ -32,8 +34,10 @@ stack traces de-minify.
   first line of `main.tsx` per the official sentry-react-sdk skill so
   global error handlers wire up before module-load errors can be
   thrown. `@sentry/react` with React Router v6 hooks-based browser
-  tracing, Session Replay with `maskAllText` + `blockAllMedia`, plus
-  a matching `beforeSend` scrubber.
+  tracing plus a matching `beforeSend` scrubber. Prod web builds refuse
+  to build without `VITE_SENTRY_TRACES_SAMPLE_RATE`; Session Replay is
+  wired with `maskAllText` + `blockAllMedia` but defaults to `0.0`
+  sample rates unless explicitly enabled.
 - **`/api/sentry-tunnel`** — same-origin proxy in
   `backend/app/api/routes/sentry_tunnel.py`. Forwards envelopes to
   the configured DSN's host + project ID only (host allow-list).
@@ -85,6 +89,11 @@ stack traces de-minify.
   names at review time.
 - **Empty DSN → SDK no-op.** Dev environments stay quiet; no events,
   no network egress.
+- **Prod Sentry sampling is explicit.** Backend and frontend traces are
+  pinned to `0.05` in `deploy/.env.prod.example`; compose must not add
+  `:-0.0` fallbacks for trace sample rates. Session Replay remains
+  opt-in at `0.0` by default. See
+  [`ADR-0026`](../adr/0026-sentry-sampling-and-replay.md).
 
 ## Sister system: Umami (product/usage signal)
 
@@ -102,9 +111,7 @@ respects DNT, no PII.
 
 ## Things deferred
 
-- Server-side performance tracing sample rate tuning — currently
-  inherited from env defaults.
-- Backend Session Replay — only the frontend ships replays today.
+- Backend Session Replay — only the frontend can ship replays today.
 - A dedicated alerts policy — alert routes live in Sentry's UI, not
   in repo config.
 

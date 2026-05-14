@@ -19,7 +19,7 @@ The auth token grants source-map upload (and, depending on the token's scopes, m
 
 Source-map upload is a CI step, not a Dockerfile step. The `web-build` job in `.github/workflows/ci.yml:285-298` runs `npx @sentry/cli sourcemaps upload` after `npm run build`, gated on push to `main`. `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, and `SENTRY_PROJECT` are GitHub Actions repository secrets.
 
-`web/Dockerfile.prod` does **not** declare ARGs or ENVs for `SENTRY_AUTH_TOKEN` / `SENTRY_ORG` / `SENTRY_PROJECT`. `docker-compose.prod.yml` does **not** pass them as build args. The only Sentry-related ARGs in the Dockerfile are `VITE_SENTRY_DSN` and `VITE_SENTRY_TRACES_SAMPLE_RATE` (`web/Dockerfile.prod:25-32`) — the public DSN and sample rate, which the runtime SDK needs and which are not secret.
+`web/Dockerfile.prod` does **not** declare ARGs or ENVs for `SENTRY_AUTH_TOKEN` / `SENTRY_ORG` / `SENTRY_PROJECT`. `docker-compose.prod.yml` does **not** pass them as build args. The only Sentry-related ARGs in the Dockerfile are the public frontend DSN and sampling controls (`VITE_SENTRY_DSN`, `VITE_SENTRY_TRACES_SAMPLE_RATE`, and the Replay sample-rate envs) — identifiers / rates that the runtime SDK needs and which are not secret.
 
 ## Consequences
 

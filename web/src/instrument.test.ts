@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@sentry/react", () => ({
   init: vi.fn(),
@@ -7,6 +7,10 @@ vi.mock("@sentry/react", () => ({
 }));
 
 describe("Sentry beforeSend", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("test_beforesend_strips_query_string", async () => {
     vi.resetModules();
 
@@ -97,6 +101,33 @@ describe("Sentry beforeSend", () => {
     expect(serialized).not.toContain("invite-token");
     expect(scrubbed?.exception?.values?.[0]?.value).toBe(
       "lookup failed password=[Filtered] api_key=[Filtered] token=[Filtered]",
+    );
+  });
+
+  it("test_init_uses_env_traces_rate", async () => {
+    vi.resetModules();
+    vi.stubEnv("VITE_SENTRY_TRACES_SAMPLE_RATE", "0.05");
+    vi.stubEnv("VITE_SENTRY_REPLAYS_SESSION_SAMPLE_RATE", "0");
+    vi.stubEnv("VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE", "0");
+
+    const Sentry = await import("@sentry/react");
+    vi.mocked(Sentry.init).mockClear();
+
+    await import("./instrument");
+
+    const options = vi.mocked(Sentry.init).mock.calls[0]?.[0];
+    expect(options?.tracesSampleRate).toBe(0.05);
+    expect(options?.replaysSessionSampleRate).toBe(0);
+    expect(options?.replaysOnErrorSampleRate).toBe(0);
+  });
+
+  it("test_init_requires_env_traces_rate_in_prod", async () => {
+    vi.resetModules();
+    vi.stubEnv("PROD", true);
+    vi.stubEnv("VITE_SENTRY_TRACES_SAMPLE_RATE", "");
+
+    await expect(import("./instrument")).rejects.toThrow(
+      "VITE_SENTRY_TRACES_SAMPLE_RATE is required",
     );
   });
 });

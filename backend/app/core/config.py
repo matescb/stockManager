@@ -3,7 +3,7 @@ from __future__ import annotations
 import urllib.parse
 from functools import lru_cache
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     # network egress, no performance overhead). Populate in .env.prod
     # only — leaving it unset in dev keeps local error stacks clean.
     SENTRY_DSN: str = ""
-    SENTRY_TRACES_SAMPLE_RATE: float = 0.0
+    SENTRY_TRACES_SAMPLE_RATE: float | None = None
     # Email / SMTP for the email-verification flow (SEC2-014).
     # In dev (APP_ENV != "prod") the mail backend writes to stdout so the
     # verification link surfaces in container logs without an SMTP server.
@@ -106,6 +106,13 @@ class Settings(BaseSettings):
     # exactly one Sentry project (the React one) instead of any
     # ingest.sentry.io URL the client cares to put in an envelope.
     VITE_SENTRY_DSN: str = ""
+
+    @field_validator("SENTRY_TRACES_SAMPLE_RATE", mode="before")
+    @classmethod
+    def _blank_sentry_traces_rate_to_none(cls, value):
+        if value == "":
+            return None
+        return value
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -198,6 +205,19 @@ class Settings(BaseSettings):
                     f"default: {', '.join(missing)}. Set them in .env.prod "
                     "before deploying — see deploy/.env.prod.example."
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _require_sentry_traces_rate_in_prod(self) -> "Settings":
+        if self.APP_ENV == "prod" and self.SENTRY_TRACES_SAMPLE_RATE is None:
+            raise ValueError(
+                "SENTRY_TRACES_SAMPLE_RATE is required when APP_ENV=prod. "
+                "Set an explicit low production rate, e.g. 0.05."
+            )
+        if self.SENTRY_TRACES_SAMPLE_RATE is not None and not (
+            0.0 <= self.SENTRY_TRACES_SAMPLE_RATE <= 1.0
+        ):
+            raise ValueError("SENTRY_TRACES_SAMPLE_RATE must be between 0.0 and 1.0.")
         return self
 
 
