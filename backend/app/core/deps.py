@@ -15,13 +15,13 @@ from app.domain.users.models import User, UserSession
 from app.domain.workspaces.models import Workspace, WorkspaceMember
 from app.infra.db import get_db
 
-# Sliding-expiry idle window (SEC2-015). A session whose `last_used_at`
-# is older than this is rejected even if the absolute `expires_at` is
-# still in the future. Tighter than SESSION_LIFETIME_DAYS so an
-# abandoned tab can't sit logged in for a month.
-_SESSION_IDLE_WINDOW = timedelta(hours=24)
-
 DbSession = Annotated[Session, Depends(get_db)]
+
+
+def _session_idle_window() -> timedelta:
+    # Sliding-expiry idle window (SEC2-015). Kept in Settings so ops can
+    # tune it without changing the session model.
+    return timedelta(hours=settings().SESSION_IDLE_HOURS)
 
 
 def get_current_user(
@@ -60,7 +60,7 @@ def get_current_user(
             ErrorCodes.AUTH_SESSION_EXPIRED,
             "session expired",
         )
-    if sess.last_used_at and sess.last_used_at < now - _SESSION_IDLE_WINDOW:
+    if sess.last_used_at and sess.last_used_at < now - _session_idle_window():
         # SEC2-015: idle longer than the sliding window. Drop the row
         # so a re-login mints a fresh credential rather than reviving
         # this one.

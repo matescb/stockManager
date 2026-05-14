@@ -22,6 +22,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-stockmgr}:${POSTGRES_PASSWORD:-stockmgr}@db:5432/${POSTGRES_DB:-stockmgr}
       SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required — copy .env.example to .env and set a value}
+      SESSION_IDLE_HOURS: ${SESSION_IDLE_HOURS:-24}
       UPLOAD_DIR: /data/uploads
       APP_ENV: ${APP_ENV:-dev}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
