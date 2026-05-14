@@ -28,6 +28,7 @@ export default function PurchasePlanLinesTable({
 }: Props) {
   const columns: Column<PurchasePlanLine>[] = [
     { key: "mpn", header: "MPN", accessor: line => line.mpn_searched },
+    { key: "distributor", header: "Distributor", accessor: line => line.selected_distributor ?? "" },
     { key: "required", header: "Required", accessor: line => line.required_qty, align: "right" },
     { key: "internal", header: "Internal", accessor: line => line.internal_available_qty, align: "right" },
     { key: "shortage", header: "Shortage", accessor: line => line.shortage_qty, align: "right" },
@@ -90,6 +91,7 @@ export default function PurchasePlanLinesTable({
         <button
           type="button"
           className={overrides[line.id] ? "btn-primary" : "btn"}
+          data-testid={`override-button-${line.id}`}
           onClick={() => onOverride(line)}
         >
           Override

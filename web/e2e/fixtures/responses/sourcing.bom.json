@@ -1,0 +1,210 @@
+{
+  "data": {
+    "rows": [
+      {
+        "project_entry_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "part_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "part_name": "E2E Source MCU",
+        "mpn": "E2E-PLAN-A",
+        "required": 10,
+        "available": 0,
+        "substitute_ids": [],
+        "substitute_available": 0,
+        "short_by": 10,
+        "authorized_stock": 200,
+        "offers": [
+          {
+            "mpn": "E2E-PLAN-A",
+            "distributor": "DigiKey",
+            "sku": "E2E-PLAN-A-DK",
+            "stock": 100,
+            "unit_price": "1.00",
+            "currency": "EUR",
+            "packaging": "Cut tape",
+            "moq": 1,
+            "lead_time_days": 3,
+            "price_breaks": [{ "quantity": 1, "unit_price": "1.00", "currency": "EUR" }],
+            "url": "https://example.test/e2e/plan-a/digikey",
+            "availability_text": "In Stock",
+            "quantity_multiple": 1,
+            "lifecycle_risk": "Low",
+            "supply_chain_risk": "Stable",
+            "is_affected_by_tariff": false,
+            "rohs_compliance": [{ "region": "EU", "is_compliant": true, "description": "RoHS compliant" }]
+          },
+          {
+            "mpn": "E2E-PLAN-A",
+            "distributor": "Mouser",
+            "sku": "E2E-PLAN-A-MO",
+            "stock": 100,
+            "unit_price": "0.95",
+            "currency": "EUR",
+            "packaging": "Reel",
+            "moq": 10,
+            "lead_time_days": 5,
+            "price_breaks": [{ "quantity": 10, "unit_price": "0.95", "currency": "EUR" }],
+            "url": "https://example.test/e2e/plan-a/mouser",
+            "availability_text": "In Stock",
+            "quantity_multiple": 10,
+            "lifecycle_risk": "Low",
+            "supply_chain_risk": "Stable",
+            "is_affected_by_tariff": false,
+            "rohs_compliance": [{ "region": "EU", "is_compliant": true, "description": "RoHS compliant" }]
+          }
+        ],
+        "best_offer": {
+          "mpn": "E2E-PLAN-A",
+          "distributor": "Mouser",
+          "sku": "E2E-PLAN-A-MO",
+          "stock": 100,
+          "unit_price": "0.95",
+          "currency": "EUR",
+          "packaging": "Reel",
+          "moq": 10,
+          "lead_time_days": 5,
+          "price_breaks": [{ "quantity": 10, "unit_price": "0.95", "currency": "EUR" }],
+          "url": "https://example.test/e2e/plan-a/mouser",
+          "availability_text": "In Stock",
+          "quantity_multiple": 10,
+          "lifecycle_risk": "Low",
+          "supply_chain_risk": "Stable",
+          "is_affected_by_tariff": false,
+          "rohs_compliance": [{ "region": "EU", "is_compliant": true, "description": "RoHS compliant" }]
+        },
+        "est_extended_cost": "9.50",
+        "lead_time_days": 5,
+        "cache_hit": false,
+        "reason": "ok",
+        "fx_status": null,
+        "risk_flags": []
+      },
+      {
+        "project_entry_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        "part_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "part_name": "E2E Source Regulator",
+        "mpn": "E2E-PLAN-B",
+        "required": 8,
+        "available": 0,
+        "substitute_ids": [],
+        "substitute_available": 0,
+        "short_by": 8,
+        "authorized_stock": 150,
+        "offers": [
+          {
+            "mpn": "E2E-PLAN-B",
+            "distributor": "DigiKey",
+            "sku": "E2E-PLAN-B-DK",
+            "stock": 80,
+            "unit_price": "2.00",
+            "currency": "EUR",
+            "packaging": "Cut tape",
+            "moq": 1,
+            "lead_time_days": 4,
+            "price_breaks": [{ "quantity": 1, "unit_price": "2.00", "currency": "EUR" }],
+            "url": "https://example.test/e2e/plan-b/digikey",
+            "availability_text": "In Stock",
+            "quantity_multiple": 1,
+            "lifecycle_risk": "Low",
+            "supply_chain_risk": "Stable",
+            "is_affected_by_tariff": false,
+            "rohs_compliance": [{ "region": "EU", "is_compliant": true, "description": "RoHS compliant" }]
+          },
+          {
+            "mpn": "E2E-PLAN-B",
+            "distributor": "Mouser",
+            "sku": "E2E-PLAN-B-MO",
+            "stock": 70,
+            "unit_price": "2.50",
+            "currency": "EUR",
+            "packaging": "Tray",
+            "moq": 1,
+            "lead_time_days": 6,
+            "price_breaks": [{ "quantity": 1, "unit_price": "2.50", "currency": "EUR" }],
+            "url": "https://example.test/e2e/plan-b/mouser",
+            "availability_text": "In Stock",
+            "quantity_multiple": 1,
+            "lifecycle_risk": "Low",
+            "supply_chain_risk": "Stable",
+            "is_affected_by_tariff": false,
+            "rohs_compliance": [{ "region": "EU", "is_compliant": true, "description": "RoHS compliant" }]
+          }
+        ],
+        "best_offer": {
+          "mpn": "E2E-PLAN-B",
+          "distributor": "DigiKey",
+          "sku": "E2E-PLAN-B-DK",
+          "stock": 80,
+          "unit_price": "2.00",
+          "currency": "EUR",
+          "packaging": "Cut tape",
+          "moq": 1,
+          "lead_time_days": 4,
+          "price_breaks": [{ "quantity": 1, "unit_price": "2.00", "currency": "EUR" }],
+          "url": "https://example.test/e2e/plan-b/digikey",
+          "availability_text": "In Stock",
+          "quantity_multiple": 1,
+          "lifecycle_risk": "Low",
+          "supply_chain_risk": "Stable",
+          "is_affected_by_tariff": false,
+          "rohs_compliance": [{ "region": "EU", "is_compliant": true, "description": "RoHS compliant" }]
+        },
+        "est_extended_cost": "16.00",
+        "lead_time_days": 4,
+        "cache_hit": false,
+        "reason": "ok",
+        "fx_status": null,
+        "risk_flags": []
+      }
+    ],
+    "coverage": {
+      "rows": [
+        {
+          "distributor": "DigiKey",
+          "lines_covered": 2,
+          "lines_uncovered": [],
+          "coverage_pct": 1,
+          "est_total_cost": "26.00",
+          "worst_lead_time_days": 4
+        },
+        {
+          "distributor": "Mouser",
+          "lines_covered": 2,
+          "lines_uncovered": [],
+          "coverage_pct": 1,
+          "est_total_cost": "29.50",
+          "worst_lead_time_days": 6
+        }
+      ],
+      "total_lines": 2,
+      "best_single_distributor": "DigiKey",
+      "best_two_distributor_combo": ["DigiKey", "Mouser"],
+      "lowest_total_price_combo": ["DigiKey"],
+      "lowest_total_price_total": "26.00",
+      "fewest_distributors_combo": ["DigiKey"],
+      "fewest_distributors_total": "26.00",
+      "target_coverage_pct": 1
+    },
+    "capacity": {
+      "can_build_now": 0,
+      "can_build_after_purchase": 1,
+      "total_bom_cost": "25.50",
+      "cost_per_single_bom": "25.50",
+      "purchase_to_pay_cost": "25.50",
+      "blocking_lines_now": [
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+      ],
+      "blocking_lines_after_purchase": []
+    },
+    "build_quantity": 1,
+    "powered_by": "TrustedParts",
+    "fetched_at": "2026-05-14T12:00:00.000Z",
+    "partial": false,
+    "fx_status": "ok",
+    "links": {
+      "primary": "https://example.test/e2e/sourcing",
+      "attribution": "https://example.test/e2e/about"
+    }
+  },
+  "status": { "category": "ok", "message": "OK" }
+}

@@ -248,8 +248,8 @@ describe("PurchasePlanReviewPage", () => {
   it("renders one distributor group per distributor", () => {
     renderPage();
 
-    expect(screen.getByText("DigiKey")).toBeDefined();
-    expect(screen.getByText("Mouser")).toBeDefined();
+    expect(screen.getAllByText("DigiKey").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Mouser").length).toBeGreaterThan(0);
     expect(screen.getAllByLabelText("Source: TrustedParts").length).toBeGreaterThanOrEqual(2);
   });
 
@@ -280,7 +280,7 @@ describe("PurchasePlanReviewPage", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Refresh prices/ }));
 
-    await waitFor(() => expect(screen.getByText("Arrow")).toBeDefined());
+    await waitFor(() => expect(screen.getAllByText("Arrow").length).toBeGreaterThan(0));
     expect(api.post).toHaveBeenCalledWith("/sourcing/purchase-plans/plan-12345678/refresh");
     expect(toast.success).toHaveBeenCalledWith("Prices refreshed");
   });
@@ -463,7 +463,7 @@ describe("PurchasePlanReviewPage", () => {
     await selectArrowOffer();
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(screen.getByText("Arrow")).toBeDefined();
+    expect(screen.getAllByText("Arrow").length).toBeGreaterThan(0);
     expect(screen.getByText("2.05 USD")).toBeDefined();
     expect(screen.getByText("2 days")).toBeDefined();
 
@@ -494,7 +494,7 @@ describe("PurchasePlanReviewPage", () => {
     await userEvent.click(screen.getByRole("button", { name: /Create draft orders/ }));
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Could not create draft orders"));
-    expect(screen.getByText("Arrow")).toBeDefined();
+    expect(screen.getAllByText("Arrow").length).toBeGreaterThan(0);
 
     await userEvent.click(screen.getByRole("button", { name: /Create draft orders/ }));
 

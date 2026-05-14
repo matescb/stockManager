@@ -96,36 +96,58 @@ export default function PurchasePlanReviewPage() {
   }
   const fresh = isRefreshFresh(plan);
   const currency = summaryCurrency(plan);
+  function planWithOverrides(
+    nextPlan: PurchasePlan,
+    retainedOverrides: Record<string, PurchasePlanOrderOverride>,
+  ): PurchasePlan {
+    const nextLines = nextPlan.lines.map(line => {
+      const override = retainedOverrides[line.id];
+      if (!override) return line;
+      const matchingOffer = (line.available_offers ?? []).find(offer =>
+        purchasePlanOverrideMatchesOffer(line, override, offer),
+      );
+      return {
+        ...line,
+        selected_distributor: override.selected_distributor,
+        selected_qty: override.selected_qty,
+        selected_unit_price: override.selected_unit_price,
+        selected_currency: override.selected_currency,
+        selected_packaging: matchingOffer?.packaging ?? null,
+        selected_moq: matchingOffer?.moq ?? null,
+        selected_lead_time_days: matchingOffer?.lead_time_days ?? null,
+        selected_url: matchingOffer?.url ?? null,
+      };
+    });
+    return recomputePlanFromLines(nextPlan, nextLines);
+  }
   async function refresh() {
     if (!plan) return;
     setBusyAction("refresh");
     try {
       const next = await api.post<PurchasePlan>(`/sourcing/purchase-plans/${plan.id}/refresh`);
-      setOverrides(current => {
-        const pruned: typeof current = {};
-        const dropped: string[] = [];
-        const linesById = new Map(next.lines.map(line => [line.id, line]));
-        for (const [lineId, override] of Object.entries(current)) {
-          const refreshedLine = linesById.get(lineId);
-          const stillAvailable = refreshedLine
-            ? (refreshedLine.available_offers ?? []).some(offer =>
-                purchasePlanOverrideMatchesOffer(refreshedLine, override, offer),
-              )
-            : false;
-          if (stillAvailable) {
-            pruned[lineId] = override;
-          } else {
-            dropped.push(lineId);
-          }
+      const pruned: typeof overrides = {};
+      const dropped: string[] = [];
+      const linesById = new Map(next.lines.map(line => [line.id, line]));
+      for (const [lineId, override] of Object.entries(overrides)) {
+        const refreshedLine = linesById.get(lineId);
+        const stillAvailable = refreshedLine
+          ? (refreshedLine.available_offers ?? []).some(offer =>
+              purchasePlanOverrideMatchesOffer(refreshedLine, override, offer),
+            )
+          : false;
+        if (stillAvailable) {
+          pruned[lineId] = override;
+        } else {
+          dropped.push(lineId);
         }
-        if (dropped.length > 0) {
-          toast.info(
-            `Removed ${dropped.length} override${dropped.length === 1 ? "" : "s"} no longer available after refresh.`,
-          );
-        }
-        return pruned;
-      });
-      queryClient.setQueryData(purchasePlanKey, next);
+      }
+      if (dropped.length > 0) {
+        toast.info(
+          `Removed ${dropped.length} override${dropped.length === 1 ? "" : "s"} no longer available after refresh.`,
+        );
+      }
+      setOverrides(pruned);
+      queryClient.setQueryData(purchasePlanKey, planWithOverrides(next, pruned));
       setRefreshAttention(false);
       toast.success("Prices refreshed");
     } catch (err) {
@@ -193,7 +215,7 @@ export default function PurchasePlanReviewPage() {
           <div className="text-sm text-muted">
             Projects / {project?.name ?? "Project"} / Purchase plan
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
+          <div className="mt-1 flex flex-wrap items-center gap-2" data-testid="purchase-plan-loaded">
             <h1 className="text-xl font-semibold">
               Purchase plan #{plan.id.slice(0, 8)} - {project?.name ?? "Project"} - strategy={plan.strategy}
             </h1>

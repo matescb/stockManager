@@ -201,21 +201,32 @@ export async function seedStock(
 }
 
 export async function seedProject(
-  _authedRequest: APIRequestContext,
-  _payload: SeedProjectPayload,
-): Promise<never> {
-  throw new Error(
-    "seedProject is reserved for E2E-3 and is intentionally not implemented in E2E-1.",
+  authedRequest: APIRequestContext,
+  payload: SeedProjectPayload,
+): Promise<{ id: string; name: string; [key: string]: unknown }> {
+  return postJson<{ id: string; name: string; [key: string]: unknown }>(
+    authedRequest,
+    "/api/projects",
+    payload,
+    201,
   );
 }
 
 export async function seedBomLine(
-  _authedRequest: APIRequestContext,
-  _projectId: string,
-  _payload: SeedBomLinePayload,
-): Promise<never> {
-  throw new Error(
-    "seedBomLine is reserved for E2E-3 and is intentionally not implemented in E2E-1.",
+  authedRequest: APIRequestContext,
+  projectId: string,
+  payload: SeedBomLinePayload,
+): Promise<{ id: string; project_id: string; [key: string]: unknown }> {
+  return postJson<{ id: string; project_id: string; [key: string]: unknown }>(
+    authedRequest,
+    `/api/projects/${projectId}/entries`,
+    {
+      entry_type: "part",
+      quantity: 1,
+      designators: [],
+      dnp: false,
+      ...payload,
+    },
   );
 }
 

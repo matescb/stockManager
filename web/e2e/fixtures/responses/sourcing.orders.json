@@ -1,0 +1,43 @@
+{
+  "data": {
+    "orders": [
+      {
+        "id": "33333333-3333-4333-8333-333333333333",
+        "name": "PO-E2E-DIGIKEY",
+        "supplier": "DigiKey",
+        "status": "draft",
+        "currency": "EUR",
+        "comments": "E2E mocked purchase plan order",
+        "entries": [
+          {
+            "id": "44444444-4444-4444-8444-444444444444",
+            "part_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            "quantity_ordered": 8,
+            "unit_price": "1.80",
+            "currency": "EUR",
+            "comments": "E2E mocked purchase plan line"
+          }
+        ]
+      },
+      {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "name": "PO-E2E-MOUSER",
+        "supplier": "Mouser",
+        "status": "draft",
+        "currency": "EUR",
+        "comments": "E2E mocked purchase plan order",
+        "entries": [
+          {
+            "id": "66666666-6666-4666-8666-666666666666",
+            "part_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "quantity_ordered": 10,
+            "unit_price": "1.10",
+            "currency": "EUR",
+            "comments": "E2E mocked override line"
+          }
+        ]
+      }
+    ]
+  },
+  "status": { "category": "ok", "message": "OK" }
+}
