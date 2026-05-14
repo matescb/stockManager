@@ -17,7 +17,9 @@ import time
 from typing import Any, Callable
 from urllib.parse import quote
 
-from app.domain.parts.providers.base import MpnLookupResult
+import httpx
+
+from app.domain.parts.providers.base import MpnLookupResult, ProviderUpstreamError
 from app.domain.sourcing.providers import make_retrying_client
 
 _API_BASE = "https://api.digikey.com"
@@ -55,6 +57,11 @@ def _post_token(client_id: str, client_secret: str) -> dict[str, Any]:
                 "Accept": "application/json",
             },
         )
+        if resp.status_code >= 500:
+            raise ProviderUpstreamError(
+                "digikey",
+                f"DigiKey upstream returned HTTP {resp.status_code}",
+            )
         resp.raise_for_status()
         return resp.json()
 
@@ -155,6 +162,13 @@ class DigiKeyProvider:
             status, data = self._request_with_retry(
                 lambda tok: _get_product_details(tok, self.client_id, mpn)
             )
+        except ProviderUpstreamError:
+            raise
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            raise ProviderUpstreamError(
+                "digikey",
+                f"DigiKey upstream unavailable ({type(exc).__name__})",
+            ) from exc
         except RuntimeError as exc:
             # Raised by _get_token when the OAuth response is malformed.
             return {
@@ -163,11 +177,15 @@ class DigiKeyProvider:
                 "message": f"DigiKey auth failed ({type(exc).__name__})",
             }
         except Exception as exc:
-            return {
-                "found": False,
-                "result": None,
-                "message": f"upstream unavailable ({type(exc).__name__})",
-            }
+            raise ProviderUpstreamError(
+                "digikey",
+                f"DigiKey upstream unavailable ({type(exc).__name__})",
+            ) from exc
+        if status >= 500:
+            raise ProviderUpstreamError(
+                "digikey",
+                f"DigiKey upstream returned HTTP {status}",
+            )
         if status == 429:
             return {
                 "found": False,
@@ -196,12 +214,18 @@ class DigiKeyProvider:
                 kw_status, kw_data = self._request_with_retry(
                     lambda tok: _post_keyword_search(tok, self.client_id, mpn, limit=1)
                 )
+            except ProviderUpstreamError:
+                raise
+            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+                raise ProviderUpstreamError(
+                    "digikey",
+                    f"DigiKey upstream unavailable ({type(exc).__name__})",
+                ) from exc
             except Exception as exc:
-                return {
-                    "found": False,
-                    "result": None,
-                    "message": f"upstream unavailable ({type(exc).__name__})",
-                }
+                raise ProviderUpstreamError(
+                    "digikey",
+                    f"DigiKey upstream unavailable ({type(exc).__name__})",
+                ) from exc
             if kw_status == 200:
                 products = (kw_data or {}).get("Products") or []
                 if products and isinstance(products[0], dict):
@@ -210,6 +234,11 @@ class DigiKeyProvider:
                         "result": _record_from_product(products[0]),
                         "message": None,
                     }
+            if kw_status >= 500:
+                raise ProviderUpstreamError(
+                    "digikey",
+                    f"DigiKey upstream returned HTTP {kw_status}",
+                )
             return {"found": False, "result": None, "message": "no match for MPN"}
 
         return {

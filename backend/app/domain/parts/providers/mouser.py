@@ -4,7 +4,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.domain.parts.providers.base import MpnLookupResult
+import httpx
+
+from app.domain.parts.providers.base import MpnLookupResult, ProviderUpstreamError
 from app.domain.sourcing.providers import make_retrying_client
 
 _ENDPOINT = "https://api.mouser.com/api/v1/search/partnumber"
@@ -15,6 +17,11 @@ def _post_mouser(url: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Network seam — tests monkeypatch this single function."""
     with make_retrying_client(provider_name="mouser", timeout=_TIMEOUT_SEC) as client:
         resp = client.post(url, json=payload, headers={"Accept": "application/json"})
+        if resp.status_code >= 500:
+            raise ProviderUpstreamError(
+                "mouser",
+                f"Mouser upstream returned HTTP {resp.status_code}",
+            )
         resp.raise_for_status()
         return resp.json()
 
@@ -129,12 +136,18 @@ class MouserProvider:
         body = {"SearchByPartRequest": {"mouserPartNumber": mpn}}
         try:
             data = _post_mouser(url, body)
+        except ProviderUpstreamError:
+            raise
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            raise ProviderUpstreamError(
+                "mouser",
+                f"Mouser upstream unavailable ({type(exc).__name__})",
+            ) from exc
         except Exception as exc:
-            return {
-                "found": False,
-                "result": None,
-                "message": f"upstream unavailable ({type(exc).__name__})",
-            }
+            raise ProviderUpstreamError(
+                "mouser",
+                f"Mouser upstream unavailable ({type(exc).__name__})",
+            ) from exc
 
         errors = data.get("Errors") or []
         if errors:

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Unit tests against lookup_with_cache directly (no HTTP layer needed)
 # ---------------------------------------------------------------------------
@@ -73,11 +72,10 @@ def test_breaker_opens_after_threshold_failures(monkeypatch):
     )
 
     # The (threshold + 1)-th call should be intercepted by the open breaker.
-    result = _m.lookup_with_cache(provider, "MPN-EXTRA")
-    assert result["found"] is False
-    assert "circuit breaker" in (result.get("message") or "").lower(), (
-        f"Expected circuit-breaker message, got: {result.get('message')!r}"
-    )
+    with pytest.raises(_m.ProviderUpstreamError) as exc_info:
+        _m.lookup_with_cache(provider, "MPN-EXTRA")
+    assert exc_info.value.status_code == 503
+    assert "circuit breaker" in exc_info.value.message.lower()
     # Provider must NOT have been called again.
     assert call_count == threshold, (
         f"Provider should not be called when breaker is open, "
@@ -172,12 +170,14 @@ def test_clean_miss_does_not_trip_breaker(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_circuit_breaker_returns_503_like_message_via_route(monkeypatch):
-    """Exhausting the circuit breaker via the HTTP route returns a found=False
-    result with the unavailability message without a network round-trip."""
+def test_circuit_breaker_returns_503_via_route(monkeypatch):
+    """Exhausting the circuit breaker via the HTTP route returns a 503
+    envelope with the unavailability message without a network round-trip."""
     import uuid
-    import app.domain.parts.services.provider_cache as _m
+
     from fastapi.testclient import TestClient
+
+    import app.domain.parts.services.provider_cache as _m
     from app.main import app
 
     provider_name = "mouser"
@@ -214,18 +214,18 @@ def test_circuit_breaker_returns_503_like_message_via_route(monkeypatch):
     for i in range(threshold):
         mpn = f"TRIP-{uuid.uuid4().hex[:6]}"
         r = c.post("/api/parts/lookup-mpn", json={"mpn": mpn})
-        assert r.status_code == 200, r.text
+        assert r.status_code == 502, r.text
 
     assert call_count[0] == threshold
 
     # The breaker is now open — next call must not hit the network.
     mpn_after = f"AFTER-{uuid.uuid4().hex[:6]}"
     r = c.post("/api/parts/lookup-mpn", json={"mpn": mpn_after})
-    assert r.status_code == 200, r.text
-    data = r.json()["data"]
-    assert data["found"] is False
-    assert "circuit breaker" in (data.get("message") or "").lower(), (
-        f"Expected circuit-breaker message in response, got: {data}"
+    assert r.status_code == 503, r.text
+    body = r.json()
+    assert body["data"] is None
+    assert "circuit breaker" in body["status"]["message"].lower(), (
+        f"Expected circuit-breaker message in response, got: {body}"
     )
     # Provider not called again.
     assert call_count[0] == threshold, (

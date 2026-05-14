@@ -232,10 +232,11 @@ def test_lookup_mouser_network_failure_is_graceful(authed, monkeypatch):
 
     monkeypatch.setattr("app.domain.parts.providers.mouser._post_mouser", fail)
     r = authed.post("/api/parts/lookup-mpn", json={"mpn": "ANY"})
-    assert r.status_code == 200, r.text
-    body = r.json()["data"]
-    assert body["found"] is False
-    assert "upstream unavailable" in body["message"]
+    assert r.status_code == 502, r.text
+    body = r.json()
+    assert body["data"] is None
+    assert "upstream unavailable" in body["status"]["message"]
+    assert body["provider"] == "mouser"
 
 
 def test_lookup_rejects_extra_fields(authed):
