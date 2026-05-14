@@ -36,7 +36,8 @@ async function createLocalPart(page: Page, name: string, mpn?: string): Promise<
 }
 
 async function signupNewWorkspace(page: Page): Promise<SignupEnvelope["data"]> {
-  await page.request.post("/api/auth/logout");
+  await page.context().clearCookies();
+  await page.goto("/login");
   await page.evaluate(() => {
     localStorage.clear();
     sessionStorage.clear();
