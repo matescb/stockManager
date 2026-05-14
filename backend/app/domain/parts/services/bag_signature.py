@@ -31,21 +31,29 @@ from __future__ import annotations
 
 import hashlib
 
-# ECMAScript WhiteSpace + LineTerminator characters — the characters that
-# JavaScript's String.prototype.trim() removes.  This is intentionally a
-# strict subset of Python's str.isspace() universe: Python also considers
-# ASCII FS (0x1c), GS (0x1d), RS (0x1e), US (0x1f) as whitespace, but
-# JavaScript's trim() does NOT — those are field-separator control chars
+# ECMAScript WhiteSpace + LineTerminator characters: the characters that
+# JavaScript's String.prototype.trim() removes. This includes every Unicode
+# Space_Separator (Zs) codepoint, plus a small set of explicit controls.
+# It is still a strict subset of Python's str.isspace() universe: Python also
+# considers ASCII FS (0x1c), GS (0x1d), RS (0x1e), US (0x1f) as whitespace,
+# but JavaScript's trim() does NOT. Those are field-separator control chars
 # that appear legitimately inside bag codes, and stripping them would alter
 # the digest.
 #
 # ECMAScript spec references:
-#   WhiteSpace:     TAB(09) VT(0b) FF(0c) SP(20) NBSP(a0) ZWNBSP(feff) <USP>
+#   WhiteSpace:     TAB(09) VT(0b) FF(0c) ZWNBSP(feff) <USP / Zs>
 #   LineTerminator: LF(0a) CR(0d) LS(2028) PS(2029)
 _JS_WHITESPACE: frozenset[str] = frozenset(
     "\x09\x0a\x0b\x0c\x0d"   # TAB LF VT FF CR
     "\x20"                    # SPACE
     "\xa0"                    # NO-BREAK SPACE
+    "\u1680"                  # OGHAM SPACE MARK
+    "\u2000\u2001\u2002\u2003"  # EN QUAD, EM QUAD, EN SPACE, EM SPACE
+    "\u2004\u2005\u2006\u2007"  # THREE-PER-EM, FOUR-PER-EM, SIX-PER-EM, FIGURE
+    "\u2008\u2009\u200a"      # PUNCTUATION, THIN, HAIR SPACE
+    "\u202f"                  # NARROW NO-BREAK SPACE
+    "\u205f"                  # MEDIUM MATHEMATICAL SPACE
+    "\u3000"                  # IDEOGRAPHIC SPACE
     "﻿"                  # ZERO-WIDTH NO-BREAK SPACE (BOM)
     " "                  # LINE SEPARATOR
     " "                  # PARAGRAPH SEPARATOR

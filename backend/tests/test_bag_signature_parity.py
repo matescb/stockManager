@@ -17,7 +17,6 @@ import pytest
 
 from app.domain.parts.services.bag_signature import compute_bag_signature
 
-
 _FIXTURE_PATH = (
     Path(__file__).resolve().parent.parent.parent
     / "web" / "src" / "lib" / "__fixtures__" / "bagSignatures.json"
@@ -90,6 +89,12 @@ def test_trim_whitespace_gives_same_digest():
     base = compute_bag_signature("STM32F103C8T6")
     assert compute_bag_signature("  STM32F103C8T6  ") == base
     assert compute_bag_signature("\tSTM32F103C8T6\n") == base
+
+
+def test_zs_whitespace_parity():
+    """Unicode Zs whitespace mirrors JavaScript trim() for bag signatures."""
+    base = compute_bag_signature("STM32F103C8T6")
+    assert compute_bag_signature("\u3000STM32F103C8T6\u3000") == base
 
 
 def test_control_picture_eot_normalised():
