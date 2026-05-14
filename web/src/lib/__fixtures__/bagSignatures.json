@@ -27,7 +27,8 @@
       "raws": [
         "STM32F103C8T6",
         "  STM32F103C8T6  ",
-        "\tSTM32F103C8T6\n"
+        "\tSTM32F103C8T6\n",
+        "\u3000STM32F103C8T6\u3000"
       ]
     },
     {

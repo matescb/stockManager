@@ -112,6 +112,11 @@ describe("bagSignature", () => {
     expect(await bagSignature("")).toBeNull();
     expect(await bagSignature("   ")).toBeNull();
   });
+
+  it("test_zs_whitespace_parity", async () => {
+    const base = await bagSignature("STM32F103C8T6");
+    expect(await bagSignature("\u3000STM32F103C8T6\u3000")).toBe(base);
+  });
 });
 
 // ---------------------------------------------------------------------------
