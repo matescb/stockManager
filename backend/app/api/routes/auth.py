@@ -351,6 +351,7 @@ def verify(
         )
     )
 
+    revoke_all_user_sessions(db, user.id)
     sess = create_session_row(db, user.id)
     user.last_login_at = utcnow()
 
