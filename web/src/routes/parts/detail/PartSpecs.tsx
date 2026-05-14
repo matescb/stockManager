@@ -70,7 +70,49 @@ export default function PartSpecs() {
     },
   });
 
+  const updateMutation = useApiMutation<unknown, { row: CustomFieldRow; value: string }>({
+    mutationKey: ["part", part.id, "spec-update"],
+    mutationFn: ({ row, value }) =>
+      api.post("/custom-fields", {
+        object_type: "part",
+        object_id: part.id,
+        key: row.key,
+        value,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey });
+    },
+    onError: (e) => {
+      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
+    },
+  });
+
+  const removeMutation = useApiMutation<unknown, CustomFieldRow>({
+    mutationKey: ["part", part.id, "spec-remove"],
+    mutationFn: (row) => api.delete(`/custom-fields/${row.id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey });
+      toast.success("Spec deleted.");
+    },
+    onError: (e) => {
+      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
+    },
+  });
+
+  const restoreMutation = useApiMutation<unknown, CustomFieldRow>({
+    mutationKey: ["part", part.id, "spec-restore"],
+    mutationFn: (row) => api.delete(`/custom-fields/${row.id}/override`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey });
+      toast.success("Restored upstream value.");
+    },
+    onError: (e) => {
+      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
+    },
+  });
+
   const busy = addMutation.isPending;
+  const rowMutationPending = updateMutation.isPending || removeMutation.isPending || restoreMutation.isPending;
 
   function add() {
     const k = newKey.trim();
@@ -87,40 +129,18 @@ export default function PartSpecs() {
     });
   }
 
-  async function update(row: CustomFieldRow, newValueText: string) {
+  function update(row: CustomFieldRow, newValueText: string) {
     if ((row.value ?? "") === newValueText) return;
-    try {
-      await api.post("/custom-fields", {
-        object_type: "part",
-        object_id: part.id,
-        key: row.key,
-        value: newValueText,
-      });
-      qc.invalidateQueries({ queryKey });
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
-    }
+    updateMutation.mutate({ row, value: newValueText });
   }
 
   async function remove(row: CustomFieldRow) {
     if (!(await confirm({ message: `Delete spec "${row.key}"?`, severity: "danger" }))) return;
-    try {
-      await api.delete(`/custom-fields/${row.id}`);
-      qc.invalidateQueries({ queryKey });
-      toast.success("Spec deleted.");
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
-    }
+    removeMutation.mutate(row);
   }
 
-  async function restore(row: CustomFieldRow) {
-    try {
-      await api.delete(`/custom-fields/${row.id}/override`);
-      qc.invalidateQueries({ queryKey });
-      toast.success("Restored upstream value.");
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : "Failed");
-    }
+  function restore(row: CustomFieldRow) {
+    restoreMutation.mutate(row);
   }
 
   // Specs tab shows parametric values only — provider catalog rows
@@ -204,6 +224,7 @@ export default function PartSpecs() {
                         title="Restore upstream value"
                         aria-label={`Restore ${r.key}`}
                         onClick={() => restore(r)}
+                        disabled={rowMutationPending}
                       >
                         <RotateCcw size={14} />
                       </button>
@@ -213,6 +234,7 @@ export default function PartSpecs() {
                       className="btn-ghost btn-sm"
                       aria-label={`Delete ${r.key}`}
                       onClick={() => remove(r)}
+                      disabled={rowMutationPending}
                     >
                       <Trash2 size={14} className="text-danger" />
                     </button>

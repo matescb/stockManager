@@ -1,7 +1,9 @@
-import { Link, Outlet, useParams, NavLink, useNavigate } from "react-router-dom";
+import { Link, Outlet, useParams, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ScanLine } from "lucide-react";
+import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
+import { useApiMutation } from "@/lib/mutations";
 import { useAuth } from "@/lib/auth";
 import { useWsKey, wsKeyOf, archiveStorageKeys } from "@/lib/queryKeys";
 import EntityHeader from "@/components/EntityHeader";
@@ -166,24 +168,34 @@ export function StorageOther() {
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
   const { data } = useQuery({ queryKey: useWsKey("storage", storageId), queryFn: () => api.get<StorageLocation>(`/storage/${storageId}`), enabled: !!storageId });
+  const archiveMutation = useApiMutation<unknown, { wasArchived: boolean }>({
+    mutationKey: ["storage", storageId, "archive"],
+    mutationFn: ({ wasArchived }) =>
+      api.post(`/storage/${storageId}/${wasArchived ? "restore" : "archive"}`),
+    onSuccess: (_data, vars) => {
+      for (const k of archiveStorageKeys(workspaceId, storageId!))
+        qc.invalidateQueries({ queryKey: k });
+      toast.success(vars.wasArchived ? "Storage restored." : "Storage archived.");
+      if (!vars.wasArchived) nav("/storage");
+    },
+    onError: (e) => {
+      toast.error(e.userMessage);
+    },
+  });
+
   if (!data) return null;
-  async function arch() {
-    await api.post(`/storage/${storageId}/archive`);
-    for (const k of archiveStorageKeys(workspaceId, storageId!))
-      qc.invalidateQueries({ queryKey: k });
-    nav("/storage");
+  function arch() {
+    archiveMutation.mutate({ wasArchived: false });
   }
-  async function restore() {
-    await api.post(`/storage/${storageId}/restore`);
-    for (const k of archiveStorageKeys(workspaceId, storageId!))
-      qc.invalidateQueries({ queryKey: k });
+  function restore() {
+    archiveMutation.mutate({ wasArchived: true });
   }
   return (
     <div className="card p-4 max-w-xl">
       {data.archived_at ? (
-        <button className="btn" onClick={restore}>Restore</button>
+        <button className="btn" onClick={restore} disabled={archiveMutation.isPending}>Restore</button>
       ) : (
-        <button className="btn-danger" onClick={arch}>Archive</button>
+        <button className="btn-danger" onClick={arch} disabled={archiveMutation.isPending}>Archive</button>
       )}
     </div>
   );
