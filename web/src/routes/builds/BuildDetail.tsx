@@ -59,6 +59,8 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
 
   // consumption plan: project_entry_id → list of consume rows
   const [plan, setPlan] = useState<Record<string, ConsumeRow[]>>({});
+  const [outputLotName, setOutputLotName] = useState("");
+  const [outputStorageLocationId, setOutputStorageLocationId] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
   const partsById = useMemo(() => new Map(parts?.map(p => [p.id, p]) ?? []), [parts]);
@@ -70,6 +72,8 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
       quantity: number;
       storage_location_id?: string;
     }[];
+    output_storage_location_id?: string;
+    output_lot_name?: string;
   };
 
   const consumeMutation = useApiMutation<unknown, ConsumePayload>({
@@ -144,7 +148,11 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
       setErr("No lines.");
       return;
     }
-    consumeMutation.mutate({ lines });
+    consumeMutation.mutate({
+      lines,
+      output_lot_name: outputLotName || undefined,
+      output_storage_location_id: outputStorageLocationId || undefined,
+    });
   }
 
   function doArchive() {
@@ -251,6 +259,32 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
           <div className="text-sm text-muted mb-2">
             One line per consumed part. Multiple lines per entry are allowed (e.g. main part + substitute).
             Use <strong>Auto-fill</strong> for a default plan, then tweak.
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+            <div>
+              <label className="label" htmlFor="build-output-lot-name">Output lot name</label>
+              <input
+                id="build-output-lot-name"
+                className="input"
+                value={outputLotName}
+                onChange={e => setOutputLotName(e.target.value)}
+                placeholder={`${build.name}-out`}
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="build-output-storage">Output storage</label>
+              <select
+                id="build-output-storage"
+                className="input"
+                value={outputStorageLocationId}
+                onChange={e => setOutputStorageLocationId(e.target.value)}
+              >
+                <option value="">— none —</option>
+                {storage?.filter(s => !s.archived_at && !s.is_full).map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
           </div>
           <table className="table">
             <thead>
