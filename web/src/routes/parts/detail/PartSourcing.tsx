@@ -9,6 +9,7 @@ import { isCatalogKey } from "@/lib/providerCatalog";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
+import { isSafeHttpUrl } from "@/lib/url";
 import type { CustomFieldRow, Part } from "@/types";
 
 const PROVIDER_LABEL: Record<string, string> = {
@@ -66,6 +67,7 @@ export default function PartSourcing() {
     part.linked_provider && part.mpn
       ? PROVIDER_SEARCH_URL[part.linked_provider]?.(part.mpn)
       : null;
+  const safeExternalUrl = isSafeHttpUrl(externalUrl) ? externalUrl : null;
   const columns: Column<CustomFieldRow>[] = [
     {
       key: "key",
@@ -102,9 +104,9 @@ export default function PartSourcing() {
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {externalUrl && (
+          {safeExternalUrl && (
             <a
-              href={externalUrl}
+              href={safeExternalUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="btn inline-flex items-center gap-1.5 text-sm"

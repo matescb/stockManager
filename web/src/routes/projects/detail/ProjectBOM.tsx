@@ -6,6 +6,7 @@ import { api, ApiError } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
+import { isSafeHttpOrSameOriginUrl } from "@/lib/url";
 import type { Part, ProjectEntry } from "@/types";
 import { useState } from "react";
 import { DataTable } from "@/components/DataTable";
@@ -209,9 +210,11 @@ export default function ProjectBOM() {
             width: "44px",
             render: r => {
               const part = r.part_id ? partsById.get(r.part_id) : null;
-              return part?.image_url ? (
+              const imageUrl = part?.image_url;
+              const safeImageUrl = isSafeHttpOrSameOriginUrl(imageUrl) ? imageUrl : null;
+              return safeImageUrl ? (
                 <img
-                  src={part.image_url}
+                  src={safeImageUrl}
                   alt=""
                   loading="lazy"
                   className="h-8 w-8 rounded bg-panel object-contain"

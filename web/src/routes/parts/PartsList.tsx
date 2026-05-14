@@ -1,4 +1,4 @@
-import { useRef, useCallback, useState } from "react";
+import { useRef, useCallback } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -9,6 +9,7 @@ import { PagedPartsSchema } from "@/lib/schemas";
 import type { Part } from "@/lib/schemas";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
+import { isSafeHttpOrSameOriginUrl } from "@/lib/url";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import PartsTopNav from "@/components/PartsTopNav";
@@ -175,10 +176,11 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
                   key: "image",
                   header: "",
                   width: "44px",
-                  render: (r) =>
-                    r.image_url ? (
+                  render: (r) => {
+                    const safeImageUrl = isSafeHttpOrSameOriginUrl(r.image_url) ? r.image_url : null;
+                    return safeImageUrl ? (
                       <img
-                        src={r.image_url}
+                        src={safeImageUrl}
                         alt=""
                         loading="lazy"
                         className="h-8 w-8 object-contain rounded bg-panel"
@@ -187,7 +189,8 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
                       <div className="h-8 w-8 rounded bg-panel2/40 flex items-center justify-center text-muted">
                         <ImageOff size={14} />
                       </div>
-                    ),
+                    );
+                  },
                 },
                 { key: "part_type", header: "Type", accessor: (r) => r.part_type, width: "100px" },
                 {

@@ -8,6 +8,7 @@ import { useApiMutation } from "@/lib/mutations";
 import { isSpecKey } from "@/lib/providerCatalog";
 import { useWsKey } from "@/lib/queryKeys";
 import { useConfirm } from "@/components/ConfirmDialog";
+import { isSafeHttpUrl } from "@/lib/url";
 import type { CustomFieldRow, Part, SpecSource } from "@/types";
 
 const SOURCE_BADGE: Record<SpecSource, string> = {
@@ -149,6 +150,11 @@ export default function PartSpecs() {
   const providerCount = rows.filter(r => r.source === "provider").length;
   const showSparseHint =
     !!part.linked_provider && providerCount > 0 && providerCount < 4;
+  const productPageUrl =
+    part.linked_provider && part.mpn
+      ? (PROVIDER_SEARCH_URL[part.linked_provider] ?? PROVIDER_SEARCH_URL.mouser)(part.mpn)
+      : null;
+  const safeProductPageUrl = isSafeHttpUrl(productPageUrl) ? productPageUrl : null;
 
   return (
     <div className="card p-4 max-w-3xl">
@@ -164,14 +170,18 @@ export default function PartSpecs() {
           shown above is what we could pull. Add specs below, or copy
           remaining ones from the
           {" "}
-          <a
-            className="text-accent hover:underline"
-            href={(PROVIDER_SEARCH_URL[part.linked_provider!] ?? PROVIDER_SEARCH_URL.mouser)(part.mpn ?? "")}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            product page
-          </a>.
+          {safeProductPageUrl ? (
+            <a
+              className="text-accent hover:underline"
+              href={safeProductPageUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              product page
+            </a>
+          ) : (
+            "product page"
+          )}.
         </div>
       )}
 

@@ -6,6 +6,7 @@ import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
+import { isSafeHttpOrSameOriginUrl } from "@/lib/url";
 import type { Part, ProjectEntry } from "@/types";
 
 type Props = {
@@ -177,6 +178,7 @@ export default function AddPartFromLibraryModal({ open, projectId, onClose }: Pr
               <ul className="divide-y divide-border">
                 {parts.map(part => {
                   const checked = selected.has(part.id);
+                  const safeImageUrl = isSafeHttpOrSameOriginUrl(part.image_url) ? part.image_url : null;
                   return (
                     <li key={part.id}>
                       <label className="flex cursor-pointer items-center gap-3 p-3 hover:bg-panel2/40">
@@ -187,9 +189,9 @@ export default function AddPartFromLibraryModal({ open, projectId, onClose }: Pr
                           disabled={addMutation.isPending}
                           aria-label={checked ? `Deselect ${part.name}` : `Select ${part.name}`}
                         />
-                        {part.image_url ? (
+                        {safeImageUrl ? (
                           <img
-                            src={part.image_url}
+                            src={safeImageUrl}
                             alt=""
                             loading="lazy"
                             className="h-10 w-10 rounded bg-panel object-contain"

@@ -1,4 +1,5 @@
 import { ReactNode } from "react";
+import { isSafeHttpOrSameOriginUrl } from "@/lib/url";
 
 export type Stat = { label: string; value: ReactNode; tone?: "default" | "danger" | "warning" | "success" };
 
@@ -36,21 +37,23 @@ export default function EntityHeader({
   stats,
   imageUrl,
 }: Props) {
+  const safeImageUrl = isSafeHttpOrSameOriginUrl(imageUrl) ? imageUrl : null;
+
   return (
     <div className="card p-4 mb-4">
       {breadcrumb && <div className="text-xs text-muted mb-2">{breadcrumb}</div>}
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3 min-w-0">
-          {imageUrl && (
+          {safeImageUrl && (
             <a
-              href={imageUrl}
+              href={safeImageUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="shrink-0 block"
               aria-label="Open full image"
             >
               <img
-                src={imageUrl}
+                src={safeImageUrl}
                 alt=""
                 className="h-14 w-14 object-contain rounded bg-panel"
               />

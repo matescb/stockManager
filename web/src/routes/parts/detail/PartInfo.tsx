@@ -7,6 +7,7 @@ import { api, ApiError } from "@/lib/api";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import { InlineQueryError } from "@/components/QueryStateBoundary";
+import { isSafeHttpOrSameOriginUrl } from "@/lib/url";
 import type { CustomFieldRow, Part } from "@/types";
 
 const PROVIDER_LABEL: Record<string, string> = {
@@ -65,6 +66,7 @@ export default function PartInfo() {
   // the only Media-card affordance that still belongs on this page is the
   // datasheet link.
   const datasheetUrl = lookupBy("datasheet_url");
+  const safeDatasheetUrl = isSafeHttpOrSameOriginUrl(datasheetUrl) ? datasheetUrl : null;
 
   const [refreshing, setRefreshing] = useState(false);
   async function refresh() {
@@ -157,10 +159,10 @@ export default function PartInfo() {
         <Field label="Low-stock threshold" value={part.low_stock_report_quantity != null ? String(part.low_stock_report_quantity) : null} />
         <Field label="Attrition" value={`${part.attrition_percentage}% (min ${part.attrition_min_quantity})`} />
       </div>
-      {datasheetUrl && (
+      {safeDatasheetUrl && (
         <div className="card p-4 col-span-2">
           <a
-            href={withDownloadName(datasheetUrl, part.mpn || part.name)}
+            href={withDownloadName(safeDatasheetUrl, part.mpn || part.name)}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 text-accent hover:underline text-sm"

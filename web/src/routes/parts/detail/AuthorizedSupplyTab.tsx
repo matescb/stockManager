@@ -8,6 +8,7 @@ import { useAuth } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
 import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
+import { isSafeHttpUrl } from "@/lib/url";
 import {
   bestUnitPriceAtQty,
   extendedPrice,
@@ -607,10 +608,11 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
         key: "link",
         header: "Link",
         accessor: row => row.link,
-        render: row =>
-          row.link ? (
+        render: row => {
+          const safeLink = isSafeHttpUrl(row.link) ? row.link : null;
+          return safeLink ? (
             <a
-              href={row.link}
+              href={safeLink}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-accent hover:underline"
@@ -620,7 +622,8 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
             </a>
           ) : (
             <span className="text-muted">—</span>
-          ),
+          );
+        },
       },
       {
         key: "order",
@@ -631,6 +634,7 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
             className="btn btn-sm"
             onClick={() => {
               const best = bestUnitPriceAtQty(row.priceBreaks, quantity);
+              const safeProductUrl = isSafeHttpUrl(row.link) ? row.link : null;
               setOrderLineSource({
                 partId,
                 distributor: row.distributor,
@@ -640,7 +644,7 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
                 quantity,
                 unitPrice: best?.unitPrice ?? row.unitPrice,
                 currency: row.currency,
-                productUrl: row.link,
+                productUrl: safeProductUrl,
               });
             }}
           >
