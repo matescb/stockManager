@@ -786,8 +786,7 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          # If the VPS's host key ever rotates, pin it via `fingerprint:` here
-          # (SHA256 form, captured with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`).
+          fingerprint: ${{ secrets.DEPLOY_HOST_FINGERPRINT }}
           script: |
             set -euo pipefail
             cd /srv/stockmanager

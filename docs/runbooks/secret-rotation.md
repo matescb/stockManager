@@ -24,6 +24,7 @@ Related runbooks: see `docs/deployment.md` for general VPS operations and the
 | `SENTRY_AUTH_TOKEN` | GitHub Actions secret (`SENTRY_AUTH_TOKEN`) | CI `web-build` job (sourcemap upload) | Can upload sourcemaps / releases to Sentry project; scoped to `project:write` + `project:releases` | GitHub Actions secrets page | Annual; on personnel change; on leak |
 | `SENTRY_ORG` / `SENTRY_PROJECT` | GitHub Actions secrets | CI `web-build` job | Low-risk identifiers; no auth on their own | N/A | On org/project rename |
 | `DEPLOY_SSH_KEY` | GitHub Actions secret (`DEPLOY_SSH_KEY`) | CI `deploy` job (SSH into VPS) | Can run arbitrary commands on VPS as the `deploy` user (docker socket access = effectively root) | Operator password manager | Annual; on personnel change; on leak |
+| `DEPLOY_HOST_FINGERPRINT` | GitHub Actions secret (`DEPLOY_HOST_FINGERPRINT`) | CI `deploy` job (SSH host-key pin) | Wrong value blocks deploys; stale value after host-key rotation blocks deploys; leaked value is public metadata only | GitHub Actions secrets page | On VPS host-key rotation or VPS migration |
 | `DEPLOY_HOST` / `DEPLOY_USER` | GitHub Actions secrets | CI `deploy` job | Low-risk identifiers | N/A | On VPS migration |
 | `BACKUP_AGE_RECIPIENT` keypair | Per issue #90 | Backup encryption (future) | Backup archives unreadable without private key | See issue #90 runbook | On personnel change |
 | `UPTIMEROBOT_*` credentials | Per issue #94 | Uptime monitoring (future) | Attacker can silence alerts | UptimeRobot account settings | On personnel change; on leak |
@@ -228,7 +229,40 @@ push to `main`.
 
 ---
 
-### 2.7 `WORKSPACE_SECRETS_KEY` — the complex one
+### 2.7 `DEPLOY_HOST_FINGERPRINT`
+
+**Effect of rotation:** CI deploys fail until GitHub Actions has the new
+fingerprint.  Update the secret immediately after a planned VPS host-key
+rotation, and before the first deploy to a migrated VPS.
+
+**Steps:**
+
+1. SSH into the VPS through a trusted admin path.
+2. Print the public ED25519 host-key fingerprint:
+   ```bash
+   ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+   ```
+3. Copy only the `SHA256:...` fingerprint field from the output.  Do not copy
+   any private host-key file.
+4. From a separate trusted network, confirm the same public fingerprint is
+   visible remotely:
+   ```bash
+   ssh-keyscan -t ed25519 <DEPLOY_HOST> 2>/dev/null | ssh-keygen -lf -
+   ```
+5. Go to
+   <https://github.com/matescb/stockManager/settings/secrets/actions> and
+   update `DEPLOY_HOST_FINGERPRINT` with the `SHA256:...` value.
+6. Push a no-op commit to `main` to trigger a deploy:
+   ```bash
+   git commit --allow-empty -m "chore: verify deploy host fingerprint"
+   git push origin main
+   ```
+7. Confirm the `deploy` CI job reaches the remote script.  A host-key mismatch
+   fails before any deploy command runs on the VPS.
+
+---
+
+### 2.8 `WORKSPACE_SECRETS_KEY` — the complex one
 
 **Background:** `WORKSPACE_SECRETS_KEY` is a Fernet key
 (`cryptography.fernet.Fernet`).  Every workspace's provider API key, provider
@@ -349,6 +383,7 @@ Once you are confident all rows are encrypted under the new key:
 |----------|---------|---------|
 | App secrets (VPS `.env.prod`) | `SESSION_SECRET`, `POSTGRES_PASSWORD`, `WORKSPACE_SECRETS_KEY`, `SENTRY_DSN`, `VITE_SENTRY_DSN` | Annual; immediately on personnel change or suspected leak |
 | CI / infrastructure secrets | `DEPLOY_SSH_KEY`, `SENTRY_AUTH_TOKEN` | Annual; immediately on personnel change or suspected leak |
+| SSH trust pins | `DEPLOY_HOST_FINGERPRINT` | On VPS host-key rotation or VPS migration |
 | SaaS identifiers | `SENTRY_ORG`, `SENTRY_PROJECT`, `DEPLOY_HOST`, `DEPLOY_USER` | On rename / migration only |
 | Monitoring credentials | `UPTIMEROBOT_*` (issue #94) | On personnel change; immediately on leak |
 | Backup encryption key | `BACKUP_AGE_RECIPIENT` (issue #90) | On personnel change |
@@ -369,6 +404,5 @@ The following are **not** covered by this runbook:
   user-managed credentials stored encrypted in the `workspaces` table.  Users
   rotate them via the workspace settings UI; the encryption is covered by the
   `WORKSPACE_SECRETS_KEY` playbook above.
-- **SSH host keys on the VPS** — rotating these requires updating the
-  `fingerprint:` field in `.github/workflows/ci.yml`; see
-  `docs/deployment.md#cicd-details`.
+- **SSH host keys on the VPS** — rotate the `DEPLOY_HOST_FINGERPRINT` GitHub
+  Actions secret with the playbook above.

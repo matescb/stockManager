@@ -216,6 +216,7 @@ unless you're rebuilding the host, or migrating to a fresh VPS.
    | `DEPLOY_HOST`         | `37.205.15.171`                                                               |
    | `DEPLOY_USER`         | `deploy`                                                                      |
    | `DEPLOY_SSH_KEY`      | full contents of `/home/deploy/.ssh/id_ed25519` (the **private** key)         |
+   | `DEPLOY_HOST_FINGERPRINT` | `SHA256:...` from `/etc/ssh/ssh_host_ed25519_key.pub` on the VPS          |
    | `SENTRY_AUTH_TOKEN`   | Sentry auth token with `project:write` + `project:releases` scope            |
    | `SENTRY_ORG`          | Sentry organisation slug                                                      |
    | `SENTRY_PROJECT`      | Sentry project slug                                                           |
@@ -260,9 +261,12 @@ docker image prune -f
 the tip of `origin/main`, even if some prior failed deploy left the working
 tree dirty. `image prune -f` keeps disk usage in check across rebuilds.
 
-If the VPS host key ever rotates (rebuild, key regeneration), pin the new
-fingerprint via the action's `fingerprint:` input — capture it on the host
-with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`.
+The deploy action pins the VPS host key with the `DEPLOY_HOST_FINGERPRINT`
+GitHub Actions secret. If the VPS host key rotates (rebuild, key regeneration),
+capture the new `SHA256:...` value on the host with
+`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`, verify it from a separate
+trusted network, and update the secret before the next deploy. See
+[`docs/runbooks/secret-rotation.md`](runbooks/secret-rotation.md).
 
 ### Action SHA pins
 

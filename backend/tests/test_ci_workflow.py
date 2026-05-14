@@ -96,6 +96,15 @@ def test_deploy_does_not_use_ignored_ssh_action_script_stop():
     assert "script_stop" not in step.get("with", {})
 
 
+def test_deploy_ssh_action_pins_host_fingerprint():
+    step = _deploy_ssh_step()
+    fingerprint = step.get("with", {}).get("fingerprint")
+    assert fingerprint == "${{ secrets.DEPLOY_HOST_FINGERPRINT }}", (
+        "deploy SSH action must pin the VPS host key fingerprint via "
+        "`secrets.DEPLOY_HOST_FINGERPRINT`"
+    )
+
+
 # ── INFRA-004: reproducible backend builds via uv lockfile ──────────────────
 
 
