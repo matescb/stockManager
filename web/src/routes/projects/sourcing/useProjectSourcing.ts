@@ -18,7 +18,7 @@ export function useProjectSourcing({
   const sourcingDisplayCacheKey = useWsKey("project-sourcing", projectId);
   const cachedSourcing = useQuery<SourcingBomResponse | null>({
     queryKey: sourcingDisplayCacheKey,
-    queryFn: async () => null,
+    queryFn: async ({ signal: _signal }) => null,
     enabled: false,
     staleTime: Infinity,
     gcTime: SOURCING_BOM_GC_TIME_MS,

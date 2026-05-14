@@ -41,15 +41,15 @@ export default function PartRemoveStock() {
   const { workspaceId } = useAuth();
   const storageQuery = useQuery({
     queryKey: useWsKey("storage"),
-    queryFn: () => api.get<StorageLocation[]>("/storage"),
+    queryFn: ({ signal }) => api.get<StorageLocation[]>("/storage", { signal }),
   });
   const stockQuery = useQuery({
     queryKey: useWsKey("part", partId, "stock"),
-    queryFn: () => api.get<StockResp>(`/parts/${partId}/stock`),
+    queryFn: ({ signal }) => api.get<StockResp>(`/parts/${partId}/stock`, { signal }),
   });
   const lotsQuery = useQuery({
     queryKey: useWsKey("part", partId, "lots"),
-    queryFn: () => api.get<Lot[]>(`/parts/${partId}/lots`),
+    queryFn: ({ signal }) => api.get<Lot[]>(`/parts/${partId}/lots`, { signal }),
   });
   const { data: storage } = storageQuery;
   const { data: stock } = stockQuery;

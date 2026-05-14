@@ -112,7 +112,10 @@ describe("BomBuyabilityReport", () => {
     await user.type(input, "5{Enter}");
 
     await waitFor(() => {
-      expect(get).toHaveBeenCalledWith("/reports/bom-buyability?build_quantity=5");
+      expect(get).toHaveBeenCalledWith(
+        "/reports/bom-buyability?build_quantity=5",
+        expect.any(Object),
+      );
     });
     expect(screen.getByTestId("location").textContent).toContain("build_quantity=5");
     const table = screen.getByRole("table");

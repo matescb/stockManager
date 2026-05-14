@@ -10,7 +10,7 @@ import QueryStateBoundary from "@/components/QueryStateBoundary";
 export default function PartLots() {
   const { partId } = useParams();
   const nav = useNavigate();
-  const lotsQuery = useQuery({ queryKey: useWsKey("part", partId, "lots"), queryFn: () => api.get<Lot[]>(`/parts/${partId}/lots`) });
+  const lotsQuery = useQuery({ queryKey: useWsKey("part", partId, "lots"), queryFn: ({ signal }) => api.get<Lot[]>(`/parts/${partId}/lots`, { signal }) });
   const { data } = lotsQuery;
   return (
     <QueryStateBoundary query={lotsQuery} resourceLabel="lots">

@@ -36,7 +36,7 @@ export default function PartAddStock() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
-  const storageQuery = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const storageQuery = useQuery({ queryKey: useWsKey("storage"), queryFn: ({ signal }) => api.get<StorageLocation[]>("/storage", { signal }) });
   const { data: storage } = storageQuery;
   const [qty, setQty] = useState<number>(0);
   const [location, setLocation] = useState("");

@@ -146,7 +146,7 @@ export default function ProjectImport() {
   });
   const presetsQuery = useQuery({
     queryKey: useWsKey("bom-presets"),
-    queryFn: () => api.get<Preset[]>("/bom-presets"),
+    queryFn: ({ signal }) => api.get<Preset[]>("/bom-presets", { signal }),
   });
   const { data: presets, refetch: refetchPresets } = presetsQuery;
 

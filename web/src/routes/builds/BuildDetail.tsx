@@ -30,7 +30,7 @@ export default function BuildDetail() {
 function BuildDetailQuery({ buildId }: { buildId: string }) {
   const { data, isError, error } = useQuery({
     queryKey: useWsKey("build", buildId),
-    queryFn: () => api.get<DetailOut>(`/builds/${buildId}`),
+    queryFn: ({ signal }) => api.get<DetailOut>(`/builds/${buildId}`, { signal }),
   });
 
   if (isError) return <div className="text-red-600 text-sm p-4">Failed to load build. {error instanceof ApiError ? error.userMessage : ""}</div>;
@@ -48,14 +48,14 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
 
   const { data: project } = useQuery({
     queryKey: useWsKey("project", projectId),
-    queryFn: () => api.get<Project>(`/projects/${projectId}`),
+    queryFn: ({ signal }) => api.get<Project>(`/projects/${projectId}`, { signal }),
   });
   const { data: entries } = useQuery({
     queryKey: useWsKey("project", projectId, "entries"),
-    queryFn: () => api.get<ProjectEntry[]>(`/projects/${projectId}/entries`),
+    queryFn: ({ signal }) => api.get<ProjectEntry[]>(`/projects/${projectId}/entries`, { signal }),
   });
-  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts?limit=200") });
-  const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: ({ signal }) => api.get<Part[]>("/parts?limit=200", { signal }) });
+  const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: ({ signal }) => api.get<StorageLocation[]>("/storage", { signal }) });
 
   // consumption plan: project_entry_id → list of consume rows
   const [plan, setPlan] = useState<Record<string, ConsumeRow[]>>({});

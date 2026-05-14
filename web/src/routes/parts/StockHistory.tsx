@@ -11,12 +11,12 @@ import QueryStateBoundary from "@/components/QueryStateBoundary";
 import { Link } from "react-router-dom";
 
 export default function StockHistory() {
-  const historyQuery = useQuery({ queryKey: useWsKey("stock-history"), queryFn: () => api.get<StockEntry[]>("/stock/history?limit=500") });
+  const historyQuery = useQuery({ queryKey: useWsKey("stock-history"), queryFn: ({ signal }) => api.get<StockEntry[]>("/stock/history?limit=500", { signal }) });
   const { data } = historyQuery;
   // The parts/storage queries hydrate name maps for the table cells; missing
   // them just falls back to UUIDs in the column, so they stay bare.
-  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts?limit=200") });
-  const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: ({ signal }) => api.get<Part[]>("/parts?limit=200", { signal }) });
+  const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: ({ signal }) => api.get<StorageLocation[]>("/storage", { signal }) });
   const partName = new Map(parts?.map(p => [p.id, p.name]) ?? []);
   const sName = new Map(storage?.map(s => [s.id, s.name]) ?? []);
   return (

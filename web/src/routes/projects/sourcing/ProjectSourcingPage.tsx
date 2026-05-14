@@ -42,7 +42,7 @@ export default function ProjectSourcingPage() {
   } = useSourcingFilters(budgetDisabledUntil);
   const { data: project } = useQuery({
     queryKey: useWsKey("project", projectId),
-    queryFn: () => api.get<Project>(`/projects/${projectId}`),
+    queryFn: ({ signal }) => api.get<Project>(`/projects/${projectId}`, { signal }),
     enabled: !!projectId,
   });
 

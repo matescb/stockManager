@@ -40,8 +40,8 @@ export default function PartSourcing() {
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: useWsKey("part", part.id, "custom-fields"),
-    queryFn: () =>
-      api.get<CustomFieldRow[]>(`/custom-fields/by-object/part/${part.id}`),
+    queryFn: ({ signal }) =>
+      api.get<CustomFieldRow[]>(`/custom-fields/by-object/part/${part.id}`, { signal }),
   });
 
   const rows = (data ?? []).filter(r => isCatalogKey(r.key));

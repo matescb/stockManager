@@ -48,6 +48,24 @@ module.exports = {
         selector: 'JSXAttribute[name.name="rel"][value.value="noreferrer"]',
         message: 'External links must use rel="noopener noreferrer".',
       },
+      {
+        selector: "Property[key.name='queryFn'] > ArrowFunctionExpression[params.length=0]",
+        message: "TanStack queryFn must accept the query context and thread signal to API reads.",
+      },
+      {
+        selector:
+          "Property[key.name='queryFn'] > ArrowFunctionExpression > ObjectPattern:not(:has(Property[key.name='signal']))",
+        message: "TanStack queryFn object context must destructure signal.",
+      },
+      {
+        selector: "Property[key.name='queryFn'] > FunctionExpression[params.length=0]",
+        message: "TanStack queryFn must accept the query context and thread signal to API reads.",
+      },
+      {
+        selector:
+          "Property[key.name='queryFn'] > FunctionExpression > ObjectPattern:not(:has(Property[key.name='signal']))",
+        message: "TanStack queryFn object context must destructure signal.",
+      },
     ],
   },
   ignorePatterns: [

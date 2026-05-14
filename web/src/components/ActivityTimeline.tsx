@@ -151,7 +151,7 @@ export default function ActivityTimeline({ endpoint }: Props) {
     isFetchingNextPage,
   } = useInfiniteQuery<ActivityPage>({
     queryKey: useWsKey("activity", endpoint),
-    queryFn: ({ pageParam }) => {
+    queryFn: ({ pageParam, signal }) => {
       let url = endpoint;
       if (
         pageParam &&
@@ -166,7 +166,7 @@ export default function ActivityTimeline({ endpoint }: Props) {
         });
         url = `${endpoint}?${qs.toString()}`;
       }
-      return api.get<ActivityPage>(url);
+      return api.get<ActivityPage>(url, { signal });
     },
     initialPageParam: null,
     getNextPageParam: (lastPage) => {

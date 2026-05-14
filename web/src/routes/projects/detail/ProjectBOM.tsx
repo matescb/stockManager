@@ -47,13 +47,13 @@ export default function ProjectBOM() {
   const { workspaceId } = useAuth();
   const entriesQuery = useQuery({
     queryKey: useWsKey("project", projectId, "entries"),
-    queryFn: () => api.get<ProjectEntry[]>(`/projects/${projectId}/entries`),
+    queryFn: ({ signal }) => api.get<ProjectEntry[]>(`/projects/${projectId}/entries`, { signal }),
   });
   const { data: entries } = entriesQuery;
-  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: () => api.get<Part[]>("/parts?limit=200") });
+  const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: ({ signal }) => api.get<Part[]>("/parts?limit=200", { signal }) });
   const { data: workspace } = useQuery({
     queryKey: useWsKey("ws", "current"),
-    queryFn: () => api.get<WorkspaceProviderSettings>("/workspaces/current"),
+    queryFn: ({ signal }) => api.get<WorkspaceProviderSettings>("/workspaces/current", { signal }),
   });
   const partsById = new Map(parts?.map(p => [p.id, p]) ?? []);
 

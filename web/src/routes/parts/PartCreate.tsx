@@ -60,7 +60,7 @@ export default function PartCreate() {
   // an inline banner instead of silently swallowing the error. The part
   // is valid — just missing provider-side fields — so we never DELETE it.
   const [refreshFailed, setRefreshFailed] = useState<{ partId: string } | null>(null);
-  const storageQuery = useQuery({ queryKey: useWsKey("storage"), queryFn: () => api.get<StorageLocation[]>("/storage") });
+  const storageQuery = useQuery({ queryKey: useWsKey("storage"), queryFn: ({ signal }) => api.get<StorageLocation[]>("/storage", { signal }) });
   const { data: storage } = storageQuery;
   const safeDatasheetUrl = isSafeHttpOrSameOriginUrl(datasheetUrl) ? datasheetUrl : null;
   const safeImageUrl = isSafeHttpOrSameOriginUrl(imageUrl) ? imageUrl : null;

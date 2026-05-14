@@ -82,7 +82,7 @@ export function CreateOrderLineModal({
 
   const ordersQuery = useQuery({
     queryKey: ordersKey,
-    queryFn: () => api.get<Order[]>("/orders?order_status=draft"),
+    queryFn: ({ signal }) => api.get<Order[]>("/orders?order_status=draft", { signal }),
     enabled: open,
   });
 

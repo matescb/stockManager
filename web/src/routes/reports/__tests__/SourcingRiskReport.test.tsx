@@ -133,7 +133,10 @@ describe("SourcingRiskReport", () => {
     await userEvent.click(screen.getByLabelText("Show only flagged"));
 
     expect(await screen.findByText("Clean")).toBeDefined();
-    expect(get).toHaveBeenCalledWith("/reports/sourcing-risk?only_with_flags=false");
+    expect(get).toHaveBeenCalledWith(
+      "/reports/sourcing-risk?only_with_flags=false",
+      expect.any(Object),
+    );
   });
 
   it("sorts by flag count desc by default", async () => {

@@ -76,18 +76,18 @@ export default function WorkspaceSettings() {
   const confirm = useConfirm();
   const { me, workspaceId, refresh, switchWorkspace } = useAuth();
   const qc = useQueryClient();
-  const curQuery = useQuery({ queryKey: useWsKey("ws", "current"), queryFn: () => api.get<Ws>("/workspaces/current") });
+  const curQuery = useQuery({ queryKey: useWsKey("ws", "current"), queryFn: ({ signal }) => api.get<Ws>("/workspaces/current", { signal }) });
   const membersQuery = useQuery({
     queryKey: useWsKey("ws", "members"),
-    queryFn: () => api.get<Member[]>("/workspaces/members"),
+    queryFn: ({ signal }) => api.get<Member[]>("/workspaces/members", { signal }),
   });
   const invitesQuery = useQuery({
     queryKey: useWsKey("ws", "invitations"),
-    queryFn: () => api.get<Invitation[]>("/invitations"),
+    queryFn: ({ signal }) => api.get<Invitation[]>("/invitations", { signal }),
   });
   const catalogTokensQuery = useQuery({
     queryKey: useWsKey("ws", "catalog-tokens"),
-    queryFn: () => api.get<CatalogToken[]>("/workspaces/current/catalog/tokens"),
+    queryFn: ({ signal }) => api.get<CatalogToken[]>("/workspaces/current/catalog/tokens", { signal }),
   });
   const { data: cur } = curQuery;
   const { data: members, refetch: refetchMembers } = membersQuery;

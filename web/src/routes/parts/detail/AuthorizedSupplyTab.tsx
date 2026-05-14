@@ -437,7 +437,7 @@ export function AuthorizedSupplyTab({ partId }: { partId: string }) {
   const { workspaceId } = useAuth();
   const workspaceQuery = useQuery({
     queryKey: useWsKey("ws", "current"),
-    queryFn: () => api.get<SourcingWorkspaceSettings>("/workspaces/current"),
+    queryFn: ({ signal }) => api.get<SourcingWorkspaceSettings>("/workspaces/current", { signal }),
   });
   const workspaceCurrency = workspaceQuery.data?.sourcing_currency_code?.trim().toUpperCase() || null;
   const sourcingPath = workspaceCurrency

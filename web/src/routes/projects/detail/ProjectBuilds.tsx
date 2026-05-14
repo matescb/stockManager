@@ -13,7 +13,7 @@ export default function ProjectBuilds() {
   const { projectId } = useParams<{ projectId: string }>();
   const buildsQuery = useQuery({
     queryKey: useWsKey("builds", { project: projectId }),
-    queryFn: () => api.get<Build[]>(`/builds?project_id=${projectId}`),
+    queryFn: ({ signal }) => api.get<Build[]>(`/builds?project_id=${projectId}`, { signal }),
     enabled: !!projectId,
   });
   const { data } = buildsQuery;

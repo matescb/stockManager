@@ -68,7 +68,7 @@ export default function BomBuyabilityReport() {
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: useWsKey("report", "bom-buyability", qtyFromUrl),
-    queryFn: () => api.get<BomBuyabilityReportOut>(`/reports/bom-buyability?build_quantity=${qtyFromUrl}`),
+    queryFn: ({ signal }) => api.get<BomBuyabilityReportOut>(`/reports/bom-buyability?build_quantity=${qtyFromUrl}`, { signal }),
   });
 
   const status = statusCopy(data?.sourcing_status ?? "ok");

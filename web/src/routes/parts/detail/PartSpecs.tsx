@@ -50,8 +50,8 @@ export default function PartSpecs() {
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey,
-    queryFn: () =>
-      api.get<CustomFieldRow[]>(`/custom-fields/by-object/part/${part.id}`),
+    queryFn: ({ signal }) =>
+      api.get<CustomFieldRow[]>(`/custom-fields/by-object/part/${part.id}`, { signal }),
   });
 
   const [newKey, setNewKey] = useState("");

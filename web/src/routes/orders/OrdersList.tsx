@@ -21,7 +21,7 @@ export default function OrdersList({ archived = false }: { archived?: boolean })
   const nav = useNavigate();
   const query = useQuery({
     queryKey: useWsKey("orders", { archived }),
-    queryFn: () => api.get<Order[]>(`/orders${archived ? "?archived=true" : ""}`),
+    queryFn: ({ signal }) => api.get<Order[]>(`/orders${archived ? "?archived=true" : ""}`, { signal }),
   });
   const { data } = query;
 
