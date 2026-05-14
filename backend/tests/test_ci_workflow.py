@@ -76,14 +76,14 @@ def _deploy_ssh_step() -> dict:
     data = _load()
     deploy = data["jobs"]["deploy"]
     for step in deploy["steps"]:
-        if "appleboy/ssh-action" in step.get("uses", ""):
+        if step.get("name") == "SSH deploy":
             return step
-    raise AssertionError("deploy job does not use appleboy/ssh-action")
+    raise AssertionError("deploy job does not define the SSH deploy step")
 
 
 def test_deploy_bootstraps_missing_password_pepper_before_compose_up():
     step = _deploy_ssh_step()
-    script = step["with"]["script"]
+    script = step["run"]
 
     assert "PASSWORD_PEPPER was missing in .env.prod" in script
     assert "secrets.token_hex(32)" in script
@@ -93,16 +93,25 @@ def test_deploy_bootstraps_missing_password_pepper_before_compose_up():
 
 def test_deploy_does_not_use_ignored_ssh_action_script_stop():
     step = _deploy_ssh_step()
-    assert "script_stop" not in step.get("with", {})
+    assert "appleboy/ssh-action" not in step.get("uses", "")
+    assert "script_stop" not in step
+    assert "script_stop" not in step.get("run", "")
 
 
-def test_deploy_ssh_action_pins_host_fingerprint():
+def test_deploy_uses_openssh_with_ed25519_host_fingerprint_pin():
     step = _deploy_ssh_step()
-    fingerprint = step.get("with", {}).get("fingerprint")
-    assert fingerprint == "${{ secrets.DEPLOY_HOST_FINGERPRINT }}", (
-        "deploy SSH action must pin the VPS host key fingerprint via "
-        "`secrets.DEPLOY_HOST_FINGERPRINT`"
+    env = step.get("env", {})
+    script = step["run"]
+
+    assert env.get("DEPLOY_HOST_FINGERPRINT") == (
+        "${{ secrets.DEPLOY_HOST_FINGERPRINT }}"
     )
+    assert 'ssh-keyscan -T 10 -t ed25519 "${DEPLOY_HOST}"' in script
+    assert 'actual_fingerprint=$(ssh-keygen -lf "${known_hosts}"' in script
+    assert '"${actual_fingerprint}" != "${DEPLOY_HOST_FINGERPRINT}"' in script
+    assert "-o StrictHostKeyChecking=yes" in script
+    assert '-o UserKnownHostsFile="${known_hosts}"' in script
+    assert "-o HostKeyAlgorithms=ssh-ed25519" in script
 
 
 # ── INFRA-004: reproducible backend builds via uv lockfile ──────────────────
