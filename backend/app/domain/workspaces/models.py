@@ -115,6 +115,10 @@ class Workspace(Base):
 class WorkspaceMember(Base):
     __tablename__ = "workspace_members"
     __table_args__ = (
+        CheckConstraint(
+            "role IN ('owner','admin','member','viewer')",
+            name="ck_workspace_members_role",
+        ),
         UniqueConstraint("workspace_id", "user_id", name="uq_workspace_member"),
     )
 
