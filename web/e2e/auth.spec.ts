@@ -143,7 +143,7 @@ test(
 );
 
 test(
-  "signup validation: invalid email / weak password / mismatched confirm render inline errors and stay on /signup",
+  "signup validation: invalid email and weak password render inline errors and stay on /signup",
   { tag: ["@core"] },
   async ({ page }, testInfo) => {
     await page.goto("/signup");
