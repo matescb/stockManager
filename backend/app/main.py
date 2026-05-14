@@ -35,6 +35,22 @@ _SENTRY_SENSITIVE_TEXT_RE = re.compile(
 )
 
 
+def _strip_query_string(raw_url: str) -> str:
+    fragment_index = raw_url.find("#")
+    before_fragment = raw_url if fragment_index == -1 else raw_url[:fragment_index]
+    fragment = "" if fragment_index == -1 else raw_url[fragment_index:]
+    query_index = before_fragment.find("?")
+    fragment_query_index = fragment.find("?")
+
+    clean_before_fragment = (
+        before_fragment if query_index == -1 else before_fragment[:query_index]
+    )
+    clean_fragment = (
+        fragment if fragment_query_index == -1 else fragment[:fragment_query_index]
+    )
+    return f"{clean_before_fragment}{clean_fragment}"
+
+
 def _scrub_sensitive_text(value: str) -> str:
     return _SENTRY_SENSITIVE_TEXT_RE.sub(r"\g<prefix>[Filtered]", value)
 
@@ -86,12 +102,19 @@ def _scrub_event(event, _hint):
     request = event.get("request")
     if not isinstance(request, dict):
         return event
+    if isinstance(request.get("url"), str):
+        request["url"] = _strip_query_string(request["url"])
+    request.pop("query_string", None)
     headers = request.get("headers")
     if isinstance(headers, dict):
         drop = {"cookie", "authorization", "x-workspace-id"}
         for k in list(headers.keys()):
             if k.lower() in drop:
                 headers.pop(k, None)
+            elif k.lower() in {"referer", "referrer"} and isinstance(
+                headers.get(k), str
+            ):
+                headers[k] = _strip_query_string(headers[k])
     method = (request.get("method") or "").upper()
     if method and method != "GET":
         if request.pop("data", None) is not None:
