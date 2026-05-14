@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.api._helpers import assert_in_workspace
 from app.core.deps import CurrentUser, CurrentWorkspace, require_role
-from app.core.errors import ErrorCodes
+from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import Envelope, err, ok
 from app.core.time import utcnow
@@ -494,11 +494,11 @@ def convert_purchase_plan_to_orders(
             overrides=(payload.overrides if payload is not None else None),
         )
     except sourcing_service.PurchasePlanStaleError as exc:
-        return _error_response(request, 409, "conflict", str(exc))
+        raise_http(409, ErrorCodes.SOURCING_PLAN_STALE, message=str(exc))
     except sourcing_service.PurchasePlanOverrideError as exc:
-        return _error_response(request, 422, "validation_error", str(exc))
+        raise_http(422, ErrorCodes.SOURCING_OVERRIDE_INVALID, message=str(exc))
     except sourcing_service.PurchasePlanCurrencyError as exc:
-        return _error_response(request, 422, "validation_error", str(exc))
+        raise_http(422, ErrorCodes.SOURCING_CURRENCY_MISMATCH, message=str(exc))
 
     return ok(
         sourcing_service.purchase_plan_orders_to_out(
