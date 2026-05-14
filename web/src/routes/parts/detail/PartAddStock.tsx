@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { z } from "zod";
 import { api, ApiError } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
@@ -28,6 +29,8 @@ type AddStockRequest = {
   comments?: string;
 };
 
+const currencySchema = z.string().regex(/^[A-Z]{3}$/, "Currency must be a three-letter uppercase code.");
+
 export default function PartAddStock() {
   const { partId } = useParams<{ partId: string }>();
   const nav = useNavigate();
@@ -45,6 +48,7 @@ export default function PartAddStock() {
   const [serial, setSerial] = useState("");
   const [comments, setComments] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [currencyErr, setCurrencyErr] = useState<string | null>(null);
 
   // FE2-006: stock-add is the most damaging double-submit on the
   // ledger model — two concurrent requests would append two
@@ -65,6 +69,7 @@ export default function PartAddStock() {
   function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
+    setCurrencyErr(null);
     const payload: AddStockRequest = {
       part_id: partId!,
       quantity: Number(qty),
@@ -72,9 +77,14 @@ export default function PartAddStock() {
     };
     if (location) payload.storage_location_id = location;
     if (priceMode !== "none") {
+      const parsedCurrency = currencySchema.safeParse(currency);
+      if (!parsedCurrency.success) {
+        setCurrencyErr(parsedCurrency.error.issues[0]?.message ?? "Invalid currency.");
+        return;
+      }
       payload.price = {
         mode: priceMode,
-        currency,
+        currency: parsedCurrency.data,
         unit_price: priceMode === "per_component" ? Number(unitPrice) : undefined,
         total_price: priceMode === "entire_lot" ? Number(totalPrice) : undefined,
       };
@@ -127,7 +137,23 @@ export default function PartAddStock() {
         {priceMode !== "none" && (
           <div>
             <label className="label" htmlFor="add-stock-currency">Currency</label>
-            <input id="add-stock-currency" className="input" maxLength={3} value={currency} onChange={e => setCurrency(e.target.value.toUpperCase())} />
+            <input
+              id="add-stock-currency"
+              className="input"
+              maxLength={3}
+              value={currency}
+              aria-invalid={currencyErr ? "true" : undefined}
+              aria-describedby={currencyErr ? "add-stock-currency-error" : undefined}
+              onChange={e => {
+                setCurrency(e.target.value.toUpperCase());
+                setCurrencyErr(null);
+              }}
+            />
+            {currencyErr && (
+              <p id="add-stock-currency-error" className="mt-1 text-danger text-sm">
+                {currencyErr}
+              </p>
+            )}
           </div>
         )}
       </div>
