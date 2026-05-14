@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, status
+from sqlalchemy.exc import IntegrityError
 
+from app.api.routes._stock_integrity import raise_integrity_as_409
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import Envelope, ok
 from app.domain.parts.services.bag_signature import compute_bag_signature
@@ -74,6 +76,8 @@ def add(
         )
     except StockError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except IntegrityError as exc:
+        raise_integrity_as_409(exc)
     return ok(_serialize_entry(e))
 
 
@@ -85,6 +89,8 @@ def remove(
         e = remove_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
     except StockError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except IntegrityError as exc:
+        raise_integrity_as_409(exc)
     return ok(_serialize_entry(e))
 
 
@@ -103,6 +109,8 @@ def move(payload: MoveStockIn, db: DbSession, ws: CurrentWorkspace, user: Curren
         )
     except StockError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except IntegrityError as exc:
+        raise_integrity_as_409(exc)
     return ok({"out": _serialize_entry(out_e), "in": _serialize_entry(in_e)})
 
 
@@ -112,6 +120,8 @@ def adjust(payload: AdjustStockIn, db: DbSession, ws: CurrentWorkspace, user: Cu
         e = adjust_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
     except StockError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except IntegrityError as exc:
+        raise_integrity_as_409(exc)
     return ok(_serialize_entry(e) if e is not None else None, "no change" if e is None else "OK")
 
 

@@ -5,9 +5,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy import and_, or_, select
+from sqlalchemy.exc import IntegrityError
 
 from app.api._helpers import require_resource_access
 from app.api.routes._activity import _DEFAULT_LIMIT, _MAX_LIMIT, build_activity
+from app.api.routes._stock_integrity import raise_integrity_as_409
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
 from app.core.time import utcnow
@@ -90,9 +92,12 @@ def create_build(payload: BuildCreateIn, db: DbSession, ws: CurrentWorkspace, us
     db.flush()
     # `get_db` rolls back on any raised exception (BE2-010), so the
     # explicit try/except db.rollback() shape becomes redundant here.
-    apply_reservations(
-        db, workspace_id=ws.id, user_id=user.id, build=b, project=project
-    )
+    try:
+        apply_reservations(
+            db, workspace_id=ws.id, user_id=user.id, build=b, project=project
+        )
+    except IntegrityError as exc:
+        raise_integrity_as_409(exc)
     return ok(_serialize(b))
 
 
@@ -124,14 +129,21 @@ def patch_build(build_id: UUID, payload: BuildPatchIn, db: DbSession, ws: Curren
     b.updated_by = user.id
     db.flush()
 
-    if cancelling:
-        release_reservations(db, workspace_id=ws.id, user_id=user.id, build=b)
-    elif quantity_changed and was_planned_or_in_progress and b.status in ("planned", "in_progress"):
-        project = _get_project(db, ws.id, b.project_id)
-        release_reservations(db, workspace_id=ws.id, user_id=user.id, build=b)
-        apply_reservations(
-            db, workspace_id=ws.id, user_id=user.id, build=b, project=project
-        )
+    try:
+        if cancelling:
+            release_reservations(db, workspace_id=ws.id, user_id=user.id, build=b)
+        elif (
+            quantity_changed
+            and was_planned_or_in_progress
+            and b.status in ("planned", "in_progress")
+        ):
+            project = _get_project(db, ws.id, b.project_id)
+            release_reservations(db, workspace_id=ws.id, user_id=user.id, build=b)
+            apply_reservations(
+                db, workspace_id=ws.id, user_id=user.id, build=b, project=project
+            )
+    except IntegrityError as exc:
+        raise_integrity_as_409(exc)
 
     return ok(_serialize(b))
 
@@ -144,7 +156,10 @@ def archive_build(build_id: UUID, db: DbSession, ws: CurrentWorkspace, user: Cur
     b = require_resource_access(
         db, Build, build_id, ws=ws, user=user, role="admin", label="build"
     )
-    release_reservations(db, workspace_id=ws.id, user_id=user.id, build=b)
+    try:
+        release_reservations(db, workspace_id=ws.id, user_id=user.id, build=b)
+    except IntegrityError as exc:
+        raise_integrity_as_409(exc)
     b.archived_at = utcnow()
     return ok(None, "archived")
 
@@ -185,6 +200,8 @@ def consume_build(
         # `get_db` rolls back on raise (BE2-010), so dropping the
         # explicit db.rollback() here is safe.
         raise HTTPException(status_code=400, detail=str(exc))
+    except IntegrityError as exc:
+        raise_integrity_as_409(exc)
     return ok(result)
 
 
