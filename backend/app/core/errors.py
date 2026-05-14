@@ -186,6 +186,7 @@ class ErrorCodes:
     # Storage router.
     STORAGE_NOT_FOUND = "storage.not_found"
     STORAGE_HAS_STOCK = "storage.has_stock"
+    STORAGE_CONSTRAINT_VIOLATION = "storage.constraint_violation"
 
     # Attachments router.
     ATTACHMENT_TOO_LARGE = "attachment.too_large"

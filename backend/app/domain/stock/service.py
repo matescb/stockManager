@@ -359,6 +359,7 @@ def enforce_storage_constraints(
     Raises StockConflictError on violation.
     """
     _lock_for_storage_constraint(db, workspace_id=workspace_id, storage_location_id=storage.id)
+    db.refresh(storage)
 
     if storage.single_part_only:
         # Any part other than the one being added/moved-in currently has
@@ -386,6 +387,57 @@ def enforce_storage_constraints(
         if not prior:
             raise StockConflictError(
                 "destination only accepts previously-stocked parts and this part has no prior stock here",
+                constraint="existing_parts_only",
+                storage_location_id=storage.id,
+            )
+
+
+def validate_storage_constraint_flag_update(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    storage: StorageLocation,
+    requested_single_part_only: bool | None = None,
+    requested_existing_parts_only: bool | None = None,
+) -> None:
+    """Reject flag enables that conflict with current on-hand contents."""
+    enable_single = requested_single_part_only is True and not storage.single_part_only
+    enable_existing = requested_existing_parts_only is True and not storage.existing_parts_only
+    if not enable_single and not enable_existing:
+        return
+
+    _lock_for_storage_constraint(db, workspace_id=workspace_id, storage_location_id=storage.id)
+    db.refresh(storage)
+    enable_single = requested_single_part_only is True and not storage.single_part_only
+    enable_existing = requested_existing_parts_only is True and not storage.existing_parts_only
+    if not enable_single and not enable_existing:
+        return
+
+    current_rows = stock_for_storage(db, workspace_id=workspace_id, storage_location_id=storage.id)
+    current_part_ids = {row["part_id"] for row in current_rows if int(row["quantity"]) > 0}
+
+    if enable_single and len(current_part_ids) > 1:
+        raise StockConflictError(
+            "storage cannot be marked single-part-only while it holds multiple parts",
+            constraint="single_part_only",
+            storage_location_id=storage.id,
+        )
+
+    if enable_existing and current_part_ids:
+        prior_part_ids = set(
+            db.execute(
+                select(StockEntry.part_id)
+                .where(StockEntry.workspace_id == workspace_id)
+                .where(StockEntry.storage_location_id == storage.id)
+                .where(StockEntry.part_id.in_(current_part_ids))
+                .where(StockEntry.quantity_delta > 0)
+                .distinct()
+            ).scalars()
+        )
+        if current_part_ids - prior_part_ids:
+            raise StockConflictError(
+                "storage cannot be marked existing-parts-only while it holds a part "
+                "with no prior positive entry",
                 constraint="existing_parts_only",
                 storage_location_id=storage.id,
             )

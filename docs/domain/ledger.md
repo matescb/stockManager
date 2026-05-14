@@ -79,7 +79,7 @@ Helpers:
 
 - `_lock_for_stock_write(db, *, workspace_id, part_id)` — single-part lock, called by every mutating ledger entry (producer **and** consumer; see the docstring for why the producer side isn't optional).
 - `lock_parts_for_stock_write(db, *, workspace_id, part_ids)` — multi-part lock taken in deterministic UUID-string order to prevent AB/BA deadlocks. Used by `builds.consume`, `builds.apply_reservations`, `builds.release_reservations`, and `orders.receive` (`backend/app/domain/stock/service.py:87-102`).
-- `_lock_for_storage_constraint(db, *, workspace_id, storage_location_id)` — second lock for the `single_part_only`/`existing_parts_only` cross-part race on a destination location. Always acquired *after* the per-part lock to keep the lock-ordering invariant (`backend/app/domain/stock/service.py:105-137`).
+- `_lock_for_storage_constraint(db, *, workspace_id, storage_location_id)` — second lock for the `single_part_only`/`existing_parts_only` cross-part race on a destination location. Stock writers acquire it after the per-part lock to keep the lock-ordering invariant; storage PATCH rechecks acquire only this lock before enabling flags (`backend/app/domain/stock/service.py:105-137`).
 
 The DB-side fall-back is the `0013` trigger (`backend/alembic/versions/0013_stock_nonneg_trigger.py`). It re-aggregates the bucket on every INSERT and raises `check_violation` if the cumulative sum is negative. The trigger is what catches a raw SQL write (or a future bug) that bypasses the advisory lock — it is intentionally not the primary defence because it converts every concurrent-write race into a 500 instead of a clean 4xx.
 
