@@ -54,14 +54,18 @@ def _candidate_part_ids(db: Session, *, part: Part) -> list[UUID]:
     if part.part_type == "meta":
         rows = list(
             db.execute(
-                select(PartMetaMember.part_id).where(PartMetaMember.meta_part_id == part.id)
+                select(PartMetaMember.part_id)
+                .where(PartMetaMember.workspace_id == part.workspace_id)
+                .where(PartMetaMember.meta_part_id == part.id)
             ).scalars()
         )
         return [r for r in rows if r != part.id]
 
     sub_rows = list(
         db.execute(
-            select(PartSubstitute).where(
+            select(PartSubstitute)
+            .where(PartSubstitute.workspace_id == part.workspace_id)
+            .where(
                 (PartSubstitute.part_id == part.id)
                 | (
                     (PartSubstitute.substitute_part_id == part.id)

@@ -560,14 +560,18 @@ def add_substitute(part_id: UUID, payload: SubstituteIn, db: DbSession, ws: Curr
     # can't ever resolve usefully.
     p = _get_part(db, ws.id, part_id)
     sub = _get_part(db, ws.id, payload.substitute_part_id)
-    db.add(PartSubstitute(part_id=p.id, substitute_part_id=sub.id, direction=payload.direction))
+    row = PartSubstitute(
+        workspace_id=ws.id, part_id=p.id,
+        substitute_part_id=sub.id, direction=payload.direction,
+    )
+    db.add(row)
     return ok(None)
 
 
 @router.get("/{part_id}/substitutes")
 def list_substitutes(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
     p = _get_part(db, ws.id, part_id, include_archived=True)
-    rows = list(db.execute(select(PartSubstitute).where(PartSubstitute.part_id == p.id)).scalars())
+    rows = db.query(PartSubstitute).filter_by(workspace_id=ws.id, part_id=p.id).all()
     return ok([{"part_id": str(r.substitute_part_id), "direction": r.direction} for r in rows])
 
 
@@ -576,8 +580,8 @@ def del_substitute(part_id: UUID, substitute_id: UUID, db: DbSession, ws: Curren
     # Removal allowed even on archived rows — operators should be able
     # to clean up dead bindings.
     p = _get_part(db, ws.id, part_id, include_archived=True)
-    db.query(PartSubstitute).filter(
-        PartSubstitute.part_id == p.id, PartSubstitute.substitute_part_id == substitute_id
+    db.query(PartSubstitute).filter_by(
+        workspace_id=ws.id, part_id=p.id, substitute_part_id=substitute_id
     ).delete()
     return ok(None)
 
@@ -588,11 +592,7 @@ def del_substitute(part_id: UUID, substitute_id: UUID, db: DbSession, ws: Curren
 @router.get("/{meta_id}/members")
 def list_members(meta_id: UUID, db: DbSession, ws: CurrentWorkspace):
     meta = _get_part(db, ws.id, meta_id, include_archived=True)
-    rows = list(
-        db.execute(
-            select(PartMetaMember).where(PartMetaMember.meta_part_id == meta.id)
-        ).scalars()
-    )
+    rows = db.query(PartMetaMember).filter_by(workspace_id=ws.id, meta_part_id=meta.id).all()
     return ok([{"id": str(r.id), "member_part_id": str(r.part_id)} for r in rows])
 
 
@@ -606,18 +606,12 @@ def add_member(meta_id: UUID, payload: MetaMemberIn, db: DbSession, ws: CurrentW
         raise HTTPException(status_code=400, detail="meta-part cannot include itself")
     if member.part_type == "meta":
         raise HTTPException(status_code=400, detail="meta-part members cannot themselves be meta")
-    existing = (
-        db.execute(
-            select(PartMetaMember)
-            .where(PartMetaMember.meta_part_id == meta.id)
-            .where(PartMetaMember.part_id == member.id)
-        )
-        .scalars()
-        .first()
-    )
+    existing = db.query(PartMetaMember).filter_by(
+        workspace_id=ws.id, meta_part_id=meta.id, part_id=member.id
+    ).first()
     if existing:
         return ok({"id": str(existing.id), "member_part_id": str(existing.part_id)})
-    row = PartMetaMember(meta_part_id=meta.id, part_id=member.id)
+    row = PartMetaMember(workspace_id=ws.id, meta_part_id=meta.id, part_id=member.id)
     db.add(row)
     db.flush()
     return ok({"id": str(row.id), "member_part_id": str(row.part_id)})
@@ -627,8 +621,8 @@ def add_member(meta_id: UUID, payload: MetaMemberIn, db: DbSession, ws: CurrentW
 def del_member(meta_id: UUID, member_id: UUID, db: DbSession, ws: CurrentWorkspace):
     # Removal — allowed even on archived meta.
     meta = _get_part(db, ws.id, meta_id, include_archived=True)
-    db.query(PartMetaMember).filter(
-        PartMetaMember.meta_part_id == meta.id, PartMetaMember.part_id == member_id
+    db.query(PartMetaMember).filter_by(
+        workspace_id=ws.id, meta_part_id=meta.id, part_id=member_id
     ).delete()
     return ok(None, "deleted")
 

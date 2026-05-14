@@ -10,7 +10,7 @@ from app.api._helpers import _polymorphic_resolvers, assert_polymorphic_in_works
 from app.domain.builds.models import Build
 from app.domain.lots.models import Lot
 from app.domain.orders.models import Order
-from app.domain.parts.models import Part
+from app.domain.parts.models import Part, PartMetaMember, PartSubstitute
 from app.domain.projects.models import Project
 from app.domain.sourcing.budget import BUDGET
 from app.domain.sourcing.models import SourcingCache
@@ -1017,6 +1017,116 @@ def test_stock_entries_ws_trigger():
     for overrides in cross_workspace_refs:
         with pytest.raises((IntegrityError, ProgrammingError, DBAPIError)):
             insert_stock_entry(**overrides)
+
+
+def test_part_substitute_cross_workspace_db_trigger(db):
+    """AUD-051 / migration 0053. Direct SQL cannot link substitute parts
+    across workspaces, even when the route layer is bypassed."""
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
+
+    from app.infra.db import SessionLocal
+
+    a = TestClient(app)
+    b = TestClient(app)
+    _signup(a, f"a-{uuid.uuid4().hex[:6]}@x.com")
+    ws_b = _signup(b, f"b-{uuid.uuid4().hex[:6]}@x.com")
+
+    part_a = _create_part(a, "A-substitute-trigger-part")
+    part_b = _create_part(b, "B-substitute-trigger-part")
+    substitute_b = _create_part(b, "B-substitute-trigger-alt")
+
+    row = PartSubstitute(
+        workspace_id=uuid.UUID(ws_b),
+        part_id=uuid.UUID(part_b),
+        substitute_part_id=uuid.UUID(substitute_b),
+    )
+    db.add(row)
+    db.flush()
+
+    with SessionLocal() as s:
+        with pytest.raises((IntegrityError, ProgrammingError, DBAPIError)):
+            s.execute(
+                text(
+                    "INSERT INTO part_substitutes "
+                    "(id, workspace_id, part_id, substitute_part_id, direction) "
+                    "VALUES (:id, :workspace_id, :part_id, :substitute_part_id, "
+                    "'bidirectional')"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "workspace_id": ws_b,
+                    "part_id": part_b,
+                    "substitute_part_id": part_a,
+                },
+            )
+            s.commit()
+
+    with SessionLocal() as s:
+        with pytest.raises((IntegrityError, ProgrammingError, DBAPIError)):
+            s.execute(
+                text(
+                    "UPDATE part_substitutes "
+                    "SET substitute_part_id = :substitute_part_id "
+                    "WHERE id = :id"
+                ),
+                {"id": row.id, "substitute_part_id": part_a},
+            )
+            s.commit()
+
+
+def test_part_meta_member_cross_workspace_db_trigger(db):
+    """AUD-051 / migration 0053. Direct SQL cannot attach a meta-part member
+    from another workspace."""
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
+
+    from app.infra.db import SessionLocal
+
+    a = TestClient(app)
+    b = TestClient(app)
+    _signup(a, f"a-{uuid.uuid4().hex[:6]}@x.com")
+    ws_b = _signup(b, f"b-{uuid.uuid4().hex[:6]}@x.com")
+
+    member_a = _create_part(a, "A-meta-trigger-member")
+    meta_b = _create_part(b, "B-meta-trigger-meta", part_type="meta")
+    member_b = _create_part(b, "B-meta-trigger-member")
+
+    row = PartMetaMember(
+        workspace_id=uuid.UUID(ws_b),
+        meta_part_id=uuid.UUID(meta_b),
+        part_id=uuid.UUID(member_b),
+    )
+    db.add(row)
+    db.flush()
+
+    with SessionLocal() as s:
+        with pytest.raises((IntegrityError, ProgrammingError, DBAPIError)):
+            s.execute(
+                text(
+                    "INSERT INTO part_meta_members "
+                    "(id, workspace_id, meta_part_id, part_id) "
+                    "VALUES (:id, :workspace_id, :meta_part_id, :part_id)"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "workspace_id": ws_b,
+                    "meta_part_id": meta_b,
+                    "part_id": member_a,
+                },
+            )
+            s.commit()
+
+    with SessionLocal() as s:
+        with pytest.raises((IntegrityError, ProgrammingError, DBAPIError)):
+            s.execute(
+                text(
+                    "UPDATE part_meta_members SET part_id = :part_id "
+                    "WHERE id = :id"
+                ),
+                {"id": row.id, "part_id": member_a},
+            )
+            s.commit()
 
 
 def test_parts_bulk_import_rejects_foreign_storage():
