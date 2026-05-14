@@ -258,6 +258,13 @@ jobs:
             exit 1
           fi
 
+      # AUD-055: keep direct StockEntry() construction confined to the
+      # ledger-writing services. Other code must use those services instead
+      # of bypassing their workspace and append-only semantics.
+      - name: StockEntry constructor guard
+        working-directory: backend
+        run: python scripts/check_stockentry_constructors.py
+
       - name: alembic single-head check
         working-directory: backend
         env:
