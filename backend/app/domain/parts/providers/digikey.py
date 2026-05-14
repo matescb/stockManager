@@ -87,7 +87,7 @@ def _get_product_details(
         resp = client.get(url, headers=_digikey_headers(token, client_id))
     try:
         body = resp.json()
-    except Exception:
+    except ValueError:
         body = {}
     return resp.status_code, body
 
@@ -106,7 +106,7 @@ def _post_keyword_search(
         resp = client.post(url, headers=headers, json=payload)
     try:
         body = resp.json()
-    except Exception:
+    except ValueError:
         body = {}
     return resp.status_code, body
 
@@ -164,10 +164,15 @@ class DigiKeyProvider:
             )
         except ProviderUpstreamError:
             raise
-        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+        except httpx.HTTPStatusError as exc:
             raise ProviderUpstreamError(
                 "digikey",
-                f"DigiKey upstream unavailable ({type(exc).__name__})",
+                f"DigiKey upstream returned HTTP {exc.response.status_code}",
+            ) from exc
+        except httpx.TimeoutException as exc:
+            raise ProviderUpstreamError(
+                "digikey",
+                f"DigiKey upstream unavailable: timed out ({type(exc).__name__})",
             ) from exc
         except RuntimeError as exc:
             # Raised by _get_token when the OAuth response is malformed.
@@ -176,10 +181,10 @@ class DigiKeyProvider:
                 "result": None,
                 "message": f"DigiKey auth failed ({type(exc).__name__})",
             }
-        except Exception as exc:
+        except httpx.ConnectError as exc:
             raise ProviderUpstreamError(
                 "digikey",
-                f"DigiKey upstream unavailable ({type(exc).__name__})",
+                f"DigiKey upstream unavailable: connection failed ({type(exc).__name__})",
             ) from exc
         if status >= 500:
             raise ProviderUpstreamError(
@@ -216,15 +221,20 @@ class DigiKeyProvider:
                 )
             except ProviderUpstreamError:
                 raise
-            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            except httpx.HTTPStatusError as exc:
                 raise ProviderUpstreamError(
                     "digikey",
-                    f"DigiKey upstream unavailable ({type(exc).__name__})",
+                    f"DigiKey upstream returned HTTP {exc.response.status_code}",
                 ) from exc
-            except Exception as exc:
+            except httpx.TimeoutException as exc:
                 raise ProviderUpstreamError(
                     "digikey",
-                    f"DigiKey upstream unavailable ({type(exc).__name__})",
+                    f"DigiKey upstream unavailable: timed out ({type(exc).__name__})",
+                ) from exc
+            except httpx.ConnectError as exc:
+                raise ProviderUpstreamError(
+                    "digikey",
+                    f"DigiKey upstream unavailable: connection failed ({type(exc).__name__})",
                 ) from exc
             if kw_status == 200:
                 products = (kw_data or {}).get("Products") or []

@@ -6,6 +6,7 @@ upstream.  The counter resets on a successful call.
 """
 from __future__ import annotations
 
+import httpx
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -188,7 +189,7 @@ def test_circuit_breaker_returns_503_via_route(monkeypatch):
 
     def _fail_post_mouser(url: str, payload: dict) -> dict:
         call_count[0] += 1
-        raise RuntimeError("simulated upstream failure")
+        raise httpx.ConnectError("simulated upstream failure")
 
     monkeypatch.setattr(
         "app.domain.parts.providers.mouser._post_mouser",

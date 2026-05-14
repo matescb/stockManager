@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -228,7 +229,7 @@ def test_lookup_mouser_network_failure_is_graceful(authed, monkeypatch):
     _enable_mouser(authed)
 
     def fail(url, payload):
-        raise RuntimeError("simulated DNS failure")
+        raise httpx.ConnectError("simulated connection failure")
 
     monkeypatch.setattr("app.domain.parts.providers.mouser._post_mouser", fail)
     r = authed.post("/api/parts/lookup-mpn", json={"mpn": "ANY"})
@@ -236,6 +237,7 @@ def test_lookup_mouser_network_failure_is_graceful(authed, monkeypatch):
     body = r.json()
     assert body["data"] is None
     assert "upstream unavailable" in body["status"]["message"]
+    assert "connection failed" in body["status"]["message"]
     assert body["provider"] == "mouser"
 
 

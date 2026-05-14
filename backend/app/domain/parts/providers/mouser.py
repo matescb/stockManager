@@ -138,15 +138,20 @@ class MouserProvider:
             data = _post_mouser(url, body)
         except ProviderUpstreamError:
             raise
-        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+        except httpx.HTTPStatusError as exc:
             raise ProviderUpstreamError(
                 "mouser",
-                f"Mouser upstream unavailable ({type(exc).__name__})",
+                f"Mouser upstream returned HTTP {exc.response.status_code}",
             ) from exc
-        except Exception as exc:
+        except httpx.TimeoutException as exc:
             raise ProviderUpstreamError(
                 "mouser",
-                f"Mouser upstream unavailable ({type(exc).__name__})",
+                f"Mouser upstream unavailable: timed out ({type(exc).__name__})",
+            ) from exc
+        except httpx.ConnectError as exc:
+            raise ProviderUpstreamError(
+                "mouser",
+                f"Mouser upstream unavailable: connection failed ({type(exc).__name__})",
             ) from exc
 
         errors = data.get("Errors") or []
