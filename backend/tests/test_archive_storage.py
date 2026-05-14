@@ -15,6 +15,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
+from app.domain.stock.models import StockEntry
 from app.main import app
 
 
@@ -44,6 +45,12 @@ def _create_storage(c: TestClient, name: str) -> str:
     r = c.post("/api/storage", json={"name": name})
     assert r.status_code in (200, 201), r.text
     return r.json()["data"]["id"]
+
+
+def _current_workspace_id(c: TestClient) -> uuid.UUID:
+    r = c.get("/api/workspaces/current")
+    assert r.status_code == 200, r.text
+    return uuid.UUID(r.json()["data"]["id"])
 
 
 def test_archive_empty_storage_succeeds(authed):
@@ -99,3 +106,28 @@ def test_archive_after_full_consume_succeeds(authed):
 
     r = authed.post(f"/api/storage/{sid_a}/archive")
     assert r.status_code == 200, r.text
+
+
+def test_archive_blocked_when_reserved_present(authed_client, db):
+    """Future-proof reserved rows if reservations gain storage locations."""
+    pid = _create_part(authed_client, "Reserved Cap")
+    sid = _create_storage(authed_client, "Reserved Shelf")
+    workspace_id = _current_workspace_id(authed_client)
+
+    db.add(
+        StockEntry(
+            workspace_id=workspace_id,
+            part_id=uuid.UUID(pid),
+            storage_location_id=uuid.UUID(sid),
+            quantity_delta=4,
+            status="reserved",
+            operation_type="reserve",
+        )
+    )
+    db.flush()
+
+    r = authed_client.post(f"/api/storage/{sid}/archive")
+    assert r.status_code == 409, r.text
+    body = r.json()
+    assert body["status"]["category"] == "conflict"
+    assert body["blocking"] == [{"part_id": pid, "lot_id": None, "quantity": 4}]
