@@ -221,7 +221,7 @@ export default function PartCreate() {
           </div>
           {datasheetUrl && (
             <div className="text-xs text-muted mt-1">
-              Datasheet: <a className="underline" href={datasheetUrl} target="_blank" rel="noreferrer">{datasheetUrl}</a>
+              Datasheet: <a className="underline" href={datasheetUrl} target="_blank" rel="noopener noreferrer">{datasheetUrl}</a>
             </div>
           )}
         </div>

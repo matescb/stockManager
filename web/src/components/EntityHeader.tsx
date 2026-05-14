@@ -45,7 +45,7 @@ export default function EntityHeader({
             <a
               href={imageUrl}
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               className="shrink-0 block"
               aria-label="Open full image"
             >

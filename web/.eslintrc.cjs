@@ -44,6 +44,10 @@ module.exports = {
         message:
           "Do not pass sensitive identifiers to Sentry.logger.*; log a redacted scalar or omit the field.",
       },
+      {
+        selector: 'JSXAttribute[name.name="rel"][value.value="noreferrer"]',
+        message: 'External links must use rel="noopener noreferrer".',
+      },
     ],
   },
   ignorePatterns: [
