@@ -4,8 +4,8 @@ Goals
 -----
 * Avoid burning upstream API quota on repeated lookups for the same MPN
   (e.g. scan-to-import batch, operator refreshing the same part repeatedly).
-* Return fast synthetic failures when a provider's upstream is clearly down
-  rather than stalling the only uvicorn worker for 8 s × N consecutive calls.
+* Fail fast when a provider's upstream is clearly down rather than stalling
+  the only uvicorn worker for 8 s × N consecutive calls.
 
 Design notes
 ------------
@@ -24,8 +24,8 @@ What is cached
 
 Circuit breaker
     Five consecutive failures → breaker opens for 60 s.  While open, calls
-    return `{"found": False, "message": "provider temporarily unavailable"}`
-    without hitting the network.  The counter resets on any success.
+    raise `ProviderUpstreamError` without hitting the network.  The counter
+    resets on any success.
 
     Per-provider, per-process state (in-memory dict).  Not persisted across
     restarts (CLAUDE.md hard constraint: `--workers 1` in prod).
@@ -39,6 +39,8 @@ from __future__ import annotations
 import time
 from collections import OrderedDict
 from typing import TYPE_CHECKING
+
+from app.domain.parts.providers.base import ProviderUpstreamError
 
 if TYPE_CHECKING:
     from app.domain.parts.providers.base import MpnLookupResult, PartsProvider
@@ -181,14 +183,18 @@ def lookup_with_cache(provider: "PartsProvider", mpn: str) -> "MpnLookupResult":
     #    failing.  This keeps the single uvicorn worker from stalling on a
     #    misbehaving upstream.
     if breaker.is_open:
-        return {
-            "found": False,
-            "result": None,
-            "message": "provider temporarily unavailable (circuit breaker open)",
-        }
+        raise ProviderUpstreamError(
+            provider.name,
+            "provider temporarily unavailable (circuit breaker open)",
+            status_code=503,
+        )
 
     # 3. Live call.
-    result = provider.lookup_mpn(normalized_mpn)
+    try:
+        result = provider.lookup_mpn(normalized_mpn)
+    except ProviderUpstreamError:
+        breaker.record_failure()
+        raise
 
     # 4. Update breaker state.
     if result.get("found"):
@@ -232,14 +238,18 @@ def lookup_fresh(provider: "PartsProvider", mpn: str) -> "MpnLookupResult":
     # Circuit breaker still applies — a manual refresh into a broken upstream
     # should fail fast, not pin the only uvicorn worker for 8 s.
     if breaker.is_open:
-        return {
-            "found": False,
-            "result": None,
-            "message": "provider temporarily unavailable (circuit breaker open)",
-        }
+        raise ProviderUpstreamError(
+            provider.name,
+            "provider temporarily unavailable (circuit breaker open)",
+            status_code=503,
+        )
 
     # Live call — deliberately no cache read here.
-    result = provider.lookup_mpn(normalized_mpn)
+    try:
+        result = provider.lookup_mpn(normalized_mpn)
+    except ProviderUpstreamError:
+        breaker.record_failure()
+        raise
 
     # Update breaker state.
     if result.get("found"):

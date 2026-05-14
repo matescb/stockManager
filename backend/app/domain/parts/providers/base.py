@@ -9,6 +9,22 @@ from __future__ import annotations
 from typing import Optional, Protocol, TypedDict
 
 
+class ProviderUpstreamError(Exception):
+    """Provider transport/server failure that callers should surface as 5xx."""
+
+    def __init__(
+        self,
+        provider: str,
+        message: str,
+        *,
+        status_code: int = 502,
+    ) -> None:
+        super().__init__(message)
+        self.provider = provider
+        self.message = message
+        self.status_code = status_code
+
+
 class MpnLookupResult(TypedDict, total=False):
     """The shape returned by every provider's `lookup_mpn`."""
     found: bool

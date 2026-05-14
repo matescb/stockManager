@@ -507,9 +507,7 @@ def test_bulk_import_provider_exception_does_not_abort_batch(authed, monkeypatch
     )
     assert r.status_code == 200, r.text
     statuses = [row["status"] for row in r.json()["data"]["rows"]]
-    # Mouser provider catches RuntimeError internally and returns
-    # `{"found": False, "message": "..."}`, so the row resolves as
-    # `lookup_failed` rather than `row_failed`. Either way, the
+    # Provider exceptions resolve as per-row lookup_failed results; the
     # surrounding batch keeps processing — that's the load-bearing pin.
     assert statuses[0] == "created"
     assert statuses[1] == "lookup_failed"

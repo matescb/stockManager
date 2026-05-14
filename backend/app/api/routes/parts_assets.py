@@ -30,6 +30,7 @@ from app.core.time import utcnow
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.provider_fields import PROVIDER_ASSET_CUSTOM_FIELD_KINDS
 from app.domain.parts.providers import make_provider
+from app.domain.parts.providers.base import ProviderUpstreamError
 from app.domain.parts.services.assets import fetch_provider_asset
 from app.domain.parts.services.provider_cache import lookup_fresh
 from app.domain.stock.service import reserved_quantity, total_for_part
@@ -151,7 +152,13 @@ def refresh_from_provider(
     # Use lookup_fresh (not lookup_with_cache) — the operator explicitly
     # triggered a refresh, so we always hit upstream.  The fresh result is
     # written back to the cache so subsequent lookup_with_cache calls see it.
-    out = lookup_fresh(provider, p.mpn.strip())
+    try:
+        out = lookup_fresh(provider, p.mpn.strip())
+    except ProviderUpstreamError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"message": exc.message, "provider": exc.provider},
+        ) from exc
     if not out.get("found") or not out.get("result"):
         return ok(
             {
