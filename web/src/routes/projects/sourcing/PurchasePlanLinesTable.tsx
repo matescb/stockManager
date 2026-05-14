@@ -90,6 +90,7 @@ export default function PurchasePlanLinesTable({
         <button
           type="button"
           className={overrides[line.id] ? "btn-primary" : "btn"}
+          data-testid={`override-button-${line.id}`}
           onClick={() => onOverride(line)}
         >
           Override
