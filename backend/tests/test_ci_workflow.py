@@ -72,6 +72,30 @@ def test_deploy_gates_on_green_main():
     assert "web-build" in needs, "deploy does not depend on web-build"
 
 
+def _deploy_ssh_step() -> dict:
+    data = _load()
+    deploy = data["jobs"]["deploy"]
+    for step in deploy["steps"]:
+        if "appleboy/ssh-action" in step.get("uses", ""):
+            return step
+    raise AssertionError("deploy job does not use appleboy/ssh-action")
+
+
+def test_deploy_bootstraps_missing_password_pepper_before_compose_up():
+    step = _deploy_ssh_step()
+    script = step["with"]["script"]
+
+    assert "PASSWORD_PEPPER was missing in .env.prod" in script
+    assert "secrets.token_hex(32)" in script
+    assert script.index("PASSWORD_PEPPER") < script.index("docker compose")
+    assert "logs --tail=120 backend" in script
+
+
+def test_deploy_does_not_use_ignored_ssh_action_script_stop():
+    step = _deploy_ssh_step()
+    assert "script_stop" not in step.get("with", {})
+
+
 # ── INFRA-004: reproducible backend builds via uv lockfile ──────────────────
 
 
