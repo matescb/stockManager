@@ -6,9 +6,8 @@ import { defineConfig, devices } from "@playwright/test";
  * Local: assumes `docker compose up` is running on
  * http://localhost:5173. Use `npm run test:e2e` to run.
  *
- * CI: runs in the `playwright-e2e` GitHub Actions job (see #256),
- * which brings up the dev docker-compose stack and polls /api/health
- * before invoking `npx playwright test --grep @smoke`.
+ * CI: runs `@smoke` in the `playwright-e2e` job against dev compose, and
+ * `@prod-smoke` in `prod-validate` against docker-compose.prod.yml.
  * The suite is opt-in via `npm run test:e2e` so the default
  * `npm test` (vitest) keeps doing what it does.
  */
