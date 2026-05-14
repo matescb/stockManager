@@ -788,7 +788,6 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           # If the VPS's host key ever rotates, pin it via `fingerprint:` here
           # (SHA256 form, captured with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`).
-          script_stop: true
           script: |
             set -euo pipefail
             cd /srv/stockmanager
@@ -803,12 +802,57 @@ jobs:
             export SENTRY_RELEASE
             SENTRY_RELEASE=$(git rev-parse --short=12 HEAD)
 
+            if [ ! -f .env.prod ]; then
+              echo ".env.prod is missing on the VPS; aborting before touching containers."
+              exit 1
+            fi
+
+            # AUD-022 introduced mandatory PASSWORD_PEPPER. Older prod env files
+            # predate that setting, so bootstrap it once on the VPS without
+            # logging the value. Legacy unpeppered hashes verify and rehash on
+            # successful login; after this deploy, operators must escrow the
+            # generated value from /srv/stockmanager/.env.prod.
+            python3 - <<'PY'
+            from pathlib import Path
+            import os
+            import secrets
+
+            env_path = Path(".env.prod")
+            lines = env_path.read_text().splitlines()
+            for idx, line in enumerate(lines):
+                if line.startswith("PASSWORD_PEPPER="):
+                    if line.split("=", 1)[1].strip():
+                        print("PASSWORD_PEPPER present in .env.prod.")
+                        raise SystemExit(0)
+                    lines[idx] = f"PASSWORD_PEPPER={secrets.token_hex(32)}"
+                    break
+            else:
+                if lines and lines[-1] != "":
+                    lines.append("")
+                lines.append(f"PASSWORD_PEPPER={secrets.token_hex(32)}")
+
+            env_path.write_text("\n".join(lines) + "\n")
+            os.chmod(env_path, 0o600)
+            print(
+                "PASSWORD_PEPPER was missing in .env.prod; generated and "
+                "stored on the VPS (value not logged). Escrow it from "
+                "/srv/stockmanager/.env.prod."
+            )
+            PY
+
             # FB-005: keep users on the static Apache page during the deploy
             # window. The trap is deliberately registered before the first
             # deploy-side effect so failed dumps, builds, migrations, or health
             # gates do not leave maintenance mode enabled indefinitely.
-            trap 'sudo a2disconf parts-maintenance && sudo systemctl reload apache2 || true' EXIT
-            sudo a2enconf parts-maintenance && sudo systemctl reload apache2
+            disable_maintenance() {
+              sudo -n a2disconf parts-maintenance && sudo -n systemctl reload apache2 || true
+            }
+            trap disable_maintenance EXIT
+            if sudo -n a2enconf parts-maintenance && sudo -n systemctl reload apache2; then
+              echo "Apache maintenance mode enabled for deploy."
+            else
+              echo "WARNING: could not enable Apache maintenance mode; continuing deploy."
+            fi
 
             # Pre-deploy DB snapshot (INFRA2-001 / Infra CRIT-1).
             # Runs before `docker compose up` so the pre-migration state
@@ -817,7 +861,15 @@ jobs:
             # containers keep serving the old code.
             bash deploy/predeploy-dump.sh "${SENTRY_RELEASE}"
 
-            docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+            if ! docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build; then
+              echo "docker compose up failed — current service state:"
+              docker compose -f docker-compose.prod.yml --env-file .env.prod ps || true
+              echo "--- backend-init logs (tail) ---"
+              docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=120 backend-init || true
+              echo "--- backend logs (tail) ---"
+              docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=120 backend || true
+              exit 1
+            fi
             docker image prune -f
 
             # Post-deploy health gate (INFRA2-002 / Infra HIGH-1/7/8).
