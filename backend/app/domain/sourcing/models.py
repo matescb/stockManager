@@ -181,7 +181,15 @@ class PurchasePlanLine(Base):
         ForeignKey("purchase_plans.id", ondelete="CASCADE"),
         nullable=False,
     )
-    project_entry_id = Column(UUID(as_uuid=True), nullable=True)
+    project_entry_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "project_entries.id",
+            name="fk_purchase_plan_lines_project_entry_id_project_entries",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
     part_id = Column(
         UUID(as_uuid=True),
         ForeignKey("parts.id", ondelete="CASCADE"),
