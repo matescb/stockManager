@@ -33,6 +33,7 @@ const COLUMNS = [
 
 beforeEach(() => {
   cleanup();
+  localStorage.clear();
 });
 
 describe("DataTable (DOM)", () => {
@@ -208,5 +209,43 @@ describe("DataTable (DOM)", () => {
       .getAllByRole("checkbox")
       .filter((c) => c.getAttribute("aria-label") === "Deselect row");
     expect(afterPrune.length).toBe(1);
+  });
+
+  it("resets persisted column prefs when the workspace changes", () => {
+    localStorage.setItem("workspaceId", "ws-a");
+    const { rerender } = render(
+      <DataTable<Row>
+        rows={ROWS}
+        columns={COLUMNS}
+        rowKey={(r) => r.id}
+        tableId="prefs-test"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Qty" }));
+    expect(screen.queryByRole("columnheader", { name: /qty/i })).toBeNull();
+    expect(localStorage.getItem("ws:ws-a:dt:prefs-test")).toContain('"qty":true');
+
+    localStorage.setItem("workspaceId", "ws-b");
+    rerender(
+      <DataTable<Row>
+        rows={ROWS}
+        columns={COLUMNS}
+        rowKey={(r) => r.id}
+        tableId="prefs-test"
+      />,
+    );
+    expect(screen.getByRole("columnheader", { name: /qty/i })).toBeDefined();
+
+    localStorage.setItem("workspaceId", "ws-a");
+    rerender(
+      <DataTable<Row>
+        rows={ROWS}
+        columns={COLUMNS}
+        rowKey={(r) => r.id}
+        tableId="prefs-test"
+      />,
+    );
+    expect(screen.queryByRole("columnheader", { name: /qty/i })).toBeNull();
   });
 });

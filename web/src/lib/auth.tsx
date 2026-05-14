@@ -1,5 +1,4 @@
 import {
-  createContext,
   ReactNode,
   useCallback,
   useContext,
@@ -11,21 +10,12 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import * as Sentry from "@sentry/react";
 import { api, ApiError } from "./api";
+import { AuthCtx, useOptionalAuth, type AuthContextValue } from "./authContext";
 import { authBus } from "./queryKeys";
 import { MeSchema, type Me } from "./schemas";
 
 export type { Me };
-
-type Ctx = {
-  me: Me | null;
-  loading: boolean;
-  refresh: () => Promise<void>;
-  logout: () => Promise<void>;
-  workspaceId: string | null;
-  switchWorkspace: (id: string) => Promise<void>;
-};
-
-const AuthCtx = createContext<Ctx | undefined>(undefined);
+export { useOptionalAuth };
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
@@ -167,7 +157,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useAuth(): Ctx {
+export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthCtx);
   if (!ctx) throw new Error("useAuth must be used inside <AuthProvider>");
   return ctx;
