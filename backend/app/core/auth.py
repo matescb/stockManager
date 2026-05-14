@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 import httpx
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError
+from argon2.exceptions import InvalidHashError, VerificationError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -125,7 +125,7 @@ def validate_password_strength(password: str) -> None:
 def verify_password(hash_: str, password: str) -> bool:
     try:
         return _hasher.verify(hash_, password)
-    except VerifyMismatchError:
+    except (VerificationError, InvalidHashError):
         return False
 
 
