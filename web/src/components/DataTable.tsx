@@ -1,6 +1,7 @@
-import React, { ReactNode, useEffect, useMemo, useState } from "react";
+import React, { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Rows3, Rows4 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { useOptionalAuth } from "@/lib/auth";
 
 // ---------------------------------------------------------------------
 // CSV-export helpers — extracted so they can be unit-tested without
@@ -114,18 +115,44 @@ type Props<T> = {
 
 type Persisted = { hidden?: Record<string, boolean>; density?: Density };
 
-function loadPersisted(tableId: string | undefined): Persisted {
-  if (!tableId) return {};
+export function dataTableStorageKey(
+  tableId: string | undefined,
+  workspaceId: string | null | undefined,
+): string | undefined {
+  if (!tableId) return undefined;
+  return `ws:${workspaceId ?? "none"}:dt:${tableId}`;
+}
+
+function loadPersisted(storageKey: string | undefined): Persisted {
+  if (!storageKey) return {};
   try {
-    return JSON.parse(localStorage.getItem(`dt:${tableId}`) || "{}");
+    return JSON.parse(localStorage.getItem(storageKey) || "{}");
   } catch {
     return {};
   }
 }
 
-function savePersisted(tableId: string | undefined, p: Persisted) {
-  if (!tableId) return;
-  localStorage.setItem(`dt:${tableId}`, JSON.stringify(p));
+function savePersisted(storageKey: string | undefined, p: Persisted) {
+  if (!storageKey) return;
+  localStorage.setItem(storageKey, JSON.stringify(p));
+}
+
+function storedWorkspaceId(): string | null {
+  try {
+    return localStorage.getItem("workspaceId");
+  } catch {
+    return null;
+  }
+}
+
+function initialHiddenFor<T>(
+  columns: Column<T>[],
+  persistedHidden: Persisted["hidden"],
+): Record<string, boolean> {
+  return {
+    ...Object.fromEntries(columns.filter(c => c.hidden).map(c => [c.key, true])),
+    ...(persistedHidden ?? {}),
+  };
 }
 
 function defaultAlignFor<T>(col: Column<T>, sample: T | undefined): Align {
@@ -155,17 +182,26 @@ export function DataTable<T>({
   selectable = false,
   selectionAccessory,
 }: Props<T>) {
-  const persisted = useMemo(() => loadPersisted(tableId), [tableId]);
+  const auth = useOptionalAuth();
+  const workspaceId = auth ? auth.workspaceId : storedWorkspaceId();
+  const storageKey = useMemo(
+    () => dataTableStorageKey(tableId, workspaceId),
+    [tableId, workspaceId],
+  );
+  const columnsRef = useRef(columns);
+  const activeStorageKeyRef = useRef(storageKey);
+
+  useEffect(() => {
+    columnsRef.current = columns;
+  }, [columns]);
 
   const [search, setSearch] = useState(initialSearch ?? "");
   const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
-  const [hidden, setHidden] = useState<Record<string, boolean>>(
-    () => ({
-      ...Object.fromEntries(columns.filter(c => c.hidden).map(c => [c.key, true])),
-      ...(persisted.hidden ?? {}),
-    })
-  );
-  const [density, setDensity] = useState<Density>(() => persisted.density ?? "comfortable");
+  const [hidden, setHidden] = useState<Record<string, boolean>>(() => {
+    const persisted = loadPersisted(storageKey);
+    return initialHiddenFor(columns, persisted.hidden);
+  });
+  const [density, setDensity] = useState<Density>(() => loadPersisted(storageKey).density ?? "comfortable");
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
 
   function toggleSelected(id: string) {
@@ -179,8 +215,17 @@ export function DataTable<T>({
   function clearSelection() { setSelected(new Set()); }
 
   useEffect(() => {
-    savePersisted(tableId, { hidden, density });
-  }, [tableId, hidden, density]);
+    if (activeStorageKeyRef.current !== storageKey) return;
+    savePersisted(storageKey, { hidden, density });
+  }, [storageKey, hidden, density]);
+
+  useEffect(() => {
+    if (activeStorageKeyRef.current === storageKey) return;
+    activeStorageKeyRef.current = storageKey;
+    const persisted = loadPersisted(storageKey);
+    setHidden(initialHiddenFor(columnsRef.current, persisted.hidden));
+    setDensity(persisted.density ?? "comfortable");
+  }, [storageKey]);
 
   // FE2-007 — clear the selection set whenever the table changes
   // identity. Without this, navigating from /parts to /orders carried

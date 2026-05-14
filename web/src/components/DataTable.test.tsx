@@ -9,7 +9,7 @@
  * tests pure and deterministic.
  */
 import { describe, expect, it } from "vitest";
-import { buildCsv, escapeCsvCell, pruneSelection } from "./DataTable";
+import { buildCsv, dataTableStorageKey, escapeCsvCell, pruneSelection } from "./DataTable";
 
 describe("escapeCsvCell — formula injection mitigation", () => {
   it("prefixes a leading '=' with a quote", () => {
@@ -93,5 +93,14 @@ describe("pruneSelection", () => {
     const next = pruneSelection(sel, ["b", "a"]);
     expect(next.has("a")).toBe(true);
     expect(next.has("b")).toBe(true);
+  });
+});
+
+describe("DataTable persistence", () => {
+  it("test_prefs_per_workspace", () => {
+    expect(dataTableStorageKey("parts", "ws-a")).toBe("ws:ws-a:dt:parts");
+    expect(dataTableStorageKey("parts", "ws-b")).toBe("ws:ws-b:dt:parts");
+    expect(dataTableStorageKey("parts", undefined)).toBe("ws:none:dt:parts");
+    expect(dataTableStorageKey(undefined, "ws-a")).toBeUndefined();
   });
 });
