@@ -16,6 +16,7 @@ Related runbooks: see `docs/deployment.md` for general VPS operations and the
 | Secret | Location | Used by | Blast radius if leaked | Escrow location | Rotation cadence |
 |--------|----------|---------|------------------------|-----------------|------------------|
 | `SESSION_SECRET` | `.env.prod` on VPS | backend (session signing) | Attacker can forge login sessions | Operator password manager alongside `WORKSPACE_SECRETS_KEY` | Annual; on personnel change; on leak |
+| `PASSWORD_PEPPER` | `.env.prod` on VPS | backend password hashing | Helps verify guessed passwords if DB hashes are leaked; losing/changing it blocks login for peppered hashes | Operator password manager alongside `SESSION_SECRET` | Annual only with planned password reset / migration; immediately on leak |
 | `POSTGRES_PASSWORD` | `.env.prod` on VPS | backend (DB connection), `db` service init | Full DB read/write access from inside the docker network | Operator password manager | Annual; on personnel change; on leak |
 | `WORKSPACE_SECRETS_KEY` | `.env.prod` on VPS | backend (`core/secrets.py`) | Decrypts every stored provider API key / secret / scanner licence key for every workspace | Operator password manager — **escrow is mandatory; losing it is unrecoverable** | Annual; on personnel change; on leak |
 | `SENTRY_DSN` | `.env.prod` on VPS | backend SDK init | Attacker can inject fake events; exposes project DSN URL | Sentry project settings page | Annual; on personnel change; on leak |
@@ -61,7 +62,27 @@ every logged-in user is logged out.  No data loss.
 
 ---
 
-### 2.2 `POSTGRES_PASSWORD`
+### 2.2 `PASSWORD_PEPPER`
+
+**Effect of rotation:** passwords already rehashed with the old pepper will no
+longer verify. Do not rotate this like a routine stateless secret unless you are
+also running a planned password-reset campaign or a purpose-built migration.
+
+**Steps for suspected leak:**
+
+1. Treat the database password hashes as exposed; the pepper no longer provides
+   its intended second factor.
+2. Force a password reset for all users before replacing the value.
+3. Generate a new pepper:
+   ```bash
+   openssl rand -hex 32
+   ```
+4. Edit `.env.prod` and replace `PASSWORD_PEPPER=<OLD>` with the new value.
+5. Restart every backend/cron service with the normal env-change procedure.
+
+---
+
+### 2.3 `POSTGRES_PASSWORD`
 
 **Effect of rotation:** brief downtime (~5 s) while the backend container
 restarts.  The Postgres volume password must be changed **inside Postgres
@@ -101,7 +122,7 @@ on next restart.
 
 ---
 
-### 2.3 `SENTRY_DSN` / `VITE_SENTRY_DSN`
+### 2.4 `SENTRY_DSN` / `VITE_SENTRY_DSN`
 
 **Effect of rotation:** no outage.  In-flight events still land on Sentry
 (the old DSN stays valid until explicitly revoked).  The frontend DSN is baked
@@ -136,7 +157,7 @@ frontend DSN.
 
 ---
 
-### 2.4 `SENTRY_AUTH_TOKEN`
+### 2.5 `SENTRY_AUTH_TOKEN`
 
 **Note (INFRA2-010):** this token lives **only** in GitHub Actions secrets.  It
 must **never** appear in `.env.prod` or as a Docker build arg — doing so would
@@ -157,7 +178,7 @@ embed it in the layer cache.
 
 ---
 
-### 2.5 `DEPLOY_SSH_KEY`
+### 2.6 `DEPLOY_SSH_KEY`
 
 **Effect of rotation:** CI cannot deploy until both the GitHub Actions secret
 and the VPS `authorized_keys` are updated.  Do both changes before the next
@@ -207,7 +228,7 @@ push to `main`.
 
 ---
 
-### 2.6 `WORKSPACE_SECRETS_KEY` — the complex one
+### 2.7 `WORKSPACE_SECRETS_KEY` — the complex one
 
 **Background:** `WORKSPACE_SECRETS_KEY` is a Fernet key
 (`cryptography.fernet.Fernet`).  Every workspace's provider API key, provider

@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Request, Response, status
 
 from app.core.auth import (
+    PasswordVerifyResult,
     WeakPasswordError,
     check_login_lockout,
     clear_login_failures,
@@ -18,7 +19,10 @@ from app.core.auth import (
     revoke_all_user_sessions,
     revoke_session,
     validate_password_strength,
-    verify_password,
+    verify_password_with_rehash,
+)
+from app.core.auth import (
+    verify_password as _verify_password,
 )
 from app.core.config import settings
 from app.core.cookies import (
@@ -47,6 +51,13 @@ _DUMMY_ARGON2 = (
     "$argon2id$v=19$m=65536,t=3,p=4$"
     "yEZFbIMmBabse2MdUks7RA$Iggj8Dn26NU39IQQb7Vs8ADgvJayYRb194wtzFzGsF0"
 )
+verify_password = _verify_password
+
+
+def _verify_password_for_login(hash_: str, password: str) -> PasswordVerifyResult:
+    if verify_password is _verify_password:
+        return verify_password_with_rehash(hash_, password)
+    return PasswordVerifyResult(valid=verify_password(hash_, password))
 
 
 def _set_session_cookie(response: Response, token: str) -> None:
@@ -385,8 +396,8 @@ def login(
 
     user = db.query(User).filter(User.email == payload.email).first()
     password_hash = user.password_hash if user is not None else _DUMMY_ARGON2
-    password_valid = verify_password(password_hash, payload.password)
-    if user is None or not password_valid:
+    password_result = _verify_password_for_login(password_hash, payload.password)
+    if user is None or not password_result.valid:
         # Record the failure before raising so the row is committed even
         # though the route exits via HTTPException.  The DB session is
         # committed by the dep on clean exit; on exception we must flush
@@ -413,6 +424,8 @@ def login(
 
     # Success: clear the failure counter, rotate session.
     clear_login_failures(db, email=payload.email)
+    if password_result.rehash is not None:
+        user.password_hash = password_result.rehash
     # SEC2-015 — session rotation on login.
     revoke_all_user_sessions(db, user.id)
     sess = create_session_row(db, user.id)

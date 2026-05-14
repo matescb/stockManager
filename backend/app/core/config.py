@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     POSTGRES_HOST: str = "db"
     POSTGRES_PORT: str = "5432"
     SESSION_SECRET: str = "dev-secret-change-me"
+    PASSWORD_PEPPER: str = ""
     SESSION_COOKIE_NAME: str = "stockmgr_session"
     SESSION_LIFETIME_DAYS: int = 30
     # Sliding-expiry idle window. A session idle longer than this is
@@ -161,6 +162,15 @@ class Settings(BaseSettings):
                 "Generate one with: "
                 'python -c "from cryptography.fernet import Fernet; '
                 'print(Fernet.generate_key().decode())"'
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_password_pepper_in_prod(self) -> "Settings":
+        if self.APP_ENV == "prod" and not self.PASSWORD_PEPPER:
+            raise ValueError(
+                "PASSWORD_PEPPER is required when APP_ENV=prod. Generate a high-entropy "
+                "secret and escrow it alongside SESSION_SECRET."
             )
         return self
 
