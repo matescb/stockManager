@@ -201,6 +201,8 @@ services:
       MAIL_FROM: ${MAIL_FROM}
       APP_BASE_URL: ${APP_BASE_URL}
     depends_on:
+      backend-init:
+        condition: service_completed_successfully
       backend:
         condition: service_healthy
     healthcheck:
@@ -254,6 +256,8 @@ services:
       MAIL_FROM: ${MAIL_FROM}
       APP_BASE_URL: ${APP_BASE_URL}
     depends_on:
+      backend-init:
+        condition: service_completed_successfully
       backend:
         condition: service_healthy
     healthcheck:
@@ -307,6 +311,8 @@ services:
       MAIL_FROM: ${MAIL_FROM}
       APP_BASE_URL: ${APP_BASE_URL}
     depends_on:
+      backend-init:
+        condition: service_completed_successfully
       backend:
         condition: service_healthy
     healthcheck:
