@@ -213,6 +213,7 @@ def test_invalid_conversion_override_persists_no_orders(authed_client, db):
     )
 
     assert r.status_code == 422, r.text
+    assert r.json()["code"] == "sourcing.override_invalid"
     assert "cached offers" in r.json()["status"]["message"]
     assert db.execute(select(func.count()).select_from(Order)).scalar_one() == 0
     assert db.execute(select(func.count()).select_from(OrderEntry)).scalar_one() == 0
@@ -296,6 +297,7 @@ def test_override_mixed_currency_guard_persists_no_orders(authed_client, db):
     )
 
     assert r.status_code == 422, r.text
+    assert r.json()["code"] == "sourcing.currency_mismatch"
     assert "mixed currencies" in r.json()["status"]["message"]
     assert db.execute(select(func.count()).select_from(Order)).scalar_one() == 0
     assert db.execute(select(func.count()).select_from(OrderEntry)).scalar_one() == 0
