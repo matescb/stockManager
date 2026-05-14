@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { readBarcodes, prepareZXingModule, type ReadInputBarcodeFormat } from "zxing-wasm/reader";
+import { useAuth } from "@/lib/auth";
+import { scannerDevicePreferenceKey } from "./storage";
 
 /**
  * Open-source ZXing-C++ wasm decoder. Default scanner backend so workspaces
@@ -57,7 +59,6 @@ const DEFAULT_SYMBOLOGIES = ["Code128", "Code39", "QR", "DataMatrix", "PDF417"];
 
 const SCAN_PERIOD_MS = 160;        // ~6 Hz; ZXing on a recent phone returns in ~30-80ms
 const DUPLICATE_WINDOW_MS = 1200;  // suppress repeated reads of the same code
-const DEVICE_PREF_KEY = "scanner.deviceId";
 
 /**
  * Audible + haptic feedback when a code lands. Scandit's SDK does this
@@ -110,6 +111,8 @@ type Props = {
 };
 
 export default function ZxingScanner({ onScan, className, symbologies }: Props) {
+  const { workspaceId } = useAuth();
+  const devicePrefKey = scannerDevicePreferenceKey(workspaceId);
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastHitRef = useRef<{ data: string; t: number } | null>(null);
   const trackRef = useRef<MediaStreamTrack | null>(null);
@@ -138,7 +141,7 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState<string | undefined>(() => {
     try {
-      return localStorage.getItem(DEVICE_PREF_KEY) || undefined;
+      return localStorage.getItem(devicePrefKey) || undefined;
     } catch {
       return undefined;
     }
@@ -150,6 +153,13 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
   // Mirror the live zoom values into refs the tick callback can read.
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
   useEffect(() => { zoomModeRef.current = zoomMode; }, [zoomMode]);
+  useEffect(() => {
+    try {
+      setDeviceId(localStorage.getItem(devicePrefKey) || undefined);
+    } catch {
+      setDeviceId(undefined);
+    }
+  }, [devicePrefKey]);
 
   // ---------------------------------------------------------------------
   // Camera + decoder loop. Restarts whenever the picked camera changes.
@@ -158,6 +168,7 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
     let stream: MediaStream | null = null;
     let timer: number | null = null;
     let stopped = false;
+    const videoElement = videoRef.current;
 
     // Read symbologies from the ref so the parent can pass an inline
     // array literal (memoised at the call site is preferred, but this
@@ -205,7 +216,7 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
           // unplugged, etc.). Drop the preference and fall back to defaults.
           const errName = e instanceof Error ? e.name : null;
           if (deviceId && errName === "OverconstrainedError") {
-            try { localStorage.removeItem(DEVICE_PREF_KEY); } catch {}
+            try { localStorage.removeItem(devicePrefKey); } catch {}
             stream = await navigator.mediaDevices.getUserMedia({
               video: { facingMode: { ideal: "environment" } },
               audio: false,
@@ -218,7 +229,7 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
           stream.getTracks().forEach(t => t.stop());
           return;
         }
-        const video = videoRef.current;
+        const video = videoElement;
         if (!video) throw new Error("Video element not mounted.");
         video.srcObject = stream;
         await video.play();
@@ -358,7 +369,7 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
       if (timer) window.clearTimeout(timer);
       if (stream) stream.getTracks().forEach(t => t.stop());
       trackRef.current = null;
-      const video = videoRef.current;
+      const video = videoElement;
       if (video) {
         video.pause();
         video.srcObject = null;
@@ -370,7 +381,7 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
     // reload. `symbologies` and `onScan` flow through refs (declared at
     // the top of the component) so a parent re-render with fresh closures
     // doesn't tear down the camera.
-  }, [deviceId, retryToken]);
+  }, [deviceId, devicePrefKey, retryToken]);
 
   // ---------------------------------------------------------------------
   // Apply zoom imperatively on the live track in hardware mode. Digital
@@ -392,8 +403,8 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
   function selectDevice(id: string) {
     setDeviceId(id);
     try {
-      if (id) localStorage.setItem(DEVICE_PREF_KEY, id);
-      else localStorage.removeItem(DEVICE_PREF_KEY);
+      if (id) localStorage.setItem(devicePrefKey, id);
+      else localStorage.removeItem(devicePrefKey);
     } catch { /* ignore quota / disabled storage */ }
   }
 
