@@ -864,6 +864,101 @@ def test_raw_insert_cross_workspace_default_storage_rejected():
             s.commit()
 
 
+def test_stock_entries_ws_trigger():
+    """AUD-052 / migration 0050. Direct SQL must not be able to attach a
+    stock_entries row to workspace-scoped objects from another workspace."""
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
+
+    from app.infra.db import SessionLocal
+
+    a = TestClient(app)
+    b = TestClient(app)
+    _signup(a, f"a-{uuid.uuid4().hex[:6]}@x.com")
+    ws_b = _signup(b, f"b-{uuid.uuid4().hex[:6]}@x.com")
+
+    part_a = _create_part(a, "A-stock-trigger-part")
+    part_b = _create_part(b, "B-stock-trigger-part")
+    storage_a = _create_storage(a, "A-stock-trigger-bin")
+    stock_a = _add_stock(
+        a,
+        part_id=part_a,
+        storage_id=storage_a,
+        quantity=5,
+        lot_name="A-stock-trigger-lot",
+    )
+    project_a = a.post("/api/projects", json={"name": "A-stock-trigger-project"}).json()[
+        "data"
+    ]["id"]
+    build_a = a.post(
+        "/api/builds",
+        json={"name": "A-stock-trigger-build", "project_id": project_a},
+    ).json()["data"]["id"]
+    order_a = a.post(
+        "/api/orders",
+        json={
+            "name": "A-stock-trigger-order",
+            "entries": [{"part_id": part_a, "quantity_ordered": 1}],
+        },
+    ).json()["data"]["id"]
+    order_entry_a = a.get(f"/api/orders/{order_a}").json()["data"]["entries"][0]["id"]
+
+    insert_sql = text(
+        "INSERT INTO stock_entries ("
+        "id, workspace_id, part_id, lot_id, storage_location_id, "
+        "quantity_delta, status, operation_type, related_entry_id, "
+        "order_id, order_entry_id, project_id, build_id, occurred_at, created_at"
+        ") VALUES ("
+        ":id, :workspace_id, :part_id, :lot_id, :storage_location_id, "
+        "1, 'on_hand', 'audit_probe', :related_entry_id, "
+        ":order_id, :order_entry_id, :project_id, :build_id, NOW(), NOW()"
+        ")"
+    )
+
+    def insert_stock_entry(**overrides):
+        params = {
+            "id": str(uuid.uuid4()),
+            "workspace_id": ws_b,
+            "part_id": part_b,
+            "lot_id": None,
+            "storage_location_id": None,
+            "related_entry_id": None,
+            "order_id": None,
+            "order_entry_id": None,
+            "project_id": None,
+            "build_id": None,
+        }
+        params.update(overrides)
+        with SessionLocal() as s:
+            s.execute(insert_sql, params)
+            s.commit()
+        return params["id"]
+
+    valid_entry_id = insert_stock_entry()
+
+    with SessionLocal() as s:
+        with pytest.raises((IntegrityError, ProgrammingError, DBAPIError)):
+            s.execute(
+                text("UPDATE stock_entries SET part_id = :part_id WHERE id = :id"),
+                {"part_id": part_a, "id": valid_entry_id},
+            )
+            s.commit()
+
+    cross_workspace_refs = [
+        {"part_id": part_a},
+        {"lot_id": stock_a["lot_id"]},
+        {"storage_location_id": storage_a},
+        {"related_entry_id": stock_a["id"]},
+        {"order_id": order_a},
+        {"order_entry_id": order_entry_a},
+        {"project_id": project_a},
+        {"build_id": build_a},
+    ]
+    for overrides in cross_workspace_refs:
+        with pytest.raises((IntegrityError, ProgrammingError, DBAPIError)):
+            insert_stock_entry(**overrides)
+
+
 def test_parts_bulk_import_rejects_foreign_storage():
     """bulk-import-from-scan must validate row.storage_location_id against
     the caller's workspace BEFORE creating the part. The whole-batch loop
