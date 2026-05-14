@@ -31,6 +31,7 @@ def test_prod_with_empty_smtp_fails_closed(monkeypatch):
 
     monkeypatch.setenv("APP_ENV", "prod")
     monkeypatch.setenv("WORKSPACE_SECRETS_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("PASSWORD_PEPPER", "test-pepper")
     # Leave SMTP_HOST etc. empty.
     for name in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD"):
         monkeypatch.delenv(name, raising=False)
@@ -54,6 +55,7 @@ def test_prod_with_dev_default_app_base_url_fails_closed(monkeypatch):
 
     monkeypatch.setenv("APP_ENV", "prod")
     monkeypatch.setenv("WORKSPACE_SECRETS_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("PASSWORD_PEPPER", "test-pepper")
     monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
     monkeypatch.setenv("SMTP_USER", "user")
     monkeypatch.setenv("SMTP_PASSWORD", "pw")
@@ -74,6 +76,7 @@ def test_prod_with_full_smtp_boots(monkeypatch):
 
     monkeypatch.setenv("APP_ENV", "prod")
     monkeypatch.setenv("WORKSPACE_SECRETS_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("PASSWORD_PEPPER", "test-pepper")
     monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
     monkeypatch.setenv("SMTP_USER", "user")
     monkeypatch.setenv("SMTP_PASSWORD", "pw")

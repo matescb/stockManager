@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 import secrets
 from dataclasses import dataclass
@@ -19,8 +20,46 @@ _log = logging.getLogger(__name__)
 _hasher = PasswordHasher()
 
 
+@dataclass(frozen=True)
+class PasswordVerifyResult:
+    valid: bool
+    rehash: str | None = None
+
+
+def _password_material(password: str) -> str:
+    pepper = settings().PASSWORD_PEPPER
+    if not pepper:
+        return password
+    return hmac.new(
+        pepper.encode("utf-8"),
+        password.encode("utf-8"),
+        "sha256",
+    ).hexdigest()
+
+
 def hash_password(password: str) -> str:
-    return _hasher.hash(password)
+    return _hasher.hash(_password_material(password))
+
+
+def verify_password_with_rehash(hash_: str, password: str) -> PasswordVerifyResult:
+    material = _password_material(password)
+    try:
+        if _hasher.verify(hash_, material):
+            rehash = _hasher.hash(material) if _hasher.check_needs_rehash(hash_) else None
+            return PasswordVerifyResult(valid=True, rehash=rehash)
+    except (VerificationError, InvalidHashError):
+        pass
+
+    if material == password:
+        return PasswordVerifyResult(valid=False)
+
+    try:
+        if _hasher.verify(hash_, password):
+            return PasswordVerifyResult(valid=True, rehash=hash_password(password))
+    except (VerificationError, InvalidHashError):
+        pass
+
+    return PasswordVerifyResult(valid=False)
 
 
 # Top weak passwords from public breach lists. Not exhaustive (HIBP
@@ -123,10 +162,7 @@ def validate_password_strength(password: str) -> None:
 
 
 def verify_password(hash_: str, password: str) -> bool:
-    try:
-        return _hasher.verify(hash_, password)
-    except (VerificationError, InvalidHashError):
-        return False
+    return verify_password_with_rehash(hash_, password).valid
 
 
 def new_session_token() -> str:

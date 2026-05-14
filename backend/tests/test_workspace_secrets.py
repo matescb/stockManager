@@ -42,7 +42,11 @@ def admin():
     c = TestClient(app)
     c.post(
         "/api/auth/signup",
-        json={"email": f"u-{uuid.uuid4().hex[:8]}@x.com", "name": "u", "password": "TestPass-2026-Stronk"},
+        json={
+            "email": f"u-{uuid.uuid4().hex[:8]}@x.com",
+            "name": "u",
+            "password": "TestPass-2026-Stronk",
+        },
     )
     return c
 
@@ -141,6 +145,7 @@ def test_prod_with_valid_workspace_secrets_key_boots(monkeypatch):
 
     monkeypatch.setenv("APP_ENV", "prod")
     monkeypatch.setenv("WORKSPACE_SECRETS_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("PASSWORD_PEPPER", "test-pepper")
     # Required by `_require_smtp_in_prod` (issue #281).
     monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
     monkeypatch.setenv("SMTP_USER", "user")

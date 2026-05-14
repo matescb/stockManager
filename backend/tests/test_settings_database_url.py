@@ -30,6 +30,7 @@ def _make_settings(env: dict, monkeypatch: pytest.MonkeyPatch):
         "POSTGRES_PORT",
         "APP_ENV",
         "SESSION_SECRET",
+        "PASSWORD_PEPPER",
         "WORKSPACE_SECRETS_KEY",
     ):
         monkeypatch.delenv(key, raising=False)
