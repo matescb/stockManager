@@ -38,6 +38,10 @@ log = get_logger(__name__)
 
 # How long a pending signup verification is valid (in hours).
 _VERIFY_TTL_HOURS = 24
+_DUMMY_ARGON2 = (
+    "$argon2id$v=19$m=65536,t=3,p=4$"
+    "yEZFbIMmBabse2MdUks7RA$Iggj8Dn26NU39IQQb7Vs8ADgvJayYRb194wtzFzGsF0"
+)
 
 
 def _set_session_cookie(response: Response, token: str) -> None:
@@ -179,7 +183,10 @@ def signup(
         _set_session_cookie(response, sess.token)
         log.info("signup (immediate)", extra={"user_id": str(user.id), "workspace_id": str(ws.id)})
         return ok(
-            {"user": {"id": str(user.id), "email": user.email, "name": user.name}, "workspace_id": str(ws.id)},
+            {
+                "user": {"id": str(user.id), "email": user.email, "name": user.name},
+                "workspace_id": str(ws.id),
+            },
         )
 
     # --- Prod path: email-verification two-step flow ---
@@ -343,7 +350,10 @@ def verify(
         extra={"user_id": str(user.id), "workspace_id": str(ws.id)},
     )
     return ok(
-        {"user": {"id": str(user.id), "email": user.email, "name": user.name}, "workspace_id": str(ws.id)},
+        {
+            "user": {"id": str(user.id), "email": user.email, "name": user.name},
+            "workspace_id": str(ws.id),
+        },
         "email verified",
     )
 
@@ -375,7 +385,9 @@ def login(
         )
 
     user = db.query(User).filter(User.email == payload.email).first()
-    if not user or not verify_password(user.password_hash, payload.password):
+    password_hash = user.password_hash if user is not None else _DUMMY_ARGON2
+    password_valid = verify_password(password_hash, payload.password)
+    if user is None or not password_valid:
         # Record the failure before raising so the row is committed even
         # though the route exits via HTTPException.  The DB session is
         # committed by the dep on clean exit; on exception we must flush
