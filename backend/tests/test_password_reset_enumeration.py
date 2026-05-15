@@ -31,7 +31,7 @@ def test_no_enumeration_on_request(client, db):
     assert known_response.json() == unknown_response.json()
     assert send_mail.call_count == 1
     assert hash_password.call_count == 2
-    assert db.query(PasswordResetRequest).count() == 2
+    assert db.query(PasswordResetRequest).count() == 1
 
 
 def test_no_enumeration_timing_parity(client):

@@ -206,6 +206,23 @@ def test_throttle_atomic_under_concurrency(db, monkeypatch):
     assert sum(1 for row in rows if row.token_hmac is not None) == 3
 
 
+def test_unknown_email_does_not_persist_row(client, db):
+    with (
+        patch("app.api.routes.auth.send_password_reset_email") as send_mail,
+        patch("app.api.routes.auth.hash_password", return_value="dummy-hash") as hash_password,
+    ):
+        response = client.post(
+            "/api/auth/request-password-reset",
+            json={"email": f"unknown-reset-{uuid.uuid4().hex[:8]}@example.com"},
+        )
+
+    assert response.status_code == 202, response.text
+    assert response.json()["data"] == {"status": "accepted"}
+    send_mail.assert_not_called()
+    hash_password.assert_called_once()
+    assert db.query(PasswordResetRequest).count() == 0
+
+
 def test_password_reset_request_audit_row(client, db):
     email = _signup(client)
 
