@@ -111,6 +111,8 @@ def test_deploy_uses_raw_ssh_instead_of_appleboy():
     assert "-o StrictHostKeyChecking=yes" in script
     assert '-o UserKnownHostsFile="${DEPLOY_KNOWN_HOSTS}"' in script
     assert "-o HostKeyAlgorithms=ssh-ed25519" in script
+    assert 'key.replace("\\\\n", "\\n")' in script
+    assert 'ssh-keygen -y -f "${key_file}" > /dev/null' in script
 
 
 def test_deploy_verifies_ed25519_host_fingerprint_before_raw_ssh():
