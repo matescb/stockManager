@@ -9,12 +9,20 @@ from tests._factories import signup_user
 
 
 def _cookie_from(response: Any, name: str) -> Morsel[str]:
+    cookies = _cookies_from(response, name)
+    if cookies:
+        return cookies[0]
+    raise AssertionError(f"missing Set-Cookie for {name}: {response.headers!r}")
+
+
+def _cookies_from(response: Any, name: str) -> list[Morsel[str]]:
+    out: list[Morsel[str]] = []
     for header in response.headers.get_list("set-cookie"):
         parsed = SimpleCookie()
         parsed.load(header)
         if name in parsed:
-            return parsed[name]
-    raise AssertionError(f"missing Set-Cookie for {name}: {response.headers!r}")
+            out.append(parsed[name])
+    return out
 
 
 def _security_attrs(cookie: Morsel[str]) -> dict[str, bool | str]:
@@ -52,12 +60,34 @@ def test_set_and_delete_attributes_match(client):
     logout = client.post("/api/auth/logout")
     assert logout.status_code == 200, logout.text
 
-    session_delete = _cookie_from(logout, session_cookie_name)
+    session_deletes = {cookie["path"]: cookie for cookie in _cookies_from(logout, session_cookie_name)}
+    assert {"/api", "/"}.issubset(session_deletes)
+
+    session_delete = session_deletes["/api"]
     assert session_delete.value == ""
     assert session_delete["max-age"] == "0"
     assert _security_attrs(session_delete) == _security_attrs(session_set)
 
-    workspace_delete = _cookie_from(logout, WORKSPACE_COOKIE_NAME)
+    legacy_session_delete = session_deletes["/"]
+    assert legacy_session_delete.value == ""
+    assert legacy_session_delete["max-age"] == "0"
+    assert _security_attrs(legacy_session_delete) == {
+        **_security_attrs(session_set),
+        "path": "/",
+    }
+
+    workspace_deletes = {cookie["path"]: cookie for cookie in _cookies_from(logout, WORKSPACE_COOKIE_NAME)}
+    assert {"/api", "/"}.issubset(workspace_deletes)
+
+    workspace_delete = workspace_deletes["/api"]
     assert workspace_delete.value == ""
     assert workspace_delete["max-age"] == "0"
     assert _security_attrs(workspace_delete) == _security_attrs(workspace_set)
+
+    legacy_workspace_delete = workspace_deletes["/"]
+    assert legacy_workspace_delete.value == ""
+    assert legacy_workspace_delete["max-age"] == "0"
+    assert _security_attrs(legacy_workspace_delete) == {
+        **_security_attrs(workspace_set),
+        "path": "/",
+    }

@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.routes._stock_integrity import raise_integrity_as_409
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
+from app.core.errors import ErrorCodes, raise_http
 from app.core.responses import Envelope, ok
 from app.domain.parts.services.bag_signature import compute_bag_signature
 from app.domain.stock.schemas import (
@@ -24,6 +25,23 @@ from app.domain.stock.service import (
 )
 
 router = APIRouter()
+
+
+def _validate_add_stock_currency(payload: AddStockIn, ws: CurrentWorkspace) -> None:
+    if payload.price is None or payload.price.mode == "none":
+        return
+    currency = (payload.price.currency or "").strip().upper()
+    active_currencies = ws.active_currencies or []
+    if currency not in active_currencies:
+        raise_http(
+            422,
+            ErrorCodes.STOCK_INVALID_CURRENCY,
+            "price.currency must be one of the workspace active currencies",
+            field="price.currency",
+            value=payload.price.currency,
+            active_currencies=active_currencies,
+        )
+    payload.price.currency = currency
 
 
 def _serialize_entry(e):
@@ -67,6 +85,7 @@ def add(
                     )
                 },
             )
+    _validate_add_stock_currency(payload, ws)
     try:
         e = add_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
     except StockConflictError as exc:

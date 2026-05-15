@@ -104,6 +104,76 @@ describe("Sentry beforeSend", () => {
     );
   });
 
+  it("test_beforesendtransaction_strips_query_string", async () => {
+    vi.resetModules();
+
+    const Sentry = await import("@sentry/react");
+    vi.mocked(Sentry.init).mockClear();
+
+    await import("./instrument");
+
+    const options = vi.mocked(Sentry.init).mock.calls[0]?.[0];
+    const beforeSendTransaction = options?.beforeSendTransaction;
+    expect(beforeSendTransaction).toBeTypeOf("function");
+    if (!beforeSendTransaction) {
+      throw new Error("Sentry beforeSendTransaction was not configured");
+    }
+
+    const event = {
+      type: "transaction",
+      transaction: "GET /parts/abc?token=secret#stock?tab=lots",
+      tags: {
+        url: "https://parts.matescb.cz/parts/abc?token=secret#stock?tab=lots",
+        route: "/parts/:id",
+      },
+      request: {
+        url: "https://parts.matescb.cz/api/parts?token=secret&workspace_id=ws",
+        query_string: "token=secret&workspace_id=ws",
+        method: "GET",
+        headers: {
+          Referer: "https://parts.matescb.cz/search?q=secret",
+          Cookie: "stockmgr_session=secret",
+        },
+      },
+      contexts: {
+        trace: {
+          data: {
+            "http.url": "https://parts.matescb.cz/api/parts?token=secret",
+            url: "/api/parts?workspace_id=ws",
+          },
+        },
+      },
+      spans: [
+        {
+          trace_id: "a".repeat(32),
+          span_id: "b".repeat(16),
+          start_timestamp: 1,
+          description: "GET /api/parts?token=secret",
+          data: {
+            "http.url": "https://parts.matescb.cz/api/parts?token=secret",
+            url: "/api/parts?workspace_id=ws",
+          },
+        },
+      ],
+    } as unknown as Parameters<typeof beforeSendTransaction>[0];
+
+    const scrubbed = await Promise.resolve(beforeSendTransaction(event, {}));
+
+    expect(scrubbed?.transaction).toBe("GET /parts/abc#stock");
+    expect(scrubbed?.tags?.url).toBe("https://parts.matescb.cz/parts/abc#stock");
+    expect(scrubbed?.request?.url).toBe("https://parts.matescb.cz/api/parts");
+    expect(scrubbed?.request?.query_string).toBeUndefined();
+    expect(scrubbed?.request?.headers?.Referer).toBe("https://parts.matescb.cz/search");
+    expect(scrubbed?.request?.headers?.Cookie).toBeUndefined();
+    expect(scrubbed?.contexts?.trace?.data?.["http.url"]).toBe("https://parts.matescb.cz/api/parts");
+    expect(scrubbed?.contexts?.trace?.data?.url).toBe("/api/parts");
+    expect(scrubbed?.spans?.[0]?.description).toBe("GET /api/parts");
+    expect(scrubbed?.spans?.[0]?.data?.["http.url"]).toBe("https://parts.matescb.cz/api/parts");
+    expect(scrubbed?.spans?.[0]?.data?.url).toBe("/api/parts");
+    expect(JSON.stringify(scrubbed)).not.toContain("secret");
+    expect(JSON.stringify(scrubbed)).not.toContain("?");
+  });
+
   it("test_init_uses_env_traces_rate", async () => {
     vi.resetModules();
     vi.stubEnv("VITE_SENTRY_TRACES_SAMPLE_RATE", "0.05");

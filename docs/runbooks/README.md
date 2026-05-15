@@ -27,6 +27,7 @@ How to handle ops scenarios. Each runbook follows the template in [STYLE.md](../
 | [incident-response](incident-response.md) | SEV-1/2 | Severity triage, comms cadence, post-mortem template |
 | [smtp-outage](smtp-outage.md) | SEV-2 | Signup verification + invitation emails fail; degraded paths |
 | [provider-outage](provider-outage.md) | SEV-2 | DigiKey or Mouser API unavailable; user-visible impact and mitigation |
+| [scan-import-retry](scan-import-retry.md) | SEV-3 | Retry scan-import safely without bypassing idempotency |
 | [workspace-recovery](workspace-recovery.md) | SEV-2 | Restore a disabled workspace, audit a suspected isolation leak |
 | [analytics-umami](analytics-umami.md) | Routine / SEV-3 | Self-hosted Umami: rotate website ID, disable tracking, debug a missing pageview |
 
