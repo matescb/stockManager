@@ -13,6 +13,8 @@ from uuid import uuid4
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.advisory_locks import RUN_JOB_LOCK_CLASSID
+
 logger = logging.getLogger(__name__)
 
 SessionFactory = Callable[[], Session]
@@ -36,13 +38,16 @@ class UnknownJobError(ValueError):
 
 
 def _acquire_job_lock(db: Session, job_name: str) -> bool:
-    # hashtext() returns int4, so different job names can theoretically
-    # collide. Acceptable for today's tiny allow-list; switch to explicit
-    # reserved bigint IDs or pg_try_advisory_xact_lock(classid, objid)
-    # before this grows into a broad scheduler.
+    # Class ID namespaces this feature from other hashtext-backed locks.
+    # hashtext() still returns int4, so job names can theoretically collide
+    # within the run-job namespace.
     result = db.execute(
-        text("SELECT pg_try_advisory_xact_lock(hashtext(:job_name))"),
-        {"job_name": job_name},
+        text(
+            "SELECT pg_try_advisory_xact_lock("
+            "CAST(:classid AS int4), CAST(hashtext(:job_name) AS int4)"
+            ")"
+        ),
+        {"classid": RUN_JOB_LOCK_CLASSID, "job_name": job_name},
     )
     return bool(result.scalar())
 
