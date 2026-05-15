@@ -138,6 +138,9 @@ describe("Sentry beforeSend", () => {
           "x-api-key": "provider-secret",
         },
       },
+      extra: {
+        url: "/foo?token=secret",
+      },
       contexts: {
         trace: {
           data: {
@@ -169,13 +172,13 @@ describe("Sentry beforeSend", () => {
     expect(scrubbed?.request?.headers?.Referer).toBe("https://parts.matescb.cz/search");
     expect(scrubbed?.request?.headers?.Cookie).toBeUndefined();
     expect(scrubbed?.request?.headers?.["x-api-key"]).toBeUndefined();
+    expect(scrubbed?.extra?.url).toBe("/foo?token=[Filtered]");
     expect(scrubbed?.contexts?.trace?.data?.["http.url"]).toBe("https://parts.matescb.cz/api/parts");
     expect(scrubbed?.contexts?.trace?.data?.url).toBe("/api/parts");
     expect(scrubbed?.spans?.[0]?.description).toBe("GET /api/parts");
     expect(scrubbed?.spans?.[0]?.data?.["http.url"]).toBe("https://parts.matescb.cz/api/parts");
     expect(scrubbed?.spans?.[0]?.data?.url).toBe("/api/parts");
     expect(JSON.stringify(scrubbed)).not.toContain("secret");
-    expect(JSON.stringify(scrubbed)).not.toContain("?");
   });
 
   it("test_init_uses_env_traces_rate", async () => {
