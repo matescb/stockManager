@@ -11,7 +11,6 @@ from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy import text
-from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -19,7 +18,6 @@ logger = logging.getLogger(__name__)
 SessionFactory = Callable[[], Session]
 JobCallable = Callable[[Session], int]
 HEARTBEAT_DIR = Path("/tmp/stockmanager-job-heartbeats")
-LOCK_NOT_AVAILABLE_SQLSTATE = "55P03"
 
 
 @dataclass(frozen=True)
@@ -37,19 +35,12 @@ class UnknownJobError(ValueError):
     """Raised when the requested job name is not registered."""
 
 
-def _is_lock_not_available(exc: DBAPIError) -> bool:
-    orig = getattr(exc, "orig", None)
-    return (
-        getattr(orig, "sqlstate", None) == LOCK_NOT_AVAILABLE_SQLSTATE
-        or getattr(orig, "pgcode", None) == LOCK_NOT_AVAILABLE_SQLSTATE
-    )
-
-
-def _acquire_job_lock(db: Session, job_name: str) -> None:
-    db.execute(
-        text("SELECT pg_advisory_xact_lock(hashtext(:job_name))"),
+def _acquire_job_lock(db: Session, job_name: str) -> bool:
+    result = db.execute(
+        text("SELECT pg_try_advisory_xact_lock(hashtext(:job_name))"),
         {"job_name": job_name},
     )
+    return bool(result.scalar())
 
 
 def _default_session_factory() -> Session:
@@ -121,14 +112,10 @@ def run_job(
 
     db = session_factory()
     try:
-        try:
-            _acquire_job_lock(db, job.name)
-        except DBAPIError as exc:
-            if _is_lock_not_available(exc):
-                db.rollback()
-                logger.info("job=%s status=skipped reason=lock_denied", job.name)
-                return 0
-            raise
+        if not _acquire_job_lock(db, job.name):
+            db.rollback()
+            logger.info("job=%s status=skipped reason=lock_denied", job.name)
+            return 0
         affected = job.run(db)
         db.commit()
     except Exception:
