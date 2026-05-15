@@ -9,8 +9,9 @@ Reference: https://docs.sentry.io/platforms/javascript/troubleshooting/#using-th
 
 Security posture:
 * Same-origin browser SDK posts are allowed pre-auth so login-screen errors
-  still reach Sentry. Requests without a trusted Origin must carry a valid
-  session cookie before we do any tunnel work.
+  still reach Sentry. Requests without a trusted Origin (or same-origin
+  Referer when Origin is absent) must carry a valid session cookie before
+  we do any tunnel work.
 * Host allow-list against `SENTRY_DSN` / `VITE_SENTRY_DSN`. Without it,
   this endpoint would be an open egress to anywhere Sentry-shaped — we
   cap it to our own DSN's host + project id.
@@ -105,16 +106,23 @@ def _origin_host(value: str | None) -> str | None:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
-def _has_trusted_origin(request: Request) -> bool:
-    origin = _origin_host(request.headers.get("origin"))
-    if origin is None:
-        return False
+def _allowed_request_origins() -> set[str]:
     allowed = {
         host
         for host in (_origin_host(candidate) for candidate in settings().cors_origin_list)
         if host
     }
-    return origin in allowed
+    return allowed
+
+
+def _has_trusted_origin(request: Request) -> bool:
+    origin_header = request.headers.get("origin")
+    if origin_header is not None:
+        origin = _origin_host(origin_header)
+        return origin is not None and origin in _allowed_request_origins()
+
+    referer = _origin_host(request.headers.get("referer"))
+    return referer is not None and referer in _allowed_request_origins()
 
 
 def _require_session_or_trusted_origin(request: Request) -> None:
