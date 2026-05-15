@@ -270,6 +270,10 @@ them, that's the bug.
 - **Maintenance mode is toggled by the deploy script via
   `a2enconf parts-maintenance`.** Do not bypass the deploy path without
   also disabling it with `a2disconf parts-maintenance`.
+- **Hard deletes preserve independent stock history.** Parts use
+  `ON DELETE SET NULL` for both `stock_entries.part_id` and `lots.part_id`;
+  workspace FK triggers validate all parent refs on INSERT but only changed
+  refs on UPDATE. Full policy: `docs/adr/0028-hard-delete-policy-and-workspace-trigger-contract.md`.
 
 ## Frontend conventions worth preserving
 
