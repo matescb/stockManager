@@ -364,6 +364,43 @@ def test_invitation_token_hash_drop_round_trips(round_trip_url: str) -> None:
 
 
 @pytest.mark.slow
+def test_password_reset_requests_autovacuum_reloptions_round_trip(
+    round_trip_url: str,
+) -> None:
+    cfg = _alembic_config(round_trip_url)
+    expected = {
+        "autovacuum_vacuum_scale_factor=0.05",
+        "autovacuum_analyze_scale_factor=0.05",
+        "autovacuum_vacuum_threshold=1000",
+    }
+
+    def password_reset_reloptions() -> set[str]:
+        eng = create_engine(round_trip_url, future=True)
+        try:
+            with eng.connect() as conn:
+                return {
+                    row.reloption
+                    for row in conn.execute(
+                        text(
+                            "SELECT unnest(coalesce(reloptions, ARRAY[]::text[])) "
+                            "AS reloption "
+                            "FROM pg_class "
+                            "WHERE oid = 'password_reset_requests'::regclass"
+                        )
+                    )
+                }
+        finally:
+            eng.dispose()
+
+    _reset_schema(round_trip_url)
+    _upgrade(cfg, round_trip_url, "0063")
+    assert expected <= password_reset_reloptions()
+
+    _downgrade(cfg, round_trip_url, "0062")
+    assert expected.isdisjoint(password_reset_reloptions())
+
+
+@pytest.mark.slow
 def test_snapshot_schema_captures_server_default(round_trip_url: str) -> None:
     _reset_schema(round_trip_url)
     eng = create_engine(round_trip_url, future=True)
