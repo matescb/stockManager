@@ -250,6 +250,7 @@ def revoke_all_user_sessions(db: Session, user_id) -> int:
     rows = db.query(UserSession).filter(UserSession.user_id == user_id).all()
     for r in rows:
         db.delete(r)
+    db.commit()
     return len(rows)
 
 
