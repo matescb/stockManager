@@ -283,12 +283,15 @@ test.describe("stock history ordering", () => {
       const part = await seedPart(request, { name: uniqueName("E2E History Order") });
       const detail = new PartDetailPage(page, part.id);
 
-      for (const quantity of [1, 2, 3]) {
+      for (const [index, quantity] of [1, 2, 3].entries()) {
         await seedStock(request, {
           part_id: part.id,
           quantity,
           storage_location_id: storage.id,
         });
+        if (index < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
       }
 
       await detail.goto("history");
