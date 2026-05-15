@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -123,6 +123,31 @@ def test_invite_has_expires_at(admin):
     rows = admin.get("/api/invitations").json()["data"]
     listed = next(row for row in rows if row["id"] == inv["id"])
     assert listed["expires_at"] == inv["expires_at"]
+
+
+def test_ttl_env_overrides_default(admin, monkeypatch):
+    from app.core.config import Settings, settings
+
+    monkeypatch.delenv("INVITATION_TTL_DAYS", raising=False)
+    assert Settings(_env_file=None).INVITATION_TTL_DAYS == 14
+
+    monkeypatch.setenv("INVITATION_TTL_DAYS", "3")
+    settings.cache_clear()
+    try:
+        assert settings().INVITATION_TTL_DAYS == 3
+
+        before = datetime.now(timezone.utc)
+        invitee_email = f"ttl-{uuid.uuid4().hex[:6]}@x.com"
+        response = admin.post(
+            "/api/invitations", json={"email": invitee_email, "role": "member"}
+        )
+        after = datetime.now(timezone.utc)
+
+        assert response.status_code == 201, response.text
+        expires_at = datetime.fromisoformat(response.json()["data"]["expires_at"])
+        assert before + timedelta(days=3) <= expires_at <= after + timedelta(days=3)
+    finally:
+        settings.cache_clear()
 
 
 def test_expired_invite_rejected(admin):

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import sqlalchemy as sa
 from sqlalchemy import (
@@ -17,6 +17,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
+from app.core.config import settings
 from app.core.time import utcnow
 from app.domain.workspaces.master_lists import (
     DEFAULT_ACTIVE_COUNTRIES,
@@ -25,7 +26,9 @@ from app.domain.workspaces.master_lists import (
 )
 from app.infra.db import Base
 
-INVITATION_TTL = timedelta(days=14)
+
+def invitation_expires_at() -> datetime:
+    return utcnow() + timedelta(days=settings().INVITATION_TTL_DAYS)
 
 
 class Workspace(Base):
@@ -185,7 +188,7 @@ class WorkspaceInvitation(Base):
     expires_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: utcnow() + INVITATION_TTL,
+        default=invitation_expires_at,
         server_default=text("now() + INTERVAL '14 days'"),
     )
     accepted_at = Column(DateTime(timezone=True), nullable=True)
