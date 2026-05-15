@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # Sliding-expiry idle window. A session idle longer than this is
     # rejected even when the absolute lifetime has not elapsed.
     SESSION_IDLE_HOURS: int = Field(default=24, gt=0)
+    # Workspace invitations expire after this many days. Operators may
+    # tune this without a release; restart the backend for the env
+    # override to be picked up by the cached Settings instance.
+    INVITATION_TTL_DAYS: int = Field(default=14, gt=0)
     # Cadence (seconds) of the in-process expired-session purge driven
     # by the FastAPI lifespan hook. DB-007 / issue #98. Knob exists so
     # tests can shorten it; ops should not need to touch it. 0 disables

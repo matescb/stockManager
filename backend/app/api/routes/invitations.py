@@ -23,18 +23,14 @@ from app.core.time import utcnow
 from app.domain.audit.service import log as _audit_log
 from app.domain.users.models import User
 from app.domain.workspaces.models import (
-    INVITATION_TTL,
     Workspace,
     WorkspaceInvitation,
     WorkspaceMember,
+    invitation_expires_at,
 )
 from app.domain.workspaces.schemas import AcceptIn, InviteIn
 
 router = APIRouter()
-
-
-def _invitation_expires_at():
-    return utcnow() + INVITATION_TTL
 
 
 def _iso_utc(value):
@@ -159,7 +155,7 @@ def create_invitation(
         role=payload.role,
         token_hmac=_hmac_token(plaintext),
         invited_by=user.id,
-        expires_at=_invitation_expires_at(),
+        expires_at=invitation_expires_at(),
     )
     db.add(inv)
     # Wrap in a savepoint so an IntegrityError from concurrent creates
