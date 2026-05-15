@@ -178,9 +178,9 @@ def _first_workspace_for_user(db: DbSession, user: User) -> Workspace | None:
 
 
 def _password_reset_request_throttled(db: DbSession, *, email_hash: str) -> bool:
-    db.execute(
+    result = db.execute(
         text(
-            "SELECT pg_advisory_xact_lock("
+            "SELECT pg_try_advisory_xact_lock("
             "CAST(:classid AS int4), CAST(hashtext(:lock_key) AS int4)"
             ")"
         ),
@@ -189,6 +189,10 @@ def _password_reset_request_throttled(db: DbSession, *, email_hash: str) -> bool
             "lock_key": f"reset:{email_hash}",
         },
     )
+    if not bool(result.scalar()):
+        log.info("password_reset_request status=throttled reason=lock_denied")
+        return True
+
     cutoff = utcnow() - timedelta(hours=1)
     count = (
         db.query(PasswordResetRequest)
