@@ -15,6 +15,19 @@ def _set_required_prod_env(monkeypatch):
     monkeypatch.setenv("APP_BASE_URL", "https://parts.example.com")
 
 
+def test_password_pepper_required_in_prod(monkeypatch):
+    _set_required_prod_env(monkeypatch)
+    monkeypatch.setenv("SENTRY_TRACES_SAMPLE_RATE", "0.05")
+    monkeypatch.delenv("PASSWORD_PEPPER", raising=False)
+
+    try:
+        Settings(_env_file=None)
+    except ValidationError as exc:
+        assert "PASSWORD_PEPPER is required" in str(exc)
+    else:
+        raise AssertionError("prod Settings accepted missing PASSWORD_PEPPER")
+
+
 def test_sentry_traces_rate_required_in_prod(monkeypatch):
     _set_required_prod_env(monkeypatch)
     monkeypatch.delenv("SENTRY_TRACES_SAMPLE_RATE", raising=False)

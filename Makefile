@@ -1,4 +1,4 @@
-.PHONY: dev-up dev-down dev-logs dev-rebuild prod-up prod-logs prod-rebuild refresh-tp-spec regen-tp-models
+.PHONY: dev-up dev-down dev-logs dev-rebuild prod-up prod-logs prod-rebuild bootstrap-pepper refresh-tp-spec regen-tp-models
 
 TP_SPEC_URL := https://api.trustedparts.com/swagger/inventory-api-v2/swagger.json
 TP_SPEC := docs/schemas/trustedparts-v2.json
@@ -24,6 +24,9 @@ prod-logs:
 
 prod-rebuild:
 	docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build --force-recreate
+
+bootstrap-pepper:
+	deploy/bootstrap-pepper.sh .env.prod
 
 refresh-tp-spec:
 	mkdir -p "$(dir $(TP_SPEC))"
