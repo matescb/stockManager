@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import threading
 import time
@@ -9,8 +10,10 @@ from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 import app.api.routes.auth as auth_routes
+from app.core.advisory_locks import PASSWORD_RESET_THROTTLE_LOCK_CLASSID
 from app.core.auth import hmac_token
 from app.core.time import utcnow
 from app.domain.audit.models import AuditLog
@@ -297,7 +300,7 @@ def test_throttle_atomic_under_concurrency(db, monkeypatch):
     assert not any(thread.is_alive() for thread in threads)
     assert errors == []
     assert results == [202] * thread_count
-    assert send_count == 3
+    assert 1 <= send_count <= 3
 
     rows = (
         db.query(PasswordResetRequest)
@@ -305,7 +308,56 @@ def test_throttle_atomic_under_concurrency(db, monkeypatch):
         .all()
     )
     assert len(rows) == thread_count
-    assert sum(1 for row in rows if row.token_hmac is not None) == 3
+    assert sum(1 for row in rows if row.token_hmac is not None) == send_count
+
+
+@pytest.mark.real_db
+def test_throttle_lock_denied_returns_throttled(db, caplog):
+    email = f"reset-lock-denied-{uuid.uuid4().hex[:8]}@example.com"
+    signup_user(TestClient(app), email=email)
+    email_hash = auth_routes._hash_email_for_password_reset(email)
+
+    db.execute(
+        text(
+            "SELECT pg_advisory_xact_lock("
+            "CAST(:classid AS int4), CAST(hashtext(:lock_key) AS int4)"
+            ")"
+        ),
+        {
+            "classid": PASSWORD_RESET_THROTTLE_LOCK_CLASSID,
+            "lock_key": f"reset:{email_hash}",
+        },
+    )
+
+    try:
+        with (
+            patch("app.api.routes.auth.send_password_reset_email") as send_mail,
+            caplog.at_level(logging.INFO, logger=auth_routes.__name__),
+        ):
+            response = TestClient(app).post(
+                "/api/auth/request-password-reset",
+                json={"email": email},
+            )
+    finally:
+        db.rollback()
+
+    assert response.status_code == 202, response.text
+    assert response.json()["data"] == {"status": "accepted"}
+    send_mail.assert_not_called()
+    assert "password_reset_request status=throttled reason=lock_denied" in caplog.text
+
+    row = (
+        db.query(PasswordResetRequest)
+        .filter_by(email_hash=email_hash)
+        .one()
+    )
+    assert row.token_hmac is None
+    audit = (
+        db.query(AuditLog)
+        .filter(AuditLog.action == "user.password_reset_requested")
+        .one()
+    )
+    assert audit.comment == "throttled"
 
 
 def test_unknown_email_does_not_persist_row(client, db):
