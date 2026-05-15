@@ -111,6 +111,7 @@ class ErrorCodes:
     WORKSPACE_OWNER_ONLY = "workspace.owner_only"
     WORKSPACE_LAST_OWNER = "workspace.last_owner"
     WORKSPACE_SELF_REMOVE = "workspace.self_remove"
+    WORKSPACE_ISOLATION = "workspace.isolation"
 
     # Invitations
     INVITATION_NOT_FOUND = "invitation.not_found"
