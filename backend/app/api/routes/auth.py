@@ -561,6 +561,7 @@ def reset_password(
     reset_request = (
         db.query(PasswordResetRequest)
         .filter(PasswordResetRequest.token_hmac == token_hmac)
+        .with_for_update()
         .first()
     )
     if reset_request is None:
