@@ -105,6 +105,78 @@ are.
 When in doubt, restore. The pre-deploy `pg_dump` exists for exactly
 this case (CLAUDE.md "There is no staging environment").
 
+## Downgrading migration 0058 after `lots.part_id` was set NULL
+
+Migration 0058 changes `lots.part_id` from `ON DELETE CASCADE` / `NOT
+NULL` to `ON DELETE SET NULL` / nullable. If any parts were hard-deleted
+after 0058 was applied, Postgres may have preserved their lots by
+setting `lots.part_id = NULL`. The downgrade intentionally refuses to
+restore the old constraint while those rows exist:
+
+```sql
+SELECT workspace_id, count(*) AS orphan_lots
+  FROM lots
+ WHERE part_id IS NULL
+ GROUP BY workspace_id
+ ORDER BY workspace_id;
+```
+
+Before running `alembic downgrade 0057`, choose one remediation path:
+
+1. Re-archive the deleted parent parts from backup/audit data, then
+   reconnect the orphaned lots to those archived part rows.
+2. Hard-delete orphaned lots that the incident commander confirms can be
+   discarded.
+
+Use SQL like this in a transaction, replacing the `VALUES` list with the
+operator-reviewed lot-to-restored-part mapping:
+
+```sql
+BEGIN;
+
+-- Inspect the affected rows first.
+SELECT id, workspace_id, name, serial_number, created_at, archived_at
+  FROM lots
+ WHERE part_id IS NULL
+ ORDER BY workspace_id, created_at;
+
+-- Path 1: reconnect preserved lots to parts that were restored as archived
+-- rows. The restored parts must already exist in `parts`.
+WITH restored_parent(lot_id, part_id) AS (
+  VALUES
+    ('<lot-id>'::uuid, '<restored-archived-part-id>'::uuid)
+)
+UPDATE lots AS l
+   SET part_id = restored_parent.part_id,
+       archived_at = COALESCE(l.archived_at, now()),
+       updated_at = now()
+  FROM restored_parent
+ WHERE l.id = restored_parent.lot_id
+   AND l.part_id IS NULL
+   AND EXISTS (
+       SELECT 1
+         FROM parts AS p
+        WHERE p.id = restored_parent.part_id
+          AND p.workspace_id = l.workspace_id
+          AND p.archived_at IS NOT NULL
+   );
+
+-- Path 2: if approved, discard any remaining orphaned lots before
+-- downgrading. Deleting lots will SET NULL on dependent stock entries.
+DELETE FROM lots
+ WHERE part_id IS NULL;
+
+-- Must return zero rows before the downgrade can succeed.
+SELECT id, workspace_id
+  FROM lots
+ WHERE part_id IS NULL;
+
+COMMIT;
+```
+
+Do not edit 0058 to make it silently reversible; the NULL rows represent
+history that the old schema cannot express without operator input.
+
 ## Path A — Forward-fix
 
 1. From a local checkout on `main`:

@@ -10,6 +10,10 @@ AUD-072 / issue #710.
 delete just like `stock_entries`. The workspace FK triggers remain strict on
 INSERT, but UPDATEs only re-check a reference when that reference column
 changes.
+
+Downgrade is one-way once ON DELETE SET NULL has fired: rows with
+`lots.part_id IS NULL` must be remediated before restoring the old NOT NULL
+CASCADE constraint. See `docs/runbooks/migration-recovery.md`.
 """
 
 from __future__ import annotations
