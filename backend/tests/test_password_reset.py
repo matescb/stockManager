@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 import re
+import threading
+import time
 import uuid
 from datetime import timedelta
 from unittest.mock import patch
 
+import pytest
+from fastapi.testclient import TestClient
+
+import app.api.routes.auth as auth_routes
 from app.core.auth import hmac_token
 from app.core.time import utcnow
 from app.domain.audit.models import AuditLog
 from app.domain.users.models import PasswordResetRequest, User, UserSession
+from app.main import app
 from tests._factories import DEFAULT_PASSWORD, signup_user
 
 NEW_PASSWORD = "NewResetPass-2026!!"
@@ -139,6 +146,64 @@ def test_password_reset_email_throttle_suppresses_fourth_send(client, db):
     rows = db.query(PasswordResetRequest).order_by(PasswordResetRequest.created_at).all()
     assert len(rows) == 4
     assert rows[-1].token_hmac is None
+
+
+@pytest.mark.real_db
+def test_throttle_atomic_under_concurrency(db, monkeypatch):
+    email = f"reset-race-{uuid.uuid4().hex[:8]}@example.com"
+    signup_user(TestClient(app), email=email)
+
+    send_count = 0
+    send_lock = threading.Lock()
+
+    def _slow_send(*, to: str, reset_link: str) -> None:
+        nonlocal send_count
+        assert to == email
+        assert "token=" in reset_link
+        with send_lock:
+            send_count += 1
+        time.sleep(0.1)
+
+    monkeypatch.setattr(auth_routes, "send_password_reset_email", _slow_send)
+
+    thread_count = 6
+    barrier = threading.Barrier(thread_count)
+    results: list[int] = []
+    errors: list[BaseException] = []
+    results_lock = threading.Lock()
+
+    def _request() -> None:
+        try:
+            client = TestClient(app)
+            barrier.wait(timeout=10)
+            response = client.post(
+                "/api/auth/request-password-reset",
+                json={"email": email},
+            )
+            with results_lock:
+                results.append(response.status_code)
+        except BaseException as exc:
+            with results_lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=_request) for _ in range(thread_count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=15)
+
+    assert not any(thread.is_alive() for thread in threads)
+    assert errors == []
+    assert results == [202] * thread_count
+    assert send_count == 3
+
+    rows = (
+        db.query(PasswordResetRequest)
+        .filter_by(email_hash=auth_routes._hash_email_for_password_reset(email))
+        .all()
+    )
+    assert len(rows) == thread_count
+    assert sum(1 for row in rows if row.token_hmac is not None) == 3
 
 
 def test_password_reset_request_audit_row(client, db):
