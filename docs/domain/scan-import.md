@@ -108,7 +108,7 @@ Schema:
 | Column | Notes |
 |---|---|
 | `workspace_id` | FK to `workspaces`, **CASCADE**, part of PK. |
-| `key` | `varchar(64)` part of PK. SHA-256 hex of `(workspace_id + sorted row contents)` or a client-supplied UUID4. |
+| `key` | `varchar(64)` part of PK. SHA-256 hex of `(workspace_id + ordered row contents)` or a client-supplied UUID4. |
 | `result_json` | JSONB. Holds the full API envelope so a cache hit returns verbatim without re-running any logic. |
 | `created_at` | `timestamptz`, `server_default=func.now()`. |
 
@@ -116,13 +116,19 @@ Index: `ix_bulk_import_idempotency_ws_created` for the TTL sweep.
 
 **TTL: 24 hours.** Rows older than `_BULK_IMPORT_IDEMPOTENCY_TTL_H` (24) are swept best-effort at the start of each request — bounded table without a background cron (`backend/app/api/routes/parts_scan.py:59,132-142`).
 
+### Content-key order contract
+
+The implicit content key is **order-sensitive**. `_bulk_import_content_key()` serialises each row in request order and joins those serialised blobs before hashing. Two payloads with the same rows in a different order intentionally produce different fallback keys; `backend/tests/test_bulk_import_idempotency.py::test_distinct_orders_distinct_hashes` pins this contract.
+
+Operationally, the stable retry contract is the explicit frontend-supplied `idempotency_key`. If an operator or support engineer must replay a request body without that key, preserve the exact row order. Shuffling rows changes the fallback content key and can bypass the idempotency cache, so first inspect existing parts / stock entries before retrying a shuffled payload. See [scan-import-retry](../runbooks/scan-import-retry.md).
+
 ## Bulk-import flow
 
 `POST /api/parts/bulk-import-from-scan` — `backend/app/api/routes/parts_scan.py:79-432`.
 
 The full sequence:
 
-1. **Idempotency key derivation** (`:129-130`): explicit FE-supplied `idempotency_key`, or fall back to a SHA-256 content hash of `(ws_id + sorted row JSON)`. Sorting rows by `(bag_signature or "", mpn)` makes the hash order-independent so the operator can re-sort between retries.
+1. **Idempotency key derivation** (`:129-130`): explicit FE-supplied `idempotency_key`, or fall back to a SHA-256 content hash of `(ws_id + request-order row JSON)`. The fallback is order-sensitive; it preserves the submitted sequence rather than sorting rows.
 2. **Best-effort TTL sweep** (`:132-142`): delete rows older than 24h. Failure is swallowed.
 3. **Cache lookup** — only when an explicit key was supplied. Falling back to content-hash for cache HIT would suppress the duplicate-MPN detection path on a second scan of the same MPN (`:149-156`).
 4. **Provider setup** — `make_provider(ws.parts_provider, decrypt(api_key), decrypt(api_secret))`. Returns 400 if not configured.
@@ -172,3 +178,4 @@ The full sequence:
 - **Never use Python's `str.strip()` on a bag code.** It strips field-separator control chars that are valid bag content.
 - **Never write `bag_signature` on a non-scan path.** The partial index assumes scan-only population; widening that breaks the cardinality assumption.
 - **Never replace the savepoint-per-row pattern with a single transaction.** A single uncaught exception in row N would discard rows 1..N-1's writes — which the operator already saw acknowledged in the per-row outcome list — and the audit trail would diverge from what was actually persisted (Sec CRIT-6).
+- **Never shuffle rows when replaying a scan-import payload without the original `idempotency_key`.** Row order is part of the fallback content key.

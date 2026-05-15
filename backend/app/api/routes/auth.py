@@ -27,8 +27,9 @@ from app.core.auth import (
 from app.core.config import settings
 from app.core.cookies import (
     WORKSPACE_COOKIE_NAME,
+    delete_session_cookie,
+    delete_workspace_cookie,
     session_cookie_attrs,
-    workspace_cookie_attrs,
 )
 from app.core.deps import CurrentUser, DbSession
 from app.core.errors import ErrorCodes, raise_http
@@ -490,8 +491,8 @@ def logout(request: Request, response: Response, db: DbSession) -> Envelope[None
                 request_id=getattr(request.state, "request_id", None),
             )
         revoke_session(db, token)
-    response.delete_cookie(cookie_name, **session_cookie_attrs())
-    response.delete_cookie(WORKSPACE_COOKIE_NAME, **workspace_cookie_attrs())
+    delete_session_cookie(response, cookie_name)
+    delete_workspace_cookie(response)
     log.info("logout")
     return ok(None, "logged out")
 

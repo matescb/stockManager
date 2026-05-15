@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState, type SetStateAction } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { RefreshCw, ShoppingCart } from "lucide-react";
@@ -31,6 +31,7 @@ import type {
   PurchasePlanOrderOverride,
 } from "./purchasePlanTypes";
 type LocationState = { plan?: PurchasePlan; project?: Project };
+type OrderOverrides = Record<string, PurchasePlanOrderOverride>;
 
 export default function PurchasePlanReviewPage() {
   const { projectId, planId } = useParams<{ projectId: string; planId: string }>();
@@ -52,7 +53,17 @@ export default function PurchasePlanReviewPage() {
   const [busyAction, setBusyAction] = useState<"refresh" | "convert" | null>(null);
   const [refreshAttention, setRefreshAttention] = useState(false);
   const [overrideLine, setOverrideLine] = useState<PurchasePlanLine | null>(null);
-  const [overrides, setOverrides] = useState<Record<string, PurchasePlanOrderOverride>>({});
+  const [overrides, setOverridesState] = useState<OrderOverrides>({});
+  const overridesRef = useRef(overrides);
+  const setOverrides = useCallback((update: SetStateAction<OrderOverrides>) => {
+    setOverridesState(current => {
+      const next = typeof update === "function"
+        ? (update as (current: OrderOverrides) => OrderOverrides)(current)
+        : update;
+      overridesRef.current = next;
+      return next;
+    });
+  }, []);
   const grouped = useMemo(() => groupLines(plan?.lines ?? []), [plan]);
   const unfilled = useMemo(
     () => (plan?.lines ?? []).filter(line => !line.selected_distributor),
@@ -96,9 +107,31 @@ export default function PurchasePlanReviewPage() {
   }
   const fresh = isRefreshFresh(plan);
   const currency = summaryCurrency(plan);
+  function pruneStaleOverrides(
+    current: OrderOverrides,
+    refreshed: PurchasePlan,
+  ): { retained: OrderOverrides; dropped: string[] } {
+    const retained: OrderOverrides = {};
+    const dropped: string[] = [];
+    const linesById = new Map(refreshed.lines.map(line => [line.id, line]));
+    for (const [lineId, override] of Object.entries(current)) {
+      const refreshedLine = linesById.get(lineId);
+      const stillAvailable = refreshedLine
+        ? (refreshedLine.available_offers ?? []).some(offer =>
+            purchasePlanOverrideMatchesOffer(refreshedLine, override, offer),
+          )
+        : false;
+      if (stillAvailable) {
+        retained[lineId] = override;
+      } else {
+        dropped.push(lineId);
+      }
+    }
+    return { retained, dropped };
+  }
   function planWithOverrides(
     nextPlan: PurchasePlan,
-    retainedOverrides: Record<string, PurchasePlanOrderOverride>,
+    retainedOverrides: OrderOverrides,
   ): PurchasePlan {
     const nextLines = nextPlan.lines.map(line => {
       const override = retainedOverrides[line.id];
@@ -125,28 +158,13 @@ export default function PurchasePlanReviewPage() {
     setBusyAction("refresh");
     try {
       const next = await api.post<PurchasePlan>(`/sourcing/purchase-plans/${plan.id}/refresh`);
-      const pruned: typeof overrides = {};
-      const dropped: string[] = [];
-      const linesById = new Map(next.lines.map(line => [line.id, line]));
-      for (const [lineId, override] of Object.entries(overrides)) {
-        const refreshedLine = linesById.get(lineId);
-        const stillAvailable = refreshedLine
-          ? (refreshedLine.available_offers ?? []).some(offer =>
-              purchasePlanOverrideMatchesOffer(refreshedLine, override, offer),
-            )
-          : false;
-        if (stillAvailable) {
-          pruned[lineId] = override;
-        } else {
-          dropped.push(lineId);
-        }
-      }
+      const { retained: pruned, dropped } = pruneStaleOverrides(overridesRef.current, next);
       if (dropped.length > 0) {
         toast.info(
           `Removed ${dropped.length} override${dropped.length === 1 ? "" : "s"} no longer available after refresh.`,
         );
       }
-      setOverrides(pruned);
+      setOverrides(current => pruneStaleOverrides(current, next).retained);
       queryClient.setQueryData(purchasePlanKey, planWithOverrides(next, pruned));
       setRefreshAttention(false);
       toast.success("Prices refreshed");

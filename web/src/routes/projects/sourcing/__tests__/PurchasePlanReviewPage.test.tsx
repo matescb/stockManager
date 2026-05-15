@@ -366,6 +366,55 @@ describe("PurchasePlanReviewPage", () => {
     expect(toast.info).not.toHaveBeenCalled();
   });
 
+  it("keeps an override selected while refresh is in flight", async () => {
+    let resolveRefresh!: (value: PurchasePlan) => void;
+    const refreshPromise = new Promise<PurchasePlan>(resolve => {
+      resolveRefresh = resolve;
+    });
+    const refreshed = plan({
+      est_total_cost: "18.40",
+      lines: [
+        {
+          ...plan().lines[0],
+          selected_distributor: "DigiKey",
+          selected_qty: 16,
+          selected_unit_price: "1.15",
+        },
+        plan().lines[1],
+      ],
+      unfilled_count: 0,
+    });
+    const post = vi.spyOn(api, "post")
+      .mockReturnValueOnce(refreshPromise)
+      .mockResolvedValueOnce({
+        orders: [{ id: "order-1", name: "Draft", supplier: "Arrow", status: "draft", entries: [] }],
+      });
+    renderPage();
+
+    await userEvent.click(screen.getByRole("button", { name: /Refresh prices/ }));
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith("/sourcing/purchase-plans/plan-12345678/refresh");
+    });
+
+    await selectArrowOffer();
+    resolveRefresh(refreshed);
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Prices refreshed"));
+    await userEvent.click(screen.getByRole("button", { name: /Create draft orders/ }));
+
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/orders"));
+    expect(post).toHaveBeenNthCalledWith(2, "/sourcing/purchase-plans/plan-12345678/orders", {
+      overrides: {
+        "line-1": {
+          selected_distributor: "Arrow",
+          selected_qty: 16,
+          selected_unit_price: "2.05",
+          selected_currency: "USD",
+        },
+      },
+    });
+  });
+
   it("does not prune when refresh fails", async () => {
     const apiError = new ApiError(
       502,

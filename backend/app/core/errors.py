@@ -162,6 +162,9 @@ class ErrorCodes:
     SOURCING_INVALID_CURRENCY_CODE = "invalid_currency_code"
     SOURCING_GENERIC = "sourcing.error"
 
+    # Stock router.
+    STOCK_INVALID_CURRENCY = "stock.invalid_currency"
+
     # Workspace dependency-injection edge cases (deps.py).
     # WORKSPACE_NONE: caller has no active membership in any workspace
     # at all — distinct from WORKSPACE_NOT_FOUND, which is "this id

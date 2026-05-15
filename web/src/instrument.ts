@@ -36,8 +36,17 @@ const replaysOnErrorSampleRate = parseSampleRate(
 const requestHeaderDenylist = new Set(["cookie", "authorization", "x-workspace-id"]);
 const requestUrlHeaders = new Set(["referer", "referrer"]);
 const breadcrumbUrlKeys = new Set(["url", "from", "to"]);
+const transactionUrlKeys = new Set(["url", "from", "to", "http.url"]);
 const sensitiveTextPattern =
   /(["']?\b(?:password|passwd|pass|token|secret|api[_-]?key|authorization|cookie|session(?:[_-]?id)?)["']?\s*[:=]\s*["']?)([^"',&\s;}\]]+)/gi;
+type MutableRequest = {
+  url?: string;
+  query_string?: unknown;
+  headers?: Record<string, unknown>;
+  method?: string;
+  data?: unknown;
+  body_redacted?: boolean;
+};
 
 function parseSampleRate(
   raw: string | undefined,
@@ -76,6 +85,27 @@ function scrubUrlKeys(values: Record<string, unknown>, keys: ReadonlySet<string>
     if (keys.has(key.toLowerCase()) && typeof values[key] === "string") {
       values[key] = stripQueryString(values[key]);
     }
+  }
+}
+
+function scrubRequest(req: MutableRequest | undefined, { redactNonGetBody }: { redactNonGetBody: boolean }) {
+  if (!req) return;
+  if (typeof req.url === "string") {
+    req.url = stripQueryString(req.url);
+  }
+  delete req.query_string;
+  if (req.headers) {
+    for (const k of Object.keys(req.headers)) {
+      if (requestHeaderDenylist.has(k.toLowerCase())) {
+        delete req.headers[k];
+      }
+    }
+    scrubUrlKeys(req.headers, requestUrlHeaders);
+  }
+  const method = (req.method ?? "").toUpperCase();
+  if (redactNonGetBody && method && method !== "GET" && req.data !== undefined) {
+    delete req.data;
+    req.body_redacted = true;
   }
 }
 
@@ -137,31 +167,32 @@ Sentry.init({
   beforeSend(event) {
     scrubEventStrings(event as unknown as Record<string, unknown>);
 
-    const req = event.request;
-    if (req) {
-      if (typeof req.url === "string") {
-        req.url = stripQueryString(req.url);
-      }
-      delete (req as Record<string, unknown>).query_string;
-      if (req.headers) {
-        for (const k of Object.keys(req.headers)) {
-          if (requestHeaderDenylist.has(k.toLowerCase())) {
-            delete (req.headers as Record<string, unknown>)[k];
-          }
-        }
-        scrubUrlKeys(req.headers as Record<string, unknown>, requestUrlHeaders);
-      }
-      const method = (req.method ?? "").toUpperCase();
-      if (method && method !== "GET") {
-        if (req.data !== undefined) {
-          delete req.data;
-          (req as Record<string, unknown>).body_redacted = true;
-        }
-      }
-    }
+    scrubRequest(event.request as MutableRequest | undefined, { redactNonGetBody: true });
     for (const breadcrumb of event.breadcrumbs ?? []) {
       if (breadcrumb.data) {
         scrubUrlKeys(breadcrumb.data, breadcrumbUrlKeys);
+      }
+    }
+    return event;
+  },
+  beforeSendTransaction(event) {
+    if (typeof event.transaction === "string") {
+      event.transaction = stripQueryString(event.transaction);
+    }
+    scrubRequest(event.request as MutableRequest | undefined, { redactNonGetBody: false });
+    if (event.tags) {
+      scrubUrlKeys(event.tags as Record<string, unknown>, transactionUrlKeys);
+    }
+    const trace = event.contexts?.trace as { data?: Record<string, unknown> } | undefined;
+    if (trace?.data) {
+      scrubUrlKeys(trace.data, transactionUrlKeys);
+    }
+    for (const span of event.spans ?? []) {
+      if (span.data) {
+        scrubUrlKeys(span.data as Record<string, unknown>, transactionUrlKeys);
+      }
+      if (typeof span.description === "string") {
+        span.description = stripQueryString(span.description);
       }
     }
     return event;
