@@ -90,4 +90,16 @@ describe("ResetPassword", () => {
     expect(screen.getByText("Use a less repetitive password.")).toBeDefined();
     expect(mockPost).not.toHaveBeenCalled();
   });
+
+  it("validates_blocklisted_password_before_submit", () => {
+    renderResetPassword();
+
+    fireEvent.change(screen.getByLabelText("New password"), {
+      target: { value: "password" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save new password" }));
+
+    expect(screen.getByText("Password is too common. Choose a more unique password.")).toBeDefined();
+    expect(mockPost).not.toHaveBeenCalled();
+  });
 });
