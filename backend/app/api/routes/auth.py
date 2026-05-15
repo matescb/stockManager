@@ -517,13 +517,17 @@ def request_password_reset(
     user = db.query(User).filter(func.lower(User.email) == email_normalized).first()
     throttled = _password_reset_request_throttled(db, email_hash=email_hash)
 
+    if user is None:
+        response.status_code = status.HTTP_202_ACCEPTED
+        return ok(_PASSWORD_RESET_REQUEST_DATA, _PASSWORD_RESET_REQUEST_MESSAGE)
+
     reset_request = PasswordResetRequest(
-        user_id=user.id if user else None,
+        user_id=user.id,
         email_hash=email_hash,
         ip=client_ip,
     )
 
-    if user is not None and not throttled:
+    if not throttled:
         token, token_hmac = mint_password_reset_token()
         reset_request.token_hmac = token_hmac
         reset_request.expires_at = now + timedelta(hours=_PASSWORD_RESET_TTL_HOURS)
@@ -540,8 +544,7 @@ def request_password_reset(
         db.add(reset_request)
         db.flush()
 
-    if user is not None:
-        _audit_password_reset_request(db, request, user, throttled=throttled)
+    _audit_password_reset_request(db, request, user, throttled=throttled)
 
     response.status_code = status.HTTP_202_ACCEPTED
     return ok(_PASSWORD_RESET_REQUEST_DATA, _PASSWORD_RESET_REQUEST_MESSAGE)
