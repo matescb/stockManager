@@ -171,6 +171,22 @@ def verify_password(hash_: str, password: str) -> bool:
     return verify_password_with_rehash(hash_, password).valid
 
 
+def hmac_token(token: str) -> str:
+    """HMAC-SHA-256 hex digest for bearer tokens stored at rest.
+
+    Used by email verification and password reset flows so database
+    dumps cannot replay raw email-link credentials.
+    """
+    key = settings().SESSION_SECRET.encode("utf-8")
+    return hmac.new(key, token.encode("utf-8"), "sha256").hexdigest()
+
+
+def mint_password_reset_token() -> tuple[str, str]:
+    """Return (plaintext token, HMAC digest) for a password reset link."""
+    token = secrets.token_urlsafe(48)
+    return token, hmac_token(token)
+
+
 def new_session_token() -> str:
     """Mint a fresh plaintext session token. Lives only on the client
     cookie; the server stores `hash_session_token(token)` in

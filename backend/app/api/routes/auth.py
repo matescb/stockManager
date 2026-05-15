@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import hmac as _hmac
 import secrets
 from datetime import timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response, status
+from sqlalchemy import func
 
 from app.core.auth import (
     PasswordVerifyResult,
@@ -15,6 +17,8 @@ from app.core.auth import (
     create_session_row,
     hash_password,
     hash_session_token,
+    hmac_token,
+    mint_password_reset_token,
     record_login_failure,
     revoke_all_user_sessions,
     revoke_session,
@@ -34,13 +38,23 @@ from app.core.cookies import (
 from app.core.deps import CurrentUser, DbSession
 from app.core.errors import ErrorCodes, raise_http
 from app.core.logging import get_logger
-from app.core.mail import send_account_exists_email, send_verification_email
+from app.core.mail import (
+    send_account_exists_email,
+    send_password_reset_email,
+    send_verification_email,
+)
 from app.core.ratelimit import limiter
 from app.core.responses import Envelope, ok
 from app.core.time import utcnow
 from app.domain.audit.service import log as _audit_log
-from app.domain.users.models import PendingUser, User, UserSession
-from app.domain.users.schemas import LoginIn, SignupIn, VerifyIn
+from app.domain.users.models import PasswordResetRequest, PendingUser, User, UserSession
+from app.domain.users.schemas import (
+    LoginIn,
+    PasswordResetIn,
+    RequestPasswordResetIn,
+    SignupIn,
+    VerifyIn,
+)
 from app.domain.workspaces.models import Workspace, WorkspaceMember
 
 router = APIRouter()
@@ -48,6 +62,8 @@ log = get_logger(__name__)
 
 # How long a pending signup verification is valid (in hours).
 _VERIFY_TTL_HOURS = 24
+_PASSWORD_RESET_TTL_HOURS = 1
+_PASSWORD_RESET_EMAIL_LIMIT = 3
 _DUMMY_ARGON2 = (
     "$argon2id$v=19$m=65536,t=3,p=4$"
     "yEZFbIMmBabse2MdUks7RA$Iggj8Dn26NU39IQQb7Vs8ADgvJayYRb194wtzFzGsF0"
@@ -63,6 +79,8 @@ def _verify_password_for_login(hash_: str, password: str) -> PasswordVerifyResul
 
 _SIGNUP_VERIFICATION_DATA = {"status": "verification_sent"}
 _SIGNUP_VERIFICATION_MESSAGE = "verification email sent"
+_PASSWORD_RESET_REQUEST_DATA = {"status": "accepted"}
+_PASSWORD_RESET_REQUEST_MESSAGE = "password reset request accepted"
 
 
 def _record_signup_mail_failure(kind: str, exc: Exception) -> None:
@@ -76,6 +94,29 @@ def _record_signup_mail_failure(kind: str, exc: Exception) -> None:
         sentry_sdk.capture_exception(exc)
     except Exception:
         pass
+
+
+def _record_password_reset_mail_failure(exc: Exception) -> None:
+    log.exception(
+        "password reset mail send failed",
+        extra={"mail_kind": "password_reset", "error_code": "mail.send_failed"},
+    )
+    try:
+        import sentry_sdk
+
+        sentry_sdk.capture_exception(exc)
+    except Exception:
+        pass
+
+
+def _hash_email_for_password_reset(email: str) -> str:
+    return hashlib.sha256(email.lower().encode("utf-8")).hexdigest()
+
+
+def _dummy_password_reset_compute() -> None:
+    # Keep known and unknown request paths close enough that the request
+    # endpoint does not become an email-enumeration timing oracle.
+    hash_password(secrets.token_urlsafe(24))
 
 
 def _reap_expired_pending_signup(db: DbSession, email: str) -> None:
@@ -122,8 +163,52 @@ def _hmac_token(plaintext: str) -> str:
     `hmac.compare_digest(_hmac_token(supplied), row.verification_token_hmac)`
     for constant-time comparison (SEC2-013 pattern).
     """
-    key = settings().SESSION_SECRET.encode("utf-8")
-    return _hmac.new(key, plaintext.encode("utf-8"), "sha256").hexdigest()
+    return hmac_token(plaintext)
+
+
+def _first_workspace_for_user(db: DbSession, user: User) -> Workspace | None:
+    membership = (
+        db.query(WorkspaceMember)
+        .filter(WorkspaceMember.user_id == user.id, WorkspaceMember.status == "active")
+        .order_by(WorkspaceMember.created_at.asc())
+        .first()
+    )
+    return db.get(Workspace, membership.workspace_id) if membership else None
+
+
+def _password_reset_request_throttled(db: DbSession, *, email_hash: str) -> bool:
+    cutoff = utcnow() - timedelta(hours=1)
+    count = (
+        db.query(PasswordResetRequest)
+        .filter(
+            PasswordResetRequest.email_hash == email_hash,
+            PasswordResetRequest.created_at >= cutoff,
+        )
+        .count()
+    )
+    return count >= _PASSWORD_RESET_EMAIL_LIMIT
+
+
+def _audit_password_reset_request(
+    db: DbSession,
+    request: Request,
+    user: User,
+    *,
+    throttled: bool,
+) -> None:
+    workspace = _first_workspace_for_user(db, user)
+    if workspace is None:
+        return
+    _audit_log(
+        db,
+        ws=workspace,
+        user=user,
+        action="user.password_reset_requested",
+        target_type="user",
+        target_ids=[user.id],
+        comment="throttled" if throttled else None,
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 def _workspace_for_logout_audit(db, request: Request, user: User) -> Workspace | None:
@@ -402,6 +487,131 @@ def verify(
             "workspace_id": str(ws.id),
         },
         "email verified",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Password reset — pre-auth request + single-use email token
+# ---------------------------------------------------------------------------
+
+
+@router.post("/request-password-reset")
+@limiter.limit("10/hour")
+def request_password_reset(
+    request: Request,
+    payload: RequestPasswordResetIn,
+    response: Response,
+    db: DbSession,
+) -> Envelope[dict]:
+    email = str(payload.email).strip()
+    email_normalized = email.lower()
+    email_hash = _hash_email_for_password_reset(email_normalized)
+    client_ip = request.client.host if request.client else None
+    now = utcnow()
+
+    _dummy_password_reset_compute()
+    user = db.query(User).filter(func.lower(User.email) == email_normalized).first()
+    throttled = _password_reset_request_throttled(db, email_hash=email_hash)
+
+    reset_request = PasswordResetRequest(
+        user_id=user.id if user else None,
+        email_hash=email_hash,
+        ip=client_ip,
+    )
+
+    if user is not None and not throttled:
+        token, token_hmac = mint_password_reset_token()
+        reset_request.token_hmac = token_hmac
+        reset_request.expires_at = now + timedelta(hours=_PASSWORD_RESET_TTL_HOURS)
+        db.add(reset_request)
+        db.flush()
+
+        link = f"{settings().APP_BASE_URL}/auth/reset-password?token={token}"
+        try:
+            send_password_reset_email(to=user.email, reset_link=link)
+            reset_request.sent_at = now
+        except Exception as exc:
+            _record_password_reset_mail_failure(exc)
+    else:
+        db.add(reset_request)
+        db.flush()
+
+    if user is not None:
+        _audit_password_reset_request(db, request, user, throttled=throttled)
+
+    response.status_code = status.HTTP_202_ACCEPTED
+    return ok(_PASSWORD_RESET_REQUEST_DATA, _PASSWORD_RESET_REQUEST_MESSAGE)
+
+
+@router.post("/reset-password")
+@limiter.limit("10/minute")
+def reset_password(
+    request: Request,
+    payload: PasswordResetIn,
+    db: DbSession,
+) -> Envelope[dict]:
+    token_hmac = hmac_token(payload.token)
+    reset_request = (
+        db.query(PasswordResetRequest)
+        .filter(PasswordResetRequest.token_hmac == token_hmac)
+        .first()
+    )
+    if reset_request is None:
+        raise_http(
+            status.HTTP_400_BAD_REQUEST,
+            ErrorCodes.AUTH_RESET_INVALID,
+            "invalid password reset link",
+        )
+    if reset_request.used_at is not None:
+        raise_http(
+            status.HTTP_400_BAD_REQUEST,
+            ErrorCodes.AUTH_RESET_USED,
+            "password reset link already used",
+        )
+    if reset_request.expires_at is None or reset_request.expires_at < utcnow():
+        raise_http(
+            status.HTTP_400_BAD_REQUEST,
+            ErrorCodes.AUTH_RESET_EXPIRED,
+            "password reset link expired",
+        )
+
+    user = db.get(User, reset_request.user_id) if reset_request.user_id else None
+    if user is None:
+        raise_http(
+            status.HTTP_400_BAD_REQUEST,
+            ErrorCodes.AUTH_RESET_INVALID,
+            "invalid password reset link",
+        )
+
+    try:
+        validate_password_strength(payload.new_password)
+    except WeakPasswordError as exc:
+        raise_http(
+            status.HTTP_400_BAD_REQUEST,
+            ErrorCodes.AUTH_WEAK_PASSWORD,
+            str(exc),
+        )
+
+    reset_request.used_at = utcnow()
+    user.password_hash = hash_password(payload.new_password)
+    revoked_sessions = revoke_all_user_sessions(db, user.id)
+    clear_login_failures(db, email=user.email)
+
+    workspace = _first_workspace_for_user(db, user)
+    if workspace is not None:
+        _audit_log(
+            db,
+            ws=workspace,
+            user=user,
+            action="user.password_reset",
+            target_type="user",
+            target_ids=[user.id],
+            request_id=getattr(request.state, "request_id", None),
+        )
+
+    return ok(
+        {"status": "password_reset", "revoked_sessions": revoked_sessions},
+        "password reset",
     )
 
 

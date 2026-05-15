@@ -103,6 +103,9 @@ class ErrorCodes:
     AUTH_VERIFICATION_PENDING = "auth.verification_pending"
     AUTH_VERIFICATION_INVALID = "auth.verification_invalid"
     AUTH_VERIFICATION_EXPIRED = "auth.verification_expired"
+    AUTH_RESET_INVALID = "auth.reset_invalid"
+    AUTH_RESET_EXPIRED = "auth.reset_expired"
+    AUTH_RESET_USED = "auth.reset_used"
 
     # Workspace / membership
     WORKSPACE_NOT_FOUND = "workspace.not_found"

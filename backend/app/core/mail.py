@@ -159,6 +159,31 @@ def send_account_exists_email(*, to: str) -> None:
     )
 
 
+def send_password_reset_email(*, to: str, reset_link: str) -> None:
+    """Send a password-reset message to ``to``."""
+    cfg = settings()
+    if cfg.APP_ENV == "prod":
+        _send_smtp_message(
+            to=to,
+            subject="Reset your Stock Manager password",
+            text_body=(
+                "We received a request to reset your Stock Manager password.\n\n"
+                f"Reset your password here:\n{reset_link}\n\n"
+                "This link expires in 1 hour and works only once.\n\n"
+                "If you did not request this, you can safely ignore this email."
+            ),
+            html_body=(
+                "<p>We received a request to reset your Stock Manager password.</p>"
+                f'<p><a href="{reset_link}">Reset my password</a></p>'
+                f"<p>Or copy and paste this URL: {reset_link}</p>"
+                "<p><small>This link expires in 1 hour and works only once. "
+                "If you did not request this, ignore this email.</small></p>"
+            ),
+        )
+        return
+    _send_password_reset_stdout(to=to, reset_link=reset_link)
+
+
 def _send_stdout(*, to: str, verification_link: str) -> None:
     """Dev backend: log a single WARNING with the verification link.
 
@@ -181,6 +206,19 @@ def _send_stdout(*, to: str, verification_link: str) -> None:
         "dev mail backend (SMTP not configured): verification link for %s: %s",
         to,
         verification_link,
+    )
+
+
+def _send_password_reset_stdout(*, to: str, reset_link: str) -> None:
+    cfg = settings()
+    if cfg.APP_ENV == "prod":
+        raise RuntimeError(
+            "stdout mail backend refused in prod: SMTP must be configured"
+        )
+    _log.warning(
+        "dev mail backend (SMTP not configured): password reset link for %s: %s",
+        to,
+        reset_link,
     )
 
 

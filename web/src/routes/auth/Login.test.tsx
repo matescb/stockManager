@@ -38,6 +38,7 @@ function renderLogin() {
           <Route path="/login" element={<Login />} />
           <Route path="/parts" element={<div>parts-page</div>} />
           <Route path="/signup" element={<div>signup-page</div>} />
+          <Route path="/auth/request-reset" element={<div>request-reset-page</div>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -58,6 +59,13 @@ beforeEach(() => {
 });
 
 describe("Login", () => {
+  it("test_forgot_password_link_visible", () => {
+    renderLogin();
+
+    const link = screen.getByRole("link", { name: "Forgot password?" });
+    expect(link.getAttribute("href")).toBe("/auth/request-reset");
+  });
+
   it("test_429_renders_generic_message", async () => {
     const body = {
       data: null,
