@@ -197,6 +197,7 @@ class ErrorCodes:
 
     # Parts shared helpers.
     PART_NOT_FOUND = "part.not_found"
+    PART_HAS_RESERVED_STOCK = "part.has_reserved_stock"
 
     # Projects router.
     PROJECT_NOT_FOUND = "project.not_found"

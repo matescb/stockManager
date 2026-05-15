@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import statistics
+import time
 import uuid
 from unittest.mock import patch
 
@@ -64,3 +66,56 @@ def test_response_identical_for_known_and_unknown_email(db):
     assert known_response.json() == unknown_response.json()
     account_exists_email.assert_called_once_with(to=known_email)
     verification_email.assert_called_once()
+
+
+def test_timing_similar_for_known_and_unknown_email(db):
+    known_email = f"known-timing-{uuid.uuid4().hex[:8]}@example.com"
+    _signup_and_verify(known_email)
+    client = TestClient(app)
+    samples = 4
+
+    def _delayed_hash(password: str) -> str:
+        assert password == PASSWORD
+        time.sleep(0.075)
+        return "timing-test-password-hash"
+
+    def _timed_signup(email: str) -> tuple[int, dict, float]:
+        start = time.perf_counter()
+        response = client.post(
+            "/api/auth/signup",
+            json={"email": email, "name": "Timing", "password": PASSWORD},
+        )
+        return response.status_code, response.json(), time.perf_counter() - start
+
+    known_times: list[float] = []
+    unknown_times: list[float] = []
+    with (
+        patch.object(settings(), "SIGNUP_REQUIRE_EMAIL_VERIFICATION", True),
+        patch("app.api.routes.auth.hash_password", side_effect=_delayed_hash) as hash_password,
+        patch("app.api.routes.auth.send_account_exists_email") as account_exists_email,
+        patch("app.api.routes.auth.send_verification_email") as verification_email,
+    ):
+        for _ in range(samples):
+            known_status, known_body, known_elapsed = _timed_signup(known_email)
+            unknown_status, unknown_body, unknown_elapsed = _timed_signup(
+                f"unknown-timing-{uuid.uuid4().hex[:8]}@example.com"
+            )
+
+            assert known_status == unknown_status == 202
+            assert known_body == unknown_body
+            known_times.append(known_elapsed)
+            unknown_times.append(unknown_elapsed)
+
+    assert hash_password.call_count == samples * 2
+    assert account_exists_email.call_count == samples
+    assert verification_email.call_count == samples
+
+    known_mean = statistics.fmean(known_times)
+    unknown_mean = statistics.fmean(unknown_times)
+    slower_times = known_times if known_mean >= unknown_mean else unknown_times
+    tolerance = max(0.050, 2 * statistics.pstdev(slower_times))
+    delta = abs(known_mean - unknown_mean)
+    assert delta <= tolerance, (
+        f"signup timing diverged: known_mean={known_mean:.4f}s "
+        f"unknown_mean={unknown_mean:.4f}s tolerance={tolerance:.4f}s"
+    )
