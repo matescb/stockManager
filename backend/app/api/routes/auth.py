@@ -9,6 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Request, Response, status
 from sqlalchemy import func, text
 
+from app.core.advisory_locks import PASSWORD_RESET_THROTTLE_LOCK_CLASSID
 from app.core.auth import (
     PasswordVerifyResult,
     WeakPasswordError,
@@ -178,8 +179,15 @@ def _first_workspace_for_user(db: DbSession, user: User) -> Workspace | None:
 
 def _password_reset_request_throttled(db: DbSession, *, email_hash: str) -> bool:
     db.execute(
-        text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
-        {"lock_key": f"reset:{email_hash}"},
+        text(
+            "SELECT pg_advisory_xact_lock("
+            "CAST(:classid AS int4), CAST(hashtext(:lock_key) AS int4)"
+            ")"
+        ),
+        {
+            "classid": PASSWORD_RESET_THROTTLE_LOCK_CLASSID,
+            "lock_key": f"reset:{email_hash}",
+        },
     )
     cutoff = utcnow() - timedelta(hours=1)
     count = (

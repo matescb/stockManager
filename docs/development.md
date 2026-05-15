@@ -146,6 +146,17 @@ you write a similar test, request the `real_db` fixture instead of
 ~1000× slower per test — only use it when the savepoint pattern truly
 can't model the test.
 
+## Advisory lock class IDs
+
+Postgres two-int advisory locks use `classid` as the feature namespace
+and `objid` as the per-feature key. Allocate a unique int4 class ID here
+before adding a new hashtext-backed advisory lock.
+
+| Class ID | Feature | Object ID |
+|----------|---------|-----------|
+| `1` | `run_job` | `hashtext(job_name)` for allow-listed maintenance jobs. |
+| `2` | `password_reset_throttle` | `hashtext("reset:" || email_hash)` for password-reset request throttling. |
+
 ### Polymorphic cleanup
 
 SQLAlchemy `before_delete` mapper events do not fire for bulk

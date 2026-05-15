@@ -7,6 +7,7 @@ from datetime import timedelta
 from sqlalchemy.orm import Session
 
 from app.cli.run_job import JOBS, JobSpec, UnknownJobError, main, run_job
+from app.core.advisory_locks import RUN_JOB_LOCK_CLASSID
 from app.core.time import utcnow
 from app.domain.users.models import User, UserSession
 
@@ -67,7 +68,11 @@ def test_run_job_dispatches_allow_listed_job(tmp_path) -> None:
     assert affected == 4
     assert calls == [session]
     assert session.executed == [
-        ("SELECT pg_try_advisory_xact_lock(hashtext(:job_name))", {"job_name": "example"})
+        (
+            "SELECT pg_try_advisory_xact_lock(CAST(:classid AS int4), "
+            "CAST(hashtext(:job_name) AS int4))",
+            {"classid": RUN_JOB_LOCK_CLASSID, "job_name": "example"},
+        )
     ]
     assert session.committed is True
     assert session.rolled_back is False
@@ -75,15 +80,15 @@ def test_run_job_dispatches_allow_listed_job(tmp_path) -> None:
     assert (tmp_path / "example").read_text(encoding="utf-8") == "ok\n"
 
 
-def test_run_job_lock_hash_collision_note_is_kept() -> None:
+def test_run_job_lock_namespace_collision_note_is_kept() -> None:
     from pathlib import Path
 
     source = Path(__file__).parents[1] / "app" / "cli" / "run_job.py"
     text = source.read_text(encoding="utf-8")
 
-    assert "hashtext() returns int4" in text
+    assert "Class ID namespaces this feature" in text
     assert "collide" in text
-    assert "reserved bigint IDs" in text
+    assert "run-job namespace" in text
 
 
 def test_run_job_rejects_unknown_job() -> None:
