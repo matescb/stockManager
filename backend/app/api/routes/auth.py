@@ -65,6 +65,19 @@ _SIGNUP_VERIFICATION_DATA = {"status": "verification_sent"}
 _SIGNUP_VERIFICATION_MESSAGE = "verification email sent"
 
 
+def _record_signup_mail_failure(kind: str, exc: Exception) -> None:
+    log.exception(
+        "signup mail send failed",
+        extra={"mail_kind": kind, "error_code": "mail.send_failed"},
+    )
+    try:
+        import sentry_sdk
+
+        sentry_sdk.capture_exception(exc)
+    except Exception:
+        pass
+
+
 def _reap_expired_pending_signup(db: DbSession, email: str) -> None:
     cutoff = utcnow() - timedelta(hours=_VERIFY_TTL_HOURS)
     db.query(PendingUser).filter(
@@ -245,12 +258,7 @@ def signup(
         try:
             send_account_exists_email(to=payload.email)
         except Exception as exc:
-            log.error("failed to send duplicate-signup email to %s: %s", payload.email, exc)
-            raise_http(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                "mail.send_failed",
-                "could not send signup email — please try again later",
-            )
+            _record_signup_mail_failure("duplicate_signup", exc)
         log.info("signup existing account notice sent", extra={"user_id": str(existing.id)})
         response.status_code = status.HTTP_202_ACCEPTED
         return ok(_SIGNUP_VERIFICATION_DATA, _SIGNUP_VERIFICATION_MESSAGE)
@@ -283,12 +291,7 @@ def signup(
     try:
         send_verification_email(to=payload.email, verification_link=link)
     except Exception as exc:
-        log.error("failed to send verification email to %s: %s", payload.email, exc)
-        raise_http(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "mail.send_failed",
-            "could not send signup email — please try again later",
-        )
+        _record_signup_mail_failure("verification", exc)
 
     log.info("signup pending", extra={"pending_id": str(pending.id)})
     response.status_code = status.HTTP_202_ACCEPTED
