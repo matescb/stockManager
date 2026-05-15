@@ -71,6 +71,12 @@ def _run_session_purge(db: Session) -> int:
     return purge_expired_sessions(db)
 
 
+def _run_password_reset_purge(db: Session) -> int:
+    from app.core.auth import purge_password_reset_requests
+
+    return purge_password_reset_requests(db)
+
+
 JOBS: dict[str, JobSpec] = {
     "sourcing-cache-sweep": JobSpec(
         name="sourcing-cache-sweep",
@@ -97,6 +103,13 @@ JOBS: dict[str, JobSpec] = {
         cadence="hourly",
         idempotency="Deletes only session rows whose expires_at is already in the past.",
         run=_run_session_purge,
+    ),
+    "password-reset-purge": JobSpec(
+        name="password-reset-purge",
+        owner="backend/auth-security",
+        cadence="hourly",
+        idempotency="Deletes only password-reset request rows older than 30 days.",
+        run=_run_password_reset_purge,
     ),
 }
 

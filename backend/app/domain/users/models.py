@@ -105,7 +105,7 @@ class PasswordResetRequest(Base):
     email_hash = Column(String(64), nullable=False, index=True)
     token_hmac = Column(String(64), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
-    expires_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
     used_at = Column(DateTime(timezone=True), nullable=True)
     ip = Column(String(45), nullable=True, index=True)
     sent_at = Column(DateTime(timezone=True), nullable=True)

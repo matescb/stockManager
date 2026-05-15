@@ -121,6 +121,15 @@ def test_session_purge_registered() -> None:
     assert "expires_at" in spec.idempotency
 
 
+def test_password_reset_purge_registered() -> None:
+    spec = JOBS["password-reset-purge"]
+
+    assert spec.name == "password-reset-purge"
+    assert spec.owner == "backend/auth-security"
+    assert spec.cadence == "hourly"
+    assert "older than 30 days" in spec.idempotency
+
+
 def test_session_purge_idempotent(db, tmp_path) -> None:
     user = User(
         id=uuid.uuid4(),
@@ -130,6 +139,7 @@ def test_session_purge_idempotent(db, tmp_path) -> None:
     )
     now = utcnow()
     db.add(user)
+    db.flush()
     db.add_all(
         [
             UserSession(
@@ -162,6 +172,58 @@ def test_session_purge_idempotent(db, tmp_path) -> None:
     assert second == 0
     assert [row.token_hash for row in remaining] == ["b" * 64]
     assert (tmp_path / "session-purge").read_text(encoding="utf-8") == "ok\n"
+
+
+def test_password_reset_purge_idempotent(db, tmp_path) -> None:
+    from app.domain.users.models import PasswordResetRequest
+
+    user = User(
+        id=uuid.uuid4(),
+        email=f"{uuid.uuid4()}@example.test",
+        name="Password Reset Purge",
+        password_hash="hash",
+    )
+    now = utcnow()
+    db.add(user)
+    db.flush()
+    db.add_all(
+        [
+            PasswordResetRequest(
+                id=uuid.uuid4(),
+                user_id=user.id,
+                email_hash="a" * 64,
+                token_hmac="a" * 64,
+                created_at=now - timedelta(days=31),
+                expires_at=now - timedelta(days=31) + timedelta(hours=1),
+            ),
+            PasswordResetRequest(
+                id=uuid.uuid4(),
+                user_id=user.id,
+                email_hash="b" * 64,
+                token_hmac="b" * 64,
+                created_at=now - timedelta(days=1),
+                expires_at=now - timedelta(days=1) + timedelta(hours=1),
+            ),
+        ]
+    )
+    db.flush()
+
+    first = run_job(
+        "password-reset-purge",
+        session_factory=lambda: db,
+        heartbeat_dir=tmp_path,
+    )
+    second = run_job(
+        "password-reset-purge",
+        session_factory=lambda: db,
+        heartbeat_dir=tmp_path,
+    )
+
+    remaining = db.query(PasswordResetRequest).all()
+    assert first == 1
+    assert second == 0
+    assert [row.email_hash for row in remaining] == ["b" * 64]
+    assert (tmp_path / "password-reset-purge").read_text(encoding="utf-8") == "ok\n"
 
 
 def test_sourcing_alerts_evaluate_dispatches_to_module(monkeypatch, tmp_path) -> None:
