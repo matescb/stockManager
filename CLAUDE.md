@@ -185,10 +185,13 @@ them, that's the bug.
 - **Universal `audit_log` for workspace mutations.** Every successful
   workspace-scoped API mutation writes one row through
   `domain/audit/service.py::log` in the same transaction as the business
-  change. Include stable target IDs when available and keep comments to
-  low-sensitivity summaries such as changed field names. Never put
-  plaintext credentials, provider API keys, verification tokens, raw bag
-  codes, or other secrets in `audit_log.comment`.
+  change. `audit_log.workspace_id` is nullable only for auth/system events
+  that have no workspace context; workspace-scoped consumers must filter by
+  workspace_id and decide explicitly whether to include workspace-less rows.
+  Include stable target IDs when available and keep comments to
+  low-sensitivity summaries such as changed field names. Never put plaintext
+  credentials, provider API keys, verification tokens, raw bag codes, or
+  other secrets in `audit_log.comment`.
 
 ## Things that have bitten us — don't undo
 
@@ -259,10 +262,14 @@ them, that's the bug.
 - **Active-list migrations must preserve saved workspace defaults.** When a
   new active list is introduced, backfill it from any existing per-workspace
   value; FB-003a missed this for sourcing distributors and FB-007 fixed it.
-- **Two backend-cron sidecars run separate cadences.** `backend-cron` handles
-  the hourly cache sweep and `backend-cron-alerts` handles the 15-minute alert
-  evaluator. They share the same `run_job` registry per ADR-0021; adding a
-  third cadence means a third sidecar, not a parallel scheduler.
+- **Three backend-cron sidecars run separate cadences.** `backend-cron`
+  handles the hourly TrustedParts cache sweep (`sourcing-cache-sweep`),
+  `backend-cron-alerts` handles the 15-minute alert evaluator
+  (`sourcing-alerts-evaluate`), and `backend-cron-sessions` handles
+  auth-retention purges (`session-purge` and `password-reset-purge`) in
+  parallel subshell loops. They share the same `run_job` registry per
+  ADR-0021; adding another cadence means another sidecar, not a parallel
+  scheduler.
 - **TrustedParts generated models are schema-pinned.** Refresh
   `docs/schemas/trustedparts-v2.json` with `make refresh-tp-spec`, regenerate
   `backend/app/domain/sourcing/_generated/` with `make regen-tp-models`, and
