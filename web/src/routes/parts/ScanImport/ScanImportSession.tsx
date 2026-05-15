@@ -12,8 +12,9 @@
  *
  * It does NOT own `rows` state — the parent (ScanImport) owns it.
  */
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import type React from "react";
+import { ClipboardPaste, Plus } from "lucide-react";
 import Scanner, { type ScanResult } from "@/components/scanner/Scanner";
 import { api, ApiError } from "@/lib/api";
 import { parseBagCode, bagSignature } from "@/lib/bagCode";
@@ -82,6 +83,10 @@ export default function ScanImportSession({
   onRow,
   onLookupUpdate,
 }: ScanImportSessionProps) {
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualCode, setManualCode] = useState("");
+  const [manualSubmitting, setManualSubmitting] = useState(false);
+
   const handleScan = useCallback(
     async (s: ScanResult) => {
       const parsed = parseBagCode(s.data);
@@ -147,8 +152,61 @@ export default function ScanImportSession({
     [seenSigs, seenMpns, onRow, onLookupUpdate],
   );
 
+  async function handleManualSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const data = manualCode.trim();
+    if (!data) return;
+    setManualSubmitting(true);
+    try {
+      await handleScan({ data, symbology: "DataMatrix" });
+      setManualCode("");
+    } finally {
+      setManualSubmitting(false);
+    }
+  }
+
   return (
     <div className="card p-3">
+      <div className="mb-3 rounded-md border border-border bg-panel2/40">
+        <button
+          type="button"
+          className="w-full px-3 py-2 text-left text-sm font-medium inline-flex items-center gap-2"
+          aria-expanded={manualOpen}
+          aria-controls="scan-import-manual-entry"
+          onClick={() => setManualOpen(open => !open)}
+        >
+          <ClipboardPaste size={16} className="text-muted" />
+          Manual entry
+        </button>
+        {manualOpen && (
+          <form
+            id="scan-import-manual-entry"
+            className="border-t border-border px-3 py-3 flex flex-col gap-2 sm:flex-row"
+            onSubmit={handleManualSubmit}
+          >
+            <label className="sr-only" htmlFor="scan-import-manual-code">
+              Bag code
+            </label>
+            <input
+              id="scan-import-manual-code"
+              type="text"
+              className="input min-w-0 flex-1"
+              value={manualCode}
+              onChange={e => setManualCode(e.target.value)}
+              placeholder="Paste bag code"
+              required
+            />
+            <button
+              type="submit"
+              className="btn-primary btn-sm inline-flex items-center justify-center gap-1"
+              disabled={manualSubmitting || manualCode.trim().length === 0}
+            >
+              <Plus size={14} />
+              Add bag
+            </button>
+          </form>
+        )}
+      </div>
       <Scanner
         onScan={handleScan}
         symbologies={SCAN_IMPORT_SYMBOLOGIES}
