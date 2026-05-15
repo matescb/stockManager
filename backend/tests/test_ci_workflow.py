@@ -243,6 +243,35 @@ def test_compose_prod_has_web_and_cron_healthchecks():
     assert "-mmin -90" in alerts_test
 
 
+def test_compose_prod_backend_cron_sessions_disabled_jobs_stay_healthy():
+    """backend-cron-sessions must create the heartbeat dir before gated loops."""
+    assert _COMPOSE_PROD_PATH.exists(), (
+        f"missing compose file at {_COMPOSE_PROD_PATH}"
+    )
+    data = yaml.safe_load(_COMPOSE_PROD_PATH.read_text())
+    cron = data["services"]["backend-cron-sessions"]
+
+    cmd = cron.get("command")
+    assert isinstance(cmd, list), (
+        "backend-cron-sessions.command must be a YAML list (JSON-array form)"
+    )
+    joined_cmd = " ".join(str(part) for part in cmd)
+    mkdir = "mkdir -p /tmp/stockmanager-job-heartbeats"
+    session_branch = "if [ $$session_interval -gt 0 ]"
+    reset_branch = "if [ $$reset_interval -gt 0 ]"
+    assert mkdir in joined_cmd
+    assert joined_cmd.index(mkdir) < joined_cmd.index(session_branch)
+    assert joined_cmd.index(mkdir) < joined_cmd.index(reset_branch)
+
+    healthcheck = cron.get("healthcheck", {})
+    healthcheck_test = " ".join(healthcheck.get("test", []))
+    assert "test -d /tmp/stockmanager-job-heartbeats" in healthcheck_test
+    assert "[ $${SESSION_PURGE_INTERVAL_SECONDS:-3600} -le 0 ]" in healthcheck_test
+    assert "[ $${PASSWORD_RESET_PURGE_INTERVAL_SECONDS:-3600} -le 0 ]" in healthcheck_test
+    assert "session-purge -mmin -90" in healthcheck_test
+    assert "password-reset-purge -mmin -90" in healthcheck_test
+
+
 def test_compose_prod_backend_cron_alerts_command_shape():
     """backend-cron-alerts must use the shared CLI scheduler path."""
     assert _COMPOSE_PROD_PATH.exists(), (
