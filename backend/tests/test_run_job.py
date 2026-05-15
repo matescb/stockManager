@@ -4,7 +4,6 @@ import logging
 import uuid
 from datetime import timedelta
 
-from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.cli.run_job import JOBS, JobSpec, UnknownJobError, main, run_job
@@ -12,18 +11,25 @@ from app.core.time import utcnow
 from app.domain.users.models import User, UserSession
 
 
+class _FakeResult:
+    def __init__(self, value: bool) -> None:
+        self.value = value
+
+    def scalar(self) -> bool:
+        return self.value
+
+
 class _FakeSession:
-    def __init__(self, *, execute_error: Exception | None = None) -> None:
+    def __init__(self, *, execute_result: bool = True) -> None:
         self.committed = False
         self.rolled_back = False
         self.closed = False
         self.executed: list[tuple[str, dict[str, object] | None]] = []
-        self.execute_error = execute_error
+        self.execute_result = execute_result
 
-    def execute(self, statement, params=None) -> None:
+    def execute(self, statement, params=None) -> _FakeResult:
         self.executed.append((str(statement), params))
-        if self.execute_error is not None:
-            raise self.execute_error
+        return _FakeResult(self.execute_result)
 
     def commit(self) -> None:
         self.committed = True
@@ -61,7 +67,7 @@ def test_run_job_dispatches_allow_listed_job(tmp_path) -> None:
     assert affected == 4
     assert calls == [session]
     assert session.executed == [
-        ("SELECT pg_advisory_xact_lock(hashtext(:job_name))", {"job_name": "example"})
+        ("SELECT pg_try_advisory_xact_lock(hashtext(:job_name))", {"job_name": "example"})
     ]
     assert session.committed is True
     assert session.rolled_back is False
@@ -174,18 +180,8 @@ def test_sourcing_alerts_evaluate_dispatches_to_module(monkeypatch, tmp_path) ->
     assert (tmp_path / "sourcing-alerts-evaluate").exists()
 
 
-class _FakeLockDenied(Exception):
-    sqlstate = "55P03"
-
-
 def test_run_job_skips_when_advisory_lock_denied(caplog, tmp_path) -> None:
-    session = _FakeSession(
-        execute_error=OperationalError(
-            "SELECT pg_advisory_xact_lock(hashtext(:job_name))",
-            {"job_name": "example"},
-            _FakeLockDenied(),
-        )
-    )
+    session = _FakeSession(execute_result=False)
     calls: list[Session] = []
 
     def _job(db: Session) -> int:
