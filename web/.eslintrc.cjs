@@ -45,8 +45,9 @@ module.exports = {
           "Do not pass sensitive identifiers to Sentry.logger.*; log a redacted scalar or omit the field.",
       },
       {
-        selector: 'JSXAttribute[name.name="rel"][value.value="noreferrer"]',
-        message: 'External links must use rel="noopener noreferrer".',
+        selector:
+          'JSXOpeningElement:has(JSXAttribute[name.name="target"] Literal[value="_blank"]):matches(:not(:has(JSXAttribute[name.name="rel"] Literal[value=/\\bnoopener\\b/])), :not(:has(JSXAttribute[name.name="rel"] Literal[value=/\\bnoreferrer\\b/])))',
+        message: 'Links with target="_blank" must use rel="noopener noreferrer".',
       },
       {
         selector: "Property[key.name='queryFn'] > ArrowFunctionExpression[params.length=0]",

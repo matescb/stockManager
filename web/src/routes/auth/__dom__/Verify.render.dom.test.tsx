@@ -97,11 +97,15 @@ describe("Verify — ApiError render", () => {
     expect(screen.queryByText(new RegExp(RAW_SERVER_MSG))).toBeNull();
   });
 
-  it("shows an expired-link message for 410", async () => {
+  it("shows an expired-link message for the backend verification code", async () => {
     mockPost.mockRejectedValue(
       new ApiError(
-        410,
-        { data: null, status: { category: "not_found", message: "expired" } },
+        400,
+        {
+          data: null,
+          status: { category: "validation_error", message: "expired" },
+          code: "auth.verification_expired",
+        },
         "expired",
       ),
     );
@@ -112,11 +116,15 @@ describe("Verify — ApiError render", () => {
     expect(screen.queryByText("Verification link not found.")).toBeNull();
   });
 
-  it("shows an unknown-link message for 404", async () => {
+  it("shows an unknown-link message for the backend invalid verification code", async () => {
     mockPost.mockRejectedValue(
       new ApiError(
-        404,
-        { data: null, status: { category: "not_found", message: "unknown" } },
+        400,
+        {
+          data: null,
+          status: { category: "validation_error", message: "unknown" },
+          code: "auth.verification_invalid",
+        },
         "unknown",
       ),
     );
