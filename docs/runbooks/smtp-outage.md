@@ -31,7 +31,20 @@ delivery stall — but the rest of the app keeps working.
 | New user signup → click verification link → activate account | **Yes** — verification email never arrives |
 | Admin sends invitation → invitee receives email | **Yes** |
 | Invitee accepts an invitation link they already received | No — `POST /api/invitations/accept` doesn't send mail |
+| Password-reset request | **Yes** — reset email never arrives, but the request still returns the generic `202 Accepted` response |
 | Sourcing alert email delivery | **Yes** — alert evaluation continues, but SMTP delivery can fail |
+
+## Intentional silent responses
+
+Password-reset requests intentionally hide SMTP delivery failures. For
+`POST /api/auth/request-password-reset`, the backend records
+`mail.send_failed` when SMTP raises, then still returns the same generic
+`202 Accepted` response used for successful, unknown-email, and throttled
+requests. This preserves the account-enumeration defense and is
+consistent with the signup and invitation flows: the caller should not
+learn whether an address exists or whether a mail send failed. Sources:
+`backend/app/api/routes/auth.py:500-543`,
+`backend/app/core/mail.py:162-184`.
 
 In prod the SMTP backend is the **only** option. The
 `_require_smtp_in_prod` validator (`backend/app/core/config.py`) refuses
