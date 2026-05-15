@@ -43,7 +43,7 @@ const requestUrlHeaders = new Set(["referer", "referrer"]);
 const breadcrumbUrlKeys = new Set(["url", "from", "to"]);
 const transactionUrlKeys = new Set(["url", "from", "to", "http.url"]);
 const sensitiveTextPattern =
-  /(["']?\b(?:password|passwd|pass|token|secret|api[_-]?key|authorization|cookie|session(?:[_-]?id)?)["']?\s*[:=]\s*["']?)([^"',&\s;}\]]+)/gi;
+  /(["']?\b(?:password|passwd|pass|token|secret|api[_-]?key|authorization|cookie|session(?:[_-]?id)?)["']?\s*[:=]\s*["']?)([^"',&#\s;}\]]+)/gi;
 type MutableRequest = {
   url?: string;
   query_string?: unknown;
@@ -118,24 +118,32 @@ function scrubSensitiveText(value: string): string {
   return value.replace(sensitiveTextPattern, "$1[Filtered]");
 }
 
-function scrubEventStrings(event: Record<string, unknown>) {
-  if (typeof event.message === "string") {
-    event.message = scrubSensitiveText(event.message);
-  }
-
-  const exception = event.exception as { values?: unknown } | undefined;
-  if (!exception || !Array.isArray(exception.values)) {
+function scrubEventStrings(value: unknown, seen = new WeakSet<object>()) {
+  if (!value || typeof value !== "object") {
     return;
   }
-  for (const item of exception.values) {
-    if (!item || typeof item !== "object") {
-      continue;
-    }
-    const exceptionValue = item as Record<string, unknown>;
-    for (const key of ["value", "message"]) {
-      if (typeof exceptionValue[key] === "string") {
-        exceptionValue[key] = scrubSensitiveText(exceptionValue[key]);
+  if (seen.has(value)) {
+    return;
+  }
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      if (typeof value[index] === "string") {
+        value[index] = scrubSensitiveText(value[index]);
+      } else {
+        scrubEventStrings(value[index], seen);
       }
+    }
+    return;
+  }
+
+  const values = value as Record<string, unknown>;
+  for (const key of Object.keys(values)) {
+    if (typeof values[key] === "string") {
+      values[key] = scrubSensitiveText(values[key]);
+    } else {
+      scrubEventStrings(values[key], seen);
     }
   }
 }
@@ -181,6 +189,8 @@ Sentry.init({
     return event;
   },
   beforeSendTransaction(event) {
+    scrubEventStrings(event as unknown as Record<string, unknown>);
+
     if (typeof event.transaction === "string") {
       event.transaction = stripQueryString(event.transaction);
     }
