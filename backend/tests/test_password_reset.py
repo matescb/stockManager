@@ -15,6 +15,7 @@ from app.core.auth import hmac_token
 from app.core.time import utcnow
 from app.domain.audit.models import AuditLog
 from app.domain.users.models import PasswordResetRequest, User, UserSession
+from app.domain.workspaces.models import WorkspaceMember
 from app.main import app
 from tests._factories import DEFAULT_PASSWORD, signup_user
 
@@ -335,5 +336,22 @@ def test_password_reset_request_audit_row(client, db):
         .filter(AuditLog.action == "user.password_reset_requested")
         .one()
     )
+    assert row.user_id == user.id
+    assert row.target_ids == [user.id]
+
+
+def test_orphan_user_audit_behavior(client, db):
+    email = _signup(client)
+    user = db.query(User).filter(User.email == email).one()
+    db.query(WorkspaceMember).filter(WorkspaceMember.user_id == user.id).delete()
+
+    _request_reset(client, email)
+
+    row = (
+        db.query(AuditLog)
+        .filter(AuditLog.action == "user.password_reset_requested")
+        .one()
+    )
+    assert row.workspace_id is None
     assert row.user_id == user.id
     assert row.target_ids == [user.id]

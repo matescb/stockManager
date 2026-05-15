@@ -2,6 +2,7 @@
 
 Single entry point: ``log()``. Callers pass the workspace, the acting
 user, the action string, and an optional list of affected object IDs.
+Auth/system events that have no workspace context may pass ``ws=None``.
 The row is flushed (not committed) so it rides the route's own
 transaction — if the route rolls back, the audit row disappears too,
 which is the correct behaviour.
@@ -20,7 +21,7 @@ from app.domain.workspaces.models import Workspace
 def log(
     db: Session,
     *,
-    ws: Workspace,
+    ws: Workspace | None,
     user: User | None,
     action: str,
     target_type: str | None = None,
@@ -35,12 +36,17 @@ def log(
     commits at clean exit.  A rollback in the route will also roll back
     this row — there is no separate audit-only transaction.
 
+    ``ws`` is required for workspace-scoped events. Pass ``None`` only
+    for auth/system events where no workspace membership exists; the
+    workspace audit API filters by workspace_id, so those rows remain
+    outside tenant-scoped audit views.
+
     Never store decrypted credentials here (invariant from CLAUDE.md /
     BE2-024): callers that log credential rotation MUST NOT pass the
     key material as ``comment``.
     """
     row = AuditLog(
-        workspace_id=ws.id,
+        workspace_id=ws.id if ws else None,
         user_id=user.id if user else None,
         action=action,
         target_type=target_type,

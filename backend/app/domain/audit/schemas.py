@@ -11,7 +11,7 @@ class AuditLogOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    workspace_id: UUID
+    workspace_id: UUID | None
     user_id: UUID | None
     action: str
     target_type: str | None

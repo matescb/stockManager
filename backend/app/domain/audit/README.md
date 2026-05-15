@@ -24,7 +24,8 @@ Reads are direct SQL from the audit route (`backend/app/api/routes/audit.py`).
 
 1. **One write entry point.** All audit writes go through `service.py::log` so the row shape stays uniform.
 2. **Append-only.** Audit rows are never updated or deleted by application code. Retention is a DB-side concern (TODO(verify): retention policy).
-3. **Workspace-scoped.** `AuditLog.workspace_id` is required on every row; the query API filters by the caller's workspace.
+3. **Workspace-scoped by default.** Workspace events must set `AuditLog.workspace_id`; the query API filters by the caller's workspace.
+4. **Auth/system exception.** Auth/system events with no workspace context may store `workspace_id = NULL`; those rows are not returned by tenant-scoped audit queries.
 
 ## See also
 
@@ -35,4 +36,4 @@ Reads are direct SQL from the audit route (`backend/app/api/routes/audit.py`).
 
 - Don't insert `AuditLog` rows directly from routes — go through `service.py::log`.
 - Don't use the audit log as a source of truth for business state. It's a record of changes, not a substitute for the entity tables.
-- Don't strip workspace_id from a log row "because the action is global" — every row has a workspace.
+- Don't strip workspace_id from workspace-scoped rows "because the action is global". Use `workspace_id = NULL` only for auth/system events with no workspace context.
