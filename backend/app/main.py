@@ -107,7 +107,7 @@ def _scrub_event(event, _hint):
     request.pop("query_string", None)
     headers = request.get("headers")
     if isinstance(headers, dict):
-        drop = {"cookie", "authorization", "x-workspace-id"}
+        drop = {"cookie", "authorization", "x-api-key", "x-workspace-id"}
         for k in list(headers.keys()):
             if k.lower() in drop:
                 headers.pop(k, None)
@@ -239,10 +239,15 @@ def assert_proxy_headers_trusted(argv: Sequence[str] | None = None) -> None:
 
 
 def assert_cors_origins_not_wildcard() -> None:
-    """Fail prod startup when credentialed CORS is configured for every origin."""
+    """Fail prod startup when credentialed CORS origins are unsafe or empty."""
     cfg = settings()
     if cfg.APP_ENV != "prod":
         return
+    if not cfg.cors_origin_list:
+        raise RuntimeError(
+            "APP_ENV=prod requires at least one CORS_ORIGINS entry. Configure "
+            "explicit frontend origins instead of starting with broken CORS."
+        )
     if "*" in cfg.cors_origin_list:
         raise RuntimeError(
             "APP_ENV=prod rejects CORS_ORIGINS=* because wildcard origins cannot "
@@ -255,7 +260,12 @@ async def lifespan(_app: FastAPI):
     """Run synchronous startup assertions before serving requests."""
     assert_cors_origins_not_wildcard()
     assert_proxy_headers_trusted()
-    yield
+    try:
+        yield
+    finally:
+        from app.domain.sourcing.providers.factory import close_provider_client_pool
+
+        close_provider_client_pool()
 
 
 app = FastAPI(

@@ -36,6 +36,10 @@ class UnknownJobError(ValueError):
 
 
 def _acquire_job_lock(db: Session, job_name: str) -> bool:
+    # hashtext() returns int4, so different job names can theoretically
+    # collide. Acceptable for today's tiny allow-list; switch to explicit
+    # reserved bigint IDs or pg_try_advisory_xact_lock(classid, objid)
+    # before this grows into a broad scheduler.
     result = db.execute(
         text("SELECT pg_try_advisory_xact_lock(hashtext(:job_name))"),
         {"job_name": job_name},

@@ -89,9 +89,19 @@ def make_retrying_client(
     yield _pooled_client(provider_name=provider_name, timeout=timeout)
 
 
-def _reset_provider_client_pool_for_tests() -> None:
+def close_provider_client_pool() -> None:
+    """Close all pooled provider HTTP clients.
+
+    FastAPI calls this during lifespan shutdown so graceful process exits
+    release keep-alive sockets promptly instead of waiting for interpreter
+    teardown.
+    """
     with _CLIENTS_LOCK:
         clients = list(_CLIENTS.values())
         _CLIENTS.clear()
     for client in clients:
         client.close()
+
+
+def _reset_provider_client_pool_for_tests() -> None:
+    close_provider_client_pool()

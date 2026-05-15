@@ -221,3 +221,6 @@ class ErrorCodes:
     # Custom fields router.
     CUSTOM_FIELD_RESERVED_KEY = "custom_field.reserved_key"
     CUSTOM_FIELD_NOT_OVERRIDE = "custom_field.not_override"
+
+    # Legacy parts-provider lookup route.
+    PROVIDER_UPSTREAM_ERROR = "provider.upstream_error"

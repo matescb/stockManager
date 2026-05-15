@@ -162,3 +162,11 @@ def test_sentry_tunnel_route_has_rate_limit_decorator():
             "expected @limiter.limit to wrap sentry_tunnel — none of "
             f"{markers} found and __wrapped__ unset"
         )
+
+
+def test_sentry_tunnel_auth_uses_dependency_session():
+    source = Path(sentry_tunnel_route.__file__).read_text(encoding="utf-8")
+
+    assert "SessionLocal" not in source
+    assert "Depends(require_session_or_trusted_origin)" in source
+    assert "DbSession" in source

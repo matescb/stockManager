@@ -25,16 +25,16 @@ Security posture:
 from __future__ import annotations
 
 import json
+from typing import Annotated
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 
 from app.core.config import settings
-from app.core.deps import get_current_user
+from app.core.deps import DbSession, get_current_user
 from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter
-from app.infra import db as infra_db
 
 router = APIRouter()
 
@@ -125,7 +125,7 @@ def _has_trusted_origin(request: Request) -> bool:
     return referer is not None and referer in _allowed_request_origins()
 
 
-def _require_session_or_trusted_origin(request: Request) -> None:
+def require_session_or_trusted_origin(request: Request, db: DbSession) -> None:
     if _has_trusted_origin(request):
         return
 
@@ -136,17 +136,15 @@ def _require_session_or_trusted_origin(request: Request) -> None:
             "not authenticated",
         )
 
-    db = infra_db.SessionLocal()
-    try:
-        get_current_user(request, db)
-    finally:
-        db.close()
+    get_current_user(request, db)
 
 
 @router.post("/sentry-tunnel")
 @limiter.limit("30/minute")
-async def sentry_tunnel(request: Request) -> Response:
-    _require_session_or_trusted_origin(request)
+async def sentry_tunnel(
+    request: Request,
+    _auth_gate: Annotated[None, Depends(require_session_or_trusted_origin)],
+) -> Response:
 
     allowed = ALLOWED_ENDPOINTS
     if not allowed:

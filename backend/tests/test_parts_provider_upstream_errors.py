@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import httpx
 from fastapi.testclient import TestClient
 
+from app.core.errors import ErrorCodes
 from app.main import app
 
 
@@ -86,6 +87,7 @@ def test_mouser_503_returns_502(monkeypatch):
     assert r.status_code == 502, r.text
     body = r.json()
     assert body["data"] is None
+    assert body["code"] == ErrorCodes.PROVIDER_UPSTREAM_ERROR
     assert body["status"]["category"] == "server_error"
     assert "HTTP 503" in body["status"]["message"]
     assert body["provider"] == "mouser"

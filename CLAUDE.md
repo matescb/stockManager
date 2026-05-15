@@ -169,8 +169,9 @@ them, that's the bug.
   manufacturer URL, …) vs user-curated specs. The PartSpecs and
   PartSourcing tabs split on this boundary; server-side, the catalog
   field shapes live in `backend/app/domain/parts/providers/base.py`
-  and the asset-side reserved-keys subset is `_PROVIDER_RESERVED_KEYS`
-  in `backend/app/api/routes/parts_assets.py`. Adding a new catalog
+  and the reserved custom-field keys live in
+  `PROVIDER_RESERVED_CUSTOM_FIELD_KEYS` in
+  `backend/app/domain/parts/provider_fields.py`. Adding a new catalog
   field needs the FE list AND the relevant server-side touchpoint.
 - **Polymorphic cleanup on hard delete.** `attachments`, `custom_fields`,
   and `tag_links` have no FK on `object_id`. Hard-deleting a registered

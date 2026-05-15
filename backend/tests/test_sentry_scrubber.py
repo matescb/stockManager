@@ -111,6 +111,7 @@ def test_scrubber_strips_sensitive_headers_on_get():
             "Cookie": "stockmgr_session=abc",
             "x-workspace-id": "ws-uuid",
             "authorization": "Bearer xyz",
+            "X-Api-Key": "future-provider-key",
             "X-Trace-Id": "trace-1",
             "user-agent": "Mozilla/5.0",
         },
@@ -120,6 +121,7 @@ def test_scrubber_strips_sensitive_headers_on_get():
     assert "Cookie" not in h
     assert "x-workspace-id" not in h
     assert "authorization" not in h
+    assert "X-Api-Key" not in h
     # Non-sensitive headers are kept for triage value.
     assert "X-Trace-Id" in h
     assert "user-agent" in h
