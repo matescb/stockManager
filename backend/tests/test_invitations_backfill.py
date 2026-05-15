@@ -21,9 +21,9 @@ def _load_backfill_migration():
         Path(__file__).resolve().parent.parent
         / "alembic"
         / "versions"
-        / "0058_stale_invitation_expiry_backfill.py"
+        / "0059_stale_invitation_expiry_backfill.py"
     )
-    spec = importlib.util.spec_from_file_location("migration_0058", path)
+    spec = importlib.util.spec_from_file_location("migration_0059", path)
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)

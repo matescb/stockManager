@@ -1,7 +1,7 @@
 """Backfill stale invitation expiry windows (AUD-078).
 
-Revision ID: 0058
-Revises: 0057
+Revision ID: 0059
+Revises: 0058
 Create Date: 2026-05-15
 
 Migration 0053 added ``expires_at`` with a server default of
@@ -18,8 +18,8 @@ from sqlalchemy.engine import Connection
 
 from alembic import op
 
-revision = "0058"
-down_revision = "0057"
+revision = "0059"
+down_revision = "0058"
 branch_labels = None
 depends_on = None
 
@@ -70,7 +70,7 @@ def expire_stale_invitations(conn: Connection) -> None:
                     'at their original 14-day window.',
                     expired_count
                 ),
-                'migration-0058-aud-078',
+                'migration-0059-aud-078',
                 now()
             FROM summary
             """
@@ -88,7 +88,7 @@ def downgrade() -> None:
             """
             DELETE FROM audit_log
             WHERE action = 'invitation.stale_expiration_backfilled'
-              AND request_id = 'migration-0058-aud-078'
+              AND request_id = 'migration-0059-aud-078'
             """
         )
     )
