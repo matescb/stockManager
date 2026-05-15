@@ -6,6 +6,9 @@ Create Date: 2026-05-15
 
 AUD-079 / issue #717.
 
+Superseded by 0064, which recreates these trigger functions from inline
+definitions instead of reading their current database definitions.
+
 The trigger bodies were last updated in 0058 to preserve the #710 update-gating
 semantics. Rewrite only the ERRCODE inside those current function definitions
 so this migration does not drift from that trigger logic.
