@@ -78,6 +78,12 @@ _WEAK_PASSWORDS = frozenset({
 })
 
 
+def _weak_passwords() -> frozenset[str]:
+    return _WEAK_PASSWORDS | frozenset(
+        password.lower() for password in settings().EXTRA_WEAK_PASSWORDS
+    )
+
+
 class WeakPasswordError(ValueError):
     """Raised when a candidate password fails the strength check."""
 
@@ -147,7 +153,7 @@ def validate_password_strength(password: str) -> None:
     """
     if len(password) < 8:
         raise WeakPasswordError("password must be at least 8 characters")
-    if password.lower() in _WEAK_PASSWORDS:
+    if password.lower() in _weak_passwords():
         raise WeakPasswordError(
             "password is on the public breach list — pick something else"
         )

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import urllib.parse
 from functools import lru_cache
+from typing import Annotated
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -29,6 +30,9 @@ class Settings(BaseSettings):
     POSTGRES_PORT: str = "5432"
     SESSION_SECRET: str = "dev-secret-change-me"
     PASSWORD_PEPPER: str = ""
+    # Deployment-specific additions to the local weak-password blocklist.
+    # Comma-separated in env, e.g. "stockmanager,customer-brand,internal-code".
+    EXTRA_WEAK_PASSWORDS: Annotated[list[str], NoDecode] = Field(default_factory=list)
     SESSION_COOKIE_NAME: str = "stockmgr_session"
     SESSION_LIFETIME_DAYS: int = 30
     # Sliding-expiry idle window. A session idle longer than this is
@@ -112,6 +116,15 @@ class Settings(BaseSettings):
     def _blank_sentry_traces_rate_to_none(cls, value):
         if value == "":
             return None
+        return value
+
+    @field_validator("EXTRA_WEAK_PASSWORDS", mode="before")
+    @classmethod
+    def _split_extra_weak_passwords(cls, value):
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part.strip()]
         return value
 
     @property
