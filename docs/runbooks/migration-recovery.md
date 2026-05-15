@@ -177,6 +177,31 @@ COMMIT;
 Do not edit 0058 to make it silently reversible; the NULL rows represent
 history that the old schema cannot express without operator input.
 
+## Downgrading through migration 0062 after manually recreating the password reset index
+
+Migration 0062 drops `ix_password_reset_requests_expires_at`; its
+downgrade recreates the same index
+(`backend/alembic/versions/0062_password_reset_purge_index.py:24-33`).
+If `ix_password_reset_requests_expires_at` was manually recreated during
+recovery before downgrading through 0062, the downgrade will hit a
+duplicate-index error. Drop the manual copy, or avoid the duplicate index
+before running the downgrade.
+
+Check before any `alembic downgrade` that crosses from 0062 to 0061:
+
+```sql
+SELECT to_regclass('public.ix_password_reset_requests_expires_at') AS index_name;
+```
+
+If the query returns `public.ix_password_reset_requests_expires_at`, drop
+the index in the maintenance window and let the 0062 downgrade recreate it:
+
+```sql
+DROP INDEX IF EXISTS ix_password_reset_requests_expires_at;
+```
+
+Do not edit 0062 to add `IF NOT EXISTS`; merged migrations are immutable.
+
 ## Path A — Forward-fix
 
 1. From a local checkout on `main`:
