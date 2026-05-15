@@ -1,3 +1,9 @@
+const jsxA11y = require("eslint-plugin-jsx-a11y");
+
+jsxA11y.rules["anchor-rel-noreferrer-noopener"] ??= require(
+  "./eslint-rules/anchor-rel-noreferrer-noopener.cjs",
+);
+
 // Minimal ESLint config — CQ-005 / issue #121. Intentionally narrow:
 // only @typescript-eslint/recommended + react-hooks/recommended. No
 // prettier, no react/recommended (would conflict with the existing
@@ -19,7 +25,7 @@ module.exports = {
     es2022: true,
     node: true,
   },
-  plugins: ["@typescript-eslint", "react-hooks"],
+  plugins: ["@typescript-eslint", "react-hooks", "jsx-a11y"],
   extends: [
     "eslint:recommended",
     "plugin:@typescript-eslint/recommended",
@@ -36,6 +42,7 @@ module.exports = {
     // provider catalog / DataTable cells. Tighten in a follow-up.
     "@typescript-eslint/no-explicit-any": "off",
     "no-empty": ["warn", { allowEmptyCatch: true }],
+    "jsx-a11y/anchor-rel-noreferrer-noopener": "error",
     "no-restricted-syntax": [
       "error",
       {
@@ -43,11 +50,6 @@ module.exports = {
           "CallExpression[callee.object.object.name='Sentry'][callee.object.property.name='logger'] Identifier[name=/token|secret|password|passwd|credential|authorization|cookie|session|csrf|dsn|apiKey|workspaceId/i]",
         message:
           "Do not pass sensitive identifiers to Sentry.logger.*; log a redacted scalar or omit the field.",
-      },
-      {
-        selector:
-          'JSXOpeningElement:has(JSXAttribute[name.name="target"] Literal[value="_blank"]):matches(:not(:has(JSXAttribute[name.name="rel"] Literal[value=/\\bnoopener\\b/])), :not(:has(JSXAttribute[name.name="rel"] Literal[value=/\\bnoreferrer\\b/])))',
-        message: 'Links with target="_blank" must use rel="noopener noreferrer".',
       },
       {
         selector: "Property[key.name='queryFn'] > ArrowFunctionExpression[params.length=0]",
