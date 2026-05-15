@@ -325,23 +325,32 @@ def clear_login_failures(db: Session, *, email: str) -> None:
 
 
 def purge_expired_sessions(db: Session, *, now: datetime | None = None) -> int:
-    """Delete every session row whose `expires_at` is in the past.
+    """Delete every session row no longer accepted by auth.
 
     Idempotent: safe to call repeatedly. Returns the number of rows
-    purged. Backed by `ix_user_sessions_expires_at` (alembic 0019), so
-    the DELETE is an index range scan, not a full table scan.
+    purged. Backed by `ix_user_sessions_expires_at` (alembic 0019) and
+    `ix_user_sessions_last_used_at` (alembic 0057), so the DELETE can use
+    indexed range scans.
 
     DB-007 / issue #98. Called on a one-hour cadence by the
     `session-purge` CLI job in the backend cron sidecar. The plan was to
     keep these rows around forever (sessions were only deleted on explicit
     logout); a long-running prod accumulates every expired row otherwise.
     """
+    from sqlalchemy import or_
+
     from app.domain.users.models import UserSession
 
     cutoff = now or utcnow()
+    idle_cutoff = cutoff - timedelta(hours=settings().SESSION_IDLE_HOURS)
     deleted = (
         db.query(UserSession)
-        .filter(UserSession.expires_at < cutoff)
+        .filter(
+            or_(
+                UserSession.expires_at < cutoff,
+                UserSession.last_used_at < idle_cutoff,
+            )
+        )
         .delete(synchronize_session=False)
     )
     return int(deleted)

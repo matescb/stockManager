@@ -31,18 +31,22 @@ class UserSession(Base):
     # be replayed as a session credential. Mirrors the invitation token
     # hashing landed in 0014 (SEC2-003).
     token_hash = Column(String(64), primary_key=True)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     # Sliding expiry (SEC2-015): bumped on every successful auth lookup.
     # A session idle past SESSION_IDLE_HOURS is rejected even if
     # `expires_at` (the absolute lifetime) is still in the future.
     last_used_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
-    # `ix_user_sessions_expires_at` (alembic 0019) lives in the migration
-    # rather than `index=True` here so the `session-purge` CLI job is an
-    # index range scan,
-    # not a seq scan. DB-007 / issue #98. Don't add `index=True` —
-    # SQLAlchemy would emit a redundant CREATE INDEX in a future
-    # autogenerate run.
+    # Purge indexes (`ix_user_sessions_expires_at` from alembic 0019 and
+    # `ix_user_sessions_last_used_at` from alembic 0057) live in migrations
+    # rather than `index=True` here. Don't add `index=True` — SQLAlchemy
+    # would emit redundant CREATE INDEX statements in a future autogenerate
+    # run.
     expires_at = Column(DateTime(timezone=True), nullable=False)
 
 
