@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, status
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError
 
 from app.api.routes._stock_integrity import raise_integrity_as_409
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
@@ -117,7 +117,7 @@ def move_lot(lot_id: UUID, payload: MoveStockIn, db: DbSession, ws: CurrentWorks
     except StockError as exc:
         # `get_db` rolls back on raise (BE2-010).
         raise_http(400, code=ErrorCodes.LOT_MOVE_STOCK_ERROR, message=str(exc))
-    except IntegrityError as exc:
+    except DBAPIError as exc:
         raise_integrity_as_409(exc)
     return ok({"out": str(out_e.id), "in": str(in_e.id)})
 
@@ -136,7 +136,7 @@ def adjust_lot(lot_id: UUID, payload: LotAdjustIn, db: DbSession, ws: CurrentWor
         e = adjust_stock(db, workspace_id=ws.id, user_id=user.id, payload=aip)
     except StockError as exc:
         raise_http(400, code=ErrorCodes.LOT_ADJUST_STOCK_ERROR, message=str(exc))
-    except IntegrityError as exc:
+    except DBAPIError as exc:
         raise_integrity_as_409(exc)
     return ok({"id": str(e.id) if e else None, "delta": e.quantity_delta if e else 0})
 

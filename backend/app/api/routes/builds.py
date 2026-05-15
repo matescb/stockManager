@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy import and_, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError
 
 from app.api._helpers import require_resource_access
 from app.api.routes._activity import _DEFAULT_LIMIT, _MAX_LIMIT, build_activity
@@ -96,7 +96,7 @@ def create_build(payload: BuildCreateIn, db: DbSession, ws: CurrentWorkspace, us
         apply_reservations(
             db, workspace_id=ws.id, user_id=user.id, build=b, project=project
         )
-    except IntegrityError as exc:
+    except DBAPIError as exc:
         raise_integrity_as_409(exc)
     return ok(_serialize(b))
 
@@ -142,7 +142,7 @@ def patch_build(build_id: UUID, payload: BuildPatchIn, db: DbSession, ws: Curren
             apply_reservations(
                 db, workspace_id=ws.id, user_id=user.id, build=b, project=project
             )
-    except IntegrityError as exc:
+    except DBAPIError as exc:
         raise_integrity_as_409(exc)
 
     return ok(_serialize(b))
@@ -158,7 +158,7 @@ def archive_build(build_id: UUID, db: DbSession, ws: CurrentWorkspace, user: Cur
     )
     try:
         release_reservations(db, workspace_id=ws.id, user_id=user.id, build=b)
-    except IntegrityError as exc:
+    except DBAPIError as exc:
         raise_integrity_as_409(exc)
     b.archived_at = utcnow()
     return ok(None, "archived")
@@ -200,7 +200,7 @@ def consume_build(
         # `get_db` rolls back on raise (BE2-010), so dropping the
         # explicit db.rollback() here is safe.
         raise HTTPException(status_code=400, detail=str(exc))
-    except IntegrityError as exc:
+    except DBAPIError as exc:
         raise_integrity_as_409(exc)
     return ok(result)
 

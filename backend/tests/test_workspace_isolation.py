@@ -5,8 +5,11 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.api._helpers import _polymorphic_resolvers, assert_polymorphic_in_workspace
+from app.api.routes import stock as stock_routes
+from app.core.errors import ErrorCodes
 from app.domain.builds.models import Build
 from app.domain.lots.models import Lot
 from app.domain.orders.models import Order
@@ -15,6 +18,7 @@ from app.domain.projects.bom_import import ParsedRow, _match_part
 from app.domain.projects.models import Project
 from app.domain.sourcing.budget import BUDGET
 from app.domain.sourcing.models import SourcingCache
+from app.domain.stock.models import StockEntry
 from app.domain.storage.models import StorageLocation
 from app.main import app
 from tests._factories import (
@@ -220,6 +224,63 @@ def test_part_cad_keys_workspace_trigger_rejects_mismatch():
                 },
             )
             s.commit()
+
+
+class _StockNonnegDiag:
+    constraint_name = "stock_nonneg_trigger"
+
+
+class _StockNonnegOrig(Exception):
+    diag = _StockNonnegDiag()
+
+
+def _stock_nonneg_integrity_error() -> IntegrityError:
+    return IntegrityError("INSERT INTO stock_entries ...", {}, _StockNonnegOrig())
+
+
+def test_cross_workspace_error_code_distinct_from_stock_negative(monkeypatch):
+    a = TestClient(app)
+    b = TestClient(app)
+    _signup(a, f"a-{uuid.uuid4().hex[:6]}@x.com")
+    _signup(b, f"b-{uuid.uuid4().hex[:6]}@x.com")
+    part_a = uuid.UUID(_create_part(a, "A-stock-trigger-part"))
+
+    def insert_foreign_part(db, *, workspace_id, user_id, payload):
+        entry = StockEntry(
+            workspace_id=workspace_id,
+            part_id=part_a,
+            quantity_delta=payload.quantity,
+            operation_type="add",
+            created_by=user_id,
+        )
+        db.add(entry)
+        db.flush()
+        return entry
+
+    monkeypatch.setattr(stock_routes, "add_stock", insert_foreign_part)
+    cross_workspace = b.post(
+        "/api/stock/add",
+        json={"part_id": str(uuid.uuid4()), "quantity": 1},
+    )
+
+    assert cross_workspace.status_code == 409, cross_workspace.text
+    cross_workspace_body = cross_workspace.json()
+    assert cross_workspace_body["code"] == ErrorCodes.WORKSPACE_ISOLATION
+    assert cross_workspace_body["sqlstate"] == "WS001"
+
+    def raise_stock_negative(*args, **kwargs):
+        raise _stock_nonneg_integrity_error()
+
+    monkeypatch.setattr(stock_routes, "remove_stock", raise_stock_negative)
+    stock_negative = b.post(
+        "/api/stock/remove",
+        json={"part_id": str(uuid.uuid4()), "quantity": 1},
+    )
+
+    assert stock_negative.status_code == 409, stock_negative.text
+    stock_negative_body = stock_negative.json()
+    assert stock_negative_body.get("code") != ErrorCodes.WORKSPACE_ISOLATION
+    assert stock_negative_body["constraint"] == "stock_nonneg_trigger"
 
 
 # ---------------------------------------------------------------------------
