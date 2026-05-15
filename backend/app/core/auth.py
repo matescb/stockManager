@@ -377,3 +377,22 @@ def purge_expired_sessions(db: Session, *, now: datetime | None = None) -> int:
         .delete(synchronize_session=False)
     )
     return int(deleted)
+
+
+def purge_password_reset_requests(db: Session, *, now: datetime | None = None) -> int:
+    """Delete password-reset request rows older than the retention window.
+
+    Password-reset rows are transient pre-authentication records used for
+    throttling and single-use token validation. They are not needed after the
+    one-hour token lifetime, so a 30-day retention window leaves operational
+    headroom without letting the table grow forever.
+    """
+    from app.domain.users.models import PasswordResetRequest
+
+    cutoff = (now or utcnow()) - timedelta(days=30)
+    deleted = (
+        db.query(PasswordResetRequest)
+        .filter(PasswordResetRequest.created_at < cutoff)
+        .delete(synchronize_session=False)
+    )
+    return int(deleted)
