@@ -1,3 +1,18 @@
+/**
+ * In-tree implementation of jsx-a11y/anchor-rel-noreferrer-noopener.
+ *
+ * eslint-plugin-jsx-a11y does not ship a rule with this name, so this repo
+ * carries the rule locally and web/.eslintrc.cjs grafts it into the imported
+ * plugin's rules map before enabling it as jsx-a11y/anchor-rel-noreferrer-noopener.
+ *
+ * Behavior and limitations:
+ * - Checks JSX <a> elements only when target is statically known to be "_blank".
+ * - Requires a static rel value containing both whitespace-delimited noopener and
+ *   noreferrer tokens.
+ * - After AUD-100 / #771, a static target="_blank" with dynamic rel reports a
+ *   dedicated diagnostic because the rule cannot prove the required tokens exist.
+ * - Dynamic target values and custom link components are ignored.
+ */
 const TARGET_BLANK_MESSAGE = 'Links with target="_blank" must use rel="noopener noreferrer".';
 const DYNAMIC_REL_MESSAGE =
   'Links with static target="_blank" must use a static rel value containing "noopener noreferrer".';

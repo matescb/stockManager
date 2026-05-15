@@ -1,5 +1,6 @@
 const jsxA11y = require("eslint-plugin-jsx-a11y");
 
+// In-tree rule; see eslint-rules/anchor-rel-noreferrer-noopener.cjs for details.
 jsxA11y.rules["anchor-rel-noreferrer-noopener"] ??= require(
   "./eslint-rules/anchor-rel-noreferrer-noopener.cjs",
 );
