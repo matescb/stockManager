@@ -517,7 +517,7 @@ def request_password_reset(
     user = db.query(User).filter(func.lower(User.email) == email_normalized).first()
     throttled = _password_reset_request_throttled(db, email_hash=email_hash)
 
-    if user is None:
+    if user is None or getattr(user, "archived_at", None) is not None:
         response.status_code = status.HTTP_202_ACCEPTED
         return ok(_PASSWORD_RESET_REQUEST_DATA, _PASSWORD_RESET_REQUEST_MESSAGE)
 
@@ -584,7 +584,7 @@ def reset_password(
         )
 
     user = db.get(User, reset_request.user_id) if reset_request.user_id else None
-    if user is None:
+    if user is None or getattr(user, "archived_at", None) is not None:
         raise_http(
             status.HTTP_400_BAD_REQUEST,
             ErrorCodes.AUTH_RESET_INVALID,
