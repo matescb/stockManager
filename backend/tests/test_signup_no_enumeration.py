@@ -4,7 +4,7 @@ import re
 import statistics
 import time
 import uuid
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from fastapi.testclient import TestClient
 
@@ -66,6 +66,44 @@ def test_response_identical_for_known_and_unknown_email(db):
     assert known_response.json() == unknown_response.json()
     account_exists_email.assert_called_once_with(to=known_email)
     verification_email.assert_called_once()
+
+
+def test_smtp_failure_does_not_diverge(db):
+    known_email = f"known-smtp-{uuid.uuid4().hex[:8]}@example.com"
+    unknown_email = f"unknown-smtp-{uuid.uuid4().hex[:8]}@example.com"
+    _signup_and_verify(known_email)
+
+    duplicate_failure = RuntimeError("duplicate signup SMTP down")
+    verification_failure = RuntimeError("verification SMTP down")
+    with (
+        patch.object(settings(), "SIGNUP_REQUIRE_EMAIL_VERIFICATION", True),
+        patch(
+            "app.api.routes.auth.send_account_exists_email",
+            side_effect=duplicate_failure,
+        ) as account_exists_email,
+        patch(
+            "app.api.routes.auth.send_verification_email",
+            side_effect=verification_failure,
+        ) as verification_email,
+        patch("sentry_sdk.capture_exception") as capture_exception,
+    ):
+        known_response = TestClient(app).post(
+            "/api/auth/signup",
+            json={"email": known_email, "name": "Known Again", "password": PASSWORD},
+        )
+        unknown_response = TestClient(app).post(
+            "/api/auth/signup",
+            json={"email": unknown_email, "name": "Unknown", "password": PASSWORD},
+        )
+
+    assert known_response.status_code == unknown_response.status_code == 202
+    assert known_response.json() == unknown_response.json()
+    account_exists_email.assert_called_once_with(to=known_email)
+    verification_email.assert_called_once()
+    assert capture_exception.call_args_list == [
+        call(duplicate_failure),
+        call(verification_failure),
+    ]
 
 
 def test_timing_similar_for_known_and_unknown_email(db):
