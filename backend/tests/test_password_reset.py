@@ -118,6 +118,74 @@ def test_password_reset_token_is_single_use(client):
     assert second.json()["code"] == "auth.reset_used"
 
 
+@pytest.mark.real_db
+def test_concurrent_same_token_serialises(client, db, monkeypatch):
+    email = _signup(client)
+    token = _request_reset(client, email)
+
+    first_hash_entered = threading.Event()
+    second_hash_entered = threading.Event()
+    release_first_hash = threading.Event()
+    hash_call_count = 0
+    hash_call_lock = threading.Lock()
+    original_hash_password = auth_routes.hash_password
+
+    def _blocking_hash_password(password: str) -> str:
+        nonlocal hash_call_count
+        with hash_call_lock:
+            hash_call_count += 1
+            is_first_call = hash_call_count == 1
+        if is_first_call:
+            first_hash_entered.set()
+            assert release_first_hash.wait(timeout=5)
+        else:
+            second_hash_entered.set()
+        return original_hash_password(password)
+
+    monkeypatch.setattr(auth_routes, "hash_password", _blocking_hash_password)
+
+    results: list[tuple[int, str | None]] = []
+    results_lock = threading.Lock()
+
+    def _reset(new_password: str) -> None:
+        with TestClient(app) as thread_client:
+            response = thread_client.post(
+                "/api/auth/reset-password",
+                json={"token": token, "new_password": new_password},
+            )
+        with results_lock:
+            results.append((response.status_code, response.json().get("code")))
+
+    first = threading.Thread(target=_reset, args=(NEW_PASSWORD,), daemon=True)
+    first.start()
+    assert first_hash_entered.wait(timeout=5)
+
+    second = threading.Thread(
+        target=_reset,
+        args=("AnotherPass-2026!!",),
+        daemon=True,
+    )
+    second.start()
+
+    assert not second_hash_entered.wait(timeout=0.5)
+    release_first_hash.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert sorted(results) == [(200, None), (400, "auth.reset_used")]
+
+    db.expire_all()
+    assert db.query(PasswordResetRequest).one().used_at is not None
+    reset_audits = (
+        db.query(AuditLog)
+        .filter(AuditLog.action == "user.password_reset")
+        .all()
+    )
+    assert len(reset_audits) == 1
+
+
 def test_password_reset_rejects_weak_password(client):
     email = _signup(client)
     token = _request_reset(client, email)
