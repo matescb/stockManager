@@ -201,8 +201,6 @@ def _audit_password_reset_request(
     throttled: bool,
 ) -> None:
     workspace = _first_workspace_for_user(db, user)
-    if workspace is None:
-        return
     _audit_log(
         db,
         ws=workspace,
