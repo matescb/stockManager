@@ -65,6 +65,13 @@ every logged-in user is logged out.  No data loss.
 
 ### 2.2 `PASSWORD_PEPPER`
 
+**Initial bootstrap:** run `make bootstrap-pepper` once on the VPS after
+`.env.prod` exists and before the first prod boot. The command prints the
+generated value and requires an explicit escrow confirmation before writing it
+to `.env.prod`. Store it in the operator password manager alongside
+`SESSION_SECRET`. CI deploys fail closed if this value is missing or still set
+to the template placeholder.
+
 **Effect of rotation:** passwords already rehashed with the old pepper will no
 longer verify. Do not rotate this like a routine stateless secret unless you are
 also running a planned password-reset campaign or a purpose-built migration.
@@ -232,8 +239,9 @@ push to `main`.
 ### 2.7 `DEPLOY_HOST_FINGERPRINT`
 
 **Effect of rotation:** CI deploys fail until GitHub Actions has the new
-fingerprint.  Update the secret immediately after a planned VPS host-key
-rotation, and before the first deploy to a migrated VPS.
+fingerprint. The deploy job uses raw SSH pinned to the verified ED25519
+`known_hosts` entry, so update the secret immediately after a planned VPS
+host-key rotation, and before the first deploy to a migrated VPS.
 
 **Steps:**
 

@@ -414,6 +414,7 @@ jobs:
           cp deploy/.env.prod.example .env.prod.ci
           sed -i 's|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=stockmgr-prod-ci|' .env.prod.ci
           sed -i 's|^SESSION_SECRET=.*|SESSION_SECRET=ci-prod-smoke-session-secret-2026|' .env.prod.ci
+          sed -i 's|^PASSWORD_PEPPER=.*|PASSWORD_PEPPER=ci-prod-smoke-password-pepper-2026|' .env.prod.ci
           sed -i 's|^CORS_ORIGINS=.*|CORS_ORIGINS=http://127.0.0.1:8091|' .env.prod.ci
           sed -i 's|^WORKSPACE_SECRETS_KEY=.*|WORKSPACE_SECRETS_KEY=ZDZkYjI4NzM0YTQ4MjNhODNhZGFkNzE3ZGVkMGY5YWU=|' .env.prod.ci
           sed -i 's|^SMTP_HOST=.*|SMTP_HOST=smtp.invalid|' .env.prod.ci
@@ -808,8 +809,6 @@ jobs:
           set -euo pipefail
 
           ed25519_known_hosts="${RUNNER_TEMP}/deploy_ed25519_known_hosts"
-          ecdsa_known_hosts="${RUNNER_TEMP}/deploy_ecdsa_known_hosts"
-          trap 'rm -f "${ed25519_known_hosts}" "${ecdsa_known_hosts}"' EXIT
 
           ssh-keyscan -T 10 -t ed25519 "${DEPLOY_HOST}" > "${ed25519_known_hosts}"
           if [ ! -s "${ed25519_known_hosts}" ]; then
@@ -825,130 +824,117 @@ jobs:
             exit 1
           fi
 
-          # drone-ssh negotiates the VPS ECDSA host key. The trusted pin
-          # remains the ED25519 fingerprint above; this value constrains
-          # the following appleboy connection to the scanned ECDSA key.
-          ssh-keyscan -T 10 -t ecdsa "${DEPLOY_HOST}" > "${ecdsa_known_hosts}"
-          if [ ! -s "${ecdsa_known_hosts}" ]; then
-            echo "No ECDSA host key returned for DEPLOY_HOST."
-            exit 1
-          fi
-          ecdsa_fingerprint=$(ssh-keygen -lf "${ecdsa_known_hosts}" | awk 'NR == 1 {print $2}')
-          echo "ecdsa_fingerprint=${ecdsa_fingerprint}" >> "${GITHUB_OUTPUT}"
+          echo "known_hosts=${ed25519_known_hosts}" >> "${GITHUB_OUTPUT}"
 
       - name: SSH deploy
-        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2  # v1.2.5
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          fingerprint: ${{ steps.deploy_host_key.outputs.ecdsa_fingerprint }}
-          script: |
-            set -euo pipefail
-            cd /srv/stockmanager
-            git fetch --quiet origin main
-            git reset --hard origin/main
-            # Tag this deploy with the short SHA — exposed to both the
-            # backend (SENTRY_RELEASE) and the frontend Vite build
-            # (VITE_APP_VERSION) so Sentry groups issues per release
-            # and source-map upload pins maps to it. Exported, not
-            # appended to .env.prod, so the SHA isn't persisted between
-            # deploys.
-            export SENTRY_RELEASE
-            SENTRY_RELEASE=$(git rev-parse --short=12 HEAD)
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ steps.deploy_host_key.outputs.known_hosts }}
+        run: |
+          set -euo pipefail
 
-            if [ ! -f .env.prod ]; then
-              echo ".env.prod is missing on the VPS; aborting before touching containers."
-              exit 1
+          if [ ! -s "${DEPLOY_KNOWN_HOSTS}" ]; then
+            echo "Verified ED25519 known_hosts file is missing."
+            exit 1
+          fi
+
+          key_file="${RUNNER_TEMP}/deploy_ssh_key"
+          umask 077
+          printf '%s\n' "${DEPLOY_SSH_KEY}" > "${key_file}"
+          trap 'rm -f "${key_file}"' EXIT
+
+          ssh -i "${key_file}" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${DEPLOY_KNOWN_HOSTS}" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o HostKeyAlgorithms=ssh-ed25519 \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" 'bash -se' <<'REMOTE_DEPLOY'
+          set -euo pipefail
+          cd /srv/stockmanager
+          git fetch --quiet origin main
+          git reset --hard origin/main
+          # Tag this deploy with the short SHA — exposed to both the
+          # backend (SENTRY_RELEASE) and the frontend Vite build
+          # (VITE_APP_VERSION) so Sentry groups issues per release
+          # and source-map upload pins maps to it. Exported, not
+          # appended to .env.prod, so the SHA isn't persisted between
+          # deploys.
+          export SENTRY_RELEASE
+          SENTRY_RELEASE=$(git rev-parse --short=12 HEAD)
+
+          if [ ! -f .env.prod ]; then
+            echo ".env.prod is missing on the VPS; aborting before touching containers."
+            exit 1
+          fi
+
+          pepper_line=$(grep -E '^PASSWORD_PEPPER=' .env.prod | tail -n 1 || true)
+          pepper_value="${pepper_line#PASSWORD_PEPPER=}"
+          if [ -z "${pepper_line}" ] || [ -z "${pepper_value}" ] || [ "${pepper_value}" = "replace-me-with-the-output-of-openssl-rand-hex-32" ]; then
+            echo "PASSWORD_PEPPER is missing or still the template placeholder in .env.prod."
+            echo "Run 'make bootstrap-pepper' on the VPS as deploy, escrow the generated value, then rerun deploy."
+            exit 1
+          fi
+          echo "PASSWORD_PEPPER present in .env.prod."
+
+          # FB-005: keep users on the static Apache page during the deploy
+          # window. The trap is deliberately registered before the first
+          # deploy-side effect so failed dumps, builds, migrations, or health
+          # gates do not leave maintenance mode enabled indefinitely.
+          disable_maintenance() {
+            sudo -n a2disconf parts-maintenance && sudo -n systemctl reload apache2 || true
+          }
+          trap disable_maintenance EXIT
+          if sudo -n a2enconf parts-maintenance && sudo -n systemctl reload apache2; then
+            echo "Apache maintenance mode enabled for deploy."
+          else
+            echo "WARNING: could not enable Apache maintenance mode; continuing deploy."
+          fi
+
+          # Pre-deploy DB snapshot (INFRA2-001 / Infra CRIT-1).
+          # Runs before `docker compose up` so the pre-migration state
+          # of the running Postgres is captured. Fails loud — if the
+          # dump can't be written, the deploy aborts here and the old
+          # containers keep serving the old code.
+          bash deploy/predeploy-dump.sh "${SENTRY_RELEASE}"
+
+          if ! docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build; then
+            echo "docker compose up failed — current service state:"
+            docker compose -f docker-compose.prod.yml --env-file .env.prod ps || true
+            echo "--- backend-init logs (tail) ---"
+            docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=120 backend-init || true
+            echo "--- backend logs (tail) ---"
+            docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=120 backend || true
+            exit 1
+          fi
+          docker image prune -f
+
+          # Post-deploy health gate (INFRA2-002 / Infra HIGH-1/7/8).
+          # Polls the public health endpoint until 200 — covers the
+          # rebuild window plus alembic upgrade plus first-request
+          # warm-up. The 30 × 5s = 150s ceiling is generous for our
+          # one-worker stack; tighten if it routinely takes less.
+          # On failure the SSH script exits non-zero, which fails the
+          # deploy job and surfaces in GitHub Actions instead of
+          # leaving prod broken with a green CI badge.
+          echo "post-deploy health gate"
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS https://parts.matescb.cz/api/health > /dev/null 2>&1; then
+              echo "  /api/health OK after ${i} attempts ($((i*5))s)"
+              ok=1
+              break
             fi
-
-            # AUD-022 introduced mandatory PASSWORD_PEPPER. Older prod env files
-            # predate that setting, so bootstrap it once on the VPS without
-            # logging the value. Legacy unpeppered hashes verify and rehash on
-            # successful login; after this deploy, operators must escrow the
-            # generated value from /srv/stockmanager/.env.prod.
-            python3 - <<'PY'
-            from pathlib import Path
-            import os
-            import secrets
-
-            env_path = Path(".env.prod")
-            lines = env_path.read_text().splitlines()
-            for idx, line in enumerate(lines):
-                if line.startswith("PASSWORD_PEPPER="):
-                    if line.split("=", 1)[1].strip():
-                        print("PASSWORD_PEPPER present in .env.prod.")
-                        raise SystemExit(0)
-                    lines[idx] = f"PASSWORD_PEPPER={secrets.token_hex(32)}"
-                    break
-            else:
-                if lines and lines[-1] != "":
-                    lines.append("")
-                lines.append(f"PASSWORD_PEPPER={secrets.token_hex(32)}")
-
-            env_path.write_text("\n".join(lines) + "\n")
-            os.chmod(env_path, 0o600)
-            print(
-                "PASSWORD_PEPPER was missing in .env.prod; generated and "
-                "stored on the VPS (value not logged). Escrow it from "
-                "/srv/stockmanager/.env.prod."
-            )
-            PY
-
-            # FB-005: keep users on the static Apache page during the deploy
-            # window. The trap is deliberately registered before the first
-            # deploy-side effect so failed dumps, builds, migrations, or health
-            # gates do not leave maintenance mode enabled indefinitely.
-            disable_maintenance() {
-              sudo -n a2disconf parts-maintenance && sudo -n systemctl reload apache2 || true
-            }
-            trap disable_maintenance EXIT
-            if sudo -n a2enconf parts-maintenance && sudo -n systemctl reload apache2; then
-              echo "Apache maintenance mode enabled for deploy."
-            else
-              echo "WARNING: could not enable Apache maintenance mode; continuing deploy."
-            fi
-
-            # Pre-deploy DB snapshot (INFRA2-001 / Infra CRIT-1).
-            # Runs before `docker compose up` so the pre-migration state
-            # of the running Postgres is captured. Fails loud — if the
-            # dump can't be written, the deploy aborts here and the old
-            # containers keep serving the old code.
-            bash deploy/predeploy-dump.sh "${SENTRY_RELEASE}"
-
-            if ! docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build; then
-              echo "docker compose up failed — current service state:"
-              docker compose -f docker-compose.prod.yml --env-file .env.prod ps || true
-              echo "--- backend-init logs (tail) ---"
-              docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=120 backend-init || true
-              echo "--- backend logs (tail) ---"
-              docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=120 backend || true
-              exit 1
-            fi
-            docker image prune -f
-
-            # Post-deploy health gate (INFRA2-002 / Infra HIGH-1/7/8).
-            # Polls the public health endpoint until 200 — covers the
-            # rebuild window plus alembic upgrade plus first-request
-            # warm-up. The 30 × 5s = 150s ceiling is generous for our
-            # one-worker stack; tighten if it routinely takes less.
-            # On failure the SSH script exits non-zero, which fails the
-            # deploy job and surfaces in GitHub Actions instead of
-            # leaving prod broken with a green CI badge.
-            echo "post-deploy health gate"
-            ok=0
-            for i in $(seq 1 30); do
-              if curl -fsS https://parts.matescb.cz/api/health > /dev/null 2>&1; then
-                echo "  /api/health OK after ${i} attempts ($((i*5))s)"
-                ok=1
-                break
-              fi
-              sleep 5
-            done
-            if [ "${ok}" -ne 1 ]; then
-              echo "post-deploy health gate FAILED — last response:"
-              curl -v https://parts.matescb.cz/api/health || true
-              echo "--- backend logs (tail) ---"
-              docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=80 backend || true
-              exit 1
-            fi
+            sleep 5
+          done
+          if [ "${ok}" -ne 1 ]; then
+            echo "post-deploy health gate FAILED — last response:"
+            curl -v https://parts.matescb.cz/api/health || true
+            echo "--- backend logs (tail) ---"
+            docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=80 backend || true
+            exit 1
+          fi
+          REMOTE_DEPLOY

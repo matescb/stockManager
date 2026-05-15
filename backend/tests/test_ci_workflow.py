@@ -89,23 +89,31 @@ def _deploy_ssh_step() -> dict:
     return _deploy_step_by_name("SSH deploy")
 
 
-def test_deploy_bootstraps_missing_password_pepper_before_compose_up():
+def test_deploy_fails_closed_when_password_pepper_missing_before_compose_up():
     step = _deploy_ssh_step()
-    script = step["with"]["script"]
+    script = step["run"]
 
-    assert "PASSWORD_PEPPER was missing in .env.prod" in script
-    assert "secrets.token_hex(32)" in script
+    assert "PASSWORD_PEPPER is missing or still the template placeholder" in script
+    assert "make bootstrap-pepper" in script
+    assert "secrets.token_hex" not in script
     assert script.index("PASSWORD_PEPPER") < script.index("docker compose")
     assert "logs --tail=120 backend" in script
 
 
-def test_deploy_does_not_use_ignored_ssh_action_script_stop():
+def test_deploy_uses_raw_ssh_instead_of_appleboy():
     step = _deploy_ssh_step()
-    assert "appleboy/ssh-action" in step.get("uses", "")
+    script = step["run"]
+
+    assert "uses" not in step
+    assert "appleboy/ssh-action" not in str(step)
     assert "script_stop" not in step.get("with", {})
+    assert "ssh -i" in script
+    assert "-o StrictHostKeyChecking=yes" in script
+    assert '-o UserKnownHostsFile="${DEPLOY_KNOWN_HOSTS}"' in script
+    assert "-o HostKeyAlgorithms=ssh-ed25519" in script
 
 
-def test_deploy_verifies_ed25519_host_fingerprint_before_ssh_action():
+def test_deploy_verifies_ed25519_host_fingerprint_before_raw_ssh():
     precheck = _deploy_host_key_step()
     deploy = _deploy_ssh_step()
     env = precheck.get("env", {})
@@ -117,10 +125,11 @@ def test_deploy_verifies_ed25519_host_fingerprint_before_ssh_action():
     assert 'ssh-keyscan -T 10 -t ed25519 "${DEPLOY_HOST}"' in script
     assert 'actual_fingerprint=$(ssh-keygen -lf "${ed25519_known_hosts}"' in script
     assert '"${actual_fingerprint}" != "${DEPLOY_HOST_FINGERPRINT}"' in script
-    assert 'ssh-keyscan -T 10 -t ecdsa "${DEPLOY_HOST}"' in script
-    assert "ecdsa_fingerprint=" in script
-    assert deploy["with"]["fingerprint"] == (
-        "${{ steps.deploy_host_key.outputs.ecdsa_fingerprint }}"
+    assert 'ssh-keyscan -T 10 -t ecdsa "${DEPLOY_HOST}"' not in script
+    assert "ecdsa_fingerprint" not in script
+    assert 'echo "known_hosts=${ed25519_known_hosts}"' in script
+    assert deploy["env"]["DEPLOY_KNOWN_HOSTS"] == (
+        "${{ steps.deploy_host_key.outputs.known_hosts }}"
     )
 
 
