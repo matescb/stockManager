@@ -12,8 +12,10 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 __all__ = [
-    "SignupIn",
     "LoginIn",
+    "PasswordResetIn",
+    "RequestPasswordResetIn",
+    "SignupIn",
     "VerifyIn",
 ]
 
@@ -39,3 +41,16 @@ class VerifyIn(BaseModel):
 
     id: str
     token: str
+
+
+class RequestPasswordResetIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: EmailStr
+
+
+class PasswordResetIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=8, max_length=200)

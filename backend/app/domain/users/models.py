@@ -85,6 +85,32 @@ class UserLoginFailure(Base):
     client_ip = Column(String(45), nullable=True)  # IPv4 or IPv6
 
 
+class PasswordResetRequest(Base):
+    """Transient password reset request.
+
+    Password reset is a pre-authentication flow, so this table is not
+    workspace-scoped. The email is stored as a hash for throttle rows;
+    reset tokens are HMACed at rest and are single-use via `used_at`.
+    """
+
+    __tablename__ = "password_reset_requests"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    email_hash = Column(String(64), nullable=False, index=True)
+    token_hmac = Column(String(64), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    ip = Column(String(45), nullable=True, index=True)
+    sent_at = Column(DateTime(timezone=True), nullable=True)
+
+
 class PendingUser(Base):
     """Transient signup record held until the user verifies their email.
 

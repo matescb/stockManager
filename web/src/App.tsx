@@ -9,6 +9,8 @@ import { RouteSkeleton } from "@/components/RouteSkeleton";
 // Auth pages — small, eager-loaded so the login form renders without
 // a fallback flash on first paint.
 import Login from "@/routes/auth/Login";
+import RequestReset from "@/routes/auth/RequestReset";
+import ResetPassword from "@/routes/auth/ResetPassword";
 import Signup from "@/routes/auth/Signup";
 // SEC2-014: email-verification landing page.
 import Verify from "@/routes/auth/Verify";
@@ -193,6 +195,8 @@ export default function App() {
         <Suspense fallback={lazyFallback}>
         <Routes>
           <Route path="/login" element={<RedirectIfAuthed><Login /></RedirectIfAuthed>} />
+          <Route path="/auth/request-reset" element={<RequestReset />} />
+          <Route path="/auth/reset-password" element={<ResetPassword />} />
           <Route path="/signup" element={<RedirectIfAuthed><Signup /></RedirectIfAuthed>} />
           {/* SEC2-014: email verification landing — pre-auth, no Gate wrapper */}
           <Route path="/verify" element={<Verify />} />

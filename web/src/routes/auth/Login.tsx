@@ -64,7 +64,12 @@ export default function Login() {
           />
         </div>
         <div>
-          <label className="label" htmlFor="login-password">Password</label>
+          <div className="flex items-center justify-between gap-3">
+            <label className="label" htmlFor="login-password">Password</label>
+            <Link to="/auth/request-reset" className="text-sm text-accent hover:underline">
+              Forgot password?
+            </Link>
+          </div>
           <input
             id="login-password"
             className="input"

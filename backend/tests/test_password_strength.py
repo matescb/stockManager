@@ -124,6 +124,7 @@ def test_strong_password_succeeds_on_signup():
 # Format: (method, path).
 PASSWORD_VALIDATING_ROUTES = {
     ("POST", "/api/auth/signup"),
+    ("POST", "/api/auth/reset-password"),
 }
 
 
