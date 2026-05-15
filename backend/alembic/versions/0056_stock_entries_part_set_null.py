@@ -242,7 +242,7 @@ def downgrade() -> None:
         BEGIN
           IF EXISTS (SELECT 1 FROM stock_entries WHERE part_id IS NULL) THEN
             RAISE EXCEPTION
-              'cannot downgrade 0055 while stock_entries rows have NULL part_id';
+              'cannot downgrade 0056 while stock_entries rows have NULL part_id';
           END IF;
         END $$;
         """

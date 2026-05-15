@@ -34,6 +34,7 @@ describe("Sentry beforeSend", () => {
         method: "GET",
         headers: {
           Referer: "https://parts.matescb.cz/search?q=secret#results?sort=qty",
+          "X-Api-Key": "provider-secret",
         },
       },
       breadcrumbs: [
@@ -55,6 +56,7 @@ describe("Sentry beforeSend", () => {
     expect(scrubbed?.request?.headers?.Referer).toBe(
       "https://parts.matescb.cz/search#results",
     );
+    expect(scrubbed?.request?.headers?.["X-Api-Key"]).toBeUndefined();
     expect(scrubbed?.breadcrumbs?.[0]?.data?.url).toBe("/api/parts");
     expect(scrubbed?.breadcrumbs?.[0]?.data?.to).toBe("/projects#bom");
     expect(JSON.stringify(scrubbed)).not.toContain("secret");
@@ -133,6 +135,7 @@ describe("Sentry beforeSend", () => {
         headers: {
           Referer: "https://parts.matescb.cz/search?q=secret",
           Cookie: "stockmgr_session=secret",
+          "x-api-key": "provider-secret",
         },
       },
       contexts: {
@@ -165,6 +168,7 @@ describe("Sentry beforeSend", () => {
     expect(scrubbed?.request?.query_string).toBeUndefined();
     expect(scrubbed?.request?.headers?.Referer).toBe("https://parts.matescb.cz/search");
     expect(scrubbed?.request?.headers?.Cookie).toBeUndefined();
+    expect(scrubbed?.request?.headers?.["x-api-key"]).toBeUndefined();
     expect(scrubbed?.contexts?.trace?.data?.["http.url"]).toBe("https://parts.matescb.cz/api/parts");
     expect(scrubbed?.contexts?.trace?.data?.url).toBe("/api/parts");
     expect(scrubbed?.spans?.[0]?.description).toBe("GET /api/parts");

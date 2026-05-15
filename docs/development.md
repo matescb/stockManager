@@ -146,6 +146,16 @@ you write a similar test, request the `real_db` fixture instead of
 ~1000× slower per test — only use it when the savepoint pattern truly
 can't model the test.
 
+### Polymorphic cleanup
+
+SQLAlchemy `before_delete` mapper events do not fire for bulk
+`delete().where(...)` statements. Hard-delete code for polymorphic parent
+models must either delete ORM instances so the listeners in
+`backend/app/domain/_polymorphic_cleanup.py:164-168` run, or explicitly call
+`purge_polymorphic(...)` (`backend/app/domain/_polymorphic_cleanup.py:100-121`);
+use `backend/scripts/purge_polymorphic_orphans.py` as the safety net for any
+bulk-delete path that bypasses mapper events.
+
 ### Slow tests
 
 The migration round-trip suite (`tests/test_migrations.py`,

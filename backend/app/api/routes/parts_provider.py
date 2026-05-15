@@ -2,9 +2,10 @@
 provider + API key and dispatches."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 
 from app.core.deps import CurrentWorkspace
+from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import ok
 from app.core.secrets import decrypt
@@ -36,10 +37,12 @@ def lookup_mpn(request: Request, payload: LookupIn, ws: CurrentWorkspace):
     try:
         out = lookup_with_cache(provider, payload.mpn.strip())
     except ProviderUpstreamError as exc:
-        raise HTTPException(
-            status_code=exc.status_code,
-            detail={"message": exc.message, "provider": exc.provider},
-        ) from exc
+        raise_http(
+            exc.status_code,
+            ErrorCodes.PROVIDER_UPSTREAM_ERROR,
+            exc.message,
+            provider=exc.provider,
+        )
     # Tag the response with the provider name so the UI can label its
     # success/failure note.
     return ok({**out, "provider": provider.name})

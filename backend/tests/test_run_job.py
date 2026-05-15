@@ -75,6 +75,17 @@ def test_run_job_dispatches_allow_listed_job(tmp_path) -> None:
     assert (tmp_path / "example").read_text(encoding="utf-8") == "ok\n"
 
 
+def test_run_job_lock_hash_collision_note_is_kept() -> None:
+    from pathlib import Path
+
+    source = Path(__file__).parents[1] / "app" / "cli" / "run_job.py"
+    text = source.read_text(encoding="utf-8")
+
+    assert "hashtext() returns int4" in text
+    assert "collide" in text
+    assert "reserved bigint IDs" in text
+
+
 def test_run_job_rejects_unknown_job() -> None:
     try:
         run_job("missing", jobs={}, session_factory=lambda: _FakeSession())  # type: ignore[return-value]

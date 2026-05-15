@@ -33,7 +33,12 @@ const replaysOnErrorSampleRate = parseSampleRate(
   "VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE",
   "default-zero",
 );
-const requestHeaderDenylist = new Set(["cookie", "authorization", "x-workspace-id"]);
+const requestHeaderDenylist = new Set([
+  "cookie",
+  "authorization",
+  "x-api-key",
+  "x-workspace-id",
+]);
 const requestUrlHeaders = new Set(["referer", "referrer"]);
 const breadcrumbUrlKeys = new Set(["url", "from", "to"]);
 const transactionUrlKeys = new Set(["url", "from", "to", "http.url"]);

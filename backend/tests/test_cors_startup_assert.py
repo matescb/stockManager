@@ -18,6 +18,17 @@ async def test_wildcard_in_prod_rejected(monkeypatch):
             pass
 
 
+@pytest.mark.asyncio
+async def test_empty_cors_origins_in_prod_rejected(monkeypatch):
+    cfg = settings()
+    monkeypatch.setattr(cfg, "APP_ENV", "prod")
+    monkeypatch.setattr(cfg, "CORS_ORIGINS", "")
+
+    with pytest.raises(RuntimeError, match="requires at least one CORS_ORIGINS"):
+        async with lifespan(app):
+            pass
+
+
 def test_cors_allow_headers_are_explicit():
     middleware = next(m for m in app.user_middleware if m.cls is CORSMiddleware)
     allowed_headers = middleware.kwargs["allow_headers"]

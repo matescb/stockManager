@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { readBarcodes, prepareZXingModule, type ReadInputBarcodeFormat } from "zxing-wasm/reader";
 import { useAuth } from "@/lib/auth";
-import { scannerDevicePreferenceKey } from "./storage";
+import { readScannerDevicePreference, scannerDevicePreferenceKey } from "./storage";
 
 /**
  * Open-source ZXing-C++ wasm decoder. Default scanner backend so workspaces
@@ -141,7 +141,7 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState<string | undefined>(() => {
     try {
-      return localStorage.getItem(devicePrefKey) || undefined;
+      return readScannerDevicePreference(workspaceId);
     } catch {
       return undefined;
     }
@@ -155,11 +155,11 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
   useEffect(() => { zoomModeRef.current = zoomMode; }, [zoomMode]);
   useEffect(() => {
     try {
-      setDeviceId(localStorage.getItem(devicePrefKey) || undefined);
+      setDeviceId(readScannerDevicePreference(workspaceId));
     } catch {
       setDeviceId(undefined);
     }
-  }, [devicePrefKey]);
+  }, [workspaceId]);
 
   // ---------------------------------------------------------------------
   // Camera + decoder loop. Restarts whenever the picked camera changes.

@@ -6,6 +6,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.errors import ErrorCodes
 from app.main import app
 
 
@@ -236,6 +237,7 @@ def test_lookup_mouser_network_failure_is_graceful(authed, monkeypatch):
     assert r.status_code == 502, r.text
     body = r.json()
     assert body["data"] is None
+    assert body["code"] == ErrorCodes.PROVIDER_UPSTREAM_ERROR
     assert "upstream unavailable" in body["status"]["message"]
     assert "connection failed" in body["status"]["message"]
     assert body["provider"] == "mouser"
