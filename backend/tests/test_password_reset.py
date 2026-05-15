@@ -199,6 +199,39 @@ def test_password_reset_rejects_weak_password(client):
     assert response.json()["code"] == "auth.weak_password"
 
 
+def test_archived_user_cannot_reset(client, db):
+    email = _signup(client)
+    token = _request_reset(client, email)
+
+    user = db.query(User).filter(User.email == email).one()
+    user.archived_at = utcnow()
+    db.flush()
+
+    response = client.post(
+        "/api/auth/reset-password",
+        json={"token": token, "new_password": NEW_PASSWORD},
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["code"] == "auth.reset_invalid"
+    assert db.query(UserSession).count() == 1
+
+
+def test_archived_user_cannot_request_reset_token(client, db):
+    email = _signup(client)
+    user = db.query(User).filter(User.email == email).one()
+    user.archived_at = utcnow()
+    db.flush()
+
+    with patch("app.api.routes.auth.send_password_reset_email") as send_mail:
+        response = client.post("/api/auth/request-password-reset", json={"email": email})
+
+    assert response.status_code == 202, response.text
+    assert response.json()["data"] == {"status": "accepted"}
+    send_mail.assert_not_called()
+    assert db.query(PasswordResetRequest).count() == 0
+
+
 def test_password_reset_email_throttle_suppresses_fourth_send(client, db):
     email = _signup(client)
 
