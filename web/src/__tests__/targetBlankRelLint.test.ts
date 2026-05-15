@@ -55,11 +55,11 @@ describe("target=_blank rel lint guard", () => {
     ).resolves.toHaveLength(0);
   });
 
-  it("allows computed rel values", async () => {
+  it("test_dynamic_rel_warning", async () => {
     await expect(
       targetBlankRelMessages(
         'const someVar = "noreferrer"; export const Link = () => <a href="https://example.com" target="_blank" rel={someVar}>open</a>;',
       ),
-    ).resolves.toHaveLength(0);
+    ).resolves.toHaveLength(1);
   });
 });

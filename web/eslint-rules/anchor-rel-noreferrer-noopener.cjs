@@ -1,4 +1,6 @@
 const TARGET_BLANK_MESSAGE = 'Links with target="_blank" must use rel="noopener noreferrer".';
+const DYNAMIC_REL_MESSAGE =
+  'Links with static target="_blank" must use a static rel value containing "noopener noreferrer".';
 
 function getAttribute(node, name) {
   return node.attributes.find(
@@ -44,6 +46,7 @@ module.exports = {
     },
     schema: [],
     messages: {
+      dynamicRel: DYNAMIC_REL_MESSAGE,
       missingRel: TARGET_BLANK_MESSAGE,
     },
   },
@@ -63,6 +66,8 @@ module.exports = {
         const rel = getStaticStringValue(getAttribute(node, "rel"));
 
         if (rel === null) {
+          // Option A for AUD-100: static target="_blank" cannot verify dynamic rel tokens.
+          context.report({ node, messageId: "dynamicRel" });
           return;
         }
 
