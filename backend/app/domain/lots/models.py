@@ -21,10 +21,19 @@ class Lot(WorkspaceOwned, Base):
         ),
     )
 
-    part_id = Column(UUID(as_uuid=True), ForeignKey("parts.id", ondelete="CASCADE"), nullable=False, index=True)
+    part_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("parts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     name = Column(String(200), nullable=True)
     serial_number = Column(String(200), nullable=True, index=True)
-    parent_lot_id = Column(UUID(as_uuid=True), ForeignKey("lots.id", ondelete="SET NULL"), nullable=True)
+    parent_lot_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("lots.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     description = Column(Text, nullable=True)
     comments = Column(Text, nullable=True)
     expiration_date = Column(Date, nullable=True)
