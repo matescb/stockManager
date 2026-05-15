@@ -16,14 +16,17 @@ import AuthShell from "./AuthShell";
 
 type State = "verifying" | "success" | "error";
 
+const AUTH_VERIFICATION_EXPIRED = "auth.verification_expired";
+const AUTH_VERIFICATION_INVALID = "auth.verification_invalid";
+
 function verificationErrorMessage(e: unknown): string {
   if (!(e instanceof ApiError)) {
     return "Verification failed — please try again.";
   }
-  if (e.status === 410) {
+  if (e.code === AUTH_VERIFICATION_EXPIRED) {
     return "Verification link expired.";
   }
-  if (e.status === 404) {
+  if (e.code === AUTH_VERIFICATION_INVALID) {
     return "Verification link not found.";
   }
   return e.userMessage;
