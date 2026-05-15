@@ -38,6 +38,7 @@ Chromium is the only browser target.
 - `seedPart`, `seedStorage`, `seedStock`, and `seedScanImport` call public `/api/*` endpoints with the real session cookie. There are no backend test-mode endpoints or database shortcuts.
 - `seedProject` and `seedBomLine` are typed stubs for the follow-up E2E issues.
 - Provider helpers use `page.route()` and return backend-shaped envelopes (`{ data, status }`), matching `web/src/lib/api.ts`.
+- Scan-import bag flows should use `/parts/scan-import` → `Manual entry` → `Bag code` → `Add bag`; keep those tests on the paste path instead of camera-decoder shims.
 
 ## Page Objects
 

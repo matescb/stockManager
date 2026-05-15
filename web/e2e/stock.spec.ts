@@ -83,51 +83,10 @@ async function partsByMpn(request: E2ERequest, mpn: string): Promise<Part[]> {
   return apiGet<Part[]>(request, `/api/parts?mpn=${encodeURIComponent(mpn)}`);
 }
 
-async function mockNextZxingScan(page: Page, rawBagCode: string): Promise<void> {
-  await page.route(/.*zxing-wasm_reader.*\.js.*/, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/javascript",
-      body: `
-let delivered = false;
-export async function prepareZXingModule() {}
-export async function readBarcodes() {
-  if (delivered) return [];
-  const text = globalThis.__E2E_SCAN_CODE;
-  if (!text) return [];
-  delivered = true;
-  return [{ text, format: "DataMatrix" }];
-}
-`,
-    });
-  });
-
-  await page.addInitScript((code: string) => {
-    (globalThis as typeof globalThis & { __E2E_SCAN_CODE?: string }).__E2E_SCAN_CODE = code;
-    Object.defineProperty(navigator, "mediaDevices", {
-      configurable: true,
-      value: {
-        getUserMedia: async () => {
-          const canvas = document.createElement("canvas");
-          canvas.width = 640;
-          canvas.height = 480;
-          const context = canvas.getContext("2d");
-          context?.fillRect(0, 0, canvas.width, canvas.height);
-          const stream = canvas.captureStream(1);
-          const track = stream.getVideoTracks()[0] as MediaStreamTrack & {
-            getCapabilities?: () => MediaTrackCapabilities;
-            getSettings?: () => MediaTrackSettings;
-            applyConstraints?: () => Promise<void>;
-          };
-          track.getCapabilities = () => ({});
-          track.getSettings = () => ({});
-          track.applyConstraints = async () => {};
-          return stream;
-        },
-        enumerateDevices: async () => [],
-      },
-    });
-  }, rawBagCode);
+async function addManualBagScan(page: Page, rawBagCode: string): Promise<void> {
+  await page.getByRole("button", { name: /manual entry/i }).click();
+  await page.getByLabel(/bag code/i).fill(rawBagCode);
+  await page.getByRole("button", { name: /^add bag$/i }).click();
 }
 
 function fixtureBagWithMpn(index = 0) {
@@ -266,9 +225,9 @@ test(
       bag_code: bag.raw,
       qty: 5,
     });
-    await mockNextZxingScan(page, bag.raw);
 
     await page.goto("/parts/scan-import");
+    await addManualBagScan(page, bag.raw);
 
     const rescanRow = page.getByTestId("scan-row-bag-rescan");
     await expect(rescanRow).toBeVisible({ timeout: 15_000 });
@@ -295,9 +254,9 @@ test(
       bag_code: bag.raw,
       qty: 5,
     });
-    await mockNextZxingScan(page, bag.raw);
 
     await page.goto("/parts/scan-import");
+    await addManualBagScan(page, bag.raw);
 
     const rescanRow = page.getByTestId("scan-row-bag-rescan");
     await expect(rescanRow).toBeVisible({ timeout: 15_000 });
