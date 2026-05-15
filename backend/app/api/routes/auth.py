@@ -64,6 +64,33 @@ _SIGNUP_VERIFICATION_DATA = {"status": "verification_sent"}
 _SIGNUP_VERIFICATION_MESSAGE = "verification email sent"
 
 
+def _reap_expired_pending_signup(db: DbSession, email: str) -> None:
+    cutoff = utcnow() - timedelta(hours=_VERIFY_TTL_HOURS)
+    db.query(PendingUser).filter(
+        PendingUser.email == email,
+        PendingUser.created_at < cutoff,
+        PendingUser.verified_at.is_(None),
+    ).delete(synchronize_session=False)
+
+
+def _active_pending_signup(db: DbSession, email: str) -> PendingUser | None:
+    return (
+        db.query(PendingUser)
+        .filter(
+            PendingUser.email == email,
+            PendingUser.verified_at.is_(None),
+        )
+        .first()
+    )
+
+
+def _mint_signup_verification_material(password: str) -> tuple[str, str, str]:
+    plaintext_token = secrets.token_urlsafe(32)
+    password_hash = hash_password(password)
+    verification_token_hmac = _hmac_token(plaintext_token)
+    return plaintext_token, password_hash, verification_token_hmac
+
+
 def _set_session_cookie(response: Response, token: str) -> None:
     response.set_cookie(
         key=settings().SESSION_COOKIE_NAME,
@@ -203,7 +230,17 @@ def signup(
         )
 
     # --- Prod path: email-verification two-step flow ---
+    # Keep the known-email and fresh unknown-email compute paths close
+    # enough that the response timing does not become the enumeration
+    # signal after the response body was equalised. Both branches do the
+    # pending-row maintenance and Argon2/HMAC token work; only the fresh
+    # unknown-email branch persists the PendingUser and sends the verify
+    # link.
+    _reap_expired_pending_signup(db, payload.email)
+    existing_pending = _active_pending_signup(db, payload.email)
+
     if existing:
+        _mint_signup_verification_material(payload.password)
         try:
             send_account_exists_email(to=payload.email)
         except Exception as exc:
@@ -217,39 +254,24 @@ def signup(
         response.status_code = status.HTTP_202_ACCEPTED
         return ok(_SIGNUP_VERIFICATION_DATA, _SIGNUP_VERIFICATION_MESSAGE)
 
-    # Reap expired pending rows for this email before checking for an
-    # active pending one, so old unverified attempts don't block a retry.
-    cutoff = utcnow() - timedelta(hours=_VERIFY_TTL_HOURS)
-    db.query(PendingUser).filter(
-        PendingUser.email == payload.email,
-        PendingUser.created_at < cutoff,
-        PendingUser.verified_at.is_(None),
-    ).delete(synchronize_session=False)
-
     # If there's already a non-expired pending row, return 202 again
     # without creating a duplicate row. The user may click the first
     # link or wait for it to expire and re-sign-up.
-    existing_pending = (
-        db.query(PendingUser)
-        .filter(
-            PendingUser.email == payload.email,
-            PendingUser.verified_at.is_(None),
-        )
-        .first()
-    )
     if existing_pending:
         log.info("signup resent existing pending", extra={"email": payload.email})
         response.status_code = status.HTTP_202_ACCEPTED
         return ok(_SIGNUP_VERIFICATION_DATA, _SIGNUP_VERIFICATION_MESSAGE)
 
     # Mint a verification token, store its HMAC, send the link.
-    plaintext_token = secrets.token_urlsafe(32)
+    plaintext_token, password_hash, verification_token_hmac = _mint_signup_verification_material(
+        payload.password
+    )
     pending = PendingUser(
         email=payload.email,
         name=payload.name,
-        password_hash=hash_password(payload.password),
+        password_hash=password_hash,
         workspace_name=payload.workspace_name,
-        verification_token_hmac=_hmac_token(plaintext_token),
+        verification_token_hmac=verification_token_hmac,
         ip=request.client.host if request.client else None,
     )
     db.add(pending)

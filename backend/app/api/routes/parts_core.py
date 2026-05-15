@@ -26,6 +26,7 @@ from app.api.routes._parts_shared import (
     serialize_part as _serialize,
 )
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
+from app.core.errors import ErrorCodes, raise_http
 from app.core.pagination import decode_cursor, paginate
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import Envelope, ok
@@ -334,6 +335,15 @@ def archive_part(
     from app.domain.tags.models import TagLink
 
     p = require_resource_access(db, Part, part_id, ws=ws, user=user, role="admin", label="part")
+    reserved = total_for_part(db, workspace_id=ws.id, part_id=p.id, status="reserved")
+    if reserved > 0:
+        raise_http(
+            status.HTTP_409_CONFLICT,
+            code=ErrorCodes.PART_HAS_RESERVED_STOCK,
+            message="part has reserved stock; release reservations first",
+            blocking=[{"part_id": str(p.id), "quantity": reserved}],
+        )
+
     p.archived_at = utcnow()
 
     # Observability: log how many polymorphic rows are associated with the
