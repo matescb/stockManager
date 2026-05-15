@@ -5,7 +5,7 @@ import { test, expect, DEFAULT_PASSWORD, seedPart } from "./fixtures";
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:5173";
 const LOGIN_FAILED = "Login failed. Check your credentials and try again.";
-const SIGNUP_VALIDATION_ERROR = "Some fields don't look right. Check the form and retry.";
+const PASSWORD_BLOCKLIST_ERROR = "Password is too common. Choose a more unique password.";
 
 function uniqueEmail(testInfo: TestInfo, label: string): string {
   const safeId = testInfo.testId.replace(/[^a-zA-Z0-9-]/g, "-").slice(0, 48);
@@ -173,7 +173,7 @@ test(
     await passwordInput.fill("password123");
     await page.getByRole("button", { name: "Create account" }).click();
 
-    await expect(page.getByText(SIGNUP_VALIDATION_ERROR)).toBeVisible();
+    await expect(page.getByText(PASSWORD_BLOCKLIST_ERROR)).toBeVisible();
     await expect(page).toHaveURL(/\/signup$/);
   },
 );

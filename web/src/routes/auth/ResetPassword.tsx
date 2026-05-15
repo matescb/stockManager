@@ -1,13 +1,9 @@
 import { Link, useSearchParams } from "react-router-dom";
 import { useState } from "react";
-import { z } from "zod";
 import { api, ApiError } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
+import { getPasswordStrengthError } from "@/lib/passwordStrength";
 import AuthShell from "./AuthShell";
-
-const passwordSchema = z.string()
-  .min(8, "Password must be at least 8 characters.")
-  .refine(value => new Set(value).size >= 4, "Use a less repetitive password.");
 
 function resetErrorMessage(e: unknown): string {
   if (!(e instanceof ApiError)) {
@@ -48,9 +44,9 @@ export default function ResetPassword() {
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    const parsed = passwordSchema.safeParse(password);
-    if (!parsed.success) {
-      setErr(parsed.error.issues[0]?.message || "Password does not meet the requirements.");
+    const passwordError = getPasswordStrengthError(password);
+    if (passwordError) {
+      setErr(passwordError);
       return;
     }
     setErr(null);

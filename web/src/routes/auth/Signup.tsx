@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate, type Location } from "react-router-dom"
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useApiMutation } from "@/lib/mutations";
+import { getPasswordStrengthError } from "@/lib/passwordStrength";
 import AuthShell from "./AuthShell";
 
 export default function Signup() {
@@ -46,6 +47,11 @@ export default function Signup() {
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
+    const passwordError = getPasswordStrengthError(password);
+    if (passwordError) {
+      setErr(passwordError);
+      return;
+    }
     setErr(null);
     signupMutation.mutate({
       name,
