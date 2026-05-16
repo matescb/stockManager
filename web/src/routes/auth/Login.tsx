@@ -27,11 +27,7 @@ export default function Login() {
       nav(fromPath || "/parts", { replace: true });
     },
     onError: (e) => {
-      if (e instanceof ApiError) {
-        setErr("Login failed. Check your credentials and try again.");
-      } else {
-        setErr("Login failed");
-      }
+      setErr(e instanceof ApiError ? e.userMessage : "Login failed");
     },
   });
 

@@ -66,7 +66,64 @@ describe("Login", () => {
     expect(link.getAttribute("href")).toBe("/auth/request-reset");
   });
 
-  it("test_429_renders_generic_message", async () => {
+  it.each([
+    {
+      name: "locked account",
+      status: 429,
+      body: {
+        data: null,
+        status: { category: "validation_error", message: "too many failed login attempts" },
+        code: "auth.account_locked",
+        retry_after_seconds: 900,
+      } as ApiErr,
+      message: "Account temporarily locked. Try again in 15 minutes.",
+    },
+    {
+      name: "unverified email",
+      status: 403,
+      body: {
+        data: null,
+        status: { category: "forbidden", message: "verification pending" },
+        code: "auth.email_unverified",
+      } as ApiErr,
+      message: "Verify your email before signing in. Check your inbox for the verification link.",
+    },
+    {
+      name: "invalid credentials",
+      status: 401,
+      body: {
+        data: null,
+        status: { category: "unauthenticated", message: "invalid credentials" },
+        code: "auth.invalid_credentials",
+      } as ApiErr,
+      message: "Invalid email or password.",
+    },
+  ])("renders ApiError.userMessage for $name", async ({ status, body, message }) => {
+    mockPost.mockRejectedValue(new ApiError(status, body, body.status.message));
+
+    renderLogin();
+
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "user@example.com" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "WrongPass!!X" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+    expect(await screen.findByText(message)).toBeDefined();
+    expect(screen.queryByText("Login failed. Check your credentials and try again.")).toBeNull();
+  });
+
+  it("renders fallback message for non-ApiError failures", async () => {
+    mockPost.mockRejectedValue(new Error("network broke"));
+
+    renderLogin();
+
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "user@example.com" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "WrongPass!!X" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+    expect(await screen.findByText("Login failed")).toBeDefined();
+  });
+
+  it("does not render the raw locked-account server message", async () => {
     const body = {
       data: null,
       status: { category: "validation_error", message: "too many failed login attempts" },
@@ -82,10 +139,7 @@ describe("Login", () => {
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "WrongPass!!X" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
-    expect(
-      await screen.findByText("Login failed. Check your credentials and try again."),
-    ).toBeDefined();
+    expect(await screen.findByText("Account temporarily locked. Try again in 15 minutes.")).toBeDefined();
     expect(screen.queryByText(/too many failed login attempts/i)).toBeNull();
-    expect(screen.queryByText(/try again in/i)).toBeNull();
   });
 });
