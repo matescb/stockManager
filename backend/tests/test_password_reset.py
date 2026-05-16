@@ -335,7 +335,35 @@ def test_throttle_atomic_under_concurrency(db, monkeypatch):
 
 
 @pytest.mark.real_db
-def test_throttle_lock_denied_returns_throttled(db, caplog):
+def test_throttle_log_line_carries_reason(db, caplog):
+    rate_log = "password_reset_request status=throttled reason=rate"
+    lock_denied_log = "password_reset_request status=throttled reason=lock_denied"
+    rate_email = f"reset-rate-log-{uuid.uuid4().hex[:8]}@example.com"
+    signup_user(TestClient(app), email=rate_email)
+
+    with (
+        patch("app.api.routes.auth.send_password_reset_email") as rate_send_mail,
+        caplog.at_level(logging.INFO, logger=auth_routes.__name__),
+    ):
+        rate_client = TestClient(app)
+        for _ in range(auth_routes._PASSWORD_RESET_EMAIL_LIMIT + 1):
+            response = rate_client.post(
+                "/api/auth/request-password-reset",
+                json={"email": rate_email},
+            )
+            assert response.status_code == 202, response.text
+
+    assert rate_send_mail.call_count == auth_routes._PASSWORD_RESET_EMAIL_LIMIT
+    rate_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == auth_routes.__name__
+    ]
+    assert rate_messages.count(rate_log) == 1
+    assert lock_denied_log not in rate_messages
+
+    caplog.clear()
+
     email = f"reset-lock-denied-{uuid.uuid4().hex[:8]}@example.com"
     signup_user(TestClient(app), email=email)
     email_hash = auth_routes._hash_email_for_password_reset(email)
@@ -367,7 +395,13 @@ def test_throttle_lock_denied_returns_throttled(db, caplog):
     assert response.status_code == 202, response.text
     assert response.json()["data"] == {"status": "accepted"}
     send_mail.assert_not_called()
-    assert "password_reset_request status=throttled reason=lock_denied" in caplog.text
+    lock_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == auth_routes.__name__
+    ]
+    assert lock_messages.count(lock_denied_log) == 1
+    assert rate_log not in lock_messages
 
     row = (
         db.query(PasswordResetRequest)
@@ -378,6 +412,7 @@ def test_throttle_lock_denied_returns_throttled(db, caplog):
     audit = (
         db.query(AuditLog)
         .filter(AuditLog.action == "user.password_reset_requested")
+        .filter(AuditLog.comment == "throttled:concurrent")
         .one()
     )
     assert audit.comment == "throttled:concurrent"
