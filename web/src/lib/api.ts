@@ -25,6 +25,7 @@ export type ApiErr = {
   code?: string;
   errors?: { field: string; message: string }[];
   request_id?: string;
+  retry_after_seconds?: number;
 };
 
 const BASE = "/api";
@@ -48,6 +49,27 @@ export function categoryToUserMessage(category: string | undefined | null): stri
       return "Some fields don't look right. Check the form and retry.";
     default:
       return "Something went wrong. Try again, or refresh.";
+  }
+}
+
+function authCodeToUserMessage(body: ApiErr | null): string | null {
+  switch (body?.code) {
+    case "auth.account_locked":
+    case "auth.locked": {
+      const retrySeconds = body.retry_after_seconds;
+      if (typeof retrySeconds === "number" && Number.isFinite(retrySeconds) && retrySeconds > 0) {
+        const retryMinutes = Math.max(1, Math.ceil(retrySeconds / 60));
+        return `Account temporarily locked. Try again in ${retryMinutes} minutes.`;
+      }
+      return "Account temporarily locked. Try again later.";
+    }
+    case "auth.email_unverified":
+    case "auth.verification_pending":
+      return "Verify your email before signing in. Check your inbox for the verification link.";
+    case "auth.invalid_credentials":
+      return "Invalid email or password.";
+    default:
+      return null;
   }
 }
 
@@ -85,7 +107,7 @@ export class ApiError extends Error {
     this.request_id = requestIdFromBody(body) ?? normalizeRequestId(requestId);
     this.requestId = this.request_id;
     this.userMessage = messageWithRequestId(
-      categoryToUserMessage(body?.status?.category),
+      authCodeToUserMessage(body) ?? categoryToUserMessage(body?.status?.category),
       this.request_id,
     );
   }

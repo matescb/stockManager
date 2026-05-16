@@ -189,6 +189,44 @@ describe("ApiError.userMessage", () => {
     expect(err.userMessage).not.toContain("sqlalchemy");
   });
 
+  it.each([
+    {
+      code: "auth.account_locked",
+      status: 429,
+      category: "validation_error",
+      extra: { retry_after_seconds: 900 },
+      userMessage: "Account temporarily locked. Try again in 15 minutes.",
+    },
+    {
+      code: "auth.email_unverified",
+      status: 403,
+      category: "forbidden",
+      extra: {},
+      userMessage: "Verify your email before signing in. Check your inbox for the verification link.",
+    },
+    {
+      code: "auth.invalid_credentials",
+      status: 401,
+      category: "unauthenticated",
+      extra: {},
+      userMessage: "Invalid email or password.",
+    },
+  ])("maps $code to auth-specific userMessage", ({ code, status, category, extra, userMessage }) => {
+    const err = new ApiError(
+      status,
+      {
+        data: null,
+        status: { category, message: "raw auth message" },
+        code,
+        ...extra,
+      },
+      "raw auth message",
+    );
+
+    expect(err.userMessage).toBe(userMessage);
+    expect(err.message).toBe("raw auth message");
+  });
+
   it("HTTP 404 ApiError thrown by api.parsed carries correct userMessage", async () => {
     mockFetch(404, {
       data: null,
