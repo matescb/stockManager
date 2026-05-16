@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Request, status
 from sqlalchemy import select
 
 from app.api._helpers import assert_in_workspace, assert_polymorphic_in_workspace
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.errors import ErrorCodes, raise_http
 from app.core.responses import ok
+from app.domain.audit.service import log as _audit_log
 from app.domain.custom_fields.models import CustomField
 from app.domain.custom_fields.schemas import CustomFieldIn
 from app.domain.parts.provider_fields import is_provider_reserved_custom_field_key
@@ -42,6 +43,7 @@ def list_for(object_type: str, object_id: UUID, db: DbSession, ws: CurrentWorksp
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_or_update(
+    request: Request,
     payload: CustomFieldIn,
     db: DbSession,
     ws: CurrentWorkspace,
@@ -89,6 +91,7 @@ def create_or_update(
     )
     new_value = payload.value
     if existing:
+        original_source = existing.source
         if existing.source == "provider" and new_value != existing.value:
             # User just edited a provider-supplied row. Promote it to an
             # override and remember what came from upstream.
@@ -108,6 +111,16 @@ def create_or_update(
             # manual or provider-write-with-same-value
             existing.value = new_value
         existing.updated_by = user.id
+        _audit_log(
+            db,
+            ws=ws,
+            user=user,
+            action="custom_field.updated",
+            target_type="custom_field",
+            target_ids=[existing.id],
+            comment=f"object_type={payload.object_type} source={original_source}",
+            request_id=getattr(request.state, "request_id", None),
+        )
         return ok(_serialize(existing))
 
     cf = CustomField(
@@ -122,23 +135,50 @@ def create_or_update(
     )
     db.add(cf)
     db.flush()
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="custom_field.created",
+        target_type="custom_field",
+        target_ids=[cf.id],
+        comment=f"object_type={payload.object_type} source=manual",
+        request_id=getattr(request.state, "request_id", None),
+    )
     return ok(_serialize(cf))
 
 
 @router.delete("/{cf_id}")
-def delete(cf_id: UUID, db: DbSession, ws: CurrentWorkspace):
+def delete(request: Request, cf_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     row = db.execute(
         select(CustomField)
         .where(CustomField.id == cf_id)
         .where(CustomField.workspace_id == ws.id)
     ).scalar_one_or_none()
     if row is not None:
+        object_type = row.object_type
         db.delete(row)
+        _audit_log(
+            db,
+            ws=ws,
+            user=user,
+            action="custom_field.deleted",
+            target_type="custom_field",
+            target_ids=[cf_id],
+            comment=f"object_type={object_type}",
+            request_id=getattr(request.state, "request_id", None),
+        )
     return ok(None, "deleted")
 
 
 @router.delete("/{cf_id}/override")
-def restore_override(cf_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+def restore_override(
+    request: Request,
+    cf_id: UUID,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     """Reverts an `override` row back to `provider`, restoring the saved
     `original_value` as the live value. 400 if the row isn't an override."""
     row = assert_in_workspace(db, CustomField, cf_id, ws.id, label="row")
@@ -152,4 +192,14 @@ def restore_override(cf_id: UUID, db: DbSession, ws: CurrentWorkspace, user: Cur
     row.original_value = None
     row.source = "provider"
     row.updated_by = user.id
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="custom_field.override_restored",
+        target_type="custom_field",
+        target_ids=[row.id],
+        comment=f"object_type={row.object_type}",
+        request_id=getattr(request.state, "request_id", None),
+    )
     return ok(_serialize(row))

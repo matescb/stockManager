@@ -175,6 +175,7 @@ from app.api.routes import (
     parts_assets,
     parts_core,
     parts_provider,
+    parts_relations,
     parts_scan,
     projects,
     reports,
@@ -444,6 +445,12 @@ app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(workspaces.router, prefix="/api/workspaces", tags=["workspaces"])
 app.include_router(parts_core.router, prefix="/api/parts", tags=["parts"], dependencies=_member_gate)
 app.include_router(parts_assets.router, prefix="/api/parts", tags=["parts"], dependencies=_member_gate)
+app.include_router(
+    parts_relations.router,
+    prefix="/api/parts",
+    tags=["parts"],
+    dependencies=_member_gate,
+)
 app.include_router(parts_scan.router, prefix="/api/parts", tags=["parts"], dependencies=_member_gate)
 app.include_router(storage.router, prefix="/api/storage", tags=["storage"], dependencies=_member_gate)
 app.include_router(stock.router, prefix="/api/stock", tags=["stock"], dependencies=_member_gate)

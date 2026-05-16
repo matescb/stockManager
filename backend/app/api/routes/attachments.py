@@ -3,10 +3,17 @@ from __future__ import annotations
 import os
 import re
 import uuid as uuidlib
-from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 
@@ -22,6 +29,7 @@ from app.core.deps import (
 from app.core.errors import ErrorCodes, raise_http
 from app.core.responses import ok
 from app.domain.attachments.models import Attachment
+from app.domain.audit.service import log as _audit_log
 from app.infra.db import get_db
 
 router = APIRouter()
@@ -218,12 +226,29 @@ def download(attachment_id: UUID, db: DbSession, ws: CurrentWorkspace):
 
 
 @router.delete("/{attachment_id}")
-def delete(attachment_id: UUID, db: DbSession, ws: CurrentWorkspace):
+def delete(
+    request: Request,
+    attachment_id: UUID,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     a = assert_in_workspace(db, Attachment, attachment_id, ws.id, label="attachment")
     abs_path = os.path.join(settings().UPLOAD_DIR, a.storage_key)
+    object_type = a.object_type
     try:
         os.remove(abs_path)
     except FileNotFoundError:
         pass
     db.delete(a)
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="attachment.deleted",
+        target_type="attachment",
+        target_ids=[attachment_id],
+        comment=f"object_type={object_type}",
+        request_id=getattr(request.state, "request_id", None),
+    )
     return ok(None, "deleted")
