@@ -11,6 +11,8 @@
  *   noreferrer tokens.
  * - After AUD-100 / #771, a static target="_blank" with dynamic rel reports a
  *   dedicated diagnostic because the rule cannot prove the required tokens exist.
+ * - AUD-108 / #788 folds same-file const string literal rel identifiers only;
+ *   imports, re-exports, template literals, and computed initializers stay dynamic.
  * - Dynamic target values and custom link components are ignored.
  */
 const TARGET_BLANK_MESSAGE = 'Links with target="_blank" must use rel="noopener noreferrer".';
@@ -49,6 +51,49 @@ function getStaticStringValue(attribute) {
   return null;
 }
 
+function findVariable(scope, name) {
+  let currentScope = scope;
+
+  while (currentScope) {
+    const variable = currentScope.set?.get(name);
+
+    if (variable) {
+      return variable;
+    }
+
+    currentScope = currentScope.upper;
+  }
+
+  return undefined;
+}
+
+function getConstStringLiteralValue(expression, scope) {
+  if (expression.type !== "Identifier") {
+    return null;
+  }
+
+  const variable = findVariable(scope, expression.name);
+  const definition = variable?.defs?.[0];
+
+  if (!definition || definition.type !== "Variable") {
+    return null;
+  }
+
+  const declaration = definition.parent ?? definition.node.parent;
+
+  if (declaration?.kind !== "const") {
+    return null;
+  }
+
+  const init = definition.node.init;
+
+  if (!init || init.type !== "Literal" || typeof init.value !== "string") {
+    return null;
+  }
+
+  return init.value;
+}
+
 function includesRelToken(rel, token) {
   return rel.split(/\s+/u).includes(token);
 }
@@ -78,18 +123,23 @@ module.exports = {
           return;
         }
 
-        const rel = getStaticStringValue(getAttribute(node, "rel"));
+        const relAttribute = getAttribute(node, "rel");
+        const rel = getStaticStringValue(relAttribute);
+        const resolvedRel =
+          rel === null && relAttribute?.value?.type === "JSXExpressionContainer"
+            ? getConstStringLiteralValue(relAttribute.value.expression, context.getScope())
+            : rel;
 
-        if (rel === null) {
-          // Option A for AUD-100: static target="_blank" cannot verify dynamic rel tokens.
+        if (resolvedRel === null) {
+          // The const lookup could not prove the dynamic rel tokens.
           context.report({ node, messageId: "dynamicRel" });
           return;
         }
 
         if (
-          rel === undefined ||
-          !includesRelToken(rel, "noopener") ||
-          !includesRelToken(rel, "noreferrer")
+          resolvedRel === undefined ||
+          !includesRelToken(resolvedRel, "noopener") ||
+          !includesRelToken(resolvedRel, "noreferrer")
         ) {
           context.report({ node, messageId: "missingRel" });
         }

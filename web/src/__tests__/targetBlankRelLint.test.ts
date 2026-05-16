@@ -6,6 +6,9 @@ import { describe, expect, it } from "vitest";
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const targetBlankRelRuleId = "jsx-a11y/anchor-rel-noreferrer-noopener";
+const missingRelMessage = 'Links with target="_blank" must use rel="noopener noreferrer".';
+const dynamicRelMessage =
+  'Links with static target="_blank" must use a static rel value containing "noopener noreferrer".';
 
 type LintMessage = {
   ruleId?: string | null;
@@ -58,8 +61,34 @@ describe("target=_blank rel lint guard", () => {
   it("reports dynamic rel for static target blank anchors", async () => {
     await expect(
       targetBlankRelMessages(
-        'const someVar = "noreferrer"; export const Link = () => <a href="https://example.com" target="_blank" rel={someVar}>open</a>;',
+        'let someVar = "noopener noreferrer"; export const Link = () => <a href="https://example.com" target="_blank" rel={someVar}>open</a>;',
       ),
-    ).resolves.toHaveLength(1);
+    ).resolves.toEqual([expect.objectContaining({ message: dynamicRelMessage })]);
+  });
+
+  it("allows target=_blank links with rel from module and local const string literals", async () => {
+    await expect(
+      targetBlankRelMessages(`
+        const MODULE_SAFE_REL = "noopener noreferrer";
+
+        export const ModuleLink = () => (
+          <a href="https://example.com" target="_blank" rel={MODULE_SAFE_REL}>open</a>
+        );
+
+        export const LocalLink = () => {
+          const localSafeRel = "noreferrer noopener";
+
+          return <a href="https://example.com" target="_blank" rel={localSafeRel}>open</a>;
+        };
+      `),
+    ).resolves.toHaveLength(0);
+  });
+
+  it("validates const string literal rel values with the existing token checks", async () => {
+    await expect(
+      targetBlankRelMessages(
+        'const unsafeRel = "noreferrer"; export const Link = () => <a href="https://example.com" target="_blank" rel={unsafeRel}>open</a>;',
+      ),
+    ).resolves.toEqual([expect.objectContaining({ message: missingRelMessage })]);
   });
 });
