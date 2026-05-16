@@ -1,5 +1,6 @@
 // @ts-expect-error ESLint v8 is installed for tests, but this repo does not carry @types/eslint.
 import { ESLint } from "eslint";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -9,6 +10,18 @@ const targetBlankRelRuleId = "jsx-a11y/anchor-rel-noreferrer-noopener";
 const missingRelMessage = 'Links with target="_blank" must use rel="noopener noreferrer".';
 const dynamicRelMessage =
   'Links with static target="_blank" must use a static rel value containing "noopener noreferrer".';
+const require = createRequire(import.meta.url);
+const {
+  __test: { unwrapTSConstExpression },
+} = require("../../eslint-rules/anchor-rel-noreferrer-noopener.cjs") as {
+  __test: {
+    unwrapTSConstExpression: (
+      expression:
+        | { type: "TSTypeAssertion"; expression: { type: "Literal"; value: string } }
+        | { type: "TSNonNullExpression"; expression: { type: "Literal"; value: string } },
+    ) => { type: "Literal"; value: string };
+  };
+};
 
 type LintMessage = {
   ruleId?: string | null;
@@ -106,6 +119,27 @@ describe("target=_blank rel lint guard", () => {
       targetBlankRelMessages(
         'const unsafeRel = "noreferrer"; export const Link = () => <a href="https://example.com" target="_blank" rel={unsafeRel}>open</a>;',
       ),
+    ).resolves.toEqual([expect.objectContaining({ message: missingRelMessage })]);
+  });
+
+  it("unwraps legacy TypeScript const assertion rel initializers", () => {
+    expect(
+      unwrapTSConstExpression({
+        type: "TSTypeAssertion",
+        expression: { type: "Literal", value: "noreferrer" },
+      }),
+    ).toEqual({ type: "Literal", value: "noreferrer" });
+  });
+
+  it("validates non-null const assertion rel initializers with the existing token checks", async () => {
+    await expect(
+      targetBlankRelMessages(`
+        const nonNullRel = "noopener"!;
+
+        export const NonNullLink = () => (
+          <a href="https://example.com" target="_blank" rel={nonNullRel}>open</a>
+        );
+      `),
     ).resolves.toEqual([expect.objectContaining({ message: missingRelMessage })]);
   });
 
