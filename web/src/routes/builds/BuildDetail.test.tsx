@@ -200,6 +200,62 @@ describe("BuildDetail archive mutation", () => {
 });
 
 describe("BuildDetail consumption plan", () => {
+  it("invalidates report queries on consume", async () => {
+    vi.mocked(api.get).mockImplementation((path: string) => {
+      if (path === "/builds/build-1") {
+        return Promise.resolve({
+          build: buildDetail.build,
+          shortage: [{
+            project_entry_id: "entry-1",
+            part_id: "part-1",
+            part_name: "Part 1",
+            required: 2,
+            available: 2,
+            substitute_ids: [],
+            substitute_available: 0,
+            short_by: 0,
+          }],
+        });
+      }
+      if (path === "/projects/project-1") return Promise.resolve({ id: "project-1", name: "Project 1" });
+      if (path === "/projects/project-1/entries") {
+        return Promise.resolve([{
+          id: "entry-1",
+          project_id: "project-1",
+          entry_type: "part",
+          part_id: "part-1",
+          meta_part_id: null,
+          name: null,
+          quantity: 2,
+          comments: null,
+          designators: [],
+          cad_footprint: null,
+          cad_key: null,
+          dnp: false,
+          order_index: 0,
+        }]);
+      }
+      if (path === "/parts?limit=200") return Promise.resolve([{ id: "part-1", name: "Part 1" }]);
+      if (path === "/storage") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+    vi.mocked(api.post).mockResolvedValue(null);
+
+    const { client } = renderBuildDetail();
+    const invalidateSpy = vi.spyOn(client, "invalidateQueries");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Auto-fill" }));
+    fireEvent.click(screen.getByRole("button", { name: "Consume & complete build" }));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith("/builds/build-1/consume", expect.any(Object));
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["ws", "ws-1", "report", "low-stock"] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["ws", "ws-1", "report", "stock-value"] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["ws", "ws-1", "report", "expiring"] });
+  });
+
   it("submits output lot and storage fields", async () => {
     vi.mocked(api.get).mockImplementation((path: string) => {
       if (path === "/builds/build-1") {

@@ -104,6 +104,17 @@ export function archiveStorageKeys(
   ];
 }
 
+/** Report keys backed by current stock totals. */
+export function stockReportKeys(
+  workspaceId: string | null | undefined,
+): unknown[][] {
+  return [
+    wsKeyOf(workspaceId, "report", "low-stock"),
+    wsKeyOf(workspaceId, "report", "stock-value"),
+    wsKeyOf(workspaceId, "report", "expiring"),
+  ];
+}
+
 /**
  * Keys to invalidate after a lot move or adjust-count.
  *
@@ -132,9 +143,7 @@ export function lotMutationKeys(
     // every sub-key (`:stock`, `:lots`, `:history`, `:custom-fields`, …)
     // off it, so don't enumerate them separately.
     wsKeyOf(workspaceId, "part", lot.part_id),
-    wsKeyOf(workspaceId, "report", "low-stock"),
-    wsKeyOf(workspaceId, "report", "stock-value"),
-    wsKeyOf(workspaceId, "report", "expiring"),
+    ...stockReportKeys(workspaceId),
   ];
   for (const sid of storageIds) {
     keys.push(wsKeyOf(workspaceId, "storage", sid));
