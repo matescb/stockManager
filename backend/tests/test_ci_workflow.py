@@ -299,11 +299,32 @@ def test_compose_prod_backend_cron_sessions_disabled_jobs_stay_healthy():
 
     healthcheck = cron.get("healthcheck", {})
     healthcheck_test = " ".join(healthcheck.get("test", []))
-    assert "session-purge --check-heartbeat" in healthcheck_test
-    assert "password-reset-purge --check-heartbeat" in healthcheck_test
+    assert "--check-all-heartbeats session-purge password-reset-purge" in healthcheck_test
+    assert healthcheck_test.count("python -m app.cli.run_job") == 1
     assert "--heartbeat-max-age-seconds 5400" in healthcheck_test
     assert "$${SESSION_PURGE_INTERVAL_SECONDS" not in healthcheck_test
     assert "$${PASSWORD_RESET_PURGE_INTERVAL_SECONDS" not in healthcheck_test
+
+
+def test_prod_validate_times_backend_cron_sessions_probe():
+    data = _load()
+    prod_validate = data["jobs"]["prod-validate"]
+    timing_step = next(
+        (
+            step
+            for step in prod_validate["steps"]
+            if step.get("name") == "Time backend-cron-sessions healthcheck probe"
+        ),
+        None,
+    )
+
+    assert timing_step is not None, (
+        "prod-validate must time the backend-cron-sessions healthcheck probe"
+    )
+    run = timing_step.get("run", "")
+    assert "docker exec" in run
+    assert "--check-all-heartbeats session-purge password-reset-purge" in run
+    assert "timeout_ms / 2" in run
 
 
 def test_compose_prod_backend_cron_alerts_command_shape():
