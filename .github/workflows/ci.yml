@@ -459,7 +459,54 @@ jobs:
       # Build the backend prod image. Catches broken COPY paths, missing
       # apt packages, pip install failures.
       - name: Build backend prod image
-        run: docker buildx build --load -f backend/Dockerfile backend/
+        run: |
+          docker buildx build --load \
+            -t stockmanager-backend-prod-validate:ci \
+            -f backend/Dockerfile backend/
+
+      # AUD-128 / issue #827: keep the backend-cron-sessions healthcheck
+      # comfortably below its configured timeout. The probe runs inside an
+      # already-started backend image so the timing measures cold Python import
+      # and CLI work without adding container startup overhead.
+      - name: Time backend-cron-sessions healthcheck probe
+        run: |
+          timeout_ms=$(python3 - <<'PY'
+          import re
+          import yaml
+
+          cfg = yaml.safe_load(open("docker-compose.prod.yml"))
+          timeout = cfg["services"]["backend-cron-sessions"]["healthcheck"]["timeout"]
+          match = re.fullmatch(r"(\d+)s", str(timeout))
+          if not match:
+              raise SystemExit(f"unsupported backend-cron-sessions timeout: {timeout!r}")
+          print(int(match.group(1)) * 1000)
+          PY
+          )
+          threshold_ms=$((timeout_ms / 2))
+          container=$(
+            docker run -d \
+              --env-file .env.prod.ci \
+              -e SESSION_PURGE_INTERVAL_SECONDS=0 \
+              -e PASSWORD_RESET_PURGE_INTERVAL_SECONDS=0 \
+              stockmanager-backend-prod-validate:ci \
+              sleep 60
+          )
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          start_ns=$(date +%s%N)
+          docker exec "$container" \
+            python -m app.cli.run_job --check-all-heartbeats session-purge password-reset-purge --heartbeat-max-age-seconds 5400
+          end_ns=$(date +%s%N)
+          elapsed_ms=$(((end_ns - start_ns) / 1000000))
+          echo "backend-cron-sessions probe elapsed ${elapsed_ms}ms; threshold ${threshold_ms}ms"
+          python3 - <<PY
+          elapsed_ms = int("${elapsed_ms}")
+          threshold_ms = int("${threshold_ms}")
+          if elapsed_ms > threshold_ms:
+              raise SystemExit(
+                  f"backend-cron-sessions healthcheck probe took {elapsed_ms}ms, "
+                  f"exceeding timeout/2 budget {threshold_ms}ms"
+              )
+          PY
 
       # Build the web prod image (context = repo root, matching compose).
       # Catches Dockerfile syntax errors, broken npm build, nginx config

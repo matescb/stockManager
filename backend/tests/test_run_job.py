@@ -10,9 +10,9 @@ from sqlalchemy.orm import Session
 
 from app.cli.run_job import (
     JOBS,
-    JobConfigError,
     JobSpec,
     UnknownJobError,
+    all_heartbeats_are_fresh,
     heartbeat_is_fresh,
     job_interval_seconds,
     main,
@@ -393,3 +393,94 @@ def test_healthcheck_detects_missing_or_stale_heartbeat(monkeypatch, tmp_path) -
         )
     finally:
         settings.cache_clear()
+
+
+def test_all_heartbeats_check_loads_settings_once_for_multiple_jobs(
+    monkeypatch, tmp_path
+) -> None:
+    from app.core.config import settings
+
+    settings.cache_clear()
+    monkeypatch.setenv("SESSION_PURGE_INTERVAL_SECONDS", "3600")
+    monkeypatch.setenv("PASSWORD_RESET_PURGE_INTERVAL_SECONDS", "3600")
+    jobs = {
+        "session": JobSpec(
+            name="session",
+            owner="tests",
+            cadence="manual",
+            idempotency="test-only",
+            run=lambda db: 0,
+            interval_setting="SESSION_PURGE_INTERVAL_SECONDS",
+        ),
+        "reset": JobSpec(
+            name="reset",
+            owner="tests",
+            cadence="manual",
+            idempotency="test-only",
+            run=lambda db: 0,
+            interval_setting="PASSWORD_RESET_PURGE_INTERVAL_SECONDS",
+        ),
+    }
+
+    try:
+        for job_name in ("session", "reset"):
+            (tmp_path / job_name).write_text("ok\n", encoding="utf-8")
+
+        assert all_heartbeats_are_fresh(
+            ["session", "reset"],
+            jobs=jobs,
+            heartbeat_dir=tmp_path,
+            max_age_seconds=60,
+        )
+
+        stale_mtime = time.time() - 120
+        os.utime(tmp_path / "reset", (stale_mtime, stale_mtime))
+
+        assert (
+            all_heartbeats_are_fresh(
+                ["session", "reset"],
+                jobs=jobs,
+                heartbeat_dir=tmp_path,
+                max_age_seconds=60,
+            )
+            is False
+        )
+    finally:
+        settings.cache_clear()
+
+
+def test_main_check_all_heartbeats_reports_combined_failure(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    from app.core.config import settings
+
+    settings.cache_clear()
+    monkeypatch.setenv("SESSION_PURGE_INTERVAL_SECONDS", "3600")
+    jobs = {
+        "example": JobSpec(
+            name="example",
+            owner="tests",
+            cadence="manual",
+            idempotency="test-only",
+            run=lambda db: 0,
+            interval_setting="SESSION_PURGE_INTERVAL_SECONDS",
+        )
+    }
+
+    try:
+        exit_code = main(
+            [
+                "--check-all-heartbeats",
+                "example",
+                "--heartbeat-max-age-seconds",
+                "60",
+            ],
+            jobs=jobs,
+            session_factory=lambda: _FakeSession(),  # type: ignore[return-value]
+            heartbeat_dir=tmp_path,
+        )
+    finally:
+        settings.cache_clear()
+
+    assert exit_code == 1
+    assert "jobs=example status=unhealthy reason=heartbeat" in capsys.readouterr().err

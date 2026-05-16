@@ -256,7 +256,7 @@ services:
       backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "python -m app.cli.run_job session-purge --check-heartbeat --heartbeat-max-age-seconds 5400 && python -m app.cli.run_job password-reset-purge --check-heartbeat --heartbeat-max-age-seconds 5400"]
+      test: ["CMD-SHELL", "python -m app.cli.run_job --check-all-heartbeats session-purge password-reset-purge --heartbeat-max-age-seconds 5400"]
       interval: 60s
       timeout: 5s
       retries: 3

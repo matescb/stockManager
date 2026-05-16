@@ -181,6 +181,25 @@ def heartbeat_is_fresh(
     return time.time() - heartbeat_mtime <= max_age_seconds
 
 
+def all_heartbeats_are_fresh(
+    job_names: list[str],
+    *,
+    jobs: Mapping[str, JobSpec] = JOBS,
+    heartbeat_dir: Path = HEARTBEAT_DIR,
+    max_age_seconds: int = HEARTBEAT_MAX_AGE_SECONDS,
+) -> bool:
+    """Return True when every scheduled job is disabled or has a fresh heartbeat."""
+    return all(
+        heartbeat_is_fresh(
+            job_name,
+            jobs=jobs,
+            heartbeat_dir=heartbeat_dir,
+            max_age_seconds=max_age_seconds,
+        )
+        for job_name in job_names
+    )
+
+
 def run_job(
     job_name: str,
     *,
@@ -229,7 +248,11 @@ def _write_heartbeat(job_name: str, *, heartbeat_dir: Path = HEARTBEAT_DIR) -> N
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run an allow-listed backend job.")
-    parser.add_argument("job_name", help="Registered job name, e.g. sourcing-cache-sweep")
+    parser.add_argument(
+        "job_name",
+        nargs="?",
+        help="Registered job name, e.g. sourcing-cache-sweep",
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
         "--print-interval",
@@ -241,11 +264,20 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Exit successfully when this scheduled job is disabled or healthy.",
     )
+    mode.add_argument(
+        "--check-all-heartbeats",
+        nargs="+",
+        metavar="JOB_NAME",
+        help=(
+            "Exit successfully when every listed scheduled job is disabled or "
+            "healthy. Loads backend settings once for the full probe."
+        ),
+    )
     parser.add_argument(
         "--heartbeat-max-age-seconds",
         type=int,
         default=None,
-        help="Maximum heartbeat age accepted by --check-heartbeat.",
+        help="Maximum heartbeat age accepted by heartbeat checks.",
     )
     return parser
 
@@ -253,8 +285,13 @@ def _parser() -> argparse.ArgumentParser:
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = _parser()
     args = parser.parse_args(argv)
-    if args.heartbeat_max_age_seconds is not None and not args.check_heartbeat:
-        parser.error("--heartbeat-max-age-seconds requires --check-heartbeat")
+    if args.heartbeat_max_age_seconds is not None and not (
+        args.check_heartbeat or args.check_all_heartbeats
+    ):
+        parser.error(
+            "--heartbeat-max-age-seconds requires --check-heartbeat "
+            "or --check-all-heartbeats"
+        )
     if args.heartbeat_max_age_seconds is None:
         args.heartbeat_max_age_seconds = HEARTBEAT_MAX_AGE_SECONDS
     return args
@@ -265,6 +302,7 @@ def main(
     *,
     jobs: Mapping[str, JobSpec] = JOBS,
     session_factory: SessionFactory = _default_session_factory,
+    heartbeat_dir: Path = HEARTBEAT_DIR,
 ) -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -276,6 +314,24 @@ def main(
         return int(exc.code)
 
     try:
+        if args.check_all_heartbeats:
+            if all_heartbeats_are_fresh(
+                args.check_all_heartbeats,
+                jobs=jobs,
+                heartbeat_dir=heartbeat_dir,
+                max_age_seconds=args.heartbeat_max_age_seconds,
+            ):
+                return 0
+            print(
+                "jobs="
+                f"{','.join(args.check_all_heartbeats)} "
+                "status=unhealthy reason=heartbeat",
+                file=sys.stderr,
+            )
+            return 1
+        if args.job_name is None:
+            print("job_name is required unless --check-all-heartbeats is used", file=sys.stderr)
+            return 2
         if args.print_interval:
             print(job_interval_seconds(args.job_name, jobs=jobs))
             return 0
@@ -283,12 +339,18 @@ def main(
             if heartbeat_is_fresh(
                 args.job_name,
                 jobs=jobs,
+                heartbeat_dir=heartbeat_dir,
                 max_age_seconds=args.heartbeat_max_age_seconds,
             ):
                 return 0
             print(f"job={args.job_name} status=unhealthy reason=heartbeat", file=sys.stderr)
             return 1
-        run_job(args.job_name, jobs=jobs, session_factory=session_factory)
+        run_job(
+            args.job_name,
+            jobs=jobs,
+            session_factory=session_factory,
+            heartbeat_dir=heartbeat_dir,
+        )
     except (UnknownJobError, JobConfigError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
