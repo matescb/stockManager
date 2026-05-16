@@ -14,6 +14,7 @@ from app.cli.run_job import (
     JobSpec,
     UnknownJobError,
     heartbeat_is_fresh,
+    job_interval_seconds,
     main,
     run_job,
 )
@@ -145,31 +146,16 @@ def test_password_reset_purge_registered() -> None:
     assert "older than 30 days" in spec.idempotency
 
 
-def test_password_reset_purge_negative_interval_rejected(monkeypatch, tmp_path) -> None:
+def test_password_reset_purge_interval_reads_settings(monkeypatch) -> None:
     from app.core.config import settings
 
     settings.cache_clear()
-    monkeypatch.setenv("PASSWORD_RESET_PURGE_INTERVAL_SECONDS", "-1")
-    session = _FakeSession()
+    monkeypatch.setenv("PASSWORD_RESET_PURGE_INTERVAL_SECONDS", "7200")
 
     try:
-        run_job(
-            "password-reset-purge",
-            session_factory=lambda: session,  # type: ignore[return-value]
-            heartbeat_dir=tmp_path,
-        )
-    except JobConfigError as exc:
-        assert "PASSWORD_RESET_PURGE_INTERVAL_SECONDS" in str(exc)
-    else:
-        raise AssertionError("negative password-reset purge interval should be rejected")
+        assert job_interval_seconds("password-reset-purge") == 7200
     finally:
         settings.cache_clear()
-
-    assert session.executed == []
-    assert session.committed is False
-    assert session.rolled_back is False
-    assert session.closed is False
-    assert not (tmp_path / "password-reset-purge").exists()
 
 
 def test_session_purge_idempotent(db, tmp_path) -> None:

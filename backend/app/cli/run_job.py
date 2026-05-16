@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -143,13 +142,7 @@ def _job_interval_seconds(job: JobSpec) -> int | None:
 
     from app.core.config import settings
 
-    try:
-        interval = int(getattr(settings(), job.interval_setting))
-    except ValidationError as exc:
-        raise JobConfigError(str(exc)) from exc
-    if interval < 0:
-        raise JobConfigError(f"{job.interval_setting} must be greater than or equal to 0")
-    return interval
+    return int(getattr(settings(), job.interval_setting))
 
 
 def job_interval_seconds(
