@@ -174,6 +174,7 @@ services:
     cpus: "0.5"
     pids_limit: 256
     oom_kill_disable: false
+    stop_grace_period: 605s
     logging:
       driver: json-file
       options:
@@ -206,6 +207,7 @@ services:
     cpus: "0.5"
     pids_limit: 256
     oom_kill_disable: false
+    stop_grace_period: 605s
     logging:
       driver: json-file
       options:
@@ -238,6 +240,7 @@ services:
     cpus: "0.5"
     pids_limit: 256
     oom_kill_disable: false
+    stop_grace_period: 605s
     logging:
       driver: json-file
       options:
@@ -262,7 +265,7 @@ services:
     # Settings owns *_PURGE_INTERVAL_SECONDS defaults and validation; setting
     # either to 0 disables only that job. Both loops write independent
     # heartbeat files.
-    command: ["sh", "-c", "mkdir -p /tmp/stockmanager-job-heartbeats; session_interval=$$(python -m app.cli.run_job session-purge --print-interval) || exit $$?; reset_interval=$$(python -m app.cli.run_job password-reset-purge --print-interval) || exit $$?; pids=''; if [ $$session_interval -gt 0 ]; then (while true; do timeout 600 python -m app.cli.run_job session-purge; rc=$$?; if [ $$rc -eq 124 ]; then echo 'session-purge timed out after 600s (exit=124)'; elif [ $$rc -ne 0 ]; then echo \"session-purge failed (exit=$$rc)\"; fi; sleep $$session_interval; done) & pids=\"$$pids $$!\"; fi; if [ $$reset_interval -gt 0 ]; then (while true; do timeout 600 python -m app.cli.run_job password-reset-purge; rc=$$?; if [ $$rc -eq 124 ]; then echo 'password-reset-purge timed out after 600s (exit=124)'; elif [ $$rc -ne 0 ]; then echo \"password-reset-purge failed (exit=$$rc)\"; fi; sleep $$reset_interval; done) & pids=\"$$pids $$!\"; fi; if [ -z \"$$pids\" ]; then echo 'auth retention purges disabled'; sleep infinity; fi; wait"]
+    command: ["sh", "-c", "trap 'kill 0' TERM; trap 'kill 0' INT; mkdir -p /tmp/stockmanager-job-heartbeats; session_interval=$$(python -m app.cli.run_job session-purge --print-interval) || exit $$?; reset_interval=$$(python -m app.cli.run_job password-reset-purge --print-interval) || exit $$?; pids=''; if [ $$session_interval -gt 0 ]; then (while true; do timeout 600 python -m app.cli.run_job session-purge; rc=$$?; if [ $$rc -eq 124 ]; then echo 'session-purge timed out after 600s (exit=124)'; elif [ $$rc -ne 0 ]; then echo \"session-purge failed (exit=$$rc)\"; fi; sleep $$session_interval; done) & pids=\"$$pids $$!\"; fi; if [ $$reset_interval -gt 0 ]; then (while true; do timeout 600 python -m app.cli.run_job password-reset-purge; rc=$$?; if [ $$rc -eq 124 ]; then echo 'password-reset-purge timed out after 600s (exit=124)'; elif [ $$rc -ne 0 ]; then echo \"password-reset-purge failed (exit=$$rc)\"; fi; sleep $$reset_interval; done) & pids=\"$$pids $$!\"; fi; if [ -z \"$$pids\" ]; then echo 'auth retention purges disabled'; sleep infinity; fi; wait"]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
 
