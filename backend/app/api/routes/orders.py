@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy import or_, select
 from sqlalchemy.exc import DBAPIError
 
@@ -86,14 +86,14 @@ def _serialize_entry(e: OrderEntry) -> dict:
 
 
 def _get_order(db, ws_id, oid) -> Order:
-    o = db.get(Order, oid)
-    if not o or o.workspace_id != ws_id:
+    try:
+        return assert_in_workspace(db, Order, oid, ws_id, label="order")
+    except HTTPException:
         raise_http(
             status.HTTP_404_NOT_FOUND,
             code=ErrorCodes.ORDER_NOT_FOUND,
             message="order not found",
         )
-    return o
 
 
 def _entries_for(db, ws_id, oid) -> list[OrderEntry]:

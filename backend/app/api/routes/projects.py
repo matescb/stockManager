@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy import or_, select
 
 from app.api._helpers import assert_child_in_parent, assert_in_workspace, require_resource_access
@@ -99,10 +99,14 @@ def create_project(payload: ProjectCreateIn, db: DbSession, ws: CurrentWorkspace
 
 
 def _get(db, ws_id, pid) -> Project:
-    p = db.get(Project, pid)
-    if not p or p.workspace_id != ws_id:
-        raise_http(status.HTTP_404_NOT_FOUND, code=ErrorCodes.PROJECT_NOT_FOUND, message="project not found")
-    return p
+    try:
+        return assert_in_workspace(db, Project, pid, ws_id, label="project")
+    except HTTPException:
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            code=ErrorCodes.PROJECT_NOT_FOUND,
+            message="project not found",
+        )
 
 
 @router.get("/{project_id}")

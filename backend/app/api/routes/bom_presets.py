@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 from uuid import UUID
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
+from app.api._helpers import assert_in_workspace
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.errors import ErrorCodes, raise_http
 from app.core.responses import ok
@@ -58,10 +59,14 @@ def create_preset(payload: PresetIn, db: DbSession, ws: CurrentWorkspace, user: 
 
 
 def _get(db, ws_id, pid) -> BomImportPreset:
-    p = db.get(BomImportPreset, pid)
-    if not p or p.workspace_id != ws_id:
-        raise_http(status.HTTP_404_NOT_FOUND, code=ErrorCodes.BOM_PRESET_NOT_FOUND, message="preset not found")
-    return p
+    try:
+        return assert_in_workspace(db, BomImportPreset, pid, ws_id, label="preset")
+    except HTTPException:
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            code=ErrorCodes.BOM_PRESET_NOT_FOUND,
+            message="preset not found",
+        )
 
 
 @router.get("/{preset_id}")

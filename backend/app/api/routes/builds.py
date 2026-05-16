@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import DBAPIError
 
-from app.api._helpers import require_resource_access
+from app.api._helpers import assert_in_workspace, require_resource_access
 from app.api.routes._activity import _DEFAULT_LIMIT, _MAX_LIMIT, build_activity
 from app.api.routes._stock_integrity import raise_integrity_as_409
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
@@ -48,21 +48,21 @@ def _serialize(b: Build) -> dict:
 
 
 def _get_build(db, ws_id, bid) -> Build:
-    b = db.get(Build, bid)
-    if not b or b.workspace_id != ws_id:
+    try:
+        return assert_in_workspace(db, Build, bid, ws_id, label="build")
+    except HTTPException:
         raise_http(
             status.HTTP_404_NOT_FOUND,
             code=ErrorCodes.BUILD_NOT_FOUND,
             message="build not found",
         )
-    return b
 
 
 def _get_project(db, ws_id, pid) -> Project:
-    p = db.get(Project, pid)
-    if not p or p.workspace_id != ws_id:
+    try:
+        return assert_in_workspace(db, Project, pid, ws_id, label="project")
+    except HTTPException:
         raise_http(404, code=ErrorCodes.PROJECT_NOT_FOUND, message="project not found")
-    return p
 
 
 @router.get("")

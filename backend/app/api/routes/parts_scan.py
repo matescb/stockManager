@@ -16,11 +16,12 @@ from datetime import datetime, timedelta, timezone
 from time import monotonic
 from uuid import UUID
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
+from app.api._helpers import assert_in_workspace
 from app.api.routes._parts_shared import get_part as _get_part
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.errors import ErrorCodes, raise_http
@@ -218,8 +219,15 @@ def bulk_import_from_scan(
         # foot-gun). Same fix as create_part / patch_part — surface the
         # failure as `invalid` so the rest of the batch still runs.
         if row.storage_location_id is not None:
-            sl = db.get(StorageLocation, row.storage_location_id)
-            if sl is None or sl.workspace_id != ws.id:
+            try:
+                assert_in_workspace(
+                    db,
+                    StorageLocation,
+                    row.storage_location_id,
+                    ws.id,
+                    label="storage",
+                )
+            except HTTPException:
                 out_rows.append({
                     "mpn": mpn,
                     "status": "invalid",
