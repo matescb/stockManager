@@ -12,9 +12,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PASSWORD_STRENGTH_TS = REPO_ROOT / "web" / "src" / "lib" / "passwordStrength.ts"
 
 WEAK_PASSWORDS_SET_RE = re.compile(
-    r"(?:export\s+)?const\s+WEAK_PASSWORDS\s*=\s*new\s+Set(?:<[^>]+>)?\s*"
+    r"^[ \t]*(?:export\s+)?const\s+WEAK_PASSWORDS\s*=\s*new\s+Set(?:<[^>]+>)?\s*"
     r"\(\s*\[(?P<items>.*?)\]\s*\)\s*;",
-    re.DOTALL,
+    re.DOTALL | re.MULTILINE,
 )
 
 
@@ -45,3 +45,17 @@ def test_fe_be_weak_password_lists_match() -> None:
 
     assert all(value == value.lower() for value in fe_weak_passwords)
     assert {value.lower() for value in fe_weak_passwords} == _WEAK_PASSWORDS
+
+
+def test_parse_fe_weak_passwords_ignores_commented_out_definition() -> None:
+    source = """
+// const WEAK_PASSWORDS = new Set([
+//   "commented-out-password",
+// ]);
+const WEAK_PASSWORDS = new Set([
+  "real-password",
+  "actual-password",
+]);
+"""
+
+    assert _parse_fe_weak_passwords(source) == ["real-password", "actual-password"]
