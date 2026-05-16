@@ -218,6 +218,22 @@ def test_compose_prod_backend_cron_command_shape():
     assert "uvicorn" not in joined
 
 
+def test_compose_prod_cron_sidecars_have_shutdown_grace_period():
+    """Cron sidecars must outlive their 600s job timeout during shutdown."""
+    assert _COMPOSE_PROD_PATH.exists(), (
+        f"missing compose file at {_COMPOSE_PROD_PATH}"
+    )
+    data = yaml.safe_load(_COMPOSE_PROD_PATH.read_text())
+    services = data["services"]
+
+    for service_name in (
+        "backend-cron",
+        "backend-cron-alerts",
+        "backend-cron-sessions",
+    ):
+        assert services[service_name].get("stop_grace_period") == "605s"
+
+
 def test_compose_prod_has_web_and_cron_healthchecks():
     """docker compose ps must expose health for web and cron sidecars."""
     assert _COMPOSE_PROD_PATH.exists(), (
@@ -244,7 +260,7 @@ def test_compose_prod_has_web_and_cron_healthchecks():
 
 
 def test_compose_prod_backend_cron_sessions_disabled_jobs_stay_healthy():
-    """backend-cron-sessions must create the heartbeat dir before gated loops."""
+    """backend-cron-sessions must set up shutdown and heartbeat guards."""
     assert _COMPOSE_PROD_PATH.exists(), (
         f"missing compose file at {_COMPOSE_PROD_PATH}"
     )
@@ -257,6 +273,8 @@ def test_compose_prod_backend_cron_sessions_disabled_jobs_stay_healthy():
     )
     joined_cmd = " ".join(str(part) for part in cmd)
     mkdir = "mkdir -p /tmp/stockmanager-job-heartbeats"
+    term_trap = "trap 'kill 0' TERM"
+    int_trap = "trap 'kill 0' INT"
     session_branch = "if [ $$session_interval -gt 0 ]"
     reset_branch = "if [ $$reset_interval -gt 0 ]"
     session_interval = (
@@ -267,9 +285,13 @@ def test_compose_prod_backend_cron_sessions_disabled_jobs_stay_healthy():
         "reset_interval=$$(python -m app.cli.run_job "
         "password-reset-purge --print-interval)"
     )
+    assert term_trap in joined_cmd
+    assert int_trap in joined_cmd
     assert mkdir in joined_cmd
     assert session_interval in joined_cmd
     assert reset_interval in joined_cmd
+    assert joined_cmd.index(term_trap) < joined_cmd.index(session_branch)
+    assert joined_cmd.index(int_trap) < joined_cmd.index(reset_branch)
     assert joined_cmd.index(mkdir) < joined_cmd.index(session_branch)
     assert joined_cmd.index(mkdir) < joined_cmd.index(reset_branch)
     assert "$${SESSION_PURGE_INTERVAL_SECONDS" not in joined_cmd
