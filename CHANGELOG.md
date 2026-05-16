@@ -6,6 +6,13 @@ follow that model — it's a continuous flow of product work + production
 hardening landing per-commit. Themes are summarised below; `git log` is
 the canonical record.
 
+## Breaking changes
+
+- **AUD-121 / #812** `audit_log.comment` throttle rows changed from the
+  legacy `throttled` literal to `throttled:rate` for rate-limit throttles
+  and `throttled:concurrent` for concurrent-request throttles. Downstream
+  consumers filtering audit logs by the old value must update their filters.
+
 ## 2026-05 — feedback brief fixes
 
 - **E2E-1 / #686** Playwright E2E now has smoke/core/nightly project
