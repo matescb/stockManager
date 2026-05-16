@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Request, status
 from sqlalchemy import select
 
 from app.api._helpers import assert_in_workspace, assert_polymorphic_in_workspace
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.responses import ok
+from app.domain.audit.service import log as _audit_log
 from app.domain.tags.models import Tag, TagLink
 from app.domain.tags.schemas import TagIn, TagLinkIn
 
@@ -32,15 +33,43 @@ def list_tags(
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-def create(payload: TagIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
-    t = Tag(workspace_id=ws.id, name=payload.name, color=payload.color, created_by=user.id, updated_by=user.id)
+def create(
+    request: Request,
+    payload: TagIn,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
+    t = Tag(
+        workspace_id=ws.id,
+        name=payload.name,
+        color=payload.color,
+        created_by=user.id,
+        updated_by=user.id,
+    )
     db.add(t)
     db.flush()
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="tag.created",
+        target_type="tag",
+        target_ids=[t.id],
+        comment="fields=" + ",".join(sorted(payload.model_fields_set)),
+        request_id=getattr(request.state, "request_id", None),
+    )
     return ok({"id": str(t.id), "name": t.name, "color": t.color})
 
 
 @router.post("/links", status_code=status.HTTP_201_CREATED)
-def link(payload: TagLinkIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+def link(
+    request: Request,
+    payload: TagLinkIn,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     tag = assert_in_workspace(db, Tag, payload.tag_id, ws.id, label="tag")
     # Polymorphic FK validation: object_id must name a row in the current
     # workspace, and object_type must be a known resource. Without this
@@ -69,17 +98,39 @@ def link(payload: TagLinkIn, db: DbSession, ws: CurrentWorkspace, user: CurrentU
     )
     db.add(tl)
     db.flush()
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="tag.linked",
+        target_type="tag_link",
+        target_ids=[tl.id],
+        comment=f"object_type={payload.object_type}",
+        request_id=getattr(request.state, "request_id", None),
+    )
     return ok({"id": str(tl.id)})
 
 
 @router.delete("/links/{link_id}")
-def unlink(link_id: UUID, db: DbSession, ws: CurrentWorkspace):
+def unlink(request: Request, link_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     # Per the rest of the API (orders/projects/parts), DELETE on an id
     # that doesn't exist in this workspace returns 404 — never silently
     # succeed (would let a caller probe foreign-workspace ids by their
     # 200/404 split). Use the canonical helper.
     row = assert_in_workspace(db, TagLink, link_id, ws.id)
+    target_ids = [row.id]
+    object_type = row.object_type
     db.delete(row)
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="tag.unlinked",
+        target_type="tag_link",
+        target_ids=target_ids,
+        comment=f"object_type={object_type}",
+        request_id=getattr(request.state, "request_id", None),
+    )
     return ok(None, "deleted")
 
 
@@ -94,4 +145,12 @@ def list_for_object(object_type: str, object_id: UUID, db: DbSession, ws: Curren
             .where(TagLink.object_id == object_id)
         )
     )
-    return ok([{"id": str(tl.id), "tag": {"id": str(t.id), "name": t.name, "color": t.color}} for tl, t in rows])
+    return ok(
+        [
+            {
+                "id": str(tl.id),
+                "tag": {"id": str(t.id), "name": t.name, "color": t.color},
+            }
+            for tl, t in rows
+        ]
+    )

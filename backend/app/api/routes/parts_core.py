@@ -61,6 +61,12 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def _audit_fields_comment(fields: list[str] | set[str]) -> str:
+    if not fields:
+        return "fields=none"
+    return "fields=" + ",".join(sorted(fields))
+
+
 def _raise_mpn_conflict(existing: Part) -> None:
     raise_http(
         status.HTTP_409_CONFLICT,
@@ -168,7 +174,11 @@ def list_parts(
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_part(
-    payload: PartIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser
+    request: Request,
+    payload: PartIn,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
 ) -> Envelope[dict]:
     # Name defaults to MPN when blank — paste-an-MPN-and-go workflow.
     # At least one of the two has to be set; the partial unique index on
@@ -233,6 +243,16 @@ def create_part(
             if existing is not None:
                 _raise_mpn_conflict(existing)
         raise
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="part.created",
+        target_type="part",
+        target_ids=[p.id],
+        comment=_audit_fields_comment(set(payload.model_fields_set) | {"name"}),
+        request_id=getattr(request.state, "request_id", None),
+    )
     return ok(_serialize(p, on_hand=0, reserved=0))
 
 
@@ -249,6 +269,7 @@ def get_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
 
 @router.patch("/{part_id}")
 def patch_part(
+    request: Request,
     part_id: UUID,
     payload: PartPatch,
     db: DbSession,
@@ -318,6 +339,16 @@ def patch_part(
             r.original_value = None
             r.updated_by = user.id
 
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="part.updated",
+        target_type="part",
+        target_ids=[p.id],
+        comment=_audit_fields_comment(set(payload.model_fields_set)),
+        request_id=getattr(request.state, "request_id", None),
+    )
     return ok(
         _serialize(
             p,
@@ -539,7 +570,9 @@ def part_stock(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
             "rows": [
                 {
                     "storage_location_id": (
-                        str(r["storage_location_id"]) if r["storage_location_id"] else None
+                        str(r["storage_location_id"])
+                        if r["storage_location_id"]
+                        else None
                     ),
                     "lot_id": str(r["lot_id"]) if r["lot_id"] else None,
                     "quantity": r["quantity"],
@@ -575,7 +608,9 @@ def part_lots(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
                     else None
                 ),
                 "purchase_currency": lot.purchase_currency,
-                "expiration_date": lot.expiration_date.isoformat() if lot.expiration_date else None,
+                "expiration_date": lot.expiration_date.isoformat()
+                if lot.expiration_date
+                else None,
                 "comments": lot.comments,
                 "parent_lot_id": str(lot.parent_lot_id) if lot.parent_lot_id else None,
                 "source_type": lot.source_type,
@@ -587,7 +622,14 @@ def part_lots(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
 
 
 @router.post("/{part_id}/substitutes")
-def add_substitute(part_id: UUID, payload: SubstituteIn, db: DbSession, ws: CurrentWorkspace):
+def add_substitute(
+    request: Request,
+    part_id: UUID,
+    payload: SubstituteIn,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     # Both sides must be live parts — `_get_part` defaults to refusing
     # archived rows, which is what BE2-016 wants here. Adding a
     # substitute against an archived part would create a binding that
@@ -599,6 +641,17 @@ def add_substitute(part_id: UUID, payload: SubstituteIn, db: DbSession, ws: Curr
         substitute_part_id=sub.id, direction=payload.direction,
     )
     db.add(row)
+    db.flush()
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="part.substitute_added",
+        target_type="part_substitute",
+        target_ids=[p.id, sub.id],
+        comment=f"direction={payload.direction}",
+        request_id=getattr(request.state, "request_id", None),
+    )
     return ok(None)
 
 
@@ -610,13 +663,31 @@ def list_substitutes(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
 
 
 @router.delete("/{part_id}/substitutes/{substitute_id}")
-def del_substitute(part_id: UUID, substitute_id: UUID, db: DbSession, ws: CurrentWorkspace):
+def del_substitute(
+    request: Request,
+    part_id: UUID,
+    substitute_id: UUID,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     # Removal allowed even on archived rows — operators should be able
     # to clean up dead bindings.
     p = _get_part(db, ws.id, part_id, include_archived=True)
-    db.query(PartSubstitute).filter_by(
+    deleted = db.query(PartSubstitute).filter_by(
         workspace_id=ws.id, part_id=p.id, substitute_part_id=substitute_id
     ).delete()
+    if deleted:
+        _audit_log(
+            db,
+            ws=ws,
+            user=user,
+            action="part.substitute_removed",
+            target_type="part_substitute",
+            target_ids=[p.id, substitute_id],
+            comment="relation=substitute",
+            request_id=getattr(request.state, "request_id", None),
+        )
     return ok(None)
 
 
@@ -631,7 +702,14 @@ def list_members(meta_id: UUID, db: DbSession, ws: CurrentWorkspace):
 
 
 @router.post("/{meta_id}/members", status_code=status.HTTP_201_CREATED)
-def add_member(meta_id: UUID, payload: MetaMemberIn, db: DbSession, ws: CurrentWorkspace):
+def add_member(
+    request: Request,
+    meta_id: UUID,
+    payload: MetaMemberIn,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     meta = _get_part(db, ws.id, meta_id)
     if meta.part_type != "meta":
         raise_http(400, code=ErrorCodes.PART_NOT_META, message="part is not a meta-part")
@@ -656,16 +734,44 @@ def add_member(meta_id: UUID, payload: MetaMemberIn, db: DbSession, ws: CurrentW
     row = PartMetaMember(workspace_id=ws.id, meta_part_id=meta.id, part_id=member.id)
     db.add(row)
     db.flush()
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="part.member_added",
+        target_type="part_meta_member",
+        target_ids=[meta.id, member.id],
+        comment="relation=meta_member",
+        request_id=getattr(request.state, "request_id", None),
+    )
     return ok({"id": str(row.id), "member_part_id": str(row.part_id)})
 
 
 @router.delete("/{meta_id}/members/{member_id}")
-def del_member(meta_id: UUID, member_id: UUID, db: DbSession, ws: CurrentWorkspace):
+def del_member(
+    request: Request,
+    meta_id: UUID,
+    member_id: UUID,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     # Removal — allowed even on archived meta.
     meta = _get_part(db, ws.id, meta_id, include_archived=True)
-    db.query(PartMetaMember).filter_by(
+    deleted = db.query(PartMetaMember).filter_by(
         workspace_id=ws.id, meta_part_id=meta.id, part_id=member_id
     ).delete()
+    if deleted:
+        _audit_log(
+            db,
+            ws=ws,
+            user=user,
+            action="part.member_removed",
+            target_type="part_meta_member",
+            target_ids=[meta.id, member_id],
+            comment="relation=meta_member",
+            request_id=getattr(request.state, "request_id", None),
+        )
     return ok(None, "deleted")
 
 
