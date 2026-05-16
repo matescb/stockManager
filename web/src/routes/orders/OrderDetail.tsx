@@ -2,10 +2,12 @@ import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { z } from "zod";
 import { api, ApiError } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
 import { stockReportKeys, useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
+import { OrderReceiveResultSchema, OrderReceiveSchema } from "@/lib/schemas";
 import EntityHeader from "@/components/EntityHeader";
 import { DataTable } from "@/components/DataTable";
 import AttachmentsPanel from "@/components/AttachmentsPanel";
@@ -23,18 +25,19 @@ type AddEntryRequest = {
   currency?: string;
 };
 
-type ReceiveLine = {
-  order_entry_id: string;
-  quantity: number;
-  storage_location_id?: string;
-  lot_name?: string;
-  serial_number?: string;
-};
+type ReceiveRequest = z.input<typeof OrderReceiveSchema>;
 
-type ReceiveRequest = {
-  received_on?: string;
-  lines: ReceiveLine[];
-};
+function zodMessage(e: z.ZodError): string {
+  const issue = e.issues[0];
+  const field = issue?.path.join(".");
+  return field ? `${field}: ${issue.message}` : issue?.message ?? "Invalid form data.";
+}
+
+function receiveErrorMessage(e: unknown): string {
+  if (e instanceof ApiError) return e.userMessage;
+  if (e instanceof z.ZodError) return zodMessage(e);
+  return "Receive failed";
+}
 
 export default function OrderDetail() {
   const { orderId } = useParams<{ orderId: string }>();
@@ -102,7 +105,12 @@ export default function OrderDetail() {
 
   const receiveMutation = useApiMutation<unknown, ReceiveRequest>({
     mutationKey: ["order", orderId, "receive"],
-    mutationFn: (input) => api.post(`/orders/${orderId}/receive`, input),
+    mutationFn: (input) =>
+      api.parsed.post(
+        `/orders/${orderId}/receive`,
+        OrderReceiveResultSchema,
+        OrderReceiveSchema.parse(input),
+      ),
     onSuccess: (_data, vars) => {
       const totalQty = vars.lines.reduce((s, l) => s + l.quantity, 0);
       setReceiveLines({});
@@ -114,7 +122,7 @@ export default function OrderDetail() {
       toast.success(`Received ${totalQty} unit${totalQty === 1 ? "" : "s"}.`);
     },
     onError: (e) => {
-      const msg = e instanceof ApiError ? e.userMessage : "Receive failed";
+      const msg = receiveErrorMessage(e);
       setErr(msg);
       toast.error(msg);
     },

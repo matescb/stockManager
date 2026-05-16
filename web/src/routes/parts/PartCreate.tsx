@@ -1,30 +1,29 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { z } from "zod";
 import { api, ApiError, getConflictDetail } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
 import { useQuery } from "@tanstack/react-query";
 import { useWsKey } from "@/lib/queryKeys";
 import { isSafeHttpOrSameOriginUrl } from "@/lib/url";
-import type { MpnLookupResult, ProviderSpec, StorageLocation } from "@/types";
+import { PartCreateSchema, PartSchema } from "@/lib/schemas";
+import type { MpnLookupResult, Part, ProviderSpec, StorageLocation } from "@/types";
 import MpnLookup from "@/components/MpnLookup";
 import { InlineQueryError } from "@/components/QueryStateBoundary";
 
-/**
- * Mirror of `backend/app/api/routes/_parts_shared.py::PartIn`.
- * The optional fields are sent as `undefined` when blank — the server
- * defaults `name` to `mpn` and treats omitted optional FKs as null.
- */
-type PartCreateRequest = {
-  part_type: "linked" | "local" | "meta" | "sub_assembly";
-  name?: string;
-  manufacturer?: string;
-  mpn?: string;
-  internal_part_number?: string;
-  description?: string;
-  footprint?: string;
-  default_storage_location_id?: string;
-  serialized?: boolean;
-};
+type PartCreateRequest = z.input<typeof PartCreateSchema>;
+
+function zodMessage(e: z.ZodError): string {
+  const issue = e.issues[0];
+  const field = issue?.path.join(".");
+  return field ? `${field}: ${issue.message}` : issue?.message ?? "Invalid form data.";
+}
+
+function mutationMessage(e: unknown): string {
+  if (e instanceof ApiError) return e.userMessage;
+  if (e instanceof z.ZodError) return zodMessage(e);
+  return "Failed";
+}
 
 export default function PartCreate() {
   const nav = useNavigate();
@@ -68,10 +67,10 @@ export default function PartCreate() {
   // FE2-006: gate concurrent submits via mutationKey so a double-click
   // on Create can't post two parts; the 409 conflict-link branch stays
   // in `onError`, just routed through `getConflictDetail(error)`.
-  const createMutation = useApiMutation<{ id: string }, PartCreateRequest>({
+  const createMutation = useApiMutation<Part, PartCreateRequest>({
     mutationKey: ["parts", "create"],
     mutationFn: (payload) =>
-      api.post<{ id: string }, PartCreateRequest>("/parts", payload),
+      api.parsed.post("/parts", PartSchema, PartCreateSchema.parse(payload)),
     onSuccess: async (res) => {
       // If the user successfully ran the MPN lookup and the part is
       // linked-type with an MPN, re-run the lookup against the new
@@ -101,7 +100,7 @@ export default function PartCreate() {
         setErr(null);
         return;
       }
-      setErr(e instanceof ApiError ? e.userMessage : "Failed");
+      setErr(mutationMessage(e));
     },
   });
 

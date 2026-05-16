@@ -19,6 +19,7 @@ vi.mock("@/lib/api", () => ({
   api: {
     get: vi.fn(),
     post: vi.fn(),
+    parsed: { post: vi.fn() },
     delete: vi.fn(),
   },
 }));
@@ -70,6 +71,8 @@ afterEach(() => {
 describe("OrderDetail receive", () => {
   it("submits lot name on receive lines", async () => {
     const user = userEvent.setup();
+    const partId = "11111111-1111-1111-1111-111111111111";
+    const entryId = "22222222-2222-2222-2222-222222222222";
     vi.mocked(api.get).mockImplementation((path: string) => {
       if (path === "/orders/order-1") {
         return Promise.resolve({
@@ -90,9 +93,9 @@ describe("OrderDetail receive", () => {
             updated_at: "2026-01-01T00:00:00Z",
           },
           entries: [{
-            id: "entry-1",
+            id: entryId,
             order_id: "order-1",
-            part_id: "part-1",
+            part_id: partId,
             name: null,
             quantity_ordered: 10,
             quantity_received: 0,
@@ -103,11 +106,16 @@ describe("OrderDetail receive", () => {
           }],
         });
       }
-      if (path === "/parts?limit=200") return Promise.resolve([{ id: "part-1", name: "Part 1", serialized: false }]);
+      if (path === "/parts?limit=200") return Promise.resolve([{ id: partId, name: "Part 1", serialized: false }]);
       if (path === "/storage") return Promise.resolve([]);
       return Promise.resolve(null);
     });
-    vi.mocked(api.post).mockResolvedValue(null);
+    vi.mocked(api.parsed.post).mockResolvedValue({
+      order_id: "11111111-1111-1111-1111-111111111111",
+      status: "partial",
+      lots: [],
+      stock_entries: [],
+    });
 
     renderOrderDetail();
 
@@ -116,16 +124,20 @@ describe("OrderDetail receive", () => {
     await user.click(screen.getByRole("button", { name: "Receive" }));
 
     await waitFor(() => {
-      expect(api.post).toHaveBeenCalledWith("/orders/order-1/receive", {
-        received_on: undefined,
-        lines: [{
-          order_entry_id: "entry-1",
-          quantity: 4,
-          storage_location_id: undefined,
-          lot_name: "LOT-PO-100",
-          serial_number: undefined,
-        }],
-      });
+      expect(api.parsed.post).toHaveBeenCalledWith(
+        "/orders/order-1/receive",
+        expect.any(Object),
+        {
+          received_on: undefined,
+          lines: [{
+            order_entry_id: entryId,
+            quantity: 4,
+            storage_location_id: undefined,
+            lot_name: "LOT-PO-100",
+            serial_number: undefined,
+          }],
+        },
+      );
     });
   });
 });
