@@ -55,7 +55,7 @@ describe("target=_blank rel lint guard", () => {
     ).resolves.toHaveLength(0);
   });
 
-  it("test_dynamic_rel_warning", async () => {
+  it("reports dynamic rel for static target blank anchors", async () => {
     await expect(
       targetBlankRelMessages(
         'const someVar = "noreferrer"; export const Link = () => <a href="https://example.com" target="_blank" rel={someVar}>open</a>;',
