@@ -18,12 +18,18 @@ in CI only.
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
 import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CI_PATH = _REPO_ROOT / ".github" / "workflows" / "ci.yml"
+_DIGEST_FRESHNESS_SCRIPT_PATH = (
+    _REPO_ROOT / "scripts" / "check_docker_digest_freshness.py"
+)
 _UV_LOCK_PATH = _REPO_ROOT / "backend" / "uv.lock"
 _COMPOSE_PROD_PATH = _REPO_ROOT / "docker-compose.prod.yml"
 _DOCKERFILE_PROD_PATH = _REPO_ROOT / "web" / "Dockerfile.prod"
@@ -169,6 +175,59 @@ def test_ci_has_uv_lock_check_step():
         "no `uv lock --check` step found in backend-tests job; "
         "add it so CI fails when uv.lock is stale"
     )
+
+
+# ---------------------------------------------------------------------------
+# AUD-137 / issue #835: Docker base-image digest pins must not silently age out
+# ---------------------------------------------------------------------------
+
+
+def test_ci_has_docker_digest_freshness_gate():
+    data = _load()
+    job = data["jobs"].get("digest-freshness")
+    assert job is not None, "missing digest-freshness CI job"
+
+    runs = [step.get("run", "") for step in job["steps"] if "run" in step]
+    assert any(
+        "scripts/check_docker_digest_freshness.py --max-age-days 30" in run
+        for run in runs
+    ), "digest-freshness job does not run the 30-day Docker digest guard"
+
+    deploy_needs = data["jobs"]["deploy"].get("needs") or []
+    assert "digest-freshness" in deploy_needs, (
+        "deploy must gate on digest-freshness so stale base images cannot ship"
+    )
+
+
+def test_docker_digest_freshness_script_rejects_stale_pin(tmp_path):
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        textwrap.dedent(
+            """\
+            # Digest pinned on 2026-04-01; bump via Dependabot.
+            FROM python:3.14@sha256:1111111111111111111111111111111111111111111111111111111111111111
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_DIGEST_FRESHNESS_SCRIPT_PATH),
+            "--today",
+            "2026-05-16",
+            "--max-age-days",
+            "30",
+            str(dockerfile),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "digest pin is 45 days old; max is 30 days" in result.stderr
 
 
 # ---------------------------------------------------------------------------
