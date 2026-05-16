@@ -12,6 +12,7 @@ Every public REST endpoint lives here, one file per logical area. This README is
 | `workspaces.py` | `/api/workspaces` | [workspaces](../../../../docs/api/workspaces.md) |
 | `invitations.py` | `/api/invitations` | [invitations](../../../../docs/api/invitations.md) |
 | `parts_core.py` | `/api/parts` (core CRUD) | [parts](../../../../docs/api/parts.md) |
+| `parts_relations.py` | `/api/parts` (substitutes, meta members) | [parts](../../../../docs/api/parts.md) |
 | `parts_assets.py` | `/api/parts/assets/...` | [parts](../../../../docs/api/parts.md) |
 | `parts_scan.py` | `/api/parts/scan/...` | [parts](../../../../docs/api/parts.md) |
 | `parts_provider.py` | `/api/parts/provider/...` | [parts](../../../../docs/api/parts.md) |
