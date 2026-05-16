@@ -122,7 +122,7 @@ def test_session_purge_registered() -> None:
 
     assert spec.name == "session-purge"
     assert spec.owner == "backend/auth-security"
-    assert spec.cadence == "hourly"
+    assert spec.cadence == "hourly (configurable)"
     assert "expires_at" in spec.idempotency
 
 
@@ -131,7 +131,7 @@ def test_password_reset_purge_registered() -> None:
 
     assert spec.name == "password-reset-purge"
     assert spec.owner == "backend/auth-security"
-    assert spec.cadence == "hourly"
+    assert spec.cadence == "hourly (configurable)"
     assert "older than 30 days" in spec.idempotency
 
 

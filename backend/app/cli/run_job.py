@@ -105,14 +105,14 @@ JOBS: dict[str, JobSpec] = {
     "session-purge": JobSpec(
         name="session-purge",
         owner="backend/auth-security",
-        cadence="hourly",
+        cadence="hourly (configurable)",
         idempotency="Deletes only session rows whose expires_at is already in the past.",
         run=_run_session_purge,
     ),
     "password-reset-purge": JobSpec(
         name="password-reset-purge",
         owner="backend/auth-security",
-        cadence="hourly",
+        cadence="hourly (configurable)",
         idempotency="Deletes only password-reset request rows older than 30 days.",
         run=_run_password_reset_purge,
     ),
