@@ -36,7 +36,7 @@ describe("PartAddStock", () => {
   it("test_lot_expiry_submits", async () => {
     const user = userEvent.setup();
     vi.spyOn(api, "get").mockResolvedValue([]);
-    const postSpy = vi.spyOn(api, "post").mockResolvedValue({});
+    const postSpy = vi.spyOn(api.parsed, "post").mockResolvedValue({});
 
     renderAddStock();
 
@@ -46,23 +46,27 @@ describe("PartAddStock", () => {
     await user.click(screen.getByRole("button", { name: "Add" }));
 
     await waitFor(() => {
-      expect(postSpy).toHaveBeenCalledWith("/stock/add", {
-        part_id: "11111111-1111-1111-1111-111111111111",
-        quantity: 5,
-        comments: undefined,
-        lot: {
-          name: "LOT-2026-001",
-          expiration_date: "2026-12-31",
-          serial_number: undefined,
+      expect(postSpy).toHaveBeenCalledWith(
+        "/stock/add",
+        expect.any(Object),
+        {
+          part_id: "11111111-1111-1111-1111-111111111111",
+          quantity: 5,
+          comments: undefined,
+          lot: {
+            name: "LOT-2026-001",
+            expiration_date: "2026-12-31",
+            serial_number: undefined,
+          },
         },
-      });
+      );
     });
   });
 
   it("test_currency_regex rejects non-letter currency codes inline", async () => {
     const user = userEvent.setup();
     vi.spyOn(api, "get").mockResolvedValue([]);
-    const postSpy = vi.spyOn(api, "post").mockResolvedValue({});
+    const postSpy = vi.spyOn(api.parsed, "post").mockResolvedValue({});
 
     renderAddStock();
 

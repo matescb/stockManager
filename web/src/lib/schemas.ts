@@ -33,6 +33,8 @@ const uuid = z.string().uuid();
 const isoDate = z.string();           // ISO 8601 string; not parsed to Date
 const nullableString = z.string().nullable();
 const nullableNumber = z.number().nullable();
+const optionalNullableString = z.string().nullable().optional();
+const optionalNullableUuid = uuid.nullable().optional();
 
 // ---------------------------------------------------------------------
 // Resource schemas. Mirror types.ts; export inferred types so consumers
@@ -69,6 +71,24 @@ export const PartSchema = z.object({
 export type Part = z.infer<typeof PartSchema>;
 
 export const PartsListSchema = z.array(PartSchema);
+
+export const PartCreateSchema = z.object({
+  part_type: z.enum(["linked", "local", "meta", "sub_assembly"]).optional(),
+  name: z.string().max(300).nullable().optional(),
+  manufacturer: optionalNullableString,
+  mpn: optionalNullableString,
+  internal_part_number: optionalNullableString,
+  description: optionalNullableString,
+  notes_markdown: optionalNullableString,
+  footprint: optionalNullableString,
+  low_stock_report_quantity: z.number().int().nullable().optional(),
+  attrition_percentage: z.number().optional(),
+  attrition_min_quantity: z.number().int().optional(),
+  default_storage_location_id: optionalNullableUuid,
+  default_storage_mandatory: z.boolean().optional(),
+  serialized: z.boolean().optional(),
+}).strict();
+export type PartCreate = z.infer<typeof PartCreateSchema>;
 
 /** Paged parts response — returned by GET /parts with cursor pagination. */
 export const PagedPartsSchema = z.object({
@@ -139,6 +159,32 @@ export const StockEntrySchema = z.object({
 });
 export type StockEntry = z.infer<typeof StockEntrySchema>;
 
+const PriceInputSchema = z.object({
+  mode: z.enum(["none", "per_component", "entire_lot"]).optional(),
+  unit_price: z.number().nullable().optional(),
+  total_price: z.number().nullable().optional(),
+  currency: optionalNullableString,
+}).strict();
+
+const LotInputSchema = z.object({
+  name: optionalNullableString,
+  comments: optionalNullableString,
+  expiration_date: optionalNullableString,
+  serial_number: optionalNullableString,
+}).strict();
+
+export const PartAddStockSchema = z.object({
+  part_id: uuid,
+  quantity: z.number().int().gt(0),
+  storage_location_id: optionalNullableUuid,
+  price: PriceInputSchema.nullable().optional(),
+  lot: LotInputSchema.nullable().optional(),
+  comments: optionalNullableString,
+  bag_signature: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional(),
+  raw_bag_code: z.string().max(4096).nullable().optional(),
+}).strict();
+export type PartAddStock = z.infer<typeof PartAddStockSchema>;
+
 export const ProjectSchema = z.object({
   id: uuid,
   name: z.string(),
@@ -186,6 +232,26 @@ export const OrderEntrySchema = z.object({
   order_index: z.number(),
 });
 export type OrderEntry = z.infer<typeof OrderEntrySchema>;
+
+export const OrderReceiveSchema = z.object({
+  received_on: optionalNullableString,
+  lines: z.array(z.object({
+    order_entry_id: uuid,
+    quantity: z.number().int().gt(0),
+    storage_location_id: optionalNullableUuid,
+    lot_name: optionalNullableString,
+    serial_number: optionalNullableString,
+  }).strict()).min(1),
+}).strict();
+export type OrderReceive = z.infer<typeof OrderReceiveSchema>;
+
+export const OrderReceiveResultSchema = z.object({
+  order_id: uuid,
+  status: z.enum(["draft", "open", "partial", "received", "cancelled"]),
+  lots: z.array(uuid),
+  stock_entries: z.array(uuid),
+});
+export type OrderReceiveResult = z.infer<typeof OrderReceiveResultSchema>;
 
 export const BuildSchema = z.object({
   id: uuid,

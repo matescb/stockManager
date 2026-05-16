@@ -6,30 +6,25 @@ import { api, ApiError } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
+import { PartAddStockSchema, StockEntrySchema } from "@/lib/schemas";
 import { InlineQueryError } from "@/components/QueryStateBoundary";
 import type { StorageLocation } from "@/types";
 
-/**
- * Mirror of `backend/app/domain/stock/schemas.py::AddStockIn` (extra="forbid").
- * Optional sub-objects (`price`, `lot`) follow the BE Pydantic shape so a
- * future schema change surfaces as a TS error in this file rather than as
- * silent FE/BE drift on a 4xx response.
- */
-type AddStockRequest = {
-  part_id: string;
-  quantity: number;
-  storage_location_id?: string;
-  price?: {
-    mode: "per_component" | "entire_lot";
-    currency: string;
-    unit_price?: number;
-    total_price?: number;
-  };
-  lot?: { name?: string; expiration_date?: string; serial_number?: string };
-  comments?: string;
-};
+type AddStockRequest = z.input<typeof PartAddStockSchema>;
 
 const currencySchema = z.string().regex(/^[A-Z]{3}$/, "Currency must be a three-letter uppercase code.");
+
+function zodMessage(e: z.ZodError): string {
+  const issue = e.issues[0];
+  const field = issue?.path.join(".");
+  return field ? `${field}: ${issue.message}` : issue?.message ?? "Invalid form data.";
+}
+
+function mutationMessage(e: unknown): string {
+  if (e instanceof ApiError) return e.userMessage;
+  if (e instanceof z.ZodError) return zodMessage(e);
+  return "Failed";
+}
 
 export default function PartAddStock() {
   const { partId } = useParams<{ partId: string }>();
@@ -56,14 +51,15 @@ export default function PartAddStock() {
   // `stock_entries` rows. Key on the part to hard-block double POST.
   const addMutation = useApiMutation<unknown, AddStockRequest>({
     mutationKey: ["part", partId, "stock-add"],
-    mutationFn: (payload) => api.post<unknown, AddStockRequest>("/stock/add", payload),
+    mutationFn: (payload) =>
+      api.parsed.post("/stock/add", StockEntrySchema, PartAddStockSchema.parse(payload)),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId) });
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
       nav(`/parts/${partId}/stock`);
     },
     onError: (e) => {
-      setErr(e instanceof ApiError ? e.userMessage : "Failed");
+      setErr(mutationMessage(e));
     },
   });
 
