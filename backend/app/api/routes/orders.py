@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Query, Request, status
-from sqlalchemy import and_, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import DBAPIError
 
 from app.api._helpers import assert_child_in_parent, assert_in_workspace, require_resource_access
-from app.api.routes._activity import _DEFAULT_LIMIT, _MAX_LIMIT, build_activity
+from app.api.routes._activity import (
+    _DEFAULT_LIMIT,
+    _MAX_LIMIT,
+    route_activity,
+)
 from app.api.routes._stock_integrity import raise_integrity_as_409
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.errors import ErrorCodes, raise_http
@@ -379,49 +382,19 @@ def order_activity(
 ):
     o = _get_order(db, ws.id, order_id)
 
-    cursor_at: datetime | None = None
-    if before_occurred_at is not None:
-        try:
-            cursor_at = datetime.fromisoformat(before_occurred_at)
-        except ValueError:
-            raise_http(
-                422,
-                code=ErrorCodes.ACTIVITY_INVALID_CURSOR,
-                message="invalid before_occurred_at",
-            )
-
     stmt = (
         select(StockEntry)
         .where(StockEntry.workspace_id == ws.id)
         .where(StockEntry.order_id == o.id)
     )
-    if cursor_at is not None and before_id is not None:
-        stmt = stmt.where(
-            or_(
-                StockEntry.occurred_at < cursor_at,
-                and_(
-                    StockEntry.occurred_at == cursor_at,
-                    StockEntry.id < before_id,
-                ),
-            )
-        )
-    stmt = stmt.order_by(StockEntry.occurred_at.desc(), StockEntry.id.desc()).limit(limit + 1)
-    stock_rows = list(db.execute(stmt).scalars())
-
-    if not hasattr(request.state, "user_cache"):
-        request.state.user_cache = {}
-
-    result = build_activity(
+    return ok(route_activity(
+        request,
         db,
-        stock_rows=stock_rows,
-        created_at=o.created_at,
-        updated_at=o.updated_at,
-        created_by=o.created_by,
-        updated_by=o.updated_by,
+        stmt,
+        before_occurred_at=before_occurred_at,
+        before_id=before_id,
+        limit=limit,
+        entity=o,
         created_kind="order_created",
         updated_kind="order_updated",
-        limit=limit,
-        include_synthetic=(cursor_at is None),
-        user_cache=request.state.user_cache,
-    )
-    return ok(result)
+    ))

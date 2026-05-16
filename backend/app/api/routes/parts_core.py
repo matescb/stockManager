@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, status
@@ -15,7 +14,11 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api._helpers import assert_in_workspace, require_resource_access
-from app.api.routes._activity import _DEFAULT_LIMIT, _MAX_LIMIT, build_activity
+from app.api.routes._activity import (
+    _DEFAULT_LIMIT,
+    _MAX_LIMIT,
+    route_activity,
+)
 from app.api.routes._parts_shared import (
     get_part as _get_part,
 )
@@ -97,9 +100,6 @@ def list_parts(
         the next page.  ``next_cursor`` is null when no further pages
         exist. The ``cursor`` is an HMAC-signed blob — tampering returns
         400.
-
-    The ``limit`` query param is honoured in both modes; ``paged=true``
-    only changes the response envelope shape (adds ``next_cursor``).
 
     Every query is scoped to the current workspace (CLAUDE.md invariant).
     """
@@ -682,52 +682,19 @@ def part_activity(
     # Read endpoint — let archived parts surface their history too.
     p = _get_part(db, ws.id, part_id, include_archived=True)
 
-    # Parse cursor
-    cursor_at: datetime | None = None
-    if before_occurred_at is not None:
-        try:
-            cursor_at = datetime.fromisoformat(before_occurred_at)
-        except ValueError:
-            raise_http(
-                422,
-                code=ErrorCodes.ACTIVITY_INVALID_CURSOR,
-                message="invalid before_occurred_at",
-            )
-
     stmt = (
         select(StockEntry)
         .where(StockEntry.workspace_id == ws.id)
         .where(StockEntry.part_id == p.id)
     )
-    if cursor_at is not None and before_id is not None:
-        from sqlalchemy import and_, or_
-        stmt = stmt.where(
-            or_(
-                StockEntry.occurred_at < cursor_at,
-                and_(
-                    StockEntry.occurred_at == cursor_at,
-                    StockEntry.id < before_id,
-                ),
-            )
-        )
-    stmt = stmt.order_by(StockEntry.occurred_at.desc(), StockEntry.id.desc()).limit(limit + 1)
-    stock_rows = list(db.execute(stmt).scalars())
-
-    # Per-request user cache stashed on request.state so it's isolated per request.
-    if not hasattr(request.state, "user_cache"):
-        request.state.user_cache = {}
-
-    result = build_activity(
+    return ok(route_activity(
+        request,
         db,
-        stock_rows=stock_rows,
-        created_at=p.created_at,
-        updated_at=p.updated_at,
-        created_by=p.created_by,
-        updated_by=p.updated_by,
+        stmt,
+        before_occurred_at=before_occurred_at,
+        before_id=before_id,
+        limit=limit,
+        entity=p,
         created_kind="part_created",
         updated_kind="part_updated",
-        limit=limit,
-        include_synthetic=(cursor_at is None),
-        user_cache=request.state.user_cache,
-    )
-    return ok(result)
+    ))
