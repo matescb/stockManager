@@ -72,7 +72,9 @@ function unwrapTSConstExpression(expression) {
 
   while (
     currentExpression?.type === "TSAsExpression" ||
-    currentExpression?.type === "TSSatisfiesExpression"
+    currentExpression?.type === "TSSatisfiesExpression" ||
+    currentExpression?.type === "TSTypeAssertion" ||
+    currentExpression?.type === "TSNonNullExpression"
   ) {
     currentExpression = currentExpression.expression;
   }
@@ -111,7 +113,7 @@ function includesRelToken(rel, token) {
   return rel.split(/\s+/u).includes(token);
 }
 
-module.exports = {
+const rule = {
   meta: {
     type: "problem",
     docs: {
@@ -159,4 +161,9 @@ module.exports = {
       },
     };
   },
+};
+
+module.exports = rule;
+module.exports.__test = {
+  unwrapTSConstExpression,
 };
