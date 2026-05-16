@@ -4,7 +4,7 @@ import urllib.parse
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     # tests can shorten it; ops should not need to touch it. 0 disables
     # the periodic task entirely (the migration's index still exists,
     # so a future cron / one-off SQL still benefits).
-    SESSION_PURGE_INTERVAL_SECONDS: int = 3600
+    SESSION_PURGE_INTERVAL_SECONDS: int = Field(default=3600, ge=0)
     # Cadence (seconds) of the password-reset token purge worker. 0
     # disables the periodic password-reset purge.
     PASSWORD_RESET_PURGE_INTERVAL_SECONDS: int = Field(default=3600, ge=0)
@@ -123,6 +123,17 @@ class Settings(BaseSettings):
     def _blank_sentry_traces_rate_to_none(cls, value):
         if value == "":
             return None
+        return value
+
+    @field_validator(
+        "SESSION_PURGE_INTERVAL_SECONDS",
+        "PASSWORD_RESET_PURGE_INTERVAL_SECONDS",
+        mode="before",
+    )
+    @classmethod
+    def _blank_purge_interval_to_default(cls, value, info: ValidationInfo):
+        if value == "":
+            return cls.model_fields[info.field_name].default
         return value
 
     @field_validator("EXTRA_WEAK_PASSWORDS", mode="before")

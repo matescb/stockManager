@@ -6,7 +6,7 @@ from datetime import timedelta
 
 from sqlalchemy.orm import Session
 
-from app.cli.run_job import JOBS, JobSpec, UnknownJobError, main, run_job
+from app.cli.run_job import JOBS, JobConfigError, JobSpec, UnknownJobError, main, run_job
 from app.core.advisory_locks import RUN_JOB_LOCK_CLASSID
 from app.core.time import utcnow
 from app.domain.users.models import User, UserSession
@@ -133,6 +133,33 @@ def test_password_reset_purge_registered() -> None:
     assert spec.owner == "backend/auth-security"
     assert spec.cadence == "hourly"
     assert "older than 30 days" in spec.idempotency
+
+
+def test_password_reset_purge_negative_interval_rejected(monkeypatch, tmp_path) -> None:
+    from app.core.config import settings
+
+    settings.cache_clear()
+    monkeypatch.setenv("PASSWORD_RESET_PURGE_INTERVAL_SECONDS", "-1")
+    session = _FakeSession()
+
+    try:
+        run_job(
+            "password-reset-purge",
+            session_factory=lambda: session,  # type: ignore[return-value]
+            heartbeat_dir=tmp_path,
+        )
+    except JobConfigError as exc:
+        assert "PASSWORD_RESET_PURGE_INTERVAL_SECONDS" in str(exc)
+    else:
+        raise AssertionError("negative password-reset purge interval should be rejected")
+    finally:
+        settings.cache_clear()
+
+    assert session.executed == []
+    assert session.committed is False
+    assert session.rolled_back is False
+    assert session.closed is False
+    assert not (tmp_path / "password-reset-purge").exists()
 
 
 def test_session_purge_idempotent(db, tmp_path) -> None:
