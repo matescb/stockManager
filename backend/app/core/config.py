@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     # the periodic task entirely (the migration's index still exists,
     # so a future cron / one-off SQL still benefits).
     SESSION_PURGE_INTERVAL_SECONDS: int = 3600
+    # Cadence (seconds) of the password-reset token purge worker. 0
+    # disables the periodic password-reset purge.
+    PASSWORD_RESET_PURGE_INTERVAL_SECONDS: int = Field(default=3600, ge=0)
     UPLOAD_DIR: str = "/data/uploads"
     # Per-upload size cap. nginx (in web container) and Apache (in front)
     # both cap at 25 MiB, but FastAPI must enforce its own cap so a

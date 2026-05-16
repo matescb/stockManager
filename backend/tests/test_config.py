@@ -47,3 +47,16 @@ def test_sentry_traces_rate_accepts_explicit_low_prod_rate(monkeypatch):
     settings = Settings(_env_file=None)
 
     assert settings.SENTRY_TRACES_SAMPLE_RATE == 0.05
+
+
+def test_password_reset_purge_interval_env_overrides_default(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.delenv("PASSWORD_RESET_PURGE_INTERVAL_SECONDS", raising=False)
+
+    assert Settings(_env_file=None).PASSWORD_RESET_PURGE_INTERVAL_SECONDS == 3600
+
+    monkeypatch.setenv("PASSWORD_RESET_PURGE_INTERVAL_SECONDS", "120")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.PASSWORD_RESET_PURGE_INTERVAL_SECONDS == 120
