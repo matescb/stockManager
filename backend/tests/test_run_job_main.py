@@ -149,6 +149,41 @@ def test_check_heartbeat_stale(
     )
 
 
+def test_print_interval_rejects_heartbeat_max_age(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    heartbeat_job: JobSpec,
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        run_job_cli._parse_args(
+            [
+                heartbeat_job.name,
+                "--print-interval",
+                "--heartbeat-max-age-seconds",
+                "30",
+            ]
+        )
+
+    output = capsys.readouterr()
+    assert exc_info.value.code == 2
+    assert output.out == ""
+    assert "--heartbeat-max-age-seconds requires --check-heartbeat" in output.err
+
+    exit_code = _run_main(
+        monkeypatch,
+        heartbeat_job.name,
+        "--print-interval",
+        "--heartbeat-max-age-seconds",
+        "30",
+        jobs={heartbeat_job.name: heartbeat_job},
+    )
+
+    output = capsys.readouterr()
+    assert exit_code == 2
+    assert output.out == ""
+    assert "--heartbeat-max-age-seconds requires --check-heartbeat" in output.err
+
+
 def test_check_heartbeat_sentinel(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

@@ -251,10 +251,20 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--heartbeat-max-age-seconds",
         type=int,
-        default=HEARTBEAT_MAX_AGE_SECONDS,
+        default=None,
         help="Maximum heartbeat age accepted by --check-heartbeat.",
     )
     return parser
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if args.heartbeat_max_age_seconds is not None and not args.check_heartbeat:
+        parser.error("--heartbeat-max-age-seconds requires --check-heartbeat")
+    if args.heartbeat_max_age_seconds is None:
+        args.heartbeat_max_age_seconds = HEARTBEAT_MAX_AGE_SECONDS
+    return args
 
 
 def main(
@@ -268,7 +278,7 @@ def main(
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     try:
-        args = _parser().parse_args(argv)
+        args = _parse_args(argv)
     except SystemExit as exc:
         return int(exc.code)
 
