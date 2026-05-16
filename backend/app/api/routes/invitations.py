@@ -18,7 +18,7 @@ from app.core.deps import (
     require_role,
 )
 from app.core.errors import ErrorCodes, raise_http
-from app.core.ratelimit import limiter
+from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import ok
 from app.core.time import utcnow
 from app.domain.audit.service import log as _audit_log
@@ -88,7 +88,9 @@ def _serialize(inv: WorkspaceInvitation, *, plaintext_token: str | None = None) 
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_role("admin"))],
 )
+@limiter.limit("60/hour", key_func=workspace_key)
 def create_invitation(
+    request: Request,
     payload: InviteIn,
     db: DbSession,
     ws: CurrentWorkspace,
@@ -209,7 +211,9 @@ def create_invitation(
 
 
 @router.get("", dependencies=[Depends(require_role("admin"))])
+@limiter.limit("120/hour", key_func=workspace_key)
 def list_invitations(
+    request: Request,
     db: DbSession,
     ws: CurrentWorkspace,
     limit: int = Query(default=200, le=1000),
@@ -226,7 +230,14 @@ def list_invitations(
 
 
 @router.delete("/{invitation_id}", dependencies=[Depends(require_role("admin"))])
-def revoke_invitation(invitation_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+@limiter.limit("120/hour", key_func=workspace_key)
+def revoke_invitation(
+    request: Request,
+    invitation_id: UUID,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     try:
         inv = assert_in_workspace(db, WorkspaceInvitation, invitation_id, ws.id, label="invitation")
     except HTTPException:
