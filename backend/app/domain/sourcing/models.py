@@ -230,7 +230,11 @@ class PurchasePlanLine(Base):
 
 
 class SourcingAlert(WorkspaceOwned, Base):
-    """Workspace-scoped alert definition evaluated by the sourcing jobs."""
+    """Workspace-scoped alert definition evaluated by the sourcing jobs.
+
+    Alerts retain the ``WorkspaceOwned.updated_by`` audit column so mutation
+    attribution can be read through the ORM.
+    """
 
     __tablename__ = "sourcing_alerts"
     __table_args__ = (
@@ -273,8 +277,6 @@ class SourcingAlert(WorkspaceOwned, Base):
         ),
         Index("ix_sourcing_alerts_last_checked_at", "last_checked_at"),
     )
-
-    updated_by = None
 
     id = Column(
         UUID(as_uuid=True),
