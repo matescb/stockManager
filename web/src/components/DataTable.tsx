@@ -1,4 +1,5 @@
 import React, { ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Rows3, Rows4 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useOptionalAuth } from "@/lib/authContext";
@@ -88,6 +89,13 @@ export type Column<T> = {
 };
 
 type Density = "comfortable" | "compact";
+
+const VIRTUALIZATION_THRESHOLD = 200;
+const VIRTUALIZATION_OVERSCAN = 12;
+const ESTIMATED_ROW_HEIGHT: Record<Density, number> = {
+  comfortable: 40,
+  compact: 32,
+};
 
 type Props<T> = {
   rows: T[];
@@ -190,6 +198,7 @@ export function DataTable<T>({
   );
   const columnsRef = useRef(columns);
   const activeStorageKeyRef = useRef(storageKey);
+  const scrollParentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     columnsRef.current = columns;
@@ -285,6 +294,27 @@ export function DataTable<T>({
 
   const padCls = density === "compact" ? "py-1" : "py-2";
   const textCls = density === "compact" ? "text-[13px]" : "text-sm";
+  const shouldVirtualize = sorted.length > VIRTUALIZATION_THRESHOLD;
+  const rowVirtualizer = useVirtualizer<HTMLDivElement, HTMLTableRowElement>({
+    count: sorted.length,
+    enabled: shouldVirtualize,
+    getScrollElement: () => scrollParentRef.current,
+    estimateSize: () => ESTIMATED_ROW_HEIGHT[density],
+    getItemKey: index => rowKey(sorted[index]),
+    overscan: VIRTUALIZATION_OVERSCAN,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const topSpacerHeight = shouldVirtualize && virtualRows.length > 0 ? virtualRows[0].start : 0;
+  const bottomSpacerHeight =
+    shouldVirtualize && virtualRows.length > 0
+      ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
+      : 0;
+  const tableColSpan = visibleCols.length + (selectable ? 1 : 0);
+
+  useEffect(() => {
+    if (!shouldVirtualize) return;
+    rowVirtualizer.scrollToIndex(0);
+  }, [rowVirtualizer, shouldVirtualize, search, sort?.key, sort?.dir, density]);
 
   function cellText(c: Column<T>, r: T): string {
     // Prefer the structured accessor — it returns the raw scalar
@@ -327,6 +357,94 @@ export function DataTable<T>({
     // can keep the reference around forever otherwise (memory leak on
     // long-lived sessions that export repeatedly).
     URL.revokeObjectURL(url);
+  }
+
+  function focusRowAtIndex(index: number) {
+    if (index < 0 || index >= sorted.length) return;
+    if (shouldVirtualize) {
+      rowVirtualizer.scrollToIndex(index, { align: "auto" });
+    }
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        scrollParentRef.current
+          ?.querySelector<HTMLTableRowElement>(`tr[data-row-index="${index}"]`)
+          ?.focus();
+      });
+    });
+  }
+
+  function renderDataRow(r: T, i: number, measure: boolean) {
+    const id = rowKey(r);
+    const isSel = selected.has(id);
+    const canClick = !!onRowClick && (rowCanClick ? rowCanClick(r) : true);
+
+    return (
+      <tr
+        key={id}
+        ref={measure ? rowVirtualizer.measureElement : undefined}
+        data-index={measure ? i : undefined}
+        data-row-index={i}
+        tabIndex={canClick ? 0 : undefined}
+        onClick={() => {
+          if (canClick) onRowClick?.(r);
+        }}
+        {...(canClick ? {
+          "aria-label": rowAriaLabel(r, visibleCols),
+          onKeyDown: (e: React.KeyboardEvent<HTMLTableRowElement>) => {
+            if (e.key === "Enter" || e.key === " ") {
+              if (e.key === " ") e.preventDefault();
+              onRowClick?.(r);
+            } else if (e.key === "ArrowDown") {
+              e.preventDefault();
+              focusRowAtIndex(i + 1);
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              focusRowAtIndex(i - 1);
+            }
+          },
+        } : {})}
+        className={cn(
+          canClick && "cursor-pointer focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none",
+          // Subtle zebra striping — only odd rows pick up panel2.
+          i % 2 === 1 && "bg-panel2/40",
+          isSel && "bg-accent/10",
+          rowClassName?.(r),
+        )}
+      >
+        {selectable && (
+          <td
+            className={cn(padCls, "w-8 text-center")}
+            onClick={e => e.stopPropagation()}
+            onKeyDown={(e: React.KeyboardEvent<HTMLTableCellElement>) => {
+              if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={isSel}
+              onChange={() => toggleSelected(id)}
+              aria-label={isSel ? "Deselect row" : "Select row"}
+            />
+          </td>
+        )}
+        {visibleCols.map(c => {
+          const align = defaultAlignFor(c, sample);
+          return (
+            <td
+              key={c.key}
+              className={cn(
+                padCls,
+                align === "right" && "text-right tabular-nums",
+                align === "center" && "text-center",
+              )}
+            >
+              {/* FIXME: typed row-access requires a generic constraint refactor — see issue #57. */}
+              {c.render ? c.render(r) : String((c.accessor ? c.accessor(r) : (r as Record<string, unknown>)[c.key]) ?? "")}
+            </td>
+          );
+        })}
+      </tr>
+    );
   }
 
   // All currently-filtered/sorted ids — used for select-all semantics
@@ -386,7 +504,11 @@ export function DataTable<T>({
         </details>
         <button className="btn" onClick={exportCsv}>Export CSV</button>
       </div>
-      <div className="overflow-auto">
+      <div
+        ref={scrollParentRef}
+        className="overflow-auto"
+        style={shouldVirtualize ? { maxHeight: "min(70vh, 720px)" } : undefined}
+      >
         <table className={cn("table", textCls)}>
           <thead>
             <tr>
@@ -433,76 +555,40 @@ export function DataTable<T>({
             {sorted.length === 0 && (
               <tr>
                 <td
-                  colSpan={visibleCols.length + (selectable ? 1 : 0)}
+                  colSpan={tableColSpan}
                   className="text-center py-8 text-muted"
                 >
                   {empty || "No rows."}
                 </td>
               </tr>
             )}
-            {sorted.map((r, i) => {
-              const id = rowKey(r);
-              const isSel = selected.has(id);
-              const canClick = !!onRowClick && (rowCanClick ? rowCanClick(r) : true);
-              return (
+            {topSpacerHeight > 0 && (
               <tr
-                key={id}
-                tabIndex={canClick ? 0 : undefined}
-                onClick={() => {
-                  if (canClick) onRowClick?.(r);
-                }}
-                {...(canClick ? {
-                  "aria-label": rowAriaLabel(r, visibleCols),
-                  onKeyDown: (e: React.KeyboardEvent<HTMLTableRowElement>) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      if (e.key === " ") e.preventDefault();
-                      onRowClick?.(r);
-                    }
-                  },
-                } : {})}
-                className={cn(
-                  canClick && "cursor-pointer focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none",
-                  // Subtle zebra striping — only odd rows pick up panel2.
-                  i % 2 === 1 && "bg-panel2/40",
-                  isSel && "bg-accent/10",
-                  rowClassName?.(r),
-                )}
+                aria-hidden="true"
+                role="presentation"
               >
-                {selectable && (
-                  <td
-                    className={cn(padCls, "w-8 text-center")}
-                    onClick={e => e.stopPropagation()}
-                    onKeyDown={(e: React.KeyboardEvent<HTMLTableCellElement>) => {
-                      if (e.key === "Enter" || e.key === " ") e.stopPropagation();
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={isSel}
-                      onChange={() => toggleSelected(id)}
-                      aria-label={isSel ? "Deselect row" : "Select row"}
-                    />
-                  </td>
-                )}
-                {visibleCols.map(c => {
-                  const align = defaultAlignFor(c, sample);
-                  return (
-                    <td
-                      key={c.key}
-                      className={cn(
-                        padCls,
-                        align === "right" && "text-right tabular-nums",
-                        align === "center" && "text-center",
-                      )}
-                    >
-                      {/* FIXME: typed row-access requires a generic constraint refactor — see issue #57. */}
-                      {c.render ? c.render(r) : String((c.accessor ? c.accessor(r) : (r as Record<string, unknown>)[c.key]) ?? "")}
-                    </td>
-                  );
-                })}
+                <td
+                  colSpan={tableColSpan}
+                  className="border-0 p-0"
+                  style={{ height: topSpacerHeight }}
+                />
               </tr>
-              );
-            })}
+            )}
+            {shouldVirtualize
+              ? virtualRows.map(virtualRow => renderDataRow(sorted[virtualRow.index], virtualRow.index, true))
+              : sorted.map((r, i) => renderDataRow(r, i, false))}
+            {bottomSpacerHeight > 0 && (
+              <tr
+                aria-hidden="true"
+                role="presentation"
+              >
+                <td
+                  colSpan={tableColSpan}
+                  className="border-0 p-0"
+                  style={{ height: bottomSpacerHeight }}
+                />
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
