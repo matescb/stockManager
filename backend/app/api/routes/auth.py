@@ -82,6 +82,8 @@ _SIGNUP_VERIFICATION_DATA = {"status": "verification_sent"}
 _SIGNUP_VERIFICATION_MESSAGE = "verification email sent"
 _PASSWORD_RESET_REQUEST_DATA = {"status": "accepted"}
 _PASSWORD_RESET_REQUEST_MESSAGE = "password reset request accepted"
+_PASSWORD_RESET_THROTTLED_RATE_COMMENT = "throttled:rate"
+_PASSWORD_RESET_THROTTLED_CONCURRENT_COMMENT = "throttled:concurrent"
 
 
 def _record_signup_mail_failure(kind: str, exc: Exception) -> None:
@@ -177,7 +179,9 @@ def _first_workspace_for_user(db: DbSession, user: User) -> Workspace | None:
     return db.get(Workspace, membership.workspace_id) if membership else None
 
 
-def _password_reset_request_throttled(db: DbSession, *, email_hash: str) -> bool:
+def _password_reset_request_throttle_comment(
+    db: DbSession, *, email_hash: str
+) -> str | None:
     result = db.execute(
         text(
             "SELECT pg_try_advisory_xact_lock("
@@ -191,7 +195,7 @@ def _password_reset_request_throttled(db: DbSession, *, email_hash: str) -> bool
     )
     if not bool(result.scalar()):
         log.info("password_reset_request status=throttled reason=lock_denied")
-        return True
+        return _PASSWORD_RESET_THROTTLED_CONCURRENT_COMMENT
 
     cutoff = utcnow() - timedelta(hours=1)
     count = (
@@ -202,7 +206,9 @@ def _password_reset_request_throttled(db: DbSession, *, email_hash: str) -> bool
         )
         .count()
     )
-    return count >= _PASSWORD_RESET_EMAIL_LIMIT
+    if count >= _PASSWORD_RESET_EMAIL_LIMIT:
+        return _PASSWORD_RESET_THROTTLED_RATE_COMMENT
+    return None
 
 
 def _audit_password_reset_request(
@@ -210,7 +216,7 @@ def _audit_password_reset_request(
     request: Request,
     user: User,
     *,
-    throttled: bool,
+    throttle_comment: str | None,
 ) -> None:
     workspace = _first_workspace_for_user(db, user)
     _audit_log(
@@ -220,7 +226,7 @@ def _audit_password_reset_request(
         action="user.password_reset_requested",
         target_type="user",
         target_ids=[user.id],
-        comment="throttled" if throttled else None,
+        comment=throttle_comment,
         request_id=getattr(request.state, "request_id", None),
     )
 
@@ -525,7 +531,10 @@ def request_password_reset(
 
     _dummy_password_reset_compute()
     user = db.query(User).filter(func.lower(User.email) == email_normalized).first()
-    throttled = _password_reset_request_throttled(db, email_hash=email_hash)
+    throttle_comment = _password_reset_request_throttle_comment(
+        db, email_hash=email_hash
+    )
+    throttled = throttle_comment is not None
 
     if user is None or getattr(user, "archived_at", None) is not None:
         response.status_code = status.HTTP_202_ACCEPTED
@@ -554,7 +563,7 @@ def request_password_reset(
         db.add(reset_request)
         db.flush()
 
-    _audit_password_reset_request(db, request, user, throttled=throttled)
+    _audit_password_reset_request(db, request, user, throttle_comment=throttle_comment)
 
     response.status_code = status.HTTP_202_ACCEPTED
     return ok(_PASSWORD_RESET_REQUEST_DATA, _PASSWORD_RESET_REQUEST_MESSAGE)

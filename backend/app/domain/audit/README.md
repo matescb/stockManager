@@ -20,6 +20,15 @@ Owns the activity log: a single append-only `AuditLog` table that records "who d
 
 Reads are direct SQL from the audit route (`backend/app/api/routes/audit.py`).
 
+## Auth Event Comments
+
+Password-reset request throttling records the rejected cause on
+`user.password_reset_requested`:
+
+- `throttled:rate` means the per-email hourly reset cap was already reached.
+- `throttled:concurrent` means the request lost the advisory-lock race to an
+  in-flight request for the same email hash.
+
 ## Hard rules (this module)
 
 1. **One write entry point.** All audit writes go through `service.py::log` so the row shape stays uniform.
