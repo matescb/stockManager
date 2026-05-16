@@ -84,11 +84,36 @@ describe("target=_blank rel lint guard", () => {
     ).resolves.toHaveLength(0);
   });
 
+  it("accepts as const and satisfies safe rel values", async () => {
+    await expect(
+      targetBlankRelMessages(`
+        const asConstRel = "noopener noreferrer" as const;
+        const satisfiesRel = "noreferrer noopener" satisfies string;
+
+        export const AsConstLink = () => (
+          <a href="https://example.com" target="_blank" rel={asConstRel}>open</a>
+        );
+
+        export const SatisfiesLink = () => (
+          <a href="https://example.com" target="_blank" rel={satisfiesRel}>open</a>
+        );
+      `),
+    ).resolves.toHaveLength(0);
+  });
+
   it("validates const string literal rel values with the existing token checks", async () => {
     await expect(
       targetBlankRelMessages(
         'const unsafeRel = "noreferrer"; export const Link = () => <a href="https://example.com" target="_blank" rel={unsafeRel}>open</a>;',
       ),
     ).resolves.toEqual([expect.objectContaining({ message: missingRelMessage })]);
+  });
+
+  it("reports dynamic rel for const template literal initializers", async () => {
+    await expect(
+      targetBlankRelMessages(
+        'const safeRel = `noopener noreferrer`; export const Link = () => <a href="https://example.com" target="_blank" rel={safeRel}>open</a>;',
+      ),
+    ).resolves.toEqual([expect.objectContaining({ message: dynamicRelMessage })]);
   });
 });

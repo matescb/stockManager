@@ -67,6 +67,19 @@ function findVariable(scope, name) {
   return undefined;
 }
 
+function unwrapTSConstExpression(expression) {
+  let currentExpression = expression;
+
+  while (
+    currentExpression?.type === "TSAsExpression" ||
+    currentExpression?.type === "TSSatisfiesExpression"
+  ) {
+    currentExpression = currentExpression.expression;
+  }
+
+  return currentExpression;
+}
+
 function getConstStringLiteralValue(expression, scope) {
   if (expression.type !== "Identifier") {
     return null;
@@ -85,7 +98,7 @@ function getConstStringLiteralValue(expression, scope) {
     return null;
   }
 
-  const init = definition.node.init;
+  const init = unwrapTSConstExpression(definition.node.init);
 
   if (!init || init.type !== "Literal" || typeof init.value !== "string") {
     return null;
