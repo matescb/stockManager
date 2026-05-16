@@ -9,6 +9,7 @@ AUD-083 / issue #740.
 Password reset retention purges by created_at because throttled and
 non-issued rows can have expires_at NULL. The created_at index remains the
 retention path; the expires_at index is intentionally removed.
+Runbook: docs/runbooks/migration-recovery.md#downgrading-through-migration-0062-after-manually-recreating-the-password-reset-index.
 """
 from __future__ import annotations
 
