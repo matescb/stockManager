@@ -102,4 +102,22 @@ describe("Modal", () => {
     expect(titleId).toBeTruthy();
     expect(titleId ? document.getElementById(titleId)?.textContent : null).toBe("Demo modal");
   });
+
+  it("constrains tall dialog content to the viewport", () => {
+    render(
+      <Modal open onClose={vi.fn()} title="Tall modal" className="card w-full max-w-lg">
+        <div style={{ height: "120vh" }}>
+          <button type="button">Close</button>
+        </div>
+      </Modal>,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Tall modal" });
+    const panel = dialog.firstElementChild?.nextElementSibling;
+
+    expect(panel?.classList.contains("max-h-[90vh]")).toBe(true);
+    expect(panel?.classList.contains("overflow-y-auto")).toBe(true);
+    expect(panel?.classList.contains("card")).toBe(true);
+    expect(panel?.classList.contains("max-w-lg")).toBe(true);
+  });
 });

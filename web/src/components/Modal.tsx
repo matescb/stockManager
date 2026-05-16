@@ -113,7 +113,9 @@ export function Modal({
     if (event.target === event.currentTarget) onClose();
   }
 
-  const panelClassName = className ?? `card w-full ${SIZE_CLASSES[size]}`;
+  const panelClassName = `max-h-[90vh] overflow-y-auto ${
+    className ?? `card w-full ${SIZE_CLASSES[size]}`
+  }`;
 
   return (
     <div
