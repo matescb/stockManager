@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Query, Request, status
 from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import DBAPIError
 
@@ -12,6 +12,7 @@ from app.api._helpers import assert_child_in_parent, assert_in_workspace, requir
 from app.api.routes._activity import _DEFAULT_LIMIT, _MAX_LIMIT, build_activity
 from app.api.routes._stock_integrity import raise_integrity_as_409
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
+from app.core.errors import ErrorCodes, raise_http
 from app.core.responses import ok
 from app.core.time import utcnow
 from app.domain.orders.models import Order, OrderEntry
@@ -39,7 +40,11 @@ def _assert_part_live(db, ws_id: UUID, part_id) -> None:
         return
     part = assert_in_workspace(db, Part, part_id, ws_id, label="part")
     if part.archived_at is not None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="part not found")
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            code=ErrorCodes.PART_NOT_FOUND,
+            message="part not found",
+        )
 
 
 def _serialize(o: Order, *, totals: tuple[int, int] | None = None) -> dict:
@@ -80,7 +85,11 @@ def _serialize_entry(e: OrderEntry) -> dict:
 def _get_order(db, ws_id, oid) -> Order:
     o = db.get(Order, oid)
     if not o or o.workspace_id != ws_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="order not found")
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            code=ErrorCodes.ORDER_NOT_FOUND,
+            message="order not found",
+        )
     return o
 
 
@@ -112,10 +121,18 @@ def list_orders(
     limit: int = Query(default=200, le=1000),
 ):
     stmt = select(Order).where(Order.workspace_id == ws.id)
-    stmt = stmt.where(Order.archived_at.is_(None) if not archived else Order.archived_at.is_not(None))
+    stmt = stmt.where(
+        Order.archived_at.is_(None) if not archived else Order.archived_at.is_not(None)
+    )
     if q:
         like = f"%{q}%"
-        stmt = stmt.where(or_(Order.name.ilike(like), Order.supplier.ilike(like), Order.comments.ilike(like)))
+        stmt = stmt.where(
+            or_(
+                Order.name.ilike(like),
+                Order.supplier.ilike(like),
+                Order.comments.ilike(like),
+            )
+        )
     if order_status:
         stmt = stmt.where(Order.status == order_status)
     stmt = stmt.order_by(Order.updated_at.desc()).limit(limit)
@@ -176,7 +193,13 @@ def get_order(order_id: UUID, db: DbSession, ws: CurrentWorkspace):
 
 
 @router.patch("/{order_id}")
-def patch_order(order_id: UUID, payload: OrderPatchIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+def patch_order(
+    order_id: UUID,
+    payload: OrderPatchIn,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     o = _get_order(db, ws.id, order_id)
     for k, v in payload.model_dump(exclude_unset=True).items():
         setattr(o, k, v)
@@ -233,7 +256,13 @@ def restore_order(order_id: UUID, db: DbSession, ws: CurrentWorkspace, user: Cur
 
 
 @router.post("/{order_id}/entries", status_code=status.HTTP_201_CREATED)
-def add_entry(order_id: UUID, payload: OrderEntryIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+def add_entry(
+    order_id: UUID,
+    payload: OrderEntryIn,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     o = _get_order(db, ws.id, order_id)
     _assert_part_live(db, ws.id, payload.part_id)
     next_idx = (
@@ -266,7 +295,14 @@ def add_entry(order_id: UUID, payload: OrderEntryIn, db: DbSession, ws: CurrentW
 
 
 @router.patch("/{order_id}/entries/{entry_id}")
-def patch_entry(order_id: UUID, entry_id: UUID, payload: OrderEntryPatch, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+def patch_entry(
+    order_id: UUID,
+    entry_id: UUID,
+    payload: OrderEntryPatch,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     o = _get_order(db, ws.id, order_id)
     e = assert_child_in_parent(db, OrderEntry, entry_id, o, parent_fk="order_id", label="entry")
     data = payload.model_dump(exclude_unset=True)
@@ -274,9 +310,10 @@ def patch_entry(order_id: UUID, entry_id: UUID, payload: OrderEntryPatch, db: Db
         _assert_part_live(db, ws.id, data["part_id"])
     if "quantity_ordered" in data and data["quantity_ordered"] is not None:
         if data["quantity_ordered"] < e.quantity_received:
-            raise HTTPException(
-                status_code=400,
-                detail="quantity_ordered cannot be less than already-received quantity",
+            raise_http(
+                400,
+                code=ErrorCodes.ORDER_QUANTITY_ORDERED_BELOW_RECEIVED,
+                message="quantity_ordered cannot be less than already-received quantity",
             )
     for k, v in data.items():
         setattr(e, k, v)
@@ -289,13 +326,23 @@ def del_entry(order_id: UUID, entry_id: UUID, db: DbSession, ws: CurrentWorkspac
     o = _get_order(db, ws.id, order_id)
     e = assert_child_in_parent(db, OrderEntry, entry_id, o, parent_fk="order_id", label="entry")
     if e.quantity_received > 0:
-        raise HTTPException(status_code=400, detail="cannot delete entry with received stock")
+        raise_http(
+            400,
+            code=ErrorCodes.ORDER_DELETE_RECEIVED_ENTRY,
+            message="cannot delete entry with received stock",
+        )
     db.delete(e)
     return ok(None, "deleted")
 
 
 @router.post("/{order_id}/receive")
-def receive_order(order_id: UUID, payload: ReceiveIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+def receive_order(
+    order_id: UUID,
+    payload: ReceiveIn,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     o = _get_order(db, ws.id, order_id)
     try:
         result = receive(db, workspace_id=ws.id, user_id=user.id, order=o, payload=payload)
@@ -303,19 +350,18 @@ def receive_order(order_id: UUID, payload: ReceiveIn, db: DbSession, ws: Current
         # BE-004 follow-up (#280): receive lines into a constrained
         # destination must surface a structured 409 with the same body
         # shape as /api/stock/add so existing client-side handlers work.
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "message": str(exc),
-                "constraint": exc.constraint,
-                "storage_location_id": str(exc.storage_location_id),
-            },
+        raise_http(
+            status.HTTP_409_CONFLICT,
+            code=ErrorCodes.STOCK_CONSTRAINT_VIOLATION,
+            message=str(exc),
+            constraint=exc.constraint,
+            storage_location_id=str(exc.storage_location_id),
         )
     except OrderError as exc:
         # Re-raise as a 4xx — `get_db` rolls back automatically when
         # the route raises (BE2-010), so we don't need an explicit
         # db.rollback() here.
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise_http(400, code=ErrorCodes.ORDER_RECEIVE_ERROR, message=str(exc))
     except DBAPIError as exc:
         raise_integrity_as_409(exc)
     return ok(result)
@@ -338,7 +384,11 @@ def order_activity(
         try:
             cursor_at = datetime.fromisoformat(before_occurred_at)
         except ValueError:
-            raise HTTPException(status_code=422, detail="invalid before_occurred_at")
+            raise_http(
+                422,
+                code=ErrorCodes.ACTIVITY_INVALID_CURSOR,
+                message="invalid before_occurred_at",
+            )
 
     stmt = (
         select(StockEntry)

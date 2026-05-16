@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Query, status
 from sqlalchemy.exc import DBAPIError
 
 from app.api.routes._stock_integrity import raise_integrity_as_409
@@ -77,28 +77,28 @@ def add(
     if payload.bag_signature and payload.raw_bag_code is not None:
         expected = compute_bag_signature(payload.raw_bag_code)
         if expected != payload.bag_signature:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "message": (
-                        "bag_signature does not match recomputed digest of raw_bag_code"
-                    )
-                },
+            raise_http(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                code=ErrorCodes.STOCK_BAG_SIGNATURE_MISMATCH,
+                message="bag_signature does not match recomputed digest of raw_bag_code",
             )
     _validate_add_stock_currency(payload, ws)
     try:
         e = add_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
     except StockConflictError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "message": str(exc),
-                "constraint": exc.constraint,
-                "storage_location_id": str(exc.storage_location_id),
-            },
+        raise_http(
+            status.HTTP_409_CONFLICT,
+            code=ErrorCodes.STOCK_CONSTRAINT_VIOLATION,
+            message=str(exc),
+            constraint=exc.constraint,
+            storage_location_id=str(exc.storage_location_id),
         )
     except StockError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        raise_http(
+            status.HTTP_400_BAD_REQUEST,
+            code=ErrorCodes.STOCK_OPERATION_ERROR,
+            message=str(exc),
+        )
     except DBAPIError as exc:
         raise_integrity_as_409(exc)
     return ok(_serialize_entry(e))
@@ -111,7 +111,11 @@ def remove(
     try:
         e = remove_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
     except StockError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        raise_http(
+            status.HTTP_400_BAD_REQUEST,
+            code=ErrorCodes.STOCK_OPERATION_ERROR,
+            message=str(exc),
+        )
     except DBAPIError as exc:
         raise_integrity_as_409(exc)
     return ok(_serialize_entry(e))
@@ -122,16 +126,19 @@ def move(payload: MoveStockIn, db: DbSession, ws: CurrentWorkspace, user: Curren
     try:
         out_e, in_e = move_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
     except StockConflictError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "message": str(exc),
-                "constraint": exc.constraint,
-                "storage_location_id": str(exc.storage_location_id),
-            },
+        raise_http(
+            status.HTTP_409_CONFLICT,
+            code=ErrorCodes.STOCK_CONSTRAINT_VIOLATION,
+            message=str(exc),
+            constraint=exc.constraint,
+            storage_location_id=str(exc.storage_location_id),
         )
     except StockError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        raise_http(
+            status.HTTP_400_BAD_REQUEST,
+            code=ErrorCodes.STOCK_OPERATION_ERROR,
+            message=str(exc),
+        )
     except DBAPIError as exc:
         raise_integrity_as_409(exc)
     return ok({"out": _serialize_entry(out_e), "in": _serialize_entry(in_e)})
@@ -142,7 +149,11 @@ def adjust(payload: AdjustStockIn, db: DbSession, ws: CurrentWorkspace, user: Cu
     try:
         e = adjust_stock(db, workspace_id=ws.id, user_id=user.id, payload=payload)
     except StockError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        raise_http(
+            status.HTTP_400_BAD_REQUEST,
+            code=ErrorCodes.STOCK_OPERATION_ERROR,
+            message=str(exc),
+        )
     except DBAPIError as exc:
         raise_integrity_as_409(exc)
     return ok(_serialize_entry(e) if e is not None else None, "no change" if e is None else "OK")

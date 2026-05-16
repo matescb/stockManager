@@ -16,13 +16,14 @@ from datetime import datetime, timedelta, timezone
 from time import monotonic
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
 from app.api.routes._parts_shared import get_part as _get_part
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
+from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import ok
 from app.core.secrets import decrypt
@@ -166,9 +167,10 @@ def bulk_import_from_scan(
         decrypt(ws.parts_provider_api_secret),
     )
     if provider is None:
-        raise HTTPException(
-            status_code=400,
-            detail="no parts provider configured (set one in Workspace settings)",
+        raise_http(
+            400,
+            code=ErrorCodes.PART_PROVIDER_NOT_CONFIGURED,
+            message="no parts provider configured (set one in Workspace settings)",
         )
 
     # ------------------------------------------------------------------
@@ -559,5 +561,5 @@ def quick_remove_bag(
             ),
         )
     except StockError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise_http(400, code=ErrorCodes.STOCK_OPERATION_ERROR, message=str(exc))
     return ok(None, "removed")
