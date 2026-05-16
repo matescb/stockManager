@@ -385,16 +385,24 @@ docker-compose commands so they run as the same user CI uses (avoids
 cd /srv/stockmanager
 sudo -u deploy docker compose -f docker-compose.prod.yml logs -f backend
 sudo -u deploy docker compose -f docker-compose.prod.yml logs -f backend-cron
+sudo -u deploy docker compose -f docker-compose.prod.yml logs -f backend-cron-alerts
+sudo -u deploy docker compose -f docker-compose.prod.yml logs -f backend-cron-sessions
 sudo -u deploy docker compose -f docker-compose.prod.yml logs -f web
 ```
 
 ### Backend periodic jobs
 
-`backend-cron` runs the allow-listed backend CLI once per hour:
-`python -m app.cli.run_job sourcing-cache-sweep`. The sidecar sleeps after
-each completed run, so a slow sweep delays the next start instead of
-overlapping it. Source: `docker-compose.prod.yml:165-207`,
-`backend/app/cli/run_job.py:46-52`.
+Three cron sidecars run allow-listed backend CLI jobs:
+
+- `backend-cron` runs `sourcing-cache-sweep` once per hour.
+- `backend-cron-alerts` runs `sourcing-alerts-evaluate` every 15 minutes.
+- `backend-cron-sessions` runs `session-purge` and `password-reset-purge`
+  hourly by default.
+
+Each sidecar invokes `python -m app.cli.run_job <job-name>` and sleeps after
+completed runs, so a slow job delays that job's next start instead of
+overlapping it. Source: `docker-compose.prod.yml:170-264`,
+`backend/app/cli/run_job.py:85-119`.
 
 The sourcing cache job opens a backend DB session and sweeps expired
 TrustedParts cache rows by workspace-scoped deletes. Source:

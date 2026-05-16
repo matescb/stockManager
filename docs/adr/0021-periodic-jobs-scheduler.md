@@ -30,6 +30,8 @@ Jobs using this scheduler:
 
 - `sourcing-cache-sweep` — hourly TrustedParts cache retention sweep in `backend-cron`.
 - `sourcing-alerts-evaluate` — 15-minute sourcing alert evaluator in `backend-cron-alerts`.
+- `session-purge` — hourly expired session cleanup in `backend-cron-sessions`.
+- `password-reset-purge` — hourly expired password reset request cleanup in `backend-cron-sessions`.
 
 ## Consequences
 
