@@ -42,11 +42,11 @@ class Settings(BaseSettings):
     # tune this without a release; restart the backend for the env
     # override to be picked up by the cached Settings instance.
     INVITATION_TTL_DAYS: int = Field(default=14, gt=0)
-    # Cadence (seconds) of the in-process expired-session purge driven
-    # by the FastAPI lifespan hook. DB-007 / issue #98. Knob exists so
-    # tests can shorten it; ops should not need to touch it. 0 disables
-    # the periodic task entirely (the migration's index still exists,
-    # so a future cron / one-off SQL still benefits).
+    # Cadence (seconds) of the backend-cron-sessions expired-session
+    # purge job. DB-007 / issue #98. Knob exists so tests can shorten
+    # it; ops should not need to touch it. 0 disables the periodic task
+    # entirely (the migration's index still exists, so a one-off SQL
+    # still benefits).
     SESSION_PURGE_INTERVAL_SECONDS: int = Field(default=3600, ge=0)
     # Cadence (seconds) of the password-reset token purge worker. 0
     # disables the periodic password-reset purge.
