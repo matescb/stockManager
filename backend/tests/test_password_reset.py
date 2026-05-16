@@ -253,6 +253,29 @@ def test_password_reset_email_throttle_suppresses_fourth_send(client, db):
     assert rows[-1].token_hmac is None
 
 
+def test_throttle_rate_emits_distinct_audit_comment(client, db):
+    email = _signup(client)
+
+    with patch("app.api.routes.auth.send_password_reset_email") as send_mail:
+        for _ in range(4):
+            response = client.post(
+                "/api/auth/request-password-reset",
+                json={"email": email},
+            )
+            assert response.status_code == 202, response.text
+
+    assert send_mail.call_count == 3
+    comments = [
+        row.comment
+        for row in db.query(AuditLog)
+        .filter(AuditLog.action == "user.password_reset_requested")
+        .all()
+    ]
+    assert comments.count(None) == 3
+    assert comments.count("throttled:rate") == 1
+    assert "throttled:concurrent" not in comments
+
+
 @pytest.mark.real_db
 def test_throttle_atomic_under_concurrency(db, monkeypatch):
     email = f"reset-race-{uuid.uuid4().hex[:8]}@example.com"
@@ -357,7 +380,7 @@ def test_throttle_lock_denied_returns_throttled(db, caplog):
         .filter(AuditLog.action == "user.password_reset_requested")
         .one()
     )
-    assert audit.comment == "throttled"
+    assert audit.comment == "throttled:concurrent"
 
 
 def test_unknown_email_does_not_persist_row(client, db):
