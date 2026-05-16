@@ -7,9 +7,10 @@ import secrets
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 
+from app.api._helpers import assert_in_workspace
 from app.core.config import settings
 from app.core.cookies import WORKSPACE_COOKIE_NAME, workspace_cookie_attrs
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
@@ -497,8 +498,9 @@ def revoke_catalog_token(token_id: UUID, db: DbSession, ws: CurrentWorkspace):
 
     Sets revoked_at = now(). Cross-workspace access → 404 (never 403).
     """
-    t = db.get(WorkspaceCatalogToken, token_id)
-    if not t or t.workspace_id != ws.id:
+    try:
+        t = assert_in_workspace(db, WorkspaceCatalogToken, token_id, ws.id, label="catalog token")
+    except HTTPException:
         raise_http(
             status.HTTP_404_NOT_FOUND,
             ErrorCodes.RESOURCE_NOT_FOUND,
@@ -559,8 +561,9 @@ def patch_member(
     ws: CurrentWorkspace,
     user: CurrentUser,
 ):
-    m = db.get(WorkspaceMember, member_id)
-    if not m or m.workspace_id != ws.id:
+    try:
+        m = assert_in_workspace(db, WorkspaceMember, member_id, ws.id, label="member")
+    except HTTPException:
         raise_http(
             status.HTTP_404_NOT_FOUND,
             ErrorCodes.WORKSPACE_MEMBER_NOT_FOUND,
@@ -594,8 +597,9 @@ def patch_member(
 
 @router.delete("/members/{member_id}", dependencies=[Depends(require_role("admin"))])
 def remove_member(member_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
-    m = db.get(WorkspaceMember, member_id)
-    if not m or m.workspace_id != ws.id:
+    try:
+        m = assert_in_workspace(db, WorkspaceMember, member_id, ws.id, label="member")
+    except HTTPException:
         raise_http(
             status.HTTP_404_NOT_FOUND,
             ErrorCodes.WORKSPACE_MEMBER_NOT_FOUND,

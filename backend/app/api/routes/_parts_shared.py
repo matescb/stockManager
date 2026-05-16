@@ -13,9 +13,10 @@ endpoint groups out of `parts.py` and import from this module.
 """
 from __future__ import annotations
 
-from fastapi import status
+from fastapi import HTTPException, status
 from sqlalchemy import select
 
+from app.api._helpers import assert_in_workspace
 from app.core.errors import ErrorCodes, raise_http
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part
@@ -92,9 +93,14 @@ def get_part(db, ws_id, part_id, *, include_archived: bool = False) -> Part:
     surfaces pass `include_archived=True` so the detail page and
     activity timeline still load for archived parts.
     """
-    p = db.get(Part, part_id)
-    if not p or p.workspace_id != ws_id:
-        raise_http(status.HTTP_404_NOT_FOUND, code=ErrorCodes.PART_NOT_FOUND, message="part not found")
+    try:
+        p = assert_in_workspace(db, Part, part_id, ws_id, label="part")
+    except HTTPException:
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            code=ErrorCodes.PART_NOT_FOUND,
+            message="part not found",
+        )
     if not include_archived and p.archived_at is not None:
         # 404 (not 400) — the part is "not available" for binds. We
         # don't distinguish "doesn't exist" from "archived" because the

@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError
 
+from app.api._helpers import assert_in_workspace
 from app.api.routes._stock_integrity import raise_integrity_as_409
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.errors import ErrorCodes, raise_http
@@ -69,10 +70,14 @@ def list_lots(
 
 
 def _get(db, ws_id, lot_id) -> Lot:
-    l = db.get(Lot, lot_id)
-    if not l or l.workspace_id != ws_id:
-        raise_http(status.HTTP_404_NOT_FOUND, code=ErrorCodes.LOT_NOT_FOUND, message="lot not found")
-    return l
+    try:
+        return assert_in_workspace(db, Lot, lot_id, ws_id, label="lot")
+    except HTTPException:
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            code=ErrorCodes.LOT_NOT_FOUND,
+            message="lot not found",
+        )
 
 
 @router.get("/{lot_id}")

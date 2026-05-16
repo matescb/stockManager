@@ -5,10 +5,11 @@ import secrets
 from datetime import timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
+from app.api._helpers import assert_in_workspace
 from app.core.config import settings
 from app.core.deps import (
     CurrentUser,
@@ -226,8 +227,9 @@ def list_invitations(
 
 @router.delete("/{invitation_id}", dependencies=[Depends(require_role("admin"))])
 def revoke_invitation(invitation_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
-    inv = db.get(WorkspaceInvitation, invitation_id)
-    if not inv or inv.workspace_id != ws.id:
+    try:
+        inv = assert_in_workspace(db, WorkspaceInvitation, invitation_id, ws.id, label="invitation")
+    except HTTPException:
         raise_http(
             status.HTTP_404_NOT_FOUND,
             ErrorCodes.INVITATION_NOT_FOUND,

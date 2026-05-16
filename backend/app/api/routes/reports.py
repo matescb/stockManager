@@ -5,9 +5,10 @@ from collections import defaultdict
 from datetime import date, timedelta
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 
+from app.api._helpers import assert_in_workspace
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
 from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter, workspace_key
@@ -70,8 +71,9 @@ def bom_shortage(
 ):
     """Project-wide shortage analysis at a given build quantity.
     Same engine as Build detail — no build is created."""
-    project = db.get(Project, project_id)
-    if not project or project.workspace_id != ws.id:
+    try:
+        project = assert_in_workspace(db, Project, project_id, ws.id, label="project")
+    except HTTPException:
         raise_http(404, code=ErrorCodes.REPORT_PROJECT_NOT_FOUND, message="project not found")
     rows = shortage_analysis(db, workspace_id=ws.id, project=project, build_quantity=quantity)
     total_short = sum(r["short_by"] for r in rows)

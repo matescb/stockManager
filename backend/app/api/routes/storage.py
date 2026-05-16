@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import or_, select
 
-from app.api._helpers import require_resource_access
+from app.api._helpers import assert_in_workspace, require_resource_access
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.errors import ErrorCodes, raise_http
 from app.core.pagination import decode_cursor, paginate
@@ -89,14 +89,14 @@ def create_storage(payload: StorageIn, db: DbSession, ws: CurrentWorkspace, user
 
 
 def _get(db, ws_id, sid) -> StorageLocation:
-    s = db.get(StorageLocation, sid)
-    if not s or s.workspace_id != ws_id:
+    try:
+        return assert_in_workspace(db, StorageLocation, sid, ws_id, label="storage")
+    except HTTPException:
         raise_http(
             status.HTTP_404_NOT_FOUND,
             code=ErrorCodes.STORAGE_NOT_FOUND,
             message="storage not found",
         )
-    return s
 
 
 @router.get("/{storage_id}")
