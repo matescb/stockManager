@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import NoReturn
 
-from fastapi import HTTPException, status
+from fastapi import status
 from sqlalchemy.exc import DBAPIError
 
-from app.core.errors import ErrorCodes
+from app.core.errors import ErrorCodes, raise_http
 
 _STOCK_NONNEG_NAMES = {
     "ck_stock_nonneg",
@@ -18,22 +18,19 @@ _WORKSPACE_ISOLATION_SQLSTATE = "WS001"
 def raise_integrity_as_409(exc: DBAPIError) -> NoReturn:
     """Map the stock non-negative trigger to the public conflict contract."""
     if _is_workspace_isolation_violation(exc):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": ErrorCodes.WORKSPACE_ISOLATION,
-                "message": "workspace isolation violation",
-                "sqlstate": _WORKSPACE_ISOLATION_SQLSTATE,
-            },
-        ) from exc
+        raise_http(
+            status.HTTP_409_CONFLICT,
+            code=ErrorCodes.WORKSPACE_ISOLATION,
+            message="workspace isolation violation",
+            sqlstate=_WORKSPACE_ISOLATION_SQLSTATE,
+        )
     if _is_stock_nonneg_violation(exc):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "message": "insufficient stock",
-                "constraint": "stock_nonneg_trigger",
-            },
-        ) from exc
+        raise_http(
+            status.HTTP_409_CONFLICT,
+            code=ErrorCodes.STOCK_INSUFFICIENT,
+            message="insufficient stock",
+            constraint="stock_nonneg_trigger",
+        )
     raise exc
 
 

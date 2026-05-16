@@ -7,15 +7,18 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api._helpers import assert_in_workspace, require_resource_access
-from app.api.routes._activity import _DEFAULT_LIMIT, _MAX_LIMIT, build_activity
+from app.api.routes._activity import (
+    _DEFAULT_LIMIT,
+    _MAX_LIMIT,
+    route_activity,
+)
 from app.api.routes._parts_shared import (
     get_part as _get_part,
 )
@@ -59,13 +62,12 @@ logger = logging.getLogger(__name__)
 
 
 def _raise_mpn_conflict(existing: Part) -> None:
-    raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail={
-            "message": f"MPN already used by part \"{existing.name}\"",
-            "existing_id": str(existing.id),
-            "existing_name": existing.name,
-        },
+    raise_http(
+        status.HTTP_409_CONFLICT,
+        code=ErrorCodes.PART_MPN_CONFLICT,
+        message=f"MPN already used by part \"{existing.name}\"",
+        existing_id=str(existing.id),
+        existing_name=existing.name,
     )
 
 
@@ -98,9 +100,6 @@ def list_parts(
         the next page.  ``next_cursor`` is null when no further pages
         exist. The ``cursor`` is an HMAC-signed blob — tampering returns
         400.
-
-    The ``limit`` query param is honoured in both modes; ``paged=true``
-    only changes the response envelope shape (adds ``next_cursor``).
 
     Every query is scoped to the current workspace (CLAUDE.md invariant).
     """
@@ -148,8 +147,12 @@ def list_parts(
 
     part_ids = [p.id for p in parts]
     image_urls = _image_urls_for_parts(db, ws.id, part_ids)
-    on_hand_map = bulk_current_quantities(db, workspace_id=ws.id, part_ids=part_ids, status="on_hand")
-    reserved_map = bulk_current_quantities(db, workspace_id=ws.id, part_ids=part_ids, status="reserved")
+    on_hand_map = bulk_current_quantities(
+        db, workspace_id=ws.id, part_ids=part_ids, status="on_hand"
+    )
+    reserved_map = bulk_current_quantities(
+        db, workspace_id=ws.id, part_ids=part_ids, status="reserved"
+    )
     items = []
     for p in parts:
         items.append(_serialize(
@@ -174,9 +177,10 @@ def create_part(
     name = (payload.name or "").strip()
     mpn = (payload.mpn or "").strip()
     if not name and not mpn:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="provide at least one of `name` or `mpn`",
+        raise_http(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCodes.PART_NAME_OR_MPN_REQUIRED,
+            message="provide at least one of `name` or `mpn`",
         )
     if not name:
         name = mpn
@@ -244,7 +248,13 @@ def get_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
 
 
 @router.patch("/{part_id}")
-def patch_part(part_id: UUID, payload: PartPatch, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+def patch_part(
+    part_id: UUID,
+    payload: PartPatch,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     # Write — refuse archived parts. Editing a retired part would create
     # a misleading audit trail and is the BE2-016 vector.
     p = _get_part(db, ws.id, part_id)
@@ -256,9 +266,14 @@ def patch_part(part_id: UUID, payload: PartPatch, db: DbSession, ws: CurrentWork
     if p.linked_provider and not unlink:
         for f in ("manufacturer", "mpn"):
             if f in data and data[f] != getattr(p, f):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"{f} is provider-owned on a linked part; pass unlink_provider=true to take ownership",
+                raise_http(
+                    400,
+                    code=ErrorCodes.PART_LINKED_PROVIDER_OWNED_FIELD,
+                    message=(
+                        f"{f} is provider-owned on a linked part; "
+                        "pass unlink_provider=true to take ownership"
+                    ),
+                    field=f,
                 )
 
     # Editing description on a linked part flips the locally-edited flag so
@@ -523,7 +538,9 @@ def part_stock(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
             "total_on_hand": total_for_part(db, workspace_id=ws.id, part_id=p.id),
             "rows": [
                 {
-                    "storage_location_id": str(r["storage_location_id"]) if r["storage_location_id"] else None,
+                    "storage_location_id": (
+                        str(r["storage_location_id"]) if r["storage_location_id"] else None
+                    ),
                     "lot_id": str(r["lot_id"]) if r["lot_id"] else None,
                     "quantity": r["quantity"],
                 }
@@ -539,25 +556,32 @@ def part_lots(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
     p = _get_part(db, ws.id, part_id, include_archived=True)
     lots = list(
         db.execute(
-            select(Lot).where(Lot.workspace_id == ws.id).where(Lot.part_id == p.id).order_by(Lot.created_at.desc())
+            select(Lot)
+            .where(Lot.workspace_id == ws.id)
+            .where(Lot.part_id == p.id)
+            .order_by(Lot.created_at.desc())
         ).scalars()
     )
     return ok(
         [
             {
-                "id": str(l.id),
-                "name": l.name,
-                "serial_number": l.serial_number,
-                "purchase_quantity": l.purchase_quantity,
-                "purchase_unit_cost": float(l.purchase_unit_cost) if l.purchase_unit_cost is not None else None,
-                "purchase_currency": l.purchase_currency,
-                "expiration_date": l.expiration_date.isoformat() if l.expiration_date else None,
-                "comments": l.comments,
-                "parent_lot_id": str(l.parent_lot_id) if l.parent_lot_id else None,
-                "source_type": l.source_type,
-                "created_at": l.created_at.isoformat(),
+                "id": str(lot.id),
+                "name": lot.name,
+                "serial_number": lot.serial_number,
+                "purchase_quantity": lot.purchase_quantity,
+                "purchase_unit_cost": (
+                    float(lot.purchase_unit_cost)
+                    if lot.purchase_unit_cost is not None
+                    else None
+                ),
+                "purchase_currency": lot.purchase_currency,
+                "expiration_date": lot.expiration_date.isoformat() if lot.expiration_date else None,
+                "comments": lot.comments,
+                "parent_lot_id": str(lot.parent_lot_id) if lot.parent_lot_id else None,
+                "source_type": lot.source_type,
+                "created_at": lot.created_at.isoformat(),
             }
-            for l in lots
+            for lot in lots
         ]
     )
 
@@ -610,12 +634,20 @@ def list_members(meta_id: UUID, db: DbSession, ws: CurrentWorkspace):
 def add_member(meta_id: UUID, payload: MetaMemberIn, db: DbSession, ws: CurrentWorkspace):
     meta = _get_part(db, ws.id, meta_id)
     if meta.part_type != "meta":
-        raise HTTPException(status_code=400, detail="part is not a meta-part")
+        raise_http(400, code=ErrorCodes.PART_NOT_META, message="part is not a meta-part")
     member = _get_part(db, ws.id, payload.member_part_id)
     if member.id == meta.id:
-        raise HTTPException(status_code=400, detail="meta-part cannot include itself")
+        raise_http(
+            400,
+            code=ErrorCodes.PART_META_SELF_MEMBER,
+            message="meta-part cannot include itself",
+        )
     if member.part_type == "meta":
-        raise HTTPException(status_code=400, detail="meta-part members cannot themselves be meta")
+        raise_http(
+            400,
+            code=ErrorCodes.PART_META_MEMBER_META,
+            message="meta-part members cannot themselves be meta",
+        )
     existing = db.query(PartMetaMember).filter_by(
         workspace_id=ws.id, meta_part_id=meta.id, part_id=member.id
     ).first()
@@ -650,48 +682,19 @@ def part_activity(
     # Read endpoint — let archived parts surface their history too.
     p = _get_part(db, ws.id, part_id, include_archived=True)
 
-    # Parse cursor
-    cursor_at: datetime | None = None
-    if before_occurred_at is not None:
-        try:
-            cursor_at = datetime.fromisoformat(before_occurred_at)
-        except ValueError:
-            raise HTTPException(status_code=422, detail="invalid before_occurred_at")
-
     stmt = (
         select(StockEntry)
         .where(StockEntry.workspace_id == ws.id)
         .where(StockEntry.part_id == p.id)
     )
-    if cursor_at is not None and before_id is not None:
-        from sqlalchemy import and_, or_
-        stmt = stmt.where(
-            or_(
-                StockEntry.occurred_at < cursor_at,
-                and_(
-                    StockEntry.occurred_at == cursor_at,
-                    StockEntry.id < before_id,
-                ),
-            )
-        )
-    stmt = stmt.order_by(StockEntry.occurred_at.desc(), StockEntry.id.desc()).limit(limit + 1)
-    stock_rows = list(db.execute(stmt).scalars())
-
-    # Per-request user cache stashed on request.state so it's isolated per request.
-    if not hasattr(request.state, "user_cache"):
-        request.state.user_cache = {}
-
-    result = build_activity(
+    return ok(route_activity(
+        request,
         db,
-        stock_rows=stock_rows,
-        created_at=p.created_at,
-        updated_at=p.updated_at,
-        created_by=p.created_by,
-        updated_by=p.updated_by,
+        stmt,
+        before_occurred_at=before_occurred_at,
+        before_id=before_id,
+        limit=limit,
+        entity=p,
         created_kind="part_created",
         updated_kind="part_updated",
-        limit=limit,
-        include_synthetic=(cursor_at is None),
-        user_cache=request.state.user_cache,
-    )
-    return ok(result)
+    ))

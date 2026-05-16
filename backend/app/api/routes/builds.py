@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Query, Request, status
 from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import DBAPIError
 
@@ -11,6 +11,7 @@ from app.api._helpers import require_resource_access
 from app.api.routes._activity import _DEFAULT_LIMIT, _MAX_LIMIT, build_activity
 from app.api.routes._stock_integrity import raise_integrity_as_409
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
+from app.core.errors import ErrorCodes, raise_http
 from app.core.responses import ok
 from app.core.time import utcnow
 from app.domain.builds.models import Build
@@ -49,14 +50,18 @@ def _serialize(b: Build) -> dict:
 def _get_build(db, ws_id, bid) -> Build:
     b = db.get(Build, bid)
     if not b or b.workspace_id != ws_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="build not found")
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            code=ErrorCodes.BUILD_NOT_FOUND,
+            message="build not found",
+        )
     return b
 
 
 def _get_project(db, ws_id, pid) -> Project:
     p = db.get(Project, pid)
     if not p or p.workspace_id != ws_id:
-        raise HTTPException(status_code=404, detail="project not found")
+        raise_http(404, code=ErrorCodes.PROJECT_NOT_FOUND, message="project not found")
     return p
 
 
@@ -69,7 +74,9 @@ def list_builds(
     limit: int = Query(default=200, le=1000),
 ):
     stmt = select(Build).where(Build.workspace_id == ws.id)
-    stmt = stmt.where(Build.archived_at.is_(None) if not archived else Build.archived_at.is_not(None))
+    stmt = stmt.where(
+        Build.archived_at.is_(None) if not archived else Build.archived_at.is_not(None)
+    )
     if project_id:
         stmt = stmt.where(Build.project_id == project_id)
     stmt = stmt.order_by(Build.created_at.desc()).limit(limit)
@@ -116,10 +123,16 @@ def get_build(build_id: UUID, db: DbSession, ws: CurrentWorkspace):
 
 
 @router.patch("/{build_id}")
-def patch_build(build_id: UUID, payload: BuildPatchIn, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
+def patch_build(
+    build_id: UUID,
+    payload: BuildPatchIn,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
     b = _get_build(db, ws.id, build_id)
     if b.status == "complete" and payload.status != "cancelled":
-        raise HTTPException(status_code=400, detail="completed builds are read-only")
+        raise_http(400, code=ErrorCodes.BUILD_READ_ONLY, message="completed builds are read-only")
     patch_data = payload.model_dump(exclude_unset=True)
     quantity_changed = "quantity" in patch_data and patch_data["quantity"] != b.quantity
     cancelling = patch_data.get("status") == "cancelled" and b.status != "cancelled"
@@ -188,18 +201,17 @@ def consume_build(
         # producer write into the chosen output storage; if that storage
         # is constrained the violation surfaces as a structured 409 with
         # the same body shape as /api/stock/add.
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "message": str(exc),
-                "constraint": exc.constraint,
-                "storage_location_id": str(exc.storage_location_id),
-            },
+        raise_http(
+            status.HTTP_409_CONFLICT,
+            code=ErrorCodes.STOCK_CONSTRAINT_VIOLATION,
+            message=str(exc),
+            constraint=exc.constraint,
+            storage_location_id=str(exc.storage_location_id),
         )
     except BuildError as exc:
         # `get_db` rolls back on raise (BE2-010), so dropping the
         # explicit db.rollback() here is safe.
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise_http(400, code=ErrorCodes.BUILD_CONSUME_ERROR, message=str(exc))
     except DBAPIError as exc:
         raise_integrity_as_409(exc)
     return ok(result)
@@ -222,7 +234,11 @@ def build_activity_route(
         try:
             cursor_at = datetime.fromisoformat(before_occurred_at)
         except ValueError:
-            raise HTTPException(status_code=422, detail="invalid before_occurred_at")
+            raise_http(
+                422,
+                code=ErrorCodes.ACTIVITY_INVALID_CURSOR,
+                message="invalid before_occurred_at",
+            )
 
     stmt = (
         select(StockEntry)

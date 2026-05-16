@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Query, Request, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 
@@ -23,6 +23,7 @@ from app.api.routes._parts_shared import (
 )
 from app.core.config import settings
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
+from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import ok
 from app.core.secrets import decrypt
@@ -75,14 +76,26 @@ def get_provider_asset(
     # their workspace's folder. The `ws` dep already proves membership in
     # the request's current workspace; this matches them.
     if ws_id != ws.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="asset not found")
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            code=ErrorCodes.PART_ASSET_NOT_FOUND,
+            message="asset not found",
+        )
     # Disallow path traversal — filename must be a flat content-addressed name.
     if "/" in filename or "\\" in filename or filename.startswith("."):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid filename")
+        raise_http(
+            status.HTTP_400_BAD_REQUEST,
+            code=ErrorCodes.PART_ASSET_INVALID_FILENAME,
+            message="invalid filename",
+        )
 
     abs_path = os.path.join(settings().UPLOAD_DIR, "parts", str(ws_id), filename)
     if not os.path.isfile(abs_path):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="asset not found")
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            code=ErrorCodes.PART_ASSET_NOT_FOUND,
+            message="asset not found",
+        )
 
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     served_mime = _ASSET_MIME_BY_EXT.get(ext, "application/octet-stream")
@@ -136,7 +149,11 @@ def refresh_from_provider(
     it hasn't been locally edited."""
     p = _get_part(db, ws.id, part_id)
     if not (p.mpn or "").strip():
-        raise HTTPException(status_code=400, detail="part has no MPN to look up")
+        raise_http(
+            400,
+            code=ErrorCodes.PART_PROVIDER_MISSING_MPN,
+            message="part has no MPN to look up",
+        )
 
     provider = make_provider(
         ws.parts_provider,
@@ -144,9 +161,10 @@ def refresh_from_provider(
         decrypt(ws.parts_provider_api_secret),
     )
     if provider is None:
-        raise HTTPException(
-            status_code=400,
-            detail="no parts provider configured (set one in Workspace settings)",
+        raise_http(
+            400,
+            code=ErrorCodes.PART_PROVIDER_NOT_CONFIGURED,
+            message="no parts provider configured (set one in Workspace settings)",
         )
 
     # Use lookup_fresh (not lookup_with_cache) — the operator explicitly
@@ -155,10 +173,12 @@ def refresh_from_provider(
     try:
         out = lookup_fresh(provider, p.mpn.strip())
     except ProviderUpstreamError as exc:
-        raise HTTPException(
-            status_code=exc.status_code,
-            detail={"message": exc.message, "provider": exc.provider},
-        ) from exc
+        raise_http(
+            exc.status_code,
+            code=ErrorCodes.PROVIDER_UPSTREAM_ERROR,
+            message=exc.message,
+            provider=exc.provider,
+        )
     if not out.get("found") or not out.get("result"):
         return ok(
             {

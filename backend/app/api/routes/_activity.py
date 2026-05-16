@@ -35,13 +35,80 @@ from __future__ import annotations
 from typing import Iterable
 from uuid import UUID
 
+from fastapi import Request, status
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
+from app.core.errors import ErrorCodes, raise_http
 from app.domain.stock.models import StockEntry
 from app.domain.users.models import User
 
 _DEFAULT_LIMIT = 50
 _MAX_LIMIT = 200
+
+
+def parse_activity_cursor(value: str | None):
+    if value is None:
+        return None
+    from datetime import datetime
+
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        raise_http(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCodes.ACTIVITY_INVALID_CURSOR,
+            message="invalid before_occurred_at",
+        )
+
+
+def activity_stock_rows(db: Session, stmt, *, cursor_at, before_id, limit: int):
+    if cursor_at is not None and before_id is not None:
+        stmt = stmt.where(
+            or_(
+                StockEntry.occurred_at < cursor_at,
+                and_(StockEntry.occurred_at == cursor_at, StockEntry.id < before_id),
+            )
+        )
+    stmt = stmt.order_by(StockEntry.occurred_at.desc(), StockEntry.id.desc()).limit(limit + 1)
+    return list(db.execute(stmt).scalars())
+
+
+def request_user_cache(request: Request):
+    if not hasattr(request.state, "user_cache"):
+        request.state.user_cache = {}
+    return request.state.user_cache
+
+
+def route_activity(
+    request: Request,
+    db: Session,
+    stmt,
+    *,
+    before_occurred_at: str | None,
+    before_id,
+    limit: int,
+    entity,
+    created_kind: str,
+    updated_kind: str,
+):
+    cursor_at = parse_activity_cursor(before_occurred_at)
+    stock_rows = activity_stock_rows(
+        db, stmt, cursor_at=cursor_at, before_id=before_id, limit=limit
+    )
+    return build_activity(
+        db,
+        stock_rows=stock_rows,
+        created_at=entity.created_at,
+        updated_at=entity.updated_at,
+        created_by=entity.created_by,
+        updated_by=entity.updated_by,
+        created_kind=created_kind,
+        updated_kind=updated_kind,
+        limit=limit,
+        include_synthetic=(cursor_at is None),
+        user_cache=request_user_cache(request),
+    )
 
 
 def _user_dict(user: User | None) -> dict | None:

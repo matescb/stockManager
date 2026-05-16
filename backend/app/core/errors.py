@@ -168,6 +168,10 @@ class ErrorCodes:
 
     # Stock router.
     STOCK_INVALID_CURRENCY = "stock.invalid_currency"
+    STOCK_BAG_SIGNATURE_MISMATCH = "stock.bag_signature_mismatch"
+    STOCK_CONSTRAINT_VIOLATION = "stock.constraint_violation"
+    STOCK_OPERATION_ERROR = "stock.operation_error"
+    STOCK_INSUFFICIENT = "stock.insufficient"
 
     # Workspace dependency-injection edge cases (deps.py).
     # WORKSPACE_NONE: caller has no active membership in any workspace
@@ -205,6 +209,30 @@ class ErrorCodes:
     # Parts shared helpers.
     PART_NOT_FOUND = "part.not_found"
     PART_HAS_RESERVED_STOCK = "part.has_reserved_stock"
+    PART_MPN_CONFLICT = "part.mpn_conflict"
+    PART_NAME_OR_MPN_REQUIRED = "part.name_or_mpn_required"
+    PART_LINKED_PROVIDER_OWNED_FIELD = "part.linked_provider_owned_field"
+    PART_NOT_META = "part.not_meta"
+    PART_META_SELF_MEMBER = "part.meta_self_member"
+    PART_META_MEMBER_META = "part.meta_member_meta"
+    PART_PROVIDER_NOT_CONFIGURED = "part.provider_not_configured"
+    PART_PROVIDER_MISSING_MPN = "part.provider_missing_mpn"
+    PART_ASSET_NOT_FOUND = "part.asset_not_found"
+    PART_ASSET_INVALID_FILENAME = "part.asset_invalid_filename"
+
+    # Activity cursor parsing.
+    ACTIVITY_INVALID_CURSOR = "activity.invalid_cursor"
+
+    # Orders router.
+    ORDER_NOT_FOUND = "order.not_found"
+    ORDER_QUANTITY_ORDERED_BELOW_RECEIVED = "order.quantity_ordered_below_received"
+    ORDER_DELETE_RECEIVED_ENTRY = "order.delete_received_entry"
+    ORDER_RECEIVE_ERROR = "order.receive_error"
+
+    # Builds router.
+    BUILD_NOT_FOUND = "build.not_found"
+    BUILD_READ_ONLY = "build.read_only"
+    BUILD_CONSUME_ERROR = "build.consume_error"
 
     # Projects router.
     PROJECT_NOT_FOUND = "project.not_found"
