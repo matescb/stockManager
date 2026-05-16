@@ -203,6 +203,7 @@ def run_job(
     try:
         if not _acquire_job_lock(db, job.name):
             db.rollback()
+            _write_heartbeat(job.name, heartbeat_dir=heartbeat_dir)
             logger.info("job=%s status=skipped reason=lock_denied", job.name)
             return 0
         affected = job.run(db)
