@@ -207,6 +207,7 @@ def _password_reset_request_throttle_comment(
         .count()
     )
     if count >= _PASSWORD_RESET_EMAIL_LIMIT:
+        log.info("password_reset_request status=throttled reason=rate")
         return _PASSWORD_RESET_THROTTLED_RATE_COMMENT
     return None
 
