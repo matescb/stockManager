@@ -9,20 +9,20 @@ Audience: engineer
 
 ## Context
 
-Phase 1 TrustedParts added a workspace-scoped sourcing cache with a seven-day database cap and a 30-minute service TTL. The database check prevents writes whose `expires_at` is more than seven days after `fetched_at`, but it does not delete expired rows. `sourcing.cache.sweep_expired()` exists for cleanup and is not called by any scheduler yet.
+Phase 1 TrustedParts added a workspace-scoped sourcing cache with a seven-day database cap and a 30-minute service TTL. The database check prevents writes whose `expires_at` is more than seven days after `fetched_at`, but it does not delete expired rows. `sourcing.cache.sweep_expired()` exists for cleanup and is run through the shared backend job runner.
 
-The repo already has one ad hoc in-process periodic task: expired session purge is spawned from FastAPI lifespan in `backend/app/main.py:136` and controlled by `SESSION_PURGE_INTERVAL_SECONDS` in `backend/app/core/config.py:34`. That was acceptable as a single lightweight task, but adding every future periodic job to the request process would create hidden coupling to uvicorn lifecycle, graceful shutdown, and worker count.
+Historical context: expired session purge used to run as an ad hoc FastAPI lifespan task. It now runs through the same `backend-cron-sessions` sidecar as password-reset cleanup, with cadence controlled by `SESSION_PURGE_INTERVAL_SECONDS` in `backend/app/core/config.py:50`. The FastAPI lifespan hook is limited to startup assertions and provider-client shutdown cleanup; periodic jobs stay outside the request process.
 
-The next periodic jobs are:
+The periodic job set now includes:
 
-- `sourcing.cache.sweep_expired` for TrustedParts response retention.
-- Expired session purge, currently in FastAPI lifespan, when the shared runner exists.
-- Phase 5 alert evaluator (TP-503/504).
+- TrustedParts response retention.
+- Expired session and password-reset request cleanup.
+- Sourcing alert evaluation (TP-503/504).
 - Future routine maintenance jobs that need database access but not an HTTP request.
 
 ## Decision
 
-Periodic jobs run through a dedicated `backend-cron` sidecar container that invokes a shared backend CLI entry point, for example `python -m app.cli.run_job <job-name>`. The first implementation job is the sourcing cache sweeper. The sidecar uses the same backend image and database settings as `backend`, but it does not serve HTTP and does not run uvicorn.
+Periodic jobs run through `backend-cron*` sidecar containers that invoke a shared backend CLI entry point, for example `python -m app.cli.run_job <job-name>`. The sidecars use the same backend image and database settings as `backend`, but they do not serve HTTP and do not run uvicorn.
 
 Each job must be registered in the CLI allow-list with a clear owner, cadence, and idempotency expectations. The sidecar owns scheduling; the FastAPI request process does not grow a second scheduler.
 
@@ -57,9 +57,9 @@ Jobs using this scheduler:
 
 ## References
 
-- Source: `backend/app/domain/sourcing/cache.py:73`
-- Source: `backend/app/cli/run_job.py:105-122`
-- Source: `backend/app/core/config.py:34`
+- Source: `backend/app/domain/sourcing/cache.py:152`
+- Source: `backend/app/cli/run_job.py:93`
+- Source: `backend/app/core/config.py:50`
 - Related ADR: [ADR-0012](0012-uvicorn-single-worker-slowapi.md)
 - Related ADR: [ADR-0020](0020-trustedparts-sourcing-provider-split.md)
 - Issue: `https://github.com/matescb/stockManager/issues/341`

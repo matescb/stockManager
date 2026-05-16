@@ -150,6 +150,19 @@ jobs:
             exit 1
           fi
 
+  adr-cite-freshness:
+    # AUD-134 / issue #832: ADR source citations are load-bearing onboarding
+    # pointers. Fail when a backticked file:line or file:start-end cite points
+    # outside the current tracked file.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Check ADR file-line cites
+        run: scripts/check_adr_code_cites.py
+
   tp-schema-drift:
     # TPS-1 / issue #448: the bundled TrustedParts OpenAPI document and
     # generated Pydantic v2 models are committed artifacts. Regenerate from
@@ -773,6 +786,7 @@ jobs:
   #   - pip-audit         (SEC2-016)   — HIGH/CRITICAL CVEs in the pinned set
   #   - npm-audit         (issue #305) — CVEs in the npm production dep set
   #   - line-count-budget (CQ-002/003) — per-file line-count caps
+  #   - adr-cite-freshness (#832)      — ADR file:line cite freshness
   #   - tp-schema-drift   (#448)       — TrustedParts schema/model drift
   #   - backend-tests                  — pytest + alembic
   #   - web-build                      — tsc -b + vite build (+ sourcemap upload)
@@ -786,7 +800,7 @@ jobs:
     # Only redeploy on green main pushes. PRs and feature branches just run
     # the test/validate/security jobs above.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [ci-policy, lockfile-drift, pip-audit, npm-audit, line-count-budget, tp-schema-drift, backend-tests, web-build, prod-validate, playwright-e2e]
+    needs: [ci-policy, lockfile-drift, pip-audit, npm-audit, line-count-budget, adr-cite-freshness, tp-schema-drift, backend-tests, web-build, prod-validate, playwright-e2e]
     runs-on: ubuntu-latest
     # Environment association. Today this just scopes any environment-level
     # secrets we add later; if a "Required reviewers" protection rule is
