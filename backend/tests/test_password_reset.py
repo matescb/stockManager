@@ -336,86 +336,91 @@ def test_throttle_atomic_under_concurrency(db, monkeypatch):
 
 @pytest.mark.real_db
 def test_throttle_log_line_carries_reason(db, caplog):
-    rate_log = "password_reset_request status=throttled reason=rate"
-    lock_denied_log = "password_reset_request status=throttled reason=lock_denied"
-    rate_email = f"reset-rate-log-{uuid.uuid4().hex[:8]}@example.com"
-    signup_user(TestClient(app), email=rate_email)
+    with caplog.at_level(logging.INFO, logger=auth_routes.__name__):
+        rate_log = "password_reset_request status=throttled reason=rate"
+        lock_denied_log = "password_reset_request status=throttled reason=lock_denied"
+        rate_email = f"reset-rate-log-{uuid.uuid4().hex[:8]}@example.com"
+        signup_user(TestClient(app), email=rate_email)
 
-    with (
-        patch("app.api.routes.auth.send_password_reset_email") as rate_send_mail,
-        caplog.at_level(logging.INFO, logger=auth_routes.__name__),
-    ):
-        rate_client = TestClient(app)
-        for _ in range(auth_routes._PASSWORD_RESET_EMAIL_LIMIT + 1):
-            response = rate_client.post(
-                "/api/auth/request-password-reset",
-                json={"email": rate_email},
-            )
-            assert response.status_code == 202, response.text
+        with patch("app.api.routes.auth.send_password_reset_email") as rate_send_mail:
+            rate_client = TestClient(app)
+            rate_record_start = len(caplog.records)
+            for _ in range(auth_routes._PASSWORD_RESET_EMAIL_LIMIT + 1):
+                response = rate_client.post(
+                    "/api/auth/request-password-reset",
+                    json={"email": rate_email},
+                )
+                assert response.status_code == 202, response.text
 
-    assert rate_send_mail.call_count == auth_routes._PASSWORD_RESET_EMAIL_LIMIT
-    rate_messages = [
-        record.getMessage()
-        for record in caplog.records
-        if record.name == auth_routes.__name__
-    ]
-    assert rate_messages.count(rate_log) == 1
-    assert lock_denied_log not in rate_messages
+        assert rate_send_mail.call_count == auth_routes._PASSWORD_RESET_EMAIL_LIMIT
+        rate_records = caplog.records[rate_record_start:]
+        assert rate_records, (
+            "expected log records during rate throttle checks before filtering"
+        )
+        rate_messages = [
+            record.getMessage()
+            for record in rate_records
+            if record.name == auth_routes.__name__
+        ]
+        assert rate_messages.count(rate_log) == 1, rate_messages
+        assert lock_denied_log not in rate_messages
 
-    caplog.clear()
+        caplog.clear()
 
-    email = f"reset-lock-denied-{uuid.uuid4().hex[:8]}@example.com"
-    signup_user(TestClient(app), email=email)
-    email_hash = auth_routes._hash_email_for_password_reset(email)
+        email = f"reset-lock-denied-{uuid.uuid4().hex[:8]}@example.com"
+        signup_user(TestClient(app), email=email)
+        email_hash = auth_routes._hash_email_for_password_reset(email)
 
-    db.execute(
-        text(
-            "SELECT pg_advisory_xact_lock("
-            "CAST(:classid AS int4), CAST(hashtext(:lock_key) AS int4)"
-            ")"
-        ),
-        {
-            "classid": PASSWORD_RESET_THROTTLE_LOCK_CLASSID,
-            "lock_key": f"reset:{email_hash}",
-        },
-    )
+        db.execute(
+            text(
+                "SELECT pg_advisory_xact_lock("
+                "CAST(:classid AS int4), CAST(hashtext(:lock_key) AS int4)"
+                ")"
+            ),
+            {
+                "classid": PASSWORD_RESET_THROTTLE_LOCK_CLASSID,
+                "lock_key": f"reset:{email_hash}",
+            },
+        )
 
-    try:
-        with (
-            patch("app.api.routes.auth.send_password_reset_email") as send_mail,
-            caplog.at_level(logging.INFO, logger=auth_routes.__name__),
-        ):
-            response = TestClient(app).post(
-                "/api/auth/request-password-reset",
-                json={"email": email},
-            )
-    finally:
-        db.rollback()
+        try:
+            with patch("app.api.routes.auth.send_password_reset_email") as send_mail:
+                lock_record_start = len(caplog.records)
+                response = TestClient(app).post(
+                    "/api/auth/request-password-reset",
+                    json={"email": email},
+                )
+        finally:
+            db.rollback()
 
-    assert response.status_code == 202, response.text
-    assert response.json()["data"] == {"status": "accepted"}
-    send_mail.assert_not_called()
-    lock_messages = [
-        record.getMessage()
-        for record in caplog.records
-        if record.name == auth_routes.__name__
-    ]
-    assert lock_messages.count(lock_denied_log) == 1
-    assert rate_log not in lock_messages
+        assert response.status_code == 202, response.text
+        assert response.json()["data"] == {"status": "accepted"}
+        send_mail.assert_not_called()
+        lock_records = caplog.records[lock_record_start:]
+        assert lock_records, (
+            "expected log records during lock-denied throttle check before filtering"
+        )
+        lock_messages = [
+            record.getMessage()
+            for record in lock_records
+            if record.name == auth_routes.__name__
+        ]
+        assert lock_messages.count(lock_denied_log) == 1, lock_messages
+        assert rate_log not in lock_messages
 
-    row = (
-        db.query(PasswordResetRequest)
-        .filter_by(email_hash=email_hash)
-        .one()
-    )
-    assert row.token_hmac is None
-    audit = (
-        db.query(AuditLog)
-        .filter(AuditLog.action == "user.password_reset_requested")
-        .filter(AuditLog.comment == "throttled:concurrent")
-        .one()
-    )
-    assert audit.comment == "throttled:concurrent"
+        row = (
+            db.query(PasswordResetRequest)
+            .filter_by(email_hash=email_hash)
+            .one()
+        )
+        assert row.token_hmac is None
+        audit = (
+            db.query(AuditLog)
+            .filter(AuditLog.action == "user.password_reset_requested")
+            .filter(AuditLog.comment == "throttled:concurrent")
+            .one()
+        )
+        assert audit.comment == "throttled:concurrent"
 
 
 def test_unknown_email_does_not_persist_row(client, db):
