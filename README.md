@@ -123,7 +123,7 @@ Single-VPS, single-uvicorn-worker (slowapi rate-limit correctness — see [ADR-0
 
 Read [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`CLAUDE.md`](CLAUDE.md) before opening a PR. The "Hard invariants" and "Things that have bitten us" sections of `CLAUDE.md` are not style preferences — they are the rules each ADR codifies.
 
-CI gates: ruff (Python) + eslint (JS/TS) **delta-blocking** vs the checked-in baselines (`.ruff-baseline.txt`, `.eslint-baseline.txt`); `tsc -b` + `vite build`; pytest with a real Postgres service container; vitest; Playwright e2e; pip-audit + npm-audit; lockfile-drift; line-count-budget; ci-policy meta-gate.
+CI gates: ruff (Python) + eslint (JS/TS) **delta-blocking** vs the checked-in baselines (`.ruff-baseline.txt`, `.eslint-baseline.txt`); `tsc -b` + `vite build`; pytest with a real Postgres service container; vitest; Playwright e2e; pip-audit + npm-audit; lockfile-drift; digest-freshness; line-count-budget; ci-policy meta-gate.
 
 ## License
 
