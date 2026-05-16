@@ -259,17 +259,29 @@ def test_compose_prod_backend_cron_sessions_disabled_jobs_stay_healthy():
     mkdir = "mkdir -p /tmp/stockmanager-job-heartbeats"
     session_branch = "if [ $$session_interval -gt 0 ]"
     reset_branch = "if [ $$reset_interval -gt 0 ]"
+    session_interval = (
+        "session_interval=$$(python -m app.cli.run_job "
+        "session-purge --print-interval)"
+    )
+    reset_interval = (
+        "reset_interval=$$(python -m app.cli.run_job "
+        "password-reset-purge --print-interval)"
+    )
     assert mkdir in joined_cmd
+    assert session_interval in joined_cmd
+    assert reset_interval in joined_cmd
     assert joined_cmd.index(mkdir) < joined_cmd.index(session_branch)
     assert joined_cmd.index(mkdir) < joined_cmd.index(reset_branch)
+    assert "$${SESSION_PURGE_INTERVAL_SECONDS" not in joined_cmd
+    assert "$${PASSWORD_RESET_PURGE_INTERVAL_SECONDS" not in joined_cmd
 
     healthcheck = cron.get("healthcheck", {})
     healthcheck_test = " ".join(healthcheck.get("test", []))
-    assert "test -d /tmp/stockmanager-job-heartbeats" in healthcheck_test
-    assert "[ $${SESSION_PURGE_INTERVAL_SECONDS:-3600} -le 0 ]" in healthcheck_test
-    assert "[ $${PASSWORD_RESET_PURGE_INTERVAL_SECONDS:-3600} -le 0 ]" in healthcheck_test
-    assert "session-purge -mmin -90" in healthcheck_test
-    assert "password-reset-purge -mmin -90" in healthcheck_test
+    assert "session-purge --check-heartbeat" in healthcheck_test
+    assert "password-reset-purge --check-heartbeat" in healthcheck_test
+    assert "--heartbeat-max-age-seconds 5400" in healthcheck_test
+    assert "$${SESSION_PURGE_INTERVAL_SECONDS" not in healthcheck_test
+    assert "$${PASSWORD_RESET_PURGE_INTERVAL_SECONDS" not in healthcheck_test
 
 
 def test_compose_prod_backend_cron_alerts_command_shape():
