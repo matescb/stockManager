@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
-import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
+import { stockReportKeys, useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import EntityHeader from "@/components/EntityHeader";
 import { DataTable } from "@/components/DataTable";
@@ -108,6 +108,9 @@ export default function OrderDetail() {
       setReceiveLines({});
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "order", orderId) });
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
+      for (const queryKey of stockReportKeys(workspaceId)) {
+        qc.invalidateQueries({ queryKey });
+      }
       toast.success(`Received ${totalQty} unit${totalQty === 1 ? "" : "s"}.`);
     },
     onError: (e) => {

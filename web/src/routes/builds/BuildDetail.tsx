@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
-import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
+import { stockReportKeys, useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
 import EntityHeader from "@/components/EntityHeader";
@@ -82,6 +82,9 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "build", buildId) });
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
+      for (const queryKey of stockReportKeys(workspaceId)) {
+        qc.invalidateQueries({ queryKey });
+      }
       toast.success("Build complete — stock decremented.");
     },
     onError: (e) => {

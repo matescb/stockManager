@@ -12,6 +12,7 @@ import {
   archiveStorageKeys,
   lotMutationKeys,
   archiveProjectKeys,
+  stockReportKeys,
 } from "./queryKeys";
 
 const WS = "ws-abc";
@@ -132,6 +133,16 @@ describe("lotMutationKeys", () => {
     const keys = lotMutationKeys(WS, lot, [STORAGE_ID, S2]);
     expect(keys.some(k => (k as unknown[]).includes(STORAGE_ID))).toBe(true);
     expect(keys.some(k => (k as unknown[]).includes(S2))).toBe(true);
+  });
+});
+
+describe("stockReportKeys", () => {
+  it("returns the stock-rollup report keys for a workspace", () => {
+    expect(stockReportKeys(WS)).toEqual([
+      ["ws", WS, "report", "low-stock"],
+      ["ws", WS, "report", "stock-value"],
+      ["ws", WS, "report", "expiring"],
+    ]);
   });
 });
 

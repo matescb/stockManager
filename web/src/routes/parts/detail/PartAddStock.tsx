@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { api, ApiError } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
-import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
+import { stockReportKeys, useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import { InlineQueryError } from "@/components/QueryStateBoundary";
 import type { StorageLocation } from "@/types";
@@ -60,6 +60,9 @@ export default function PartAddStock() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", partId) });
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
+      for (const queryKey of stockReportKeys(workspaceId)) {
+        qc.invalidateQueries({ queryKey });
+      }
       nav(`/parts/${partId}/stock`);
     },
     onError: (e) => {
