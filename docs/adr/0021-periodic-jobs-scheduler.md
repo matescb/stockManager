@@ -58,7 +58,7 @@ Jobs using this scheduler:
 ## References
 
 - Source: `backend/app/domain/sourcing/cache.py:73`
-- Source: `backend/app/main.py:136`
+- Source: `backend/app/cli/run_job.py:105-122`
 - Source: `backend/app/core/config.py:34`
 - Related ADR: [ADR-0012](0012-uvicorn-single-worker-slowapi.md)
 - Related ADR: [ADR-0020](0020-trustedparts-sourcing-provider-split.md)
