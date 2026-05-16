@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 import logging
+import os
+import time
 import uuid
 from datetime import timedelta
 
 from sqlalchemy.orm import Session
 
-from app.cli.run_job import JOBS, JobConfigError, JobSpec, UnknownJobError, main, run_job
+from app.cli.run_job import (
+    JOBS,
+    JobConfigError,
+    JobSpec,
+    UnknownJobError,
+    heartbeat_is_fresh,
+    main,
+    run_job,
+)
 from app.core.advisory_locks import RUN_JOB_LOCK_CLASSID
 from app.core.time import utcnow
 from app.domain.users.models import User, UserSession
@@ -314,5 +324,86 @@ def test_run_job_skips_when_advisory_lock_denied(caplog, tmp_path) -> None:
     assert session.committed is False
     assert session.rolled_back is True
     assert session.closed is True
-    assert not (tmp_path / "example").exists()
+    assert (tmp_path / "example").read_text(encoding="utf-8") == "ok\n"
     assert "job=example status=skipped reason=lock_denied" in caplog.text
+
+
+def test_lock_denied_writes_sentinel_heartbeat(tmp_path) -> None:
+    session = _FakeSession(execute_result=False)
+    calls: list[Session] = []
+    heartbeat_path = tmp_path / "example"
+    heartbeat_path.write_text("stale\n", encoding="utf-8")
+    stale_mtime = time.time() - 120
+    os.utime(heartbeat_path, (stale_mtime, stale_mtime))
+
+    def _job(db: Session) -> int:
+        calls.append(db)
+        return 4
+
+    affected = run_job(
+        "example",
+        jobs={
+            "example": JobSpec(
+                name="example",
+                owner="tests",
+                cadence="manual",
+                idempotency="test-only",
+                run=_job,
+            )
+        },
+        session_factory=lambda: session,  # type: ignore[return-value]
+        heartbeat_dir=tmp_path,
+    )
+
+    assert affected == 0
+    assert calls == []
+    assert session.committed is False
+    assert session.rolled_back is True
+    assert session.closed is True
+    assert heartbeat_path.read_text(encoding="utf-8") == "ok\n"
+    assert heartbeat_path.stat().st_mtime > stale_mtime
+
+
+def test_healthcheck_detects_missing_or_stale_heartbeat(monkeypatch, tmp_path) -> None:
+    from app.core.config import settings
+
+    settings.cache_clear()
+    monkeypatch.setenv("SESSION_PURGE_INTERVAL_SECONDS", "3600")
+    jobs = {
+        "example": JobSpec(
+            name="example",
+            owner="tests",
+            cadence="manual",
+            idempotency="test-only",
+            run=lambda db: 0,
+            interval_setting="SESSION_PURGE_INTERVAL_SECONDS",
+        )
+    }
+
+    try:
+        assert (
+            heartbeat_is_fresh(
+                "example",
+                jobs=jobs,
+                heartbeat_dir=tmp_path,
+                max_age_seconds=60,
+            )
+            is False
+        )
+
+        heartbeat_path = tmp_path / "example"
+        heartbeat_path.write_text("ok\n", encoding="utf-8")
+        stale_mtime = time.time() - 120
+        os.utime(heartbeat_path, (stale_mtime, stale_mtime))
+
+        assert (
+            heartbeat_is_fresh(
+                "example",
+                jobs=jobs,
+                heartbeat_dir=tmp_path,
+                max_age_seconds=60,
+            )
+            is False
+        )
+    finally:
+        settings.cache_clear()
