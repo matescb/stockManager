@@ -195,7 +195,7 @@ services:
     # Runs the hourly TrustedParts cache retention sweep through the shared
     # backend CLI. Each run is capped at 600s; failures are logged and the
     # loop sleeps on the same cadence before trying again.
-    command: ["sh", "-c", "while true; do timeout 600 python -m app.cli.run_job sourcing-cache-sweep; rc=$$?; if [ $$rc -eq 124 ]; then echo 'sourcing-cache-sweep timed out after 600s (exit=124)'; elif [ $$rc -ne 0 ]; then echo \"sourcing-cache-sweep failed (exit=$$rc)\"; fi; sleep 3600; done"]
+    command: ["sh", "-c", "mkdir -p /tmp/stockmanager-job-heartbeats; while true; do timeout 600 python -m app.cli.run_job sourcing-cache-sweep; rc=$$?; if [ $$rc -eq 124 ]; then echo 'sourcing-cache-sweep timed out after 600s (exit=124)'; elif [ $$rc -ne 0 ]; then echo \"sourcing-cache-sweep failed (exit=$$rc)\"; fi; sleep 3600; done"]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
 
@@ -227,7 +227,7 @@ services:
     # Runs the 15-minute sourcing alert evaluator through the shared backend
     # CLI. Alert-level cooldowns enforce per-alert notification frequency.
     # Each run is capped at 600s; failures are logged and the loop continues.
-    command: ["sh", "-c", "while true; do timeout 600 python -m app.cli.run_job sourcing-alerts-evaluate; rc=$$?; if [ $$rc -eq 124 ]; then echo 'sourcing-alerts-evaluate timed out after 600s (exit=124)'; elif [ $$rc -ne 0 ]; then echo \"sourcing-alerts-evaluate failed (exit=$$rc)\"; fi; sleep 900; done"]
+    command: ["sh", "-c", "mkdir -p /tmp/stockmanager-job-heartbeats; while true; do timeout 600 python -m app.cli.run_job sourcing-alerts-evaluate; rc=$$?; if [ $$rc -eq 124 ]; then echo 'sourcing-alerts-evaluate timed out after 600s (exit=124)'; elif [ $$rc -ne 0 ]; then echo \"sourcing-alerts-evaluate failed (exit=$$rc)\"; fi; sleep 900; done"]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
 
