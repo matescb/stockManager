@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -442,7 +442,13 @@ def test_sourcing_response_converts_when_distributor_returns_different_currency(
     assert Decimal(distributor["unit_price_converted"]) == Decimal("1.2500")
     assert distributor["currency_displayed"] == "EUR"
     assert distributor["fx_converted"] is True
-    assert distributor["fx_rate_date"] == date.today().isoformat()
+    # The app derives this from utcnow(), so the expectation must too —
+    # date.today() is the LOCAL date and disagrees with UTC between local
+    # midnight and 02:00 CEST, which is exactly when nightly runs land.
+    assert (
+        distributor["fx_rate_date"]
+        == datetime.now(timezone.utc).date().isoformat()
+    )
     assert Decimal(distributor["price_breaks_converted"][1]["unit_price"]) == Decimal("1.0000")
 
 
