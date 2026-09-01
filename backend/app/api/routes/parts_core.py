@@ -35,6 +35,7 @@ from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import Envelope, ok
 from app.core.time import utcnow
 from app.domain.audit.service import log as _audit_log
+from app.domain.categories.models import PartCategory
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part
 from app.domain.parts.schemas import (
@@ -208,6 +209,17 @@ def create_part(
             label="storage location",
         )
 
+    # Same guard for the caller-supplied category — a foreign category_id
+    # would otherwise persist as a cross-workspace FK. Archived categories
+    # are hidden from every picker, so accepting one here could only come
+    # from a stale or hand-crafted request.
+    if payload.category_id is not None:
+        category = assert_in_workspace(
+            db, PartCategory, payload.category_id, ws.id, label="category",
+        )
+        if category.archived_at is not None:
+            raise_http(409, ErrorCodes.CATEGORY_ARCHIVED, "Category is archived")
+
     p = Part(
         workspace_id=ws.id,
         part_type=payload.part_type,
@@ -224,6 +236,7 @@ def create_part(
         default_storage_location_id=payload.default_storage_location_id,
         default_storage_mandatory=payload.default_storage_mandatory,
         serialized=payload.serialized,
+        category_id=payload.category_id,
         created_by=user.id,
         updated_by=user.id,
     )
@@ -312,6 +325,18 @@ def patch_part(
             db, StorageLocation, data["default_storage_location_id"], ws.id,
             label="storage location",
         )
+
+    # Same as above — an explicit null clears the category and needs no
+    # lookup; a UUID must resolve inside this workspace. Archived is only
+    # rejected when the value CHANGES: a part already pointing at a
+    # since-archived category must stay patchable (the settings form
+    # round-trips the current value).
+    if data.get("category_id") is not None:
+        category = assert_in_workspace(
+            db, PartCategory, data["category_id"], ws.id, label="category"
+        )
+        if category.archived_at is not None and data["category_id"] != p.category_id:
+            raise_http(409, ErrorCodes.CATEGORY_ARCHIVED, "Category is archived")
 
     for k, v in data.items():
         setattr(p, k, v)

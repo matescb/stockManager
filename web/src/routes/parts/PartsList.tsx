@@ -1,11 +1,11 @@
 import { useRef, useCallback } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Boxes, ImageOff, Loader2, Trash2 } from "lucide-react";
 import { api, ApiError, getPaged } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
-import { PagedPartsSchema } from "@/lib/schemas";
+import { PagedPartsSchema, PartCategoriesListSchema } from "@/lib/schemas";
 import type { Part } from "@/lib/schemas";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
@@ -25,6 +25,17 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
   const { workspaceId } = useAuth();
   // Use a distinct key so archived/active lists don't share cache entries.
   const partsKey = useWsKey("parts", "paged", { archived });
+  // Parts carry `category_id`, not the name — one list query resolves every
+  // row's label. Archived categories are included so a part that still
+  // points at one doesn't render a blank cell.
+  const categoriesQuery = useQuery({
+    queryKey: useWsKey("categories", { archived: true }),
+    queryFn: ({ signal }) =>
+      api.parsed.get("/categories?include_archived=true", PartCategoriesListSchema, { signal }),
+  });
+  const categoryNames = new Map(
+    (categoriesQuery.data ?? []).map((c) => [c.id, c.name] as const),
+  );
 
   const bulkDeleteMutation = useApiMutation<{ archived_ids: string[]; skipped: number }, { part_ids: string[] }>({
     mutationKey: ["parts", "bulk-delete"],
@@ -202,6 +213,12 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
                 { key: "mpn", header: "MPN", accessor: (r) => r.mpn ?? "" },
                 { key: "manufacturer", header: "Manufacturer", accessor: (r) => r.manufacturer ?? "" },
                 { key: "footprint", header: "Footprint", accessor: (r) => r.footprint ?? "" },
+                {
+                  key: "category",
+                  header: "Category",
+                  accessor: (r) => (r.category_id ? categoryNames.get(r.category_id) ?? "" : ""),
+                  hidden: true,
+                },
                 { key: "on_hand", header: "Stock", accessor: (r) => r.on_hand ?? 0, width: "80px" },
                 {
                   key: "reserved",

@@ -16,6 +16,7 @@
 // Resources currently covered by zod schemas.
 export type {
   Part,
+  PartCategory,
   StorageLocation,
   SpecSource,
   CustomFieldRow,

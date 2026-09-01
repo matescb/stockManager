@@ -1483,6 +1483,19 @@ def test_bom_presets_isolation():
     assert b.delete(f"/api/bom-presets/{preset}").status_code == 404
 
 
+def test_categories_isolation():
+    a, b = _two_workspaces()
+    category = a.post("/api/categories", json={"name": "A's"}).json()["data"]["id"]
+    rows = b.get("/api/categories").json()["data"]
+    assert all(r["id"] != category for r in rows)
+    assert b.patch(f"/api/categories/{category}", json={"name": "stolen"}).status_code == 404
+    assert b.post(f"/api/categories/{category}/archive").status_code == 404
+    assert b.post(f"/api/categories/{category}/restore").status_code == 404
+    # And the FK on parts must refuse a foreign category the same way.
+    part = b.post("/api/parts", json={"name": "B's part"}).json()["data"]["id"]
+    assert b.patch(f"/api/parts/{part}", json={"category_id": category}).status_code == 404
+
+
 def test_bom_provider_import_foreign_project_404():
     """Provider-backed unmatched-row import must resolve project_id inside
     the caller's workspace before it looks at any BOM entries."""

@@ -168,6 +168,7 @@ from app.api.routes import (
     bom_presets,
     builds,
     catalog,
+    categories,
     custom_fields,
     invitations,
     lots,
@@ -467,6 +468,12 @@ app.include_router(invitations.router, prefix="/api/invitations", tags=["invitat
 # the route enforces its own session-or-trusted-Origin gate.
 app.include_router(sentry_tunnel.router, prefix="/api", tags=["sentry"])
 app.include_router(attachments.router, prefix="/api/attachments", tags=["attachments"], dependencies=_member_gate)
+app.include_router(
+    categories.router,
+    prefix="/api/categories",
+    tags=["categories"],
+    dependencies=_member_gate,
+)
 app.include_router(custom_fields.router, prefix="/api/custom-fields", tags=["custom_fields"], dependencies=_member_gate)
 app.include_router(tags.router, prefix="/api/tags", tags=["tags"], dependencies=_member_gate)
 app.include_router(search.router, prefix="/api/search", tags=["search"], dependencies=_member_gate)

@@ -57,6 +57,11 @@ export const PartSchema = z.object({
   default_storage_location_id: uuid.nullable(),
   default_storage_mandatory: z.boolean(),
   serialized: z.boolean(),
+  // Optional rather than plain `.nullable()` for the same reason as
+  // `published` below — the field was added after the schema shipped, and
+  // marking it optional keeps older fixtures and any cached response
+  // parseable instead of throwing a schema-mismatch at the boundary.
+  category_id: optionalNullableUuid,
   published: z.boolean().optional(),
   linked_provider: z.enum(["mouser", "digikey"]).nullable(),
   linked_external_id: nullableString,
@@ -87,8 +92,30 @@ export const PartCreateSchema = z.object({
   default_storage_location_id: optionalNullableUuid,
   default_storage_mandatory: z.boolean().optional(),
   serialized: z.boolean().optional(),
+  category_id: optionalNullableUuid,
 }).strict();
 export type PartCreate = z.infer<typeof PartCreateSchema>;
+
+/**
+ * A workspace-scoped bucket for parts. `library_slug` is the stable,
+ * URL- and KiCad-library-safe identifier; the server derives it from
+ * `name` when the caller doesn't supply one, and a rename never moves it.
+ */
+export const PartCategorySchema = z.object({
+  id: uuid,
+  name: z.string(),
+  description: nullableString,
+  sort_order: z.number(),
+  refdes_prefix: nullableString,
+  default_symbol_ref: nullableString,
+  default_footprint_ref: nullableString,
+  footprint_filters: z.array(z.string()).nullable(),
+  library_slug: z.string(),
+  archived_at: nullableString,
+});
+export type PartCategory = z.infer<typeof PartCategorySchema>;
+
+export const PartCategoriesListSchema = z.array(PartCategorySchema);
 
 /** Paged parts response — returned by GET /parts with cursor pagination. */
 export const PagedPartsSchema = z.object({

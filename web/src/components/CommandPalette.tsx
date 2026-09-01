@@ -107,6 +107,12 @@ export default function CommandPalette() {
             <Settings size={14} /> Workspace settings
           </Command.Item>
           <Command.Item
+            value="nav settings categories parts library kicad"
+            onSelect={() => go("/settings/categories")}
+          >
+            <Boxes size={14} /> Categories
+          </Command.Item>
+          <Command.Item
             value="nav settings account profile invitation"
             onSelect={() => go("/settings/account")}
           >

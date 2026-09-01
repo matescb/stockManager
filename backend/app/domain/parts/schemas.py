@@ -54,6 +54,7 @@ class PartIn(BaseModel):
     default_storage_location_id: UUID | None = None
     default_storage_mandatory: bool = False
     serialized: bool = False
+    category_id: UUID | None = None
 
 
 class PartPatch(BaseModel):
@@ -73,6 +74,9 @@ class PartPatch(BaseModel):
     default_storage_mandatory: bool | None = None
     serialized: bool | None = None
     published: bool | None = None
+    # Explicit null clears the category; a UUID must name a category in
+    # this workspace (validated in the route).
+    category_id: UUID | None = None
     # Command flag: when true, drops the provider link, clears
     # last_refresh_at, resets description_locally_edited, and converts
     # every {provider, override} custom_field row on this part to

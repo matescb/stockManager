@@ -114,6 +114,7 @@ const PurchasePlanReviewPage = lazy(() => import("@/routes/projects/sourcing/Pur
 
 const Account = lazy(() => import("@/routes/settings/Account"));
 const WorkspaceSettings = lazy(() => import("@/routes/settings/Workspace"));
+const CategoriesSettings = lazy(() => import("@/routes/settings/Categories"));
 
 /**
  * Auth gate + AppShell as a layout route. Mounting this once at the top
@@ -301,6 +302,7 @@ export default function App() {
 
             <Route path="/settings/account" element={<LazyRoute><Account /></LazyRoute>} />
             <Route path="/settings/workspace" element={<LazyRoute><WorkspaceSettings /></LazyRoute>} />
+            <Route path="/settings/categories" element={<LazyRoute><CategoriesSettings /></LazyRoute>} />
 
             <Route path="*" element={<NotFound />} />
           </Route>

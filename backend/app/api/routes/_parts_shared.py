@@ -67,6 +67,7 @@ def serialize_part(
         "low_stock_report_quantity": p.low_stock_report_quantity,
         "attrition_percentage": float(p.attrition_percentage or 0),
         "attrition_min_quantity": p.attrition_min_quantity or 0,
+        "category_id": str(p.category_id) if p.category_id else None,
         "default_storage_location_id": str(p.default_storage_location_id) if p.default_storage_location_id else None,
         "default_storage_mandatory": p.default_storage_mandatory,
         "serialized": p.serialized,
