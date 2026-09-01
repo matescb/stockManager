@@ -10,6 +10,12 @@ from app.domain.audit.models import AuditLog
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part
 
+# Reuse the EDA fixture builders rather than re-deriving valid KiCad
+# content here — one definition, so a format fix lands in both files.
+from tests.test_eda import STEP_BYTES as EDA_STEP_BYTES
+from tests.test_eda import _footprint_text as _eda_footprint_text
+from tests.test_eda import _symbol_text as _eda_symbol_text
+
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 FORBIDDEN_COMMENT_VALUES = (
     "plaintext-token-aud-124",
@@ -321,6 +327,122 @@ def _setup_custom_field_restore(client, db) -> Operation:
     }
 
 
+def _eda_upload(client, path: str, filename: str, content) -> str:
+    """Upload one EDA library file through the API and return its row id."""
+    if isinstance(content, str):
+        content = content.encode("utf-8")
+    r = client.post(
+        path, files={"file": (filename, content, "application/octet-stream")}
+    )
+    assert r.status_code in (200, 201), r.text
+    return r.json()["data"]["id"]
+
+
+def _setup_eda_symbol_upload(_client, _db) -> Operation:
+    return {
+        "method": "post",
+        "path": "/api/eda/symbols",
+        "files": {
+            "file": (
+                "R.kicad_sym",
+                _eda_symbol_text("AUD_124_R").encode("utf-8"),
+                "application/octet-stream",
+            )
+        },
+        "expected_status": 201,
+        "target_ids": _created_part_id,
+    }
+
+
+def _setup_eda_symbol_patch(client, _db) -> Operation:
+    symbol_id = _eda_upload(
+        client, "/api/eda/symbols", "R.kicad_sym", _eda_symbol_text("AUD_124_patch")
+    )
+    return {
+        "method": "patch",
+        "path": f"/api/eda/symbols/{symbol_id}",
+        "json": {"name": "AUD_124_renamed"},
+        "expected_status": 200,
+        "target_id": symbol_id,
+    }
+
+
+def _setup_eda_symbol_archive(client, _db) -> Operation:
+    symbol_id = _eda_upload(
+        client, "/api/eda/symbols", "R.kicad_sym", _eda_symbol_text("AUD_124_archive")
+    )
+    return {
+        "method": "post",
+        "path": f"/api/eda/symbols/{symbol_id}/archive",
+        "expected_status": 200,
+        "target_id": symbol_id,
+    }
+
+
+def _setup_eda_symbol_restore(client, _db) -> Operation:
+    symbol_id = _eda_upload(
+        client, "/api/eda/symbols", "R.kicad_sym", _eda_symbol_text("AUD_124_restore")
+    )
+    assert client.post(f"/api/eda/symbols/{symbol_id}/archive").status_code == 200
+    return {
+        "method": "post",
+        "path": f"/api/eda/symbols/{symbol_id}/restore",
+        "expected_status": 200,
+        "target_id": symbol_id,
+    }
+
+
+def _setup_eda_datafile_upload(_client, _db) -> Operation:
+    return {
+        "method": "post",
+        "path": "/api/eda/datafiles",
+        "files": {"file": ("model.step", EDA_STEP_BYTES, "application/octet-stream")},
+        "expected_status": 201,
+        "target_ids": _created_part_id,
+    }
+
+
+def _setup_eda_footprint_model_link(client, _db) -> Operation:
+    footprint_id = _eda_upload(
+        client,
+        "/api/eda/footprints",
+        "F.kicad_mod",
+        _eda_footprint_text("AUD_124_FP"),
+    )
+    datafile_id = _eda_upload(client, "/api/eda/datafiles", "m.step", EDA_STEP_BYTES)
+    return {
+        "method": "post",
+        "path": f"/api/eda/footprints/{footprint_id}/models",
+        "json": {"datafile_id": datafile_id, "position": 0},
+        "expected_status": 200,
+        "target_id": footprint_id,
+    }
+
+
+def _setup_part_eda_put(client, _db) -> Operation:
+    part_id = _create_part(client, "AUD-124 part_eda target")
+    return {
+        "method": "put",
+        "path": f"/api/parts/{part_id}/eda",
+        # The comment grammar for this route is `fields=<names>`, so a
+        # secret in a VALUE must not reach the audit row.
+        "json": {"value": "credential-aud-124", "keywords": "raw-bag-code-aud-124"},
+        "expected_status": 200,
+        "target_id": part_id,
+    }
+
+
+def _setup_part_eda_delete(client, _db) -> Operation:
+    part_id = _create_part(client, "AUD-124 part_eda delete target")
+    assert client.put(f"/api/parts/{part_id}/eda", json={"value": "10k"}).status_code == 200
+    return {
+        "method": "delete",
+        "path": f"/api/parts/{part_id}/eda",
+        "expected_status": 200,
+        "target_id": part_id,
+    }
+
+
 def _setup_attachment_delete(client, _db) -> Operation:
     part_id = _create_part(client, "AUD-124 attachment target")
     r = client.post(
@@ -367,6 +489,31 @@ def _setup_attachment_delete(client, _db) -> Operation:
             {"description": "SMD only", "sort_order": 30},
             "category.updated",
             "part_category",
+        ),
+        (
+            "eda.patch_symbol",
+            lambda client: _eda_upload(
+                client,
+                "/api/eda/symbols",
+                "R.kicad_sym",
+                _eda_symbol_text("Audit Symbol"),
+            ),
+            "patch",
+            "/api/eda/symbols/{target_id}",
+            {"name": "Audit Symbol Renamed"},
+            "eda_symbol.updated",
+            "eda_symbol",
+        ),
+        (
+            "eda.patch_datafile",
+            lambda client: _eda_upload(
+                client, "/api/eda/datafiles", "audit.step", EDA_STEP_BYTES
+            ),
+            "patch",
+            "/api/eda/datafiles/{target_id}",
+            {"name": "audit-renamed.step"},
+            "eda_datafile.updated",
+            "eda_datafile",
         ),
     ],
 )
@@ -493,6 +640,62 @@ def test_each_mutator_writes_audit_row(
             _setup_attachment_delete,
             "attachment.deleted",
             "attachment",
+            _target_id,
+        ),
+        (
+            "eda.upload_symbol",
+            _setup_eda_symbol_upload,
+            "eda_symbol.uploaded",
+            "eda_symbol",
+            _created_part_id,
+        ),
+        (
+            "eda.patch_symbol",
+            _setup_eda_symbol_patch,
+            "eda_symbol.updated",
+            "eda_symbol",
+            _target_id,
+        ),
+        (
+            "eda.archive_symbol",
+            _setup_eda_symbol_archive,
+            "eda_symbol.archived",
+            "eda_symbol",
+            _target_id,
+        ),
+        (
+            "eda.restore_symbol",
+            _setup_eda_symbol_restore,
+            "eda_symbol.restored",
+            "eda_symbol",
+            _target_id,
+        ),
+        (
+            "eda.upload_datafile",
+            _setup_eda_datafile_upload,
+            "eda_datafile.uploaded",
+            "eda_datafile",
+            _created_part_id,
+        ),
+        (
+            "eda.link_footprint_model",
+            _setup_eda_footprint_model_link,
+            "eda_footprint.updated",
+            "eda_footprint",
+            _target_id,
+        ),
+        (
+            "eda.put_part_eda",
+            _setup_part_eda_put,
+            "part_eda.updated",
+            "part_eda",
+            _target_id,
+        ),
+        (
+            "eda.delete_part_eda",
+            _setup_part_eda_delete,
+            "part_eda.deleted",
+            "part_eda",
             _target_id,
         ),
     ],

@@ -17,6 +17,12 @@
 export type {
   Part,
   PartCategory,
+  EdaSymbol,
+  EdaFootprint,
+  EdaDatafile,
+  EdaFootprintModel,
+  PartEda,
+  PartEdaWrite,
   StorageLocation,
   SpecSource,
   CustomFieldRow,

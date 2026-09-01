@@ -36,6 +36,9 @@ from tests._factories import (
 from tests._factories import (
     signup_user,
 )
+from tests.test_eda import STEP_BYTES as _EDA_STEP_BYTES
+from tests.test_eda import _footprint_text as _eda_footprint_text
+from tests.test_eda import _symbol_text as _eda_symbol_text
 from tests.test_purchase_plan_route import (
     _configure_sourcing as _configure_purchase_plan_sourcing,
 )
@@ -1897,3 +1900,108 @@ def test_sourcing_alert_evaluator_isolated_by_workspace(db, monkeypatch):
     assert alerts_evaluator.evaluate_all_alerts(db) == 2
 
     assert set(seen_workspace_ids) == {workspace_a.id, workspace_b.id}
+
+
+# ---------------------------------------------------------------------
+# EDA libraries + per-part EDA config (phase 2)
+# ---------------------------------------------------------------------
+
+
+def _upload_eda_symbol(c: TestClient, entry: str = "R") -> dict:
+    r = c.post(
+        "/api/eda/symbols",
+        files={
+            "file": (
+                f"{entry}.kicad_sym",
+                _eda_symbol_text(entry).encode("utf-8"),
+                "application/octet-stream",
+            )
+        },
+    )
+    assert r.status_code == 201, r.text
+    return r.json()["data"]
+
+
+def test_eda_library_isolation_list_and_mutations_404_across_workspaces():
+    a, b = _two_workspaces()
+    symbol_a = _upload_eda_symbol(a, "A_Symbol")
+
+    # B's listing must not include it.
+    assert all(row["id"] != symbol_a["id"] for row in b.get("/api/eda/symbols").json()["data"])
+
+    # Every mutation path 404s — never 403, which would confirm existence.
+    assert b.patch(
+        f"/api/eda/symbols/{symbol_a['id']}", json={"name": "stolen"}
+    ).status_code == 404
+    assert b.post(f"/api/eda/symbols/{symbol_a['id']}/archive").status_code == 404
+    assert b.post(f"/api/eda/symbols/{symbol_a['id']}/restore").status_code == 404
+
+
+def test_eda_stored_files_are_not_readable_across_workspaces():
+    """The serve route keys on the ws_id in the PATH, so it has to match
+    the caller's current workspace — otherwise knowing a sha is enough to
+    read another tenant's library."""
+    a, b = _two_workspaces()
+    symbol_a = _upload_eda_symbol(a, "A_Symbol")
+    ws_a = a.get("/api/auth/me").json()["data"]["workspaces"][0]["id"]
+
+    assert b.get(f"/api/eda/files/{ws_a}/{symbol_a['sha256']}.kicad_sym").status_code == 404
+    # And A can still read its own file, so the guard isn't just breaking it.
+    assert a.get(f"/api/eda/files/{ws_a}/{symbol_a['sha256']}.kicad_sym").status_code == 200
+
+
+def test_eda_footprint_model_link_rejects_foreign_datafile():
+    a, b = _two_workspaces()
+    r = a.post(
+        "/api/eda/footprints",
+        files={
+            "file": (
+                "F.kicad_mod",
+                _eda_footprint_text("A_FP").encode("utf-8"),
+                "application/octet-stream",
+            )
+        },
+    )
+    assert r.status_code == 201, r.text
+    footprint_a = r.json()["data"]
+
+    r = b.post(
+        "/api/eda/datafiles",
+        files={"file": ("b.step", _EDA_STEP_BYTES, "application/octet-stream")},
+    )
+    assert r.status_code == 201, r.text
+    datafile_b = r.json()["data"]
+
+    # A embedding B's datafile_id must 404, not silently create a link
+    # that reaches across tenants.
+    r = a.post(
+        f"/api/eda/footprints/{footprint_a['id']}/models",
+        json={"datafile_id": datafile_b["id"]},
+    )
+    assert r.status_code == 404, r.text
+    assert a.get(f"/api/eda/footprints/{footprint_a['id']}/models").json()["data"] == []
+
+
+def test_part_eda_config_isolated_across_workspaces():
+    a, b = _two_workspaces()
+    part_a = _create_part(a, "A-part")
+    assert a.put(f"/api/parts/{part_a}/eda", json={"value": "10k"}).status_code == 200
+
+    assert b.get(f"/api/parts/{part_a}/eda").status_code == 404
+    assert b.put(f"/api/parts/{part_a}/eda", json={"value": "stolen"}).status_code == 404
+    assert b.delete(f"/api/parts/{part_a}/eda").status_code == 404
+    # The refused writes left A's config untouched.
+    assert a.get(f"/api/parts/{part_a}/eda").json()["data"]["value"] == "10k"
+
+
+def test_part_eda_rejects_foreign_symbol_and_footprint_ids():
+    """Without ws-validation on the body ids, a B caller could point its
+    own part at A's hosted symbol — binding a row across tenants and
+    leaking an existence oracle."""
+    a, b = _two_workspaces()
+    symbol_a = _upload_eda_symbol(a, "A_Symbol")
+    part_b = _create_part(b, "B-part")
+
+    r = b.put(f"/api/parts/{part_b}/eda", json={"symbol_id": symbol_a["id"]})
+    assert r.status_code == 404, r.text
+    assert b.get(f"/api/parts/{part_b}/eda").json()["data"] is None

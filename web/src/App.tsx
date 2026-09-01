@@ -41,6 +41,7 @@ import PartSettings from "@/routes/parts/detail/PartSettings";
 import PartOther from "@/routes/parts/detail/PartOther";
 import PartSpecs from "@/routes/parts/detail/PartSpecs";
 import PartSourcing from "@/routes/parts/detail/PartSourcing";
+import PartCad from "@/routes/parts/detail/PartCad";
 import AuthorizedSupplyTab from "@/routes/parts/detail/AuthorizedSupplyTab";
 import PartAttachments from "@/routes/parts/detail/PartAttachments";
 import PartActivity from "@/routes/parts/detail/PartActivity";
@@ -224,6 +225,7 @@ export default function App() {
               <Route path="info" element={<PartInfo />} />
               <Route path="specs" element={<PartSpecs />} />
               <Route path="sourcing" element={<PartSourcing />} />
+              <Route path="cad" element={<PartCad />} />
               <Route path="authorized-supply" element={<AuthorizedSupplyTabRoute />} />
               <Route path="stock" element={<PartStock />} />
               <Route path="add" element={<PartAddStock />} />

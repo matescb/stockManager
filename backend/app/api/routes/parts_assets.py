@@ -115,7 +115,11 @@ def get_provider_asset(
         # into play when the user does Save As. Restrict to a safe
         # subset and append the original extension so the saved file
         # opens in the right viewer.
-        safe = "".join(c for c in name if c.isalnum() or c in "._-")[:80] or "datasheet"
+        # ASCII-only: str.isalnum() alone admits Unicode letters, which
+        # blow up Starlette's latin-1 header encoding with a 500.
+        safe = "".join(
+            c for c in name if c.isascii() and (c.isalnum() or c in "._-")
+        )[:80] or "datasheet"
         ext_suffix = f".{ext}" if ext and not safe.lower().endswith(f".{ext.lower()}") else ""
         disposition_type = "inline" if inline else "attachment"
         headers["Content-Disposition"] = f'{disposition_type}; filename="{safe}{ext_suffix}"'
