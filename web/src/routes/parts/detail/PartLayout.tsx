@@ -30,6 +30,7 @@ function PartLayoutQuery({ partId }: { partId: string }) {
     // Sourcing only makes sense for parts that have a provider linked —
     // it surfaces stock/price/lead-time/etc. pulled by Mouser or DigiKey.
     ...(part.linked_provider ? [{ to: `/parts/${part.id}/sourcing`, label: "Sourcing" }] : []),
+    { to: `/parts/${part.id}/cad`, label: "CAD" },
     { to: `/parts/${part.id}/authorized-supply`, label: "Authorized supply" },
     { to: `/parts/${part.id}/stock`, label: "Stock" },
     { to: `/parts/${part.id}/add`, label: "Add stock" },

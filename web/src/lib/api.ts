@@ -239,6 +239,16 @@ export const api = {
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal: opts?.signal,
     }),
+  // PUT is for endpoints that REPLACE a resource wholesale rather than
+  // merging a partial (PATCH). Currently only `/parts/{id}/eda`, whose
+  // server contract is explicitly a full replacement — an omitted field
+  // resets to its default.
+  put: <T, B = unknown>(p: string, body?: B, opts?: ApiOptions) =>
+    request<T>(p, {
+      method: "PUT",
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: opts?.signal,
+    }),
   delete: <T>(p: string, opts?: ApiOptions) =>
     request<T>(p, { method: "DELETE", signal: opts?.signal }),
   upload: <T>(p: string, form: FormData, opts?: ApiOptions) =>

@@ -247,6 +247,25 @@ class ErrorCodes:
     CATEGORY_ARCHIVED = "category.archived"
     CATEGORY_FIELD_NOT_NULLABLE = "category.field_not_nullable"
 
+    # EDA router (symbols / footprints / 3D + SPICE data files / part_eda).
+    EDA_SYMBOL_NOT_FOUND = "eda_symbol.not_found"
+    EDA_FOOTPRINT_NOT_FOUND = "eda_footprint.not_found"
+    EDA_DATAFILE_NOT_FOUND = "eda_datafile.not_found"
+    EDA_NAME_CONFLICT = "eda.name_conflict"
+    EDA_FIELD_NOT_NULLABLE = "eda.field_not_nullable"
+    # Upload-lane validation (domain/eda/storage.py).
+    EDA_INVALID_FILE = "eda.invalid_file"
+    EDA_FILE_TOO_LARGE = "eda.file_too_large"
+    EDA_UNSUPPORTED_KIND = "eda.unsupported_kind"
+    EDA_EMPTY_FILE = "eda.empty_file"
+    EDA_MULTIPLE_SYMBOLS = "eda.multiple_symbols"
+    # part_eda config.
+    EDA_REF_CONFLICT = "eda.ref_conflict"
+    EDA_ARCHIVED = "eda.archived"
+    # File serving.
+    EDA_FILE_NOT_FOUND = "eda.file_not_found"
+    EDA_INVALID_FILENAME = "eda.invalid_filename"
+
     # Reports router.
     REPORT_PROJECT_NOT_FOUND = "report.project_not_found"
 

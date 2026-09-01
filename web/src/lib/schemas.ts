@@ -117,6 +117,104 @@ export type PartCategory = z.infer<typeof PartCategorySchema>;
 
 export const PartCategoriesListSchema = z.array(PartCategorySchema);
 
+// ---------------------------------------------------------------------
+// EDA libraries — the workspace's KiCad symbols, footprints, 3D models
+// and SPICE models, plus the per-part config naming which it uses.
+// Backend: `app/domain/eda/schemas.py`.
+// ---------------------------------------------------------------------
+
+/** Shared by symbols and footprints — same columns, same lifecycle. */
+const EdaEntryFields = {
+  id: uuid,
+  /** The KiCad entry name — the `Entry` half of a `LibNick:Entry` ref. */
+  name: z.string(),
+  /** Content hash; also the stored filename stem. The file is immutable. */
+  sha256: z.string(),
+  size_bytes: z.number(),
+  /** Server-controlled: manual | snapeda | samacsys | ultralibrarian | easyeda. */
+  source: z.string(),
+  category_id: uuid.nullable(),
+  archived_at: nullableString,
+};
+
+export const EdaSymbolSchema = z.object(EdaEntryFields);
+export type EdaSymbol = z.infer<typeof EdaSymbolSchema>;
+export const EdaSymbolsListSchema = z.array(EdaSymbolSchema);
+
+export const EdaFootprintSchema = z.object(EdaEntryFields);
+export type EdaFootprint = z.infer<typeof EdaFootprintSchema>;
+export const EdaFootprintsListSchema = z.array(EdaFootprintSchema);
+
+export const EdaDatafileSchema = z.object({
+  id: uuid,
+  /** step | wrl | spice — derived server-side from the upload's extension. */
+  kind: z.enum(["step", "wrl", "spice"]),
+  name: z.string(),
+  sha256: z.string(),
+  size_bytes: z.number(),
+  source: z.string(),
+  archived_at: nullableString,
+});
+export type EdaDatafile = z.infer<typeof EdaDatafileSchema>;
+export const EdaDatafilesListSchema = z.array(EdaDatafileSchema);
+
+/** A 3D model attached to a footprint, ordered by `position`. */
+export const EdaFootprintModelSchema = z.object({
+  datafile_id: uuid,
+  position: z.number(),
+});
+export type EdaFootprintModel = z.infer<typeof EdaFootprintModelSchema>;
+export const EdaFootprintModelsListSchema = z.array(EdaFootprintModelSchema);
+
+/**
+ * A part's EDA configuration.
+ *
+ * Each of the symbol and footprint slots is named EITHER by a hosted id
+ * (`*_id`) or by a KiCad `LibNick:Entry` string into the user's own
+ * libraries (`*_ref_external`) — never both; the server 422s on that.
+ * Both null means "inherit the category default".
+ */
+export const PartEdaSchema = z.object({
+  part_id: uuid,
+  symbol_id: uuid.nullable(),
+  symbol_ref_external: nullableString,
+  footprint_id: uuid.nullable(),
+  footprint_ref_external: nullableString,
+  spice_datafile_id: uuid.nullable(),
+  value: nullableString,
+  keywords: nullableString,
+  footprint_filters: z.array(z.string()).nullable(),
+  exclude_from_bom: z.boolean(),
+  exclude_from_board: z.boolean(),
+  exclude_from_sim: z.boolean(),
+  sim_device: nullableString,
+  sim_pins: nullableString,
+  sim_params: nullableString,
+});
+export type PartEda = z.infer<typeof PartEdaSchema>;
+
+/**
+ * The PUT body. A full replacement, not a merge — the server writes every
+ * column from this payload, so an omitted field resets to its default.
+ */
+export const PartEdaWriteSchema = z.object({
+  symbol_id: optionalNullableUuid,
+  symbol_ref_external: optionalNullableString,
+  footprint_id: optionalNullableUuid,
+  footprint_ref_external: optionalNullableString,
+  spice_datafile_id: optionalNullableUuid,
+  value: optionalNullableString,
+  keywords: optionalNullableString,
+  footprint_filters: z.array(z.string()).nullable().optional(),
+  exclude_from_bom: z.boolean().optional(),
+  exclude_from_board: z.boolean().optional(),
+  exclude_from_sim: z.boolean().optional(),
+  sim_device: optionalNullableString,
+  sim_pins: optionalNullableString,
+  sim_params: optionalNullableString,
+}).strict();
+export type PartEdaWrite = z.infer<typeof PartEdaWriteSchema>;
+
 /** Paged parts response — returned by GET /parts with cursor pagination. */
 export const PagedPartsSchema = z.object({
   items: z.array(PartSchema),

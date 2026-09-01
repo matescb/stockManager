@@ -48,6 +48,11 @@ EXPECTED_PARTS_ROUTES: set[tuple[str, str]] = {
     # Provider
     ("POST", "/api/parts/lookup-mpn"),
     ("POST", "/api/parts/{part_id}/refresh-from-provider"),
+    # EDA configuration (second mount of the eda router — the library
+    # itself lives under /api/eda; only the per-part config is here).
+    ("GET", "/api/parts/{part_id}/eda"),
+    ("PUT", "/api/parts/{part_id}/eda"),
+    ("DELETE", "/api/parts/{part_id}/eda"),
 }
 
 
