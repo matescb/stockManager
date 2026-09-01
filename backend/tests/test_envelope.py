@@ -36,6 +36,7 @@ _AUTHED_2XX_ROUTES: list[tuple[str, str]] = [
     ("reports.low_stock", "/api/reports/low-stock"),
     ("bom_presets.list", "/api/bom-presets"),
     ("tags.list", "/api/tags"),
+    ("categories.list", "/api/categories"),
     ("search", "/api/search?q=anything"),
     ("health", "/api/health"),
 ]

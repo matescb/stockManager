@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
@@ -659,6 +660,18 @@ export default function WorkspaceSettings() {
           )}
         </div>
       )}
+
+      <div className="card p-4 mb-4 space-y-2 text-sm">
+        <h2 className="text-md font-semibold">Categories</h2>
+        <div className="text-xs text-muted">
+          Buckets for the parts library, with the reference-designator prefix
+          and default symbol / footprint references a KiCad library is built
+          from.
+        </div>
+        <Link to="/settings/categories" className="btn inline-flex w-fit">
+          Manage categories
+        </Link>
+      </div>
 
       {cur && <SourcingCard workspace={cur} workspaceId={workspaceId} />}
       {cur && <ActiveListsCard workspace={cur} workspaceId={workspaceId} />}

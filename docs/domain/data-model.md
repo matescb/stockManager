@@ -45,6 +45,14 @@ For the one-line domain table (which router serves which tables), see [`ARCHITEC
 
 `Part` carries `part_type` (`linked|local|meta|sub_assembly`) — see [parts](parts.md). The MPN partial unique `uq_parts_ws_mpn` is the load-bearing constraint (`backend/app/domain/parts/models.py:33-39`).
 
+### categories
+
+| Model | Table | Source |
+|---|---|---|
+| `PartCategory` | `part_categories` | `backend/app/domain/categories/models.py` |
+
+Workspace-scoped part grouping with per-category EDA defaults (KiCad symbol/footprint refs, refdes prefix, footprint filters). `name` and `library_slug` are partial-unique per workspace among active rows; `parts.category_id` references it `SET NULL` — see [categories API](../api/categories.md).
+
 ### storage
 
 | Model | Table | Source |
@@ -134,6 +142,7 @@ erDiagram
   WORKSPACES ||--o{ TAGS : ""
   WORKSPACES ||--o{ TAG_LINKS : ""
   WORKSPACES ||--o{ BULK_IMPORT_IDEMPOTENCY : ""
+  WORKSPACES ||--o{ PART_CATEGORIES : ""
 
   PARTS ||--o{ PART_CAD_KEYS : "part_id"
   PARTS ||--o{ PART_META_MEMBERS : "meta_part_id / part_id"
@@ -143,6 +152,7 @@ erDiagram
   PARTS ||--o{ ORDER_ENTRIES : "part_id (SET NULL)"
   PARTS ||--o{ PROJECT_ENTRIES : "part_id / meta_part_id (SET NULL)"
   PARTS }o--o| STORAGE_LOCATIONS : "default_storage_location_id (SET NULL)"
+  PARTS }o--o| PART_CATEGORIES : "category_id (SET NULL)"
   PARTS }o--o| PROJECTS : "project_id (SET NULL)"
   PROJECTS }o--o| PARTS : "associated_subassembly_part_id (SET NULL, use_alter)"
 
@@ -180,6 +190,7 @@ The non-trivial cross-domain FKs and their delete behaviour. Within-domain CASCA
 | Source column | Target | On delete | Source |
 |---|---|---|---|
 | `parts.default_storage_location_id` | `storage_locations.id` | `SET NULL` (+ BEFORE trigger checks workspace) | `backend/app/domain/parts/models.py:72-74`, `backend/alembic/versions/0036_parts_default_storage_ws_trigger.py` |
+| `parts.category_id` | `part_categories.id` | `SET NULL` (+ BEFORE trigger checks workspace, SQLSTATE `WS001`) | `backend/app/domain/parts/models.py`, `backend/alembic/versions/0067_part_categories.py` |
 | `parts.project_id` | `projects.id` | `SET NULL` | `backend/app/domain/parts/models.py:68` |
 | `projects.associated_subassembly_part_id` | `parts.id` | `SET NULL` (`use_alter`) | `backend/app/domain/projects/models.py:38-47` |
 | `stock_entries.lot_id` | `lots.id` | `SET NULL` | `backend/app/domain/stock/models.py:51` |

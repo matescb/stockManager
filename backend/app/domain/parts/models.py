@@ -38,6 +38,11 @@ class Part(WorkspaceOwned, Base):
             postgresql_where=text("mpn IS NOT NULL AND archived_at IS NULL"),
         ),
         Index("ix_parts_ws_ipn", "workspace_id", "internal_part_number"),
+        Index(
+            "ix_parts_category_id",
+            "category_id",
+            postgresql_where=text("category_id IS NOT NULL"),
+        ),
         Index("ix_parts_ws_archived", "workspace_id", "archived_at"),
         # pg_trgm GIN indexes for ILIKE %q% search (alembic 0018, BE2-018).
         # Single-column GIN; planner bitmap-ANDs with the (workspace_id,
@@ -69,6 +74,13 @@ class Part(WorkspaceOwned, Base):
     project_id = Column(
         UUID(as_uuid=True),
         ForeignKey("projects.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # Optional bucket the part belongs to. SET NULL rather than CASCADE: a
+    # category going away must never take its parts with it.
+    category_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("part_categories.id", ondelete="SET NULL"),
         nullable=True,
     )
     low_stock_report_quantity = Column(Integer, nullable=True)

@@ -27,6 +27,7 @@ from app.domain._polymorphic_cleanup import register_polymorphic_cleanup_listene
 from app.domain.attachments.models import Attachment  # noqa: F401
 from app.domain.audit.models import AuditLog  # noqa: F401
 from app.domain.builds.models import Build  # noqa: F401
+from app.domain.categories.models import PartCategory  # noqa: F401
 from app.domain.custom_fields.models import CustomField  # noqa: F401
 from app.domain.fx.models import FxRateSnapshot  # noqa: F401
 from app.domain.lots.models import Lot  # noqa: F401

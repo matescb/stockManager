@@ -5,6 +5,7 @@ import { api, ApiError } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
+import { PartCategoriesListSchema } from "@/lib/schemas";
 import { InlineQueryError } from "@/components/QueryStateBoundary";
 import type { Part, StorageLocation } from "@/types";
 
@@ -16,6 +17,7 @@ type PartPatch = {
   default_storage_mandatory: boolean;
   serialized: boolean;
   published: boolean;
+  category_id: string | null;
 };
 
 export default function PartSettings() {
@@ -25,6 +27,16 @@ export default function PartSettings() {
   const { workspaceId } = useAuth();
   const storageQuery = useQuery({ queryKey: useWsKey("storage"), queryFn: ({ signal }) => api.get<StorageLocation[]>("/storage", { signal }) });
   const { data: storage } = storageQuery;
+  // Archived included so a part still pointing at an archived category
+  // shows its name instead of a blank select (mirrors PartsList). The
+  // archived entry renders disabled — visible, but not re-selectable.
+  const categoriesQuery = useQuery({
+    queryKey: useWsKey("categories", { archived: true }),
+    queryFn: ({ signal }) =>
+      api.parsed.get("/categories?include_archived=true", PartCategoriesListSchema, { signal }),
+  });
+  const { data: categories } = categoriesQuery;
+  const [categoryId, setCategoryId] = useState(part.category_id ?? "");
   const [low, setLow] = useState(part.low_stock_report_quantity?.toString() ?? "");
   const [attrPct, setAttrPct] = useState(String(part.attrition_percentage));
   const [attrMin, setAttrMin] = useState(String(part.attrition_min_quantity));
@@ -59,6 +71,7 @@ export default function PartSettings() {
       default_storage_mandatory: mandatory,
       serialized,
       published,
+      category_id: categoryId || null,
     });
   }
 
@@ -81,6 +94,25 @@ export default function PartSettings() {
           <label className="label" htmlFor="ps-attrition-min">Min attrition qty</label>
           <input id="ps-attrition-min" className="input" type="number" value={attrMin} onChange={e => setAttrMin(e.target.value)} />
         </div>
+      </div>
+      <div>
+        <label className="label" htmlFor="ps-category">Category</label>
+        <InlineQueryError query={categoriesQuery} label="categories" className="mb-2" />
+        <select
+          id="ps-category"
+          className="input"
+          value={categoryId}
+          onChange={e => setCategoryId(e.target.value)}
+        >
+          <option value="">— none —</option>
+          {categories
+            ?.filter(c => !c.archived_at || c.id === categoryId)
+            .map(c => (
+              <option key={c.id} value={c.id} disabled={!!c.archived_at}>
+                {c.name}{c.archived_at ? " (archived)" : ""}
+              </option>
+            ))}
+        </select>
       </div>
       <div>
         <label className="label" htmlFor="ps-default-storage">Default storage location</label>

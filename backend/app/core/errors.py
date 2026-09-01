@@ -240,6 +240,13 @@ class ErrorCodes:
     # BOM presets router.
     BOM_PRESET_NOT_FOUND = "bom_preset.not_found"
 
+    # Categories router.
+    CATEGORY_NOT_FOUND = "category.not_found"
+    CATEGORY_NAME_CONFLICT = "category.name_conflict"
+    CATEGORY_SLUG_CONFLICT = "category.slug_conflict"
+    CATEGORY_ARCHIVED = "category.archived"
+    CATEGORY_FIELD_NOT_NULLABLE = "category.field_not_nullable"
+
     # Reports router.
     REPORT_PROJECT_NOT_FOUND = "report.project_not_found"
 

@@ -6,7 +6,7 @@ import { useApiMutation } from "@/lib/mutations";
 import { useQuery } from "@tanstack/react-query";
 import { useWsKey } from "@/lib/queryKeys";
 import { isSafeHttpOrSameOriginUrl } from "@/lib/url";
-import { PartCreateSchema, PartSchema } from "@/lib/schemas";
+import { PartCategoriesListSchema, PartCreateSchema, PartSchema } from "@/lib/schemas";
 import type { MpnLookupResult, Part, ProviderSpec, StorageLocation } from "@/types";
 import MpnLookup from "@/components/MpnLookup";
 import { InlineQueryError } from "@/components/QueryStateBoundary";
@@ -39,6 +39,7 @@ export default function PartCreate() {
     description: "",
     footprint: "",
     default_storage_location_id: "",
+    category_id: "",
     serialized: false,
   });
   const [err, setErr] = useState<string | null>(null);
@@ -61,6 +62,12 @@ export default function PartCreate() {
   const [refreshFailed, setRefreshFailed] = useState<{ partId: string } | null>(null);
   const storageQuery = useQuery({ queryKey: useWsKey("storage"), queryFn: ({ signal }) => api.get<StorageLocation[]>("/storage", { signal }) });
   const { data: storage } = storageQuery;
+  // Active categories only — archived ones aren't selectable.
+  const categoriesQuery = useQuery({
+    queryKey: useWsKey("categories", { archived: false }),
+    queryFn: ({ signal }) => api.parsed.get("/categories", PartCategoriesListSchema, { signal }),
+  });
+  const { data: categories } = categoriesQuery;
   const safeDatasheetUrl = isSafeHttpOrSameOriginUrl(datasheetUrl) ? datasheetUrl : null;
   const safeImageUrl = isSafeHttpOrSameOriginUrl(imageUrl) ? imageUrl : null;
 
@@ -137,6 +144,9 @@ export default function PartCreate() {
     };
     if (form.default_storage_location_id) {
       payload.default_storage_location_id = form.default_storage_location_id;
+    }
+    if (form.category_id) {
+      payload.category_id = form.category_id;
     }
     // Send blank name as undefined so the server defaults it to mpn.
     if (form.name?.trim()) payload.name = form.name;
@@ -254,6 +264,19 @@ export default function PartCreate() {
           )}
         </div>
       )}
+      <div>
+        <label className="label" htmlFor="part-create-category">Category</label>
+        <InlineQueryError query={categoriesQuery} label="categories" className="mb-2" />
+        <select
+          id="part-create-category"
+          className="input"
+          value={form.category_id}
+          onChange={e => set("category_id", e.target.value)}
+        >
+          <option value="">— none —</option>
+          {categories?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </div>
       <div>
         <label className="label" htmlFor="part-create-ipn">Internal part number</label>
         <input id="part-create-ipn" className="input" value={form.internal_part_number} onChange={e => set("internal_part_number", e.target.value)} />

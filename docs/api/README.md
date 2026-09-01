@@ -40,6 +40,7 @@ slowapi, per-process bucket store, per-IP. The reverse proxy must set `X-Forward
 | [workspaces](workspaces.md) | `/api/workspaces` | Workspace CRUD, members, invitations, catalog tokens |
 | [invitations](invitations.md) | `/api/invitations` | Accept invitation (no workspace context) |
 | [parts](parts.md) | `/api/parts` | parts_core + parts_assets + parts_scan + parts_provider |
+| [categories](categories.md) | `/api/categories` | Part categories + per-category EDA defaults |
 | [stock](stock.md) | `/api/stock`, `/api/lots` | Add/remove/move/adjust + lot management |
 | [storage](storage.md) | `/api/storage` | Storage location CRUD |
 | [projects](projects.md) | `/api/projects`, `/api/bom-presets` | Projects, BOM CRUD, BOM import wizard, presets |

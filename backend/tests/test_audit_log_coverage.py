@@ -34,6 +34,12 @@ def _create_storage(client, name: str) -> str:
     return r.json()["data"]["id"]
 
 
+def _create_category(client, name: str) -> str:
+    r = client.post("/api/categories", json={"name": name})
+    assert r.status_code == 201, r.text
+    return r.json()["data"]["id"]
+
+
 def _create_lot(client, part_id: str) -> str:
     r = client.post(
         "/api/stock/add",
@@ -154,6 +160,49 @@ def _setup_part_member_delete(client, _db) -> Operation:
         "path": f"/api/parts/{meta_id}/members/{member_id}",
         "expected_status": 200,
         "target_ids": [meta_id, member_id],
+    }
+
+
+def _setup_category_create(_client, _db) -> Operation:
+    return {
+        "method": "post",
+        "path": "/api/categories",
+        "json": {"name": "AUD-124 category", "description": "plaintext-token-aud-124"},
+        "expected_status": 201,
+        "target_ids": _created_part_id,
+    }
+
+
+def _setup_category_patch(client, _db) -> Operation:
+    category_id = _create_category(client, "AUD-124 category patch")
+    return {
+        "method": "patch",
+        "path": f"/api/categories/{category_id}",
+        "json": {"description": "credential-aud-124"},
+        "expected_status": 200,
+        "target_id": category_id,
+    }
+
+
+def _setup_category_archive(client, _db) -> Operation:
+    category_id = _create_category(client, "AUD-124 category archive")
+    return {
+        "method": "post",
+        "path": f"/api/categories/{category_id}/archive",
+        "expected_status": 200,
+        "target_id": category_id,
+    }
+
+
+def _setup_category_restore(client, _db) -> Operation:
+    category_id = _create_category(client, "AUD-124 category restore")
+    r = client.post(f"/api/categories/{category_id}/archive")
+    assert r.status_code == 200, r.text
+    return {
+        "method": "post",
+        "path": f"/api/categories/{category_id}/restore",
+        "expected_status": 200,
+        "target_id": category_id,
     }
 
 
@@ -310,6 +359,15 @@ def _setup_attachment_delete(client, _db) -> Operation:
             "storage.updated",
             "storage_location",
         ),
+        (
+            "categories.patch_category",
+            lambda client: _create_category(client, "Audit Category"),
+            "patch",
+            "/api/categories/{target_id}",
+            {"description": "SMD only", "sort_order": 30},
+            "category.updated",
+            "part_category",
+        ),
     ],
 )
 def test_each_mutator_writes_audit_row(
@@ -370,6 +428,34 @@ def test_each_mutator_writes_audit_row(
             "part.member_removed",
             "part_meta_member",
             _target_ids,
+        ),
+        (
+            "categories.create_category",
+            _setup_category_create,
+            "category.created",
+            "part_category",
+            _created_part_id,
+        ),
+        (
+            "categories.patch_category",
+            _setup_category_patch,
+            "category.updated",
+            "part_category",
+            _target_id,
+        ),
+        (
+            "categories.archive_category",
+            _setup_category_archive,
+            "category.archived",
+            "part_category",
+            _target_id,
+        ),
+        (
+            "categories.restore_category",
+            _setup_category_restore,
+            "category.restored",
+            "part_category",
+            _target_id,
         ),
         ("tags.create", _setup_tag_create, "tag.created", "tag", _created_part_id),
         ("tags.link", _setup_tag_link, "tag.linked", "tag_link", None),
