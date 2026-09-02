@@ -193,6 +193,10 @@ dnspython==2.8.0 \
     --hash=sha256:01d9bbc4a2d76bf0db7c1f729812ded6d912bd318d3b1cf81d30c0f845dbf3af \
     --hash=sha256:181d3c6996452cb1189c4046c61599b84a5a86e099562ffde77d26984ff26d0f
     # via email-validator
+easyeda2kicad==1.0.1 \
+    --hash=sha256:122a48fafa3b918e730185c973dd342183928b8a0dbe24436d13d58b90290e84 \
+    --hash=sha256:b5a460650c5dd0af35a70658f433f63355fdbdf2c2b9e3bc411bc11ea98d06ed
+    # via stockmgr-backend
 email-validator==2.3.0 \
     --hash=sha256:80f13f623413e6b197ae73bb10bf4eb0908faf509ad8362c5edeb0be7fd450b4 \
     --hash=sha256:9fc05c37f2f6cf439ff414f8fc46d917929974a82244c20eb10231ba60c54426
