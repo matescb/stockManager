@@ -52,7 +52,24 @@ def _non_api_prefixes() -> set[str]:
         if segment in ("api", *_UNROUTED_PREFIXES):
             continue
         prefixes.add(segment)
+    prefixes |= _middleware_mounted_prefixes()
     return prefixes
+
+
+def _middleware_mounted_prefixes() -> set[str]:
+    """Backend surfaces served from the middleware stack, not the router.
+
+    `app.routes` is not the whole HTTP surface. The MCP server
+    (ADR-0030) is dispatched by a pure-ASGI middleware rather than a
+    route, because Starlette's `Mount` cannot answer the bare `/mcp`
+    path — so it is invisible to the enumeration above while being
+    exactly the kind of non-`/api` surface this test exists to protect.
+    Read off the module constant rather than hard-coded, so renaming the
+    path moves the assertion with it.
+    """
+    from app.mcp.server import MCP_PATH
+
+    return {_first_segment(MCP_PATH)}
 
 
 def _proxied_locations(conf: str) -> set[str]:
@@ -64,13 +81,17 @@ def _proxied_locations(conf: str) -> set[str]:
     which is the only question here.
     """
     found = set()
-    for match in re.finditer(r"location\s+([^\s{]+)\s*\{", conf):
+    # The optional group is nginx's location modifier (`=` exact, `~` /
+    # `~*` regex, `^~` prefix-no-regex), which is a separate token from
+    # the path. Without consuming it, `location = /mcp {` matched with
+    # `=` as the path and the real prefix went unrecorded.
+    for match in re.finditer(r"location\s+(?:(=|\^~|~\*?)\s+)?([^\s{]+)\s*\{", conf):
         body_start = match.end()
         body = conf[body_start : conf.find("}", body_start)]
         if "proxy_pass" not in body:
             continue
         # Strip nginx's regex/prefix modifiers and any leading anchor.
-        target = match.group(1).lstrip("^~").lstrip("/")
+        target = match.group(2).lstrip("^~").lstrip("/")
         found.add(target.split("/", 1)[0])
     return found
 
@@ -87,7 +108,7 @@ def test_every_non_api_router_is_proxied_by_nginx():
     )
 
 
-@pytest.mark.parametrize("prefix", ["/api/", "/kicad-api/", "/catalog/"])
+@pytest.mark.parametrize("prefix", ["/api/", "/kicad-api/", "/catalog/", "/mcp/"])
 def test_proxy_blocks_carry_the_forwarding_headers(prefix: str):
     """A proxied block without `X-Forwarded-For` makes every client look
     like the docker bridge IP, which collapses slowapi's per-IP buckets

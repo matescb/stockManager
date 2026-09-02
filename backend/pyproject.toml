@@ -28,6 +28,7 @@ dependencies = [
     # LCSC / EasyEDA → KiCad conversion, used as a library (never its CLI)
     # by `app/domain/eda/lcsc.py`. Pure-Python, no transitive runtime deps.
     "easyeda2kicad>=1.0.1",
+    "mcp>=2.1.1",
 ]
 
 [project.optional-dependencies]

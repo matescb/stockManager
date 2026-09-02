@@ -118,6 +118,14 @@ class Settings(BaseSettings):
     # ingest.sentry.io URL the client cares to put in an envelope.
     VITE_SENTRY_DSN: str = ""
 
+    # Mount the MCP server at /mcp (ADR-0030). On by default: the surface
+    # is unreachable without a live personal access token, so an idle
+    # mount costs nothing. Set MCP_ENABLED=false to take the endpoint off
+    # the network entirely — it then 404s like any unrouted path, which
+    # is the kill switch to reach for if an agent integration ever needs
+    # to be stopped without a redeploy of the whole app.
+    MCP_ENABLED: bool = True
+
     @field_validator("SENTRY_TRACES_SAMPLE_RATE", mode="before")
     @classmethod
     def _blank_sentry_traces_rate_to_none(cls, value):
