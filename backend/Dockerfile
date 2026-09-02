@@ -1,7 +1,7 @@
 # ── Stage 1: builder ────────────────────────────────────────────────────────
 # Full Debian image so we can compile C extensions (psycopg, cryptography, …).
-# Digest pinned on 2026-05-02; bump via Dependabot (docker ecosystem).
-FROM python:3.14@sha256:511f025a0718f01b977d5ad572bc431745b31887ceccc538c85b87e82ad2956f AS builder
+# Digest pinned on 2026-09-02; bump via Dependabot (docker ecosystem).
+FROM python:3.14@sha256:8edbf9e42c7fb168b9c523718ed907117e6d2e60f5889c0c499bbda3a787da53 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential libpq-dev \
@@ -24,8 +24,8 @@ RUN uv sync --frozen --no-dev
 
 # ── Stage 2: runtime ────────────────────────────────────────────────────────
 # Slim image — only the runtime libs, no compiler toolchain.
-# Digest pinned on 2026-05-02; bump via Dependabot (docker ecosystem).
-FROM python:3.14-slim@sha256:1697e8e8d39bf168e177ac6b5fdab6df86d81cfc24dae17dfb96cfc3ef76b4dd
+# Digest pinned on 2026-09-02; bump via Dependabot (docker ecosystem).
+FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
