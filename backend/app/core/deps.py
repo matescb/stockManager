@@ -68,8 +68,20 @@ def _authenticate_api_token(request: Request, db: Session, header: str) -> User:
     scheme, _, raw = header.partition(" ")
     if scheme.lower() not in ("token", "bearer"):
         _invalid_token()
+    return _authenticate_token_value(request, db, raw.strip())
 
-    row = tokens_service.resolve_token(db, raw.strip())
+
+def _authenticate_token_value(request: Request, db: Session, raw: str) -> User:
+    """Authenticate a bare token plaintext, however it was transported.
+
+    Split from `_authenticate_api_token` for the PCM surface, which
+    receives its token in the URL path because the Plugin and Content
+    Manager sends no headers at all. Everything past the transport is
+    identical on purpose: the membership re-check and the telemetry
+    commit below are the two things a second implementation would drift
+    on, and both are security-relevant.
+    """
+    row = tokens_service.resolve_token(db, raw)
     if row is None:
         _invalid_token()
 
@@ -177,6 +189,26 @@ def try_authenticate_api_token(request: Request, db: Session) -> User | None:
         return None
     try:
         return _authenticate_api_token(request, db, header)
+    except HTTPException:
+        return None
+
+
+def try_authenticate_url_token(request: Request, db: Session, raw: str) -> User | None:
+    """Same as `try_authenticate_api_token`, for a token in the URL path.
+
+    The KiCad Plugin and Content Manager fetches with plain GETs and no
+    headers, so a PCM repository URL has to carry its own credential.
+    That is a worse place for one than a header — it lands in proxy
+    access logs and browser history — which is why
+    `api/routes/kicad_pcm.py` accepts only `read_only` tokens there and
+    rejects everything else as a 404. The read-only check is the
+    CALLER's: this function's job is to say whether the credential is
+    live, exactly as the header path does, side effects and all.
+    """
+    if not raw:
+        return None
+    try:
+        return _authenticate_token_value(request, db, raw)
     except HTTPException:
         return None
 

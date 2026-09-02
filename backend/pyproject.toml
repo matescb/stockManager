@@ -45,6 +45,13 @@ dev = [
     # Static analysis. Pinned <1.0 to avoid surprise rule churn — see
     # issue #121 / CQ-005. Configured via [tool.ruff] below.
     "ruff>=0.6,<1.0",
+    # Used by tests/test_kicad_pcm.py to validate the PCM documents we
+    # serve against KiCad's own vendored schema
+    # (tests/fixtures/pcm.v1.schema.json). Test-only — the runtime app
+    # never imports it. Worth a dev dependency because the schema closes
+    # several enums, and a value outside one makes KiCad reject the whole
+    # document with no error the user can see.
+    "jsonschema>=4.20",
 ]
 
 [build-system]

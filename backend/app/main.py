@@ -64,6 +64,34 @@ def _scrub_sensitive_text(value: str) -> str:
     return _SENTRY_API_TOKEN_RE.sub("smk_[Filtered]", scrubbed)
 
 
+def _scrub_url(raw_url: str) -> str:
+    """Strip a URL down to what triage needs and no credential.
+
+    Three passes, because a token can be in three places and stripping
+    the query only ever covered the first:
+
+    1. the query string, dropped wholesale;
+    2. a credential PATH segment, masked — `/kicad-api/pcm/{token}/…` and
+       `/catalog/{token}/…` are the two surfaces whose client can't send
+       a header, so the token has to ride the path. Query-stripping alone
+       left those live credentials in every Sentry event, which is the
+       one place they must never appear (SEC2 class: a bearer token in a
+       third-party store outlives any revocation we do);
+    3. `_scrub_sensitive_text`, which catches a `smk_` token anywhere at
+       all — including a `Referer` pointing at some other origin whose
+       path shape we don't know.
+
+    Shares `mask_credential_segment` with the error log rather than
+    re-listing the prefixes, so a future URL-borne token is covered in
+    both places at once. Imported inside the function on purpose: this
+    module initialises Sentry BEFORE FastAPI is imported (the SDK patches
+    starlette on first import), and `core.responses` imports FastAPI.
+    """
+    from app.core.responses import mask_credential_segment
+
+    return _scrub_sensitive_text(mask_credential_segment(_strip_query_string(raw_url)))
+
+
 def _scrub_event_strings(event: dict) -> None:
     if isinstance(event.get("message"), str):
         event["message"] = _scrub_sensitive_text(event["message"])
@@ -112,7 +140,7 @@ def _scrub_event(event, _hint):
     if not isinstance(request, dict):
         return event
     if isinstance(request.get("url"), str):
-        request["url"] = _strip_query_string(request["url"])
+        request["url"] = _scrub_url(request["url"])
     request.pop("query_string", None)
     headers = request.get("headers")
     if isinstance(headers, dict):
@@ -123,7 +151,7 @@ def _scrub_event(event, _hint):
             elif k.lower() in {"referer", "referrer"} and isinstance(
                 headers.get(k), str
             ):
-                headers[k] = _strip_query_string(headers[k])
+                headers[k] = _scrub_url(headers[k])
     method = (request.get("method") or "").upper()
     if method and method != "GET":
         if request.pop("data", None) is not None:
@@ -161,6 +189,13 @@ def _init_sentry() -> None:
         # are an unbounded leak surface.
         include_local_variables=False,
         before_send=_scrub_event,
+        # `before_send` covers ERROR events only. Transactions are a
+        # separate pipeline with its own hook, and it carries the same
+        # `request` dict — so with tracing on (required in prod) every
+        # SAMPLED SUCCESSFUL request was shipping its URL unscrubbed,
+        # which on the PCM and catalog surfaces means a live token. The
+        # scrubber is shape-agnostic, so the same one serves both.
+        before_send_transaction=_scrub_event,
         integrations=[
             StarletteIntegration(transaction_style="endpoint"),
             FastApiIntegration(transaction_style="endpoint"),
@@ -183,6 +218,7 @@ from app.api.routes import (
     eda_import,
     invitations,
     kicad,
+    kicad_pcm,
     lots,
     orders,
     parts_assets,
@@ -583,6 +619,12 @@ app.include_router(catalog.router, prefix="/catalog", tags=["catalog"])
 # `_member_gate` because it carries its own always-404 PAT dependency
 # (`routes/kicad.py::kicad_workspace`) instead of the session cookie.
 app.include_router(kicad.router, prefix=kicad.API_PREFIX, tags=["kicad"])
+
+# The PCM repository, on the same mount so nginx and the routing table
+# each know one KiCad prefix. Separate router because the credential
+# arrives in the URL rather than a header and only `read_only` tokens are
+# accepted there — see `routes/kicad_pcm.py`.
+app.include_router(kicad_pcm.router, prefix=kicad.API_PREFIX, tags=["kicad"])
 
 
 @app.get("/api/health")

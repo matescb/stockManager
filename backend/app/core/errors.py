@@ -295,6 +295,11 @@ class ErrorCodes:
     # is the same 404, so nothing there is an oracle.
     KICAD_NOT_FOUND = "kicad.not_found"
 
+    # The one exception to that rule, on the PCM surface: reaching it
+    # needs a valid read-only token, so it reveals nothing a caller
+    # didn't already have. It means the package could not be built.
+    KICAD_PACKAGE_UNAVAILABLE = "kicad.package_unavailable"
+
     # Custom fields router.
     CUSTOM_FIELD_RESERVED_KEY = "custom_field.reserved_key"
     CUSTOM_FIELD_NOT_OVERRIDE = "custom_field.not_override"

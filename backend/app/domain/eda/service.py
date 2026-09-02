@@ -44,6 +44,25 @@ _NON_NULLABLE_PATCH_FIELDS = frozenset({"name"})
 # 3D models attach to footprints; a SPICE model attaches to a part. The
 # tables are shared, so the kind has to be checked at each seam.
 _MODEL_KINDS = ("step", "wrl")
+
+
+def _touch(footprint, user_id: UUID | None) -> None:
+    """Mark a footprint as changed by something outside its own row.
+
+    `updated_at` has an `onupdate`, but an ORM object with no *net*
+    attribute change never produces an UPDATE for it to fire on — and
+    re-linking a model you already own sets `updated_by` to the value it
+    already had. Writing `updated_at` explicitly is what makes the row
+    dirty. It matters because `eda_footprint_models` carries no
+    timestamps of its own, so this footprint's `updated_at` is the only
+    record that its 3D models changed — and the phase-6 PCM package
+    derives its version from exactly those timestamps
+    (`domain/eda/pcm.py`). Without this, attaching a model would alter
+    the package's contents without advancing its version, and no
+    installed copy would ever be offered the update.
+    """
+    footprint.updated_by = user_id
+    footprint.updated_at = utcnow()
 _SPICE_KIND = "spice"
 
 
@@ -458,7 +477,7 @@ def link_footprint_model(
         )
     else:
         link.position = position
-    footprint.updated_by = user_id
+    _touch(footprint, user_id)
     db.flush()
     return footprint
 
@@ -485,7 +504,7 @@ def unlink_footprint_model(
     ).scalars().first()
     if link is not None:
         db.delete(link)
-        footprint.updated_by = user_id
+        _touch(footprint, user_id)
         db.flush()
     return footprint
 
