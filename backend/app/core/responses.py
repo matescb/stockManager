@@ -92,6 +92,52 @@ def err(
     return body
 
 
+# Path prefixes whose NEXT segment is a credential rather than an id.
+# Two surfaces hand their token to a client that cannot send headers:
+# KiCad's Plugin and Content Manager fetches with plain GETs, and the
+# public catalog link is pasted into a browser. Both would otherwise put
+# a live credential in the log line below on every bad-token probe.
+_SECRET_PATH_PREFIXES = ("/kicad-api/pcm/", "/catalog/")
+_REDACTED_SEGMENT = "<token>"
+
+_SCHEME_SEP = "://"
+
+
+def mask_credential_segment(value: str) -> str:
+    """`value` with a credential path segment masked out.
+
+    Takes either a bare path or an absolute URL, because the two callers
+    have different shapes: the exception handler logs `request.url.path`,
+    and `main.py::_scrub_event` hands Sentry a full URL (and a `Referer`,
+    which may point at another origin entirely).
+
+    Anchored at the START of the path — a `/catalog/` appearing deeper in
+    some other route's path is an id, not a token, and masking it would
+    make a log line lie about what was requested.
+
+    This covers what the app itself emits. The uvicorn access log and
+    nginx's still record the full URL, which is inherent to putting a
+    token in a path; the PCM surface bounds that by accepting read-only
+    tokens alone.
+    """
+    origin = ""
+    path = value
+    if _SCHEME_SEP in value:
+        scheme, _, after = value.partition(_SCHEME_SEP)
+        host, slash, tail = after.partition("/")
+        if not slash:
+            return value
+        origin = f"{scheme}{_SCHEME_SEP}{host}"
+        path = f"/{tail}"
+
+    for prefix in _SECRET_PATH_PREFIXES:
+        if path.startswith(prefix):
+            _, _, rest = path[len(prefix):].partition("/")
+            masked = f"{prefix}{_REDACTED_SEGMENT}" + (f"/{rest}" if rest else "")
+            return origin + masked
+    return value
+
+
 async def http_exception_handler(request: Request, exc: HTTPException):
     # Routes can raise HTTPException(detail={"message": "...", ...extras})
     # to surface structured context alongside the human-readable message.
@@ -113,7 +159,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     # contextvar, so it appears in the log record automatically.
     log_extra = {
         "status": exc.status_code,
-        "path": request.url.path,
+        "path": mask_credential_segment(request.url.path),
         "method": request.method,
         "detail": str(exc.detail)[:500],
         "request_id": rid,
@@ -155,7 +201,7 @@ async def validation_exception_handler(request: Request, exc):  # pydantic Valid
     _log.info(
         "validation error",
         extra={
-            "path": request.url.path,
+            "path": mask_credential_segment(request.url.path),
             "fields": fields,
             "request_id": rid,
         },

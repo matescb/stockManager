@@ -44,7 +44,7 @@ from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import Envelope, ok
-from app.domain.eda import kicad_library, storage
+from app.domain.eda import kicad_library, kicad_refs, pcm, storage
 from app.domain.eda import service as eda_service
 from app.domain.eda.models import EdaDatafile, EdaFootprint, EdaSymbol
 from app.domain.eda.schemas import (
@@ -627,6 +627,11 @@ def kicad_setup(ws: CurrentWorkspace) -> Envelope[dict]:
     example so the UI can show them without parsing the blob. They are
     the client's cache lifetimes, and the reason a workstation that
     leaves the chooser open doesn't hammer `/kicad-api`.
+
+    The `pcm_*` keys describe the other half of the setup — the add-on
+    package that ships the actual library files the HTTP library only
+    names. Its URL carries the token in the path, so its placeholder is
+    a different one: that surface accepts read-only tokens alone.
     """
     root_url = f"{settings().APP_BASE_URL.rstrip('/')}{kicad_library.API_PREFIX}"
     return ok(
@@ -634,6 +639,24 @@ def kicad_setup(ws: CurrentWorkspace) -> Envelope[dict]:
             "root_url": root_url,
             "categories_ttl": kicad_library.CATEGORIES_TTL_SECONDS,
             "parts_ttl": kicad_library.PARTS_TTL_SECONDS,
+            "pcm_repository_url_template": pcm.document_url(
+                pcm.READ_ONLY_TOKEN_PLACEHOLDER, pcm.REPOSITORY_DOCUMENT
+            ),
+            "pcm_package_identifier": kicad_refs.package_identifier(ws.id),
+            # SPICE is the one reference the package can't fix up for
+            # itself: `Sim.Library` is served as JSON by the HTTP library,
+            # not stored in bytes we rewrite at build time. So the user
+            # sets one path variable, and this is the value.
+            "pcm_spice_path_variable": kicad_refs.SPICE_PATH_VAR.strip("${}"),
+            "pcm_spice_path_value": kicad_refs.pcm_spice_dir(
+                kicad_refs.package_identifier(ws.id)
+            ),
+            "read_only_note": (
+                "The PCM sends no authentication headers, so the repository "
+                "URL carries the token in its path. Only read-only tokens are "
+                "accepted there — a full-access token pasted into this URL is "
+                "rejected the same way an invalid one is."
+            ),
             "example": {
                 "meta": {"version": 1.0},
                 "name": f"{ws.name} (stockManager)",

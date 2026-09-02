@@ -241,3 +241,98 @@ def test_scrubber_does_not_set_body_redacted_when_no_data():
     event = _event("POST", "/api/parts/abc/archive")  # no body
     out = _scrub_event(event, None)
     assert "body_redacted" not in out["request"]
+
+
+# ---------------------------------------------------------------------------
+# URL-borne credentials (phase 6)
+#
+# Two surfaces hand a bearer token to a client that cannot send headers,
+# so the token rides the PATH: `/kicad-api/pcm/{token}/…` for KiCad's
+# Plugin and Content Manager, and `/catalog/{token}/…` for the public
+# catalog link. The scrubber only ever stripped the QUERY string, so both
+# were shipping live credentials to a third-party store on every captured
+# event — and a credential in Sentry outlives any revocation we perform.
+# ---------------------------------------------------------------------------
+
+_PCM_TOKEN = "smk_" + "ab" * 16 + ".Sup3r-Secret_Value"
+
+
+def test_scrubber_masks_a_pcm_token_in_the_url_path():
+    event = _event("GET", f"/kicad-api/pcm/{_PCM_TOKEN}/packages.json")
+    out = _scrub_event(event, None)
+    assert out["request"]["url"] == "/kicad-api/pcm/<token>/packages.json"
+    assert "Sup3r-Secret_Value" not in str(out)
+
+
+def test_scrubber_masks_a_catalog_token_in_the_url_path():
+    """The catalog token is a `token_urlsafe` blob with no `smk_` prefix
+    to match on, so the path rule — not the text regex — is what saves
+    it."""
+    event = _event("GET", "/catalog/Zm9vYmFy-catalogsecret/index.json")
+    out = _scrub_event(event, None)
+    assert out["request"]["url"] == "/catalog/<token>/index.json"
+    assert "catalogsecret" not in str(out)
+
+
+def test_scrubber_masks_a_token_in_an_absolute_url():
+    """Sentry reports an absolute URL, not a path."""
+    event = _event(
+        "GET", f"https://parts.example.com/kicad-api/pcm/{_PCM_TOKEN}/package.zip"
+    )
+    out = _scrub_event(event, None)
+    assert out["request"]["url"] == (
+        "https://parts.example.com/kicad-api/pcm/<token>/package.zip"
+    )
+
+
+def test_scrubber_masks_a_token_in_the_referer_header():
+    event = _event(
+        "GET",
+        "/api/parts",
+        headers={"Referer": f"https://parts.example.com/kicad-api/pcm/{_PCM_TOKEN}/x"},
+    )
+    out = _scrub_event(event, None)
+    assert "Sup3r-Secret_Value" not in str(out)
+    assert out["request"]["headers"]["Referer"].endswith("/kicad-api/pcm/<token>/x")
+
+
+def test_scrubber_filters_a_stray_token_on_an_unknown_path():
+    """Belt and braces for a shape the path rule doesn't know: the
+    `smk_` prefix exists precisely so a leaked token is greppable, and
+    the text scrubber matches it wherever it appears."""
+    event = _event("GET", f"/some/other/route/{_PCM_TOKEN}")
+    out = _scrub_event(event, None)
+    assert "Sup3r-Secret_Value" not in out["request"]["url"]
+    assert "smk_[Filtered]" in out["request"]["url"]
+
+
+def test_scrubber_leaves_an_ordinary_url_alone():
+    event = _event("GET", "/api/parts/6f1a/eda")
+    assert _scrub_event(event, None)["request"]["url"] == "/api/parts/6f1a/eda"
+
+
+def test_transactions_go_through_the_same_scrubber():
+    """`before_send` covers ERROR events only. Tracing is required in
+    prod, so without `before_send_transaction` every SAMPLED SUCCESSFUL
+    request shipped its URL unscrubbed — which on these two surfaces is
+    a live token on a 200."""
+    import inspect
+
+    import app.main as main_module
+
+    source = inspect.getsource(main_module._init_sentry)
+    assert "before_send_transaction=" in source, (
+        "sentry_sdk.init must pass before_send_transaction — transactions "
+        "are a separate pipeline from before_send"
+    )
+
+    transaction = {
+        "type": "transaction",
+        "transaction": "pcm_packages",
+        "request": {
+            "method": "GET",
+            "url": f"/kicad-api/pcm/{_PCM_TOKEN}/packages.json",
+        },
+    }
+    out = _scrub_event(transaction, None)
+    assert out["request"]["url"] == "/kicad-api/pcm/<token>/packages.json"

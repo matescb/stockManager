@@ -49,13 +49,64 @@ The contract
 * **SPICE library path** — ``${STOCKMGR_SPICE}/<datafile name>``,
   emitted as the ``Sim.Library`` symbol field.
 
-Both path variables are KiCad path-substitution variables, defined by
-the phase-6 PCM package. Storing the variable rather than an absolute
-path is what lets one package work on every machine that installs it.
+Both path variables are KiCad path-substitution variables. Storing the
+variable rather than an absolute path is what lets one set of bytes work
+on every machine that reads them.
+
+Where the PCM puts it all
+-------------------------
+
+``${STOCKMGR_3D}`` is what a user gets when they download a footprint
+from the CAD tab and wire the variable up by hand. The phase-6 PCM
+package can do better, because the install location is known:
+``pcm.py`` rewrites those paths to :func:`pcm_model_path` on the way
+into the zip, so an installed package resolves its models with no
+configuration at all. (``Sim.Library`` can't get the same treatment — it
+is served as JSON by phase 5, not stored in bytes we package — so
+``${STOCKMGR_SPICE}`` stays a variable the user points at
+:func:`pcm_spice_dir`.)
+
+The layout is fixed by KiCad, not by us —
+``kicad/pcm/pcm_task_manager.cpp::extract()`` rewrites every archive
+member ``<folder>/<rest>`` to ``<3rd-party root>/<folder>/<id>/<rest>``::
+
+    wxString clean_package_id = aPackageId;
+    clean_package_id.Replace( '.', '_' );
+    …
+    path_parts.Insert( clean_package_id, 1 );
+
+so ``3dmodels/foo.step`` in the zip lands at
+``<root>/3dmodels/com_stockmanager_<ws>/foo.step`` — the identifier sits
+BELOW the folder, and its dots become underscores
+(:func:`install_dir_name`). ``<folder>`` must be one of KiCad's
+``PCM_PACKAGE_DIRECTORIES`` (``kicad/pcm/pcm.h``: plugins, footprints,
+3dmodels, symbols, resources, colors, templates, scripts); a member
+under anything else is silently skipped by the extractor.
+
+:data:`THIRD_PARTY_VAR` names that root, and it is **versioned** —
+``KICAD8_3RD_PARTY`` on KiCad 8, ``KICAD9_3RD_PARTY`` on 9. There is no
+unversioned spelling, and a hand-created ``KICAD_3RD_PARTY`` is not
+recognised. Hard-coding one major is nonetheless correct, because
+``common/common.cpp::KIwxExpandEnvVars`` exists for exactly this case: a
+``${KICADn_3RD_PARTY}`` it cannot resolve is recognised by
+``ENV_VAR::IsVersionedEnvVar( strVarName, "3RD_PARTY" )`` and re-pointed
+at whichever ``KICAD*_3RD_PARTY`` the running version defines. Real
+packages rely on it and pin whatever major they were built against —
+Espressif's ships
+``${KICAD8_3RD_PARTY}/3dmodels/com_github_espressif_kicad-libraries/…``.
+We pin 8 to match the ``kicad_version`` floor the package advertises.
+
+``.3dshapes`` — the conventional suffix on 3D-model directories in
+KiCad's own libraries — is NOT required by anything, so models ship flat
+under ``3dmodels/``. ``.pretty`` on a footprint directory genuinely is:
+``common/libraries/library_manager.cpp::PCM_LIB_TRAVERSER`` matches that
+suffix and nothing else when it registers installed libraries, and it is
+the same traverser that prepends :data:`PCM_NICKNAME_PREFIX`.
 """
 from __future__ import annotations
 
 from typing import Protocol
+from uuid import UUID
 
 __all__ = [
     "LIBRARY_PREFIX",
@@ -72,6 +123,18 @@ __all__ = [
     "footprint_ref",
     "model_path",
     "spice_path",
+    "PCM_IDENTIFIER_PREFIX",
+    "THIRD_PARTY_VAR",
+    "SYMBOLS_DIR",
+    "FOOTPRINTS_DIR",
+    "MODELS_DIR",
+    "RESOURCES_DIR",
+    "SPICE_SUBDIR",
+    "PRETTY_SUFFIX",
+    "package_identifier",
+    "install_dir_name",
+    "pcm_model_path",
+    "pcm_spice_dir",
 ]
 
 # Namespaces every generated library so it can't collide with a stock
@@ -153,3 +216,64 @@ def model_path(name: str) -> str:
 def spice_path(name: str) -> str:
     """The ``Sim.Library`` value for a SPICE datafile named *name*."""
     return f"{SPICE_PATH_VAR}/{name}"
+
+
+# ---------------------------------------------------------------------
+# PCM package naming — see "Where the PCM puts it all" above
+# ---------------------------------------------------------------------
+
+# Reverse-DNS, as the PCM asks for. The full identifier is 49 characters
+# (17 + a 32-hex workspace id), comfortably inside the 100 the v2 schema
+# allows, and matches its `^[a-zA-Z][-a-zA-Z0-9.]{0,98}[a-zA-Z0-9]$`.
+PCM_IDENTIFIER_PREFIX = "com.stockmanager."
+
+# KiCad's 3rd-party install root. Versioned on purpose — read the module
+# docstring before "fixing" the 8.
+THIRD_PARTY_VAR = "${KICAD8_3RD_PARTY}"
+
+# The top-level zip folders we use, all of them in KiCad's
+# PCM_PACKAGE_DIRECTORIES allow-list.
+SYMBOLS_DIR = "symbols"
+FOOTPRINTS_DIR = "footprints"
+MODELS_DIR = "3dmodels"
+RESOURCES_DIR = "resources"
+
+# `resources/` is a free-for-all as far as the PCM is concerned, so SPICE
+# models get a subdirectory of their own inside it. There is no native
+# slot for them.
+SPICE_SUBDIR = "spice"
+
+PRETTY_SUFFIX = ".pretty"
+
+
+def package_identifier(workspace_id: UUID) -> str:
+    """The PCM identifier for a workspace's one-and-only package.
+
+    One package per workspace, not one per category: the PCM's unit of
+    installation is the package, and a user should click Install once.
+    """
+    return f"{PCM_IDENTIFIER_PREFIX}{workspace_id.hex}"
+
+
+def install_dir_name(identifier: str) -> str:
+    """``com.stockmanager.<hex>`` → ``com_stockmanager_<hex>``.
+
+    The directory the PCM extracts a package into. Not cosmetic — a path
+    written with the dots left in resolves to nothing on an installed
+    machine.
+    """
+    return identifier.replace(".", "_")
+
+
+def pcm_model_path(identifier: str, name: str) -> str:
+    """The installed location of a 3D datafile, as a ``(model …)`` path."""
+    return f"{THIRD_PARTY_VAR}/{MODELS_DIR}/{install_dir_name(identifier)}/{name}"
+
+
+def pcm_spice_dir(identifier: str) -> str:
+    """Where installed SPICE models land — what ``${STOCKMGR_SPICE}``
+    should be set to once the package is installed."""
+    return (
+        f"{THIRD_PARTY_VAR}/{RESOURCES_DIR}/"
+        f"{install_dir_name(identifier)}/{SPICE_SUBDIR}"
+    )
