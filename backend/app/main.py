@@ -182,6 +182,7 @@ from app.api.routes import (
     eda,
     eda_import,
     invitations,
+    kicad,
     lots,
     orders,
     parts_assets,
@@ -576,6 +577,12 @@ app.include_router(
 # Public, token-gated read-only catalog. Mounted AFTER the /api routers and
 # intentionally without a member-gate dependency.
 app.include_router(catalog.router, prefix="/catalog", tags=["catalog"])
+
+# KiCad HTTP library. Outside /api because KiCad parses fixed raw-JSON
+# documents rather than the `{data, status}` envelope, and without
+# `_member_gate` because it carries its own always-404 PAT dependency
+# (`routes/kicad.py::kicad_workspace`) instead of the session cookie.
+app.include_router(kicad.router, prefix=kicad.API_PREFIX, tags=["kicad"])
 
 
 @app.get("/api/health")

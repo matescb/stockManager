@@ -2,7 +2,7 @@
 
 Audience: engineer
 
-Owns the workspace's KiCad library — schematic symbols, PCB footprints, 3D models and SPICE models — plus `PartEda`, the 1:1 row saying which of them a part uses. Phase 5 serves this over the KiCad HTTP-library protocol; nothing else in the app reads it yet.
+Owns the workspace's KiCad library — schematic symbols, PCB footprints, 3D models and SPICE models — plus `PartEda`, the 1:1 row saying which of them a part uses. `kicad_library.py` serves it over the KiCad HTTP-library protocol at `/kicad-api/v1`, and `kicad_refs.py` holds the names that surface and the phase-6 file generation must agree on.
 
 ## Files
 
@@ -16,6 +16,8 @@ Owns the workspace's KiCad library — schematic symbols, PCB footprints, 3D mod
 | `vendor_zip.py` | Reads a SnapEDA / SamacSys / UltraLibrarian zip into an `ImportPlan` |
 | `lcsc.py` | The `easyeda2kicad` seam — one LCSC part fetched and converted into the same plan |
 | `importer.py` | Turns a plan into rows, blobs and part wiring |
+| `kicad_refs.py` | The naming contract: file stem `SM_<slug>`, reference `PCM_SM_<slug>:<entry>`, `${STOCKMGR_3D}/…`, `${STOCKMGR_SPICE}/…` |
+| `kicad_library.py` | The `/kicad-api/v1` documents: eligibility, the one-query listing, JSON shaping |
 
 ## Public surface
 
@@ -31,10 +33,14 @@ Owns the workspace's KiCad library — schematic symbols, PCB footprints, 3D mod
 | Read a vendor archive | `vendor_zip.py::read_archive`, `::read_symbol_library`, `::narrow_to_part` |
 | Fetch + convert an LCSC part | `lcsc.py::fetch_plan` |
 | Write a plan down | `importer.py::import_plan`, `::wire_part` |
+| Build a KiCad reference | `kicad_refs.py::library_nickname`, `::symbol_ref`, `::footprint_ref`, `::model_path`, `::spice_path` |
+| Serve the KiCad library | `kicad_library.py::root_document`, `::list_categories`, `::list_parts`, `::part_detail` |
 
 REST surface: `backend/app/api/routes/eda.py` (library CRUD + per-part config) and
 `backend/app/api/routes/eda_import.py` (the three import endpoints), both mounted
-under `/api/eda` and `/api/parts/{part_id}/eda`.
+under `/api/eda` and `/api/parts/{part_id}/eda`; plus
+`backend/app/api/routes/kicad.py` at `/kicad-api/v1`, which is outside `/api`,
+outside the envelope and authenticated by a personal access token only.
 
 ## Hard rules (this module)
 
@@ -49,7 +55,10 @@ under `/api/eda` and `/api/parts/{part_id}/eda`.
 9. **Model paths are rewritten before the footprint is stored.** A vendor footprint points at the vendor's own tree; `importer._rewrite_models` repoints it at `${STOCKMGR_3D}/<row name>` (phase 6 substitutes the variable) and DROPS a `(model …)` whose file wasn't in the archive. The stored bytes are what phase 6 packages, so the rewrite has to happen before `storage.canonical_entry_bytes`.
 10. **An import fills empty slots only.** `overwrite` is opt-in, and `value`, `keywords` and the exclusion flags are never touched — no vendor archive knows better than the user.
 11. **Three budgets bound an archive, and the parse budget is the one that bounds memory.** `MAX_MEMBERS` and `MAX_UNCOMPRESSED_BYTES` are checked against the central directory, which a hostile zip simply lies about — so `_Budget.inflate` re-checks the real total as chunks come out of zlib, and `MAX_PARSED_TEXT_BYTES` caps what reaches the s-expression reader. A parsed node tree runs ~20x its source text; without that last cap a ~130 KiB upload peaked at 1.2 GiB RSS. All three are enforced INSIDE the member walk — trimming a finished list means everything was parsed and retained first, which is the cost the caps exist to avoid.
-12. **Every path an upstream name touches is sanitised before it is used.** `easyeda2kicad` builds its output path from EasyEDA's own JSON title, so `lcsc._rename_model` flattens the name before the exporter runs, and `_read_converted` re-checks with `os.path.realpath` that what came back is still inside the conversion directory.
+12. **One module owns every name KiCad sees.** `kicad_refs.py` — one generated library per category, whose FILE stem is `SM_<library_slug>` (`SM_uncategorized` for rows with none) but whose NICKNAME is `PCM_SM_<library_slug>`, because KiCad's Plugin & Content Manager prepends `PCM_` when it registers an installed package's libraries. Every `LibNick:Entry` reference is built on the nickname; one built on the bare stem names no registered library and KiCad reports a broken symbol on every part that uses it ([forum.kicad.info/t/…/63784](https://forum.kicad.info/t/pcm-content-library-and-library-prefix-problem/63784)). The slug comes from the SYMBOL's or FOOTPRINT's own category, not the part's. Models are `${STOCKMGR_3D}/<name>` and SPICE is `${STOCKMGR_SPICE}/<name>`. The HTTP library serves these strings and phase 6 generates the files they name; a second copy of the format anywhere is how those two drift apart.
+13. **`/kicad-api` collapses every failure it can distinguish into one 404.** The KiCad client accepts no status but 200 and shows no error body, so a missing token, a revoked one, an unknown category, a foreign part and a part with no symbol are one indistinguishable failure. The rate limiter's 429 is the deliberate exception: slowapi raises it before this router's code runs, it is reachable without a valid credential (so it is no oracle), and flattening it would cost the caller `Retry-After`. Session cookies never authenticate this surface. Both rate-limit buckets — a digest of the presented token, and the caller's IP — are checked on EVERY request including ones that never authenticate, which is why the routes resolve the token in their body rather than in a dependency (dependencies resolve before slowapi's wrapper runs).
+14. **Every scalar `/kicad-api` emits is a string**, booleans (`"True"` / `"False"`) and ids included. `tests/test_kicad_api.py::test_no_non_string_scalars_anywhere` walks the documents, so a new field can't quietly ship an int.
+15. **Every path an upstream name touches is sanitised before it is used.** `easyeda2kicad` builds its output path from EasyEDA's own JSON title, so `lcsc._rename_model` flattens the name before the exporter runs, and `_read_converted` re-checks with `os.path.realpath` that what came back is still inside the conversion directory.
 
 ## See also
 

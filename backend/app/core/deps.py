@@ -5,7 +5,7 @@ from datetime import timedelta
 from typing import Annotated, NoReturn
 from uuid import UUID
 
-from fastapi import Cookie, Depends, Request, status
+from fastapi import Cookie, Depends, HTTPException, Request, status
 from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
@@ -145,6 +145,40 @@ def _authenticate_api_token(request: Request, db: Session, header: str) -> User:
         )
 
     return user
+
+
+def try_authenticate_api_token(request: Request, db: Session) -> User | None:
+    """API-token authentication that reports failure instead of raising.
+
+    For surfaces that answer something other than this module's 401/403
+    — `api/routes/kicad.py` answers 404 to everything, because KiCad
+    treats any non-200 as "library unavailable" and a distinguishable
+    401 would only be an oracle.
+
+    Returns the authenticated user, or None when there is no
+    `Authorization` header or the credential is unusable for ANY reason
+    (malformed, unknown, wrong secret, revoked, expired, owner no longer
+    a member, unknown scheme, or a write attempted with a read-only
+    token). Callers get one failure to map onto their own status; they
+    must not try to recover a reason, because there is deliberately none
+    to recover.
+
+    On success every side effect of the normal path has happened:
+    `request.state.api_token` and `.user_id` are set, and the throttled
+    `last_used_at` telemetry has been written and committed. That is the
+    point of routing through `_authenticate_api_token` rather than
+    calling the token service directly — a second implementation of the
+    membership re-check and the telemetry commit would drift from this
+    one, and the CSRF middleware's "a present header means token auth,
+    never the cookie" rule depends on there being exactly one.
+    """
+    header = request.headers.get("Authorization")
+    if not header:
+        return None
+    try:
+        return _authenticate_api_token(request, db, header)
+    except HTTPException:
+        return None
 
 
 def get_current_user(

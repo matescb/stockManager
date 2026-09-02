@@ -39,12 +39,13 @@ from app.api.routes._eda_shared import audit as _audit
 from app.api.routes._eda_shared import patch_comment as _patch_comment
 from app.api.routes._eda_shared import read_upload as _read_upload
 from app.api.routes._parts_shared import get_part as _get_part
+from app.core.config import settings
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import Envelope, ok
+from app.domain.eda import kicad_library, storage
 from app.domain.eda import service as eda_service
-from app.domain.eda import storage
 from app.domain.eda.models import EdaDatafile, EdaFootprint, EdaSymbol
 from app.domain.eda.schemas import (
     EdaDatafileOut,
@@ -604,6 +605,49 @@ def restore_datafile(
         target_id=row.id,
     )
     return ok(None, "restored")
+
+
+# ---------------------------------------------------------------------
+# KiCad client configuration
+# ---------------------------------------------------------------------
+
+
+@router.get("/kicad-setup")
+def kicad_setup(ws: CurrentWorkspace) -> Envelope[dict]:
+    """Everything needed to write a `.kicad_httplib` file, minus the token.
+
+    A token's plaintext exists exactly once, in the response that minted
+    it (`POST /api/tokens`), and is never recoverable afterwards — so
+    the server cannot hand out a ready-to-use library file. What it can
+    hand out is the rest of the file, with a placeholder where the
+    secret goes; the settings UI merges in the freshly-minted plaintext
+    client-side and offers the result as a download.
+
+    `categories_ttl` / `parts_ttl` are surfaced separately from the
+    example so the UI can show them without parsing the blob. They are
+    the client's cache lifetimes, and the reason a workstation that
+    leaves the chooser open doesn't hammer `/kicad-api`.
+    """
+    root_url = f"{settings().APP_BASE_URL.rstrip('/')}{kicad_library.API_PREFIX}"
+    return ok(
+        {
+            "root_url": root_url,
+            "categories_ttl": kicad_library.CATEGORIES_TTL_SECONDS,
+            "parts_ttl": kicad_library.PARTS_TTL_SECONDS,
+            "example": {
+                "meta": {"version": 1.0},
+                "name": f"{ws.name} (stockManager)",
+                "source": {
+                    "type": "REST_API",
+                    "api_version": "v1",
+                    "root_url": root_url,
+                    "token": kicad_library.TOKEN_PLACEHOLDER,
+                    "timeout_parts_seconds": kicad_library.PARTS_TTL_SECONDS,
+                    "timeout_categories_seconds": kicad_library.CATEGORIES_TTL_SECONDS,
+                },
+            },
+        }
+    )
 
 
 # ---------------------------------------------------------------------

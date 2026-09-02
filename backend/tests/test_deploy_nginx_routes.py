@@ -1,0 +1,108 @@
+"""Every backend surface mounted outside `/api` is routed by prod nginx.
+
+`deploy/nginx-web.conf` ends in an SPA fallback (`try_files … /index.html`),
+so a path nginx doesn't route explicitly is answered by the **web**
+container with `200 text/html` — it never reaches uvicorn. The host-side
+Apache proxies `/` wholesale to that container, so there is no second
+chance upstream.
+
+A 200 with the wrong body is the worst failure mode available here, and
+it is invisible to every other gate we have:
+
+* KiCad's HTTP library checks the status code and nothing else. It
+  accepts the SPA index page and then throws inside its JSON parse; the
+  user sees a dead library and no usable error.
+* A public catalog link handed to a customer renders the app shell,
+  which bounces them to a login they aren't supposed to need.
+
+`/api/*` has been routed since the beginning, so this only bites routers
+mounted elsewhere — `/catalog` (which shipped with the gap) and
+`/kicad-api`. This test enumerates the app's own routes rather than
+checking a hard-coded list, so the next such router fails the build
+instead of shipping.
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+from fastapi.routing import APIRoute
+
+from app.main import app
+
+_NGINX_CONF = Path(__file__).resolve().parents[2] / "deploy" / "nginx-web.conf"
+
+# FastAPI's own docs routes. They are not part of the product's HTTP
+# surface, are not linked from anywhere, and are deliberately left to the
+# SPA fallback rather than exposed through the prod proxy.
+_UNROUTED_PREFIXES = frozenset({"docs", "openapi.json", "redoc"})
+
+
+def _first_segment(path: str) -> str:
+    return path.lstrip("/").split("/", 1)[0]
+
+
+def _non_api_prefixes() -> set[str]:
+    prefixes = set()
+    for route in app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        segment = _first_segment(route.path)
+        if segment in ("api", *_UNROUTED_PREFIXES):
+            continue
+        prefixes.add(segment)
+    return prefixes
+
+
+def _proxied_locations(conf: str) -> set[str]:
+    """First path segment of every `location` block that proxies upstream.
+
+    Deliberately naive: it pairs each `location <match>` with the body
+    that follows it and keeps the ones containing `proxy_pass`. That is
+    enough to answer "does traffic under this prefix reach the backend",
+    which is the only question here.
+    """
+    found = set()
+    for match in re.finditer(r"location\s+([^\s{]+)\s*\{", conf):
+        body_start = match.end()
+        body = conf[body_start : conf.find("}", body_start)]
+        if "proxy_pass" not in body:
+            continue
+        # Strip nginx's regex/prefix modifiers and any leading anchor.
+        target = match.group(1).lstrip("^~").lstrip("/")
+        found.add(target.split("/", 1)[0])
+    return found
+
+
+def test_every_non_api_router_is_proxied_by_nginx():
+    conf = _NGINX_CONF.read_text()
+    proxied = _proxied_locations(conf)
+    missing = sorted(p for p in _non_api_prefixes() if p not in proxied)
+    assert not missing, (
+        f"mounted outside /api but not routed in {_NGINX_CONF.name}: {missing}. "
+        "In prod these fall into the SPA fallback and return 200 text/html "
+        "instead of reaching the backend — add a `location /<prefix>/` block "
+        "mirroring the /api/ one."
+    )
+
+
+@pytest.mark.parametrize("prefix", ["/api/", "/kicad-api/", "/catalog/"])
+def test_proxy_blocks_carry_the_forwarding_headers(prefix: str):
+    """A proxied block without `X-Forwarded-For` makes every client look
+    like the docker bridge IP, which collapses slowapi's per-IP buckets
+    into one (the same class of bug as the compose `command:` regression
+    in CLAUDE.md)."""
+    conf = _NGINX_CONF.read_text()
+    match = re.search(rf"location {re.escape(prefix)}\s*\{{", conf)
+    assert match, f"no `location {prefix}` block in {_NGINX_CONF.name}"
+    body = conf[match.end() : conf.find("}", match.end())]
+    for directive in (
+        "proxy_pass http://backend:8000",
+        "X-Real-IP",
+        "X-Forwarded-For",
+        "X-Forwarded-Proto",
+        # SEC2-018: don't advertise "Server: uvicorn".
+        "proxy_hide_header Server",
+    ):
+        assert directive in body, f"{prefix} block is missing `{directive}`"

@@ -154,6 +154,56 @@ applied under `/api/auth/`: `logout` reads the session cookie directly, so the
 no-cookie-fallback rule that justifies the exemption does not cover it. No
 token client calls those routes.
 
+## Using a token with KiCad
+
+`GET /kicad-api/v1/...` is the KiCad HTTP-library surface. It accepts any live
+token — `read_only` included, since every endpoint on it is a `GET` — presented
+as `Authorization: Token <plaintext>`, and answers `404` to everything else. It
+is mounted outside `/api` and does **not** use the `{ data, status }` envelope:
+KiCad parses fixed raw-JSON documents in which every scalar is a string.
+
+A `read_only` token is the right credential here. Its plaintext ends up in a
+`.kicad_httplib` file on a workstation, and the read-only flag bounds what a
+copy of that file can do (`core/deps.py` refuses any non-`GET` before the route
+sees the request).
+
+`GET /api/eda/kicad-setup` (session-authed, normal envelope) returns everything
+needed to write that file except the secret:
+
+```json
+{ "root_url": "https://…/kicad-api", "categories_ttl": 600, "parts_ttl": 60,
+  "example": { "meta": { "version": 1.0 }, "name": "…",
+               "source": { "type": "REST_API", "api_version": "v1",
+                           "root_url": "https://…/kicad-api",
+                           "token": "PASTE_YOUR_TOKEN_HERE",
+                           "timeout_parts_seconds": 60,
+                           "timeout_categories_seconds": 600 } } }
+```
+
+The plaintext exists exactly once, in the `POST /api/tokens` response, so the
+server cannot fill in `token` — the settings UI merges the freshly minted value
+in client-side and offers the finished file as a download.
+
+`timeout_parts_seconds` / `timeout_categories_seconds` are the KiCad client's
+own caches. KiCad's code defaults are 30s and 600s; we write 60s and 600s
+explicitly, so the numbers a user sees in the file are the ones in effect.
+
+Two refresh caveats worth knowing before filing a bug:
+
+* **Category NAMES are read when the library connection is validated**, not on
+  the parts cache's timer. Renaming a category in stockManager will not rename
+  it in an open symbol chooser — the user has to reload the library (or restart
+  KiCad) to see it.
+* **A part stops being offered the moment it loses its symbol.** Archiving a
+  symbol, or archiving the category whose default supplied one, drops the part
+  from the listings and makes its detail a 404. That is deliberate — a chooser
+  entry that can't be placed is worse than a missing one — but it means
+  "my part vanished" usually means "its symbol reference no longer resolves".
+
+Full reference for the KiCad endpoints themselves lands with the KiCad settings
+page; for now the shapes are pinned by `backend/tests/test_kicad_api.py` and
+described in `backend/app/domain/eda/README.md`.
+
 ## See also
 
 - [ADR-0029](../adr/0029-api-tokens-and-csrf-exemption.md) — token design + CSRF exemption

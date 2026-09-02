@@ -36,8 +36,8 @@ from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import ErrorCodes
+from app.domain.eda import kicad_refs, sexpr, storage
 from app.domain.eda import service as eda_service
-from app.domain.eda import sexpr, storage
 from app.domain.eda.models import EdaDatafile, EdaFootprint, EdaSymbol, PartEda
 from app.domain.eda.vendor_zip import ImportPlan, PendingDatafile, PendingEntry, Skipped
 
@@ -49,10 +49,10 @@ __all__ = [
     "wire_part",
 ]
 
-# The KiCad path-substitution variable phase 6 defines when it packages a
-# library. Storing the variable rather than an absolute path is what lets
-# the same footprint work on every machine that installs the package.
-MODEL_PATH_VAR = "${STOCKMGR_3D}"
+# Re-exported from `kicad_refs`, which owns every name this app and
+# KiCad have to agree on. Kept as a module-level name here because the
+# importer's call sites and tests already read it from this module.
+MODEL_PATH_VAR = kicad_refs.MODEL_PATH_VAR
 
 # How far the ` (2)`…` (9)` conflict-suffix walk goes before the 409 the
 # single-file upload would have raised is allowed through. Past nine

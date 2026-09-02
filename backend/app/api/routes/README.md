@@ -36,11 +36,12 @@ Every public REST endpoint lives here, one file per logical area. This README is
 | `_activity.py` | (helpers, no routes) | — |
 | `search.py` | `/api/search` | [search](../../../../docs/api/search.md) |
 | `catalog.py` | `/catalog` | [catalog](../../../../docs/api/catalog.md) |
+| `kicad.py` | `/kicad-api/v1` | _(docs deferred to phase 9)_ |
 | `sentry_tunnel.py` | `/api/sentry-tunnel` | [sentry-tunnel](../../../../docs/api/sentry-tunnel.md) |
 
 ## Conventions
 
-- Every response uses `core/responses.py::ok` / `::err`. Envelope is `{ data, status }`. See [ADR-0003](../../../../docs/adr/0003-api-envelope-data-status.md).
+- Every response uses `core/responses.py::ok` / `::err`. Envelope is `{ data, status }`. See [ADR-0003](../../../../docs/adr/0003-api-envelope-data-status.md). The one exception is `kicad.py`, which speaks KiCad's HTTP-library protocol: fixed raw-JSON documents in which every scalar is a string. It is mounted outside `/api` for that reason, and its errors are all the same 404.
 - `core/deps.py::get_current_user` is on every route; `get_current_workspace` is on every route except invitations and the public catalog. A request carrying an `Authorization` header authenticates with an API token instead of the session cookie, with **no fallback** either way — see [ADR-0029](../../../../docs/adr/0029-api-tokens-and-csrf-exemption.md).
 - Workspace isolation is the route author's job. Use the helpers in `app/api/_helpers.py`: `assert_in_workspace(db, Model, id_, workspace_id)` for any caller-supplied UUID, and `assert_child_in_parent(...)` when a child id must also match a parent id. They raise 404 on miss *or* on cross-workspace match — replacing the workspace-blind `db.get(Model, id)`. See [ADR-0002](../../../../docs/adr/0002-code-enforced-workspace-isolation.md) and [docs/domain/workspace-isolation.md](../../../../docs/domain/workspace-isolation.md).
 - Rate limiting via slowapi, single-process bucket. See [ADR-0012](../../../../docs/adr/0012-uvicorn-single-worker-slowapi.md).
