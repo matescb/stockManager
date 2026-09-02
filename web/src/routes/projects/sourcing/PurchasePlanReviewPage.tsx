@@ -41,11 +41,19 @@ export default function PurchasePlanReviewPage() {
   const queryClient = useQueryClient();
   const purchasePlanKey = useWsKey("purchase-plan", planId);
   const initialPlan = locationState.plan?.id === planId ? locationState.plan : undefined;
+  // Set when conversion succeeds: disables the plan query BEFORE its
+  // cache entry is removed. With an active observer, removeQueries
+  // schedules an immediate refetch that repopulates the cache — react-
+  // router 7 defers unmount past navigate(), so the observer is still
+  // alive at that point (v6 merely masked the race).
+  const [converted, setConverted] = useState(false);
   const planQuery = useQuery({
     queryKey: purchasePlanKey,
     queryFn: ({ signal }) => api.get<PurchasePlan>(`/projects/${projectId}/purchase-plans/${planId}`, { signal }),
-    enabled: !!projectId && !!planId,
-    initialData: initialPlan,
+    enabled: !!projectId && !!planId && !converted,
+    // Also gated on `converted`: initialData re-seeds a cache entry that
+    // removeQueries just deleted, even on a disabled observer.
+    initialData: converted ? undefined : initialPlan,
     staleTime: 5 * 60 * 1000,
   });
   const plan = planQuery.data ?? null;
@@ -217,6 +225,7 @@ export default function PurchasePlanReviewPage() {
         { overrides },
       );
       toast.success(`Created ${result.orders.length} draft orders`);
+      setConverted(true);
       queryClient.removeQueries({ queryKey: purchasePlanKey, exact: true });
       navigate("/orders");
     } catch (err) {
