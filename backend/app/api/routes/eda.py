@@ -632,8 +632,27 @@ def kicad_setup(ws: CurrentWorkspace) -> Envelope[dict]:
     package that ships the actual library files the HTTP library only
     names. Its URL carries the token in the path, so its placeholder is
     a different one: that surface accepts read-only tokens alone.
+
+    `mcp_url` is the third thing a token opens, and the odd one out: it
+    is not KiCad's at all. It rides along because the settings page that
+    reads this endpoint is where a user has a freshly-minted token in
+    hand, and the MCP endpoint is the other place to paste it. It is
+    null when `MCP_ENABLED` is false, which is the difference between
+    "here is the URL" and a page advertising a path that 404s.
     """
-    root_url = f"{settings().APP_BASE_URL.rstrip('/')}{kicad_library.API_PREFIX}"
+    base_url = settings().APP_BASE_URL.rstrip("/")
+    root_url = f"{base_url}{kicad_library.API_PREFIX}"
+
+    # Imported here rather than at module scope for the reason
+    # `app/main.py` gives at its own `from app.mcp import server` — that
+    # module builds the tool registry at import time, and pulling it in
+    # through a route module would move that work ahead of the Sentry
+    # init `main.py` sequences it after. By request time it is already
+    # imported, so this costs a dict lookup.
+    # `tests/test_deploy_nginx_routes.py:70` reaches for MCP_PATH the
+    # same way.
+    from app.mcp.server import MCP_PATH
+
     return ok(
         {
             "root_url": root_url,
@@ -656,6 +675,13 @@ def kicad_setup(ws: CurrentWorkspace) -> Envelope[dict]:
                 "URL carries the token in its path. Only read-only tokens are "
                 "accepted there — a full-access token pasted into this URL is "
                 "rejected the same way an invalid one is."
+            ),
+            "mcp_url": f"{base_url}{MCP_PATH}" if settings().MCP_ENABLED else None,
+            "mcp_note": (
+                "The same token authenticates the MCP endpoint, for AI "
+                "agents: point an MCP client at this URL over streamable "
+                "HTTP with `Authorization: Bearer <token>`. A read-only "
+                "token there permits the read tools only."
             ),
             "example": {
                 "meta": {"version": 1.0},

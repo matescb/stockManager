@@ -8,13 +8,13 @@ For the one-line domain table (which router serves which tables), see [`ARCHITEC
 
 ## Conventions
 
-- Every workspace-scoped table inherits `WorkspaceOwned` (`backend/app/domain/_mixins.py:11-21`): `id` (UUID PK), `workspace_id` (FK, `ON DELETE CASCADE`), `created_at`, `updated_at`, `created_by`/`updated_by` (FK to `users`, `SET NULL`), `archived_at`.
+- Every workspace-scoped table inherits `WorkspaceOwned` (`backend/app/domain/_mixins.py:11-20`): `id` (UUID PK), `workspace_id` (FK, `ON DELETE CASCADE`), `created_at`, `updated_at`, `created_by`/`updated_by` (FK to `users`, `SET NULL`), `archived_at`.
 - Soft-archive is the universal delete pattern: `archived_at IS NOT NULL` rows are excluded from active queries via partial indexes (`postgresql_where=text("archived_at IS NULL")`). Hard-delete is rare.
 - Cross-table FKs use `ON DELETE SET NULL` so a hard-delete of a parent (e.g. an order) preserves audit trail in `stock_entries.order_id`. The exceptions are intra-domain FKs (`order_entries.order_id`, `part_meta_members.meta_part_id`, etc.) which use `CASCADE`.
 - Every model module is registered in `backend/app/domain/all_models.py`. The test `tests/test_migrations.py::test_all_models_covers_every_domain` walks `app/domain/*/models.py` and asserts each `__tablename__` is in `Base.metadata.tables`.
 - Polymorphic tables (`attachments`, `custom_fields`, `tag_links`) reference parents via `(object_type, object_id)` with **no FK on `object_id`**. See [polymorphic](polymorphic.md).
 
-## Entity catalogue (28 models)
+## Entity catalogue (34 models)
 
 ### users + workspaces
 
@@ -52,6 +52,26 @@ For the one-line domain table (which router serves which tables), see [`ARCHITEC
 | `PartCategory` | `part_categories` | `backend/app/domain/categories/models.py` |
 
 Workspace-scoped part grouping with per-category EDA defaults (KiCad symbol/footprint refs, refdes prefix, footprint filters). `name` and `library_slug` are partial-unique per workspace among active rows; `parts.category_id` references it `SET NULL` — see [categories API](../api/categories.md).
+
+### eda
+
+| Model | Table | Source |
+|---|---|---|
+| `EdaSymbol` | `eda_symbols` | `backend/app/domain/eda/models.py:32` |
+| `EdaFootprint` | `eda_footprints` | `backend/app/domain/eda/models.py:71` |
+| `EdaDatafile` | `eda_datafiles` | `backend/app/domain/eda/models.py:103` |
+| `EdaFootprintModel` | `eda_footprint_models` | `backend/app/domain/eda/models.py:131` |
+| `PartEda` | `part_eda` | `backend/app/domain/eda/models.py:170` |
+
+The workspace's KiCad library plus the per-part configuration naming entries from it. The three library tables are content-addressed and partial-unique per workspace among active rows; `eda_datafiles` has no `category_id` and is instead keyed on `(workspace_id, kind, name)`. `part_eda` is 1:1 with `parts` (`uq_part_eda_part`, a plain unique) and carries two CHECK constraints making each of its symbol and footprint slots an XOR of "hosted id" and "external `LibNick:Entry` ref". `EdaFootprintModel` is the only one of the five that is not `WorkspaceOwned` — a join row has no independent lifecycle — though it still carries and filters on `workspace_id`. See [eda](eda.md).
+
+### tokens
+
+| Model | Table | Source |
+|---|---|---|
+| `ApiToken` | `api_tokens` | `backend/app/domain/tokens/models.py:10` |
+
+Personal access tokens — the non-cookie credential for KiCad, scripts and agents. Workspace- **and** user-scoped: `user_id` references `users.id` `CASCADE`, because a token with no owner has no role to resolve. Only the HMAC is stored (`token_hmac`, `String(64)`); the plaintext exists once, in the mint response. See [ADR-0029](../adr/0029-api-tokens-and-csrf-exemption.md) and [tokens API](../api/tokens.md).
 
 ### storage
 
@@ -143,6 +163,12 @@ erDiagram
   WORKSPACES ||--o{ TAG_LINKS : ""
   WORKSPACES ||--o{ BULK_IMPORT_IDEMPOTENCY : ""
   WORKSPACES ||--o{ PART_CATEGORIES : ""
+  WORKSPACES ||--o{ API_TOKENS : ""
+  WORKSPACES ||--o{ EDA_SYMBOLS : ""
+  WORKSPACES ||--o{ EDA_FOOTPRINTS : ""
+  WORKSPACES ||--o{ EDA_DATAFILES : ""
+  WORKSPACES ||--o{ EDA_FOOTPRINT_MODELS : ""
+  WORKSPACES ||--o{ PART_EDA : ""
 
   PARTS ||--o{ PART_CAD_KEYS : "part_id"
   PARTS ||--o{ PART_META_MEMBERS : "meta_part_id / part_id"
@@ -173,6 +199,17 @@ erDiagram
   BUILDS ||--o{ STOCK_ENTRIES : "build_id (SET NULL)"
   BUILDS ||--o{ LOTS : "source_build_id (SET NULL)"
   BUILDS }o--o| LOTS : "output_lot_id (SET NULL)"
+
+  EDA_FOOTPRINTS ||--o{ EDA_FOOTPRINT_MODELS : "footprint_id (CASCADE)"
+  EDA_DATAFILES ||--o{ EDA_FOOTPRINT_MODELS : "datafile_id (CASCADE)"
+  PARTS ||--o| PART_EDA : "part_id (CASCADE)"
+  EDA_SYMBOLS ||--o{ PART_EDA : "symbol_id (SET NULL)"
+  EDA_FOOTPRINTS ||--o{ PART_EDA : "footprint_id (SET NULL)"
+  EDA_DATAFILES ||--o{ PART_EDA : "spice_datafile_id (SET NULL)"
+  PART_CATEGORIES ||--o{ EDA_SYMBOLS : "category_id (SET NULL)"
+  PART_CATEGORIES ||--o{ EDA_FOOTPRINTS : "category_id (SET NULL)"
+
+  USERS ||--o{ API_TOKENS : "user_id (CASCADE)"
 
   TAGS ||--o{ TAG_LINKS : "tag_id (CASCADE)"
 
@@ -208,6 +245,15 @@ The non-trivial cross-domain FKs and their delete behaviour. Within-domain CASCA
 | `builds.project_id` | `projects.id` | `CASCADE` | `backend/app/domain/builds/models.py:27` |
 | `workspaces.owner_user_id` | `users.id` | `RESTRICT` (deletion guarded by `users/service.py::assert_user_deletable`) | `backend/app/domain/workspaces/models.py:29` |
 | `audit_log.user_id` | `users.id` | `SET NULL` | `backend/app/domain/audit/models.py:23-27` |
+| `api_tokens.user_id` | `users.id` | `CASCADE` (a token with no owner has no role to resolve) | `backend/app/domain/tokens/models.py:43-49` |
+| `eda_symbols.category_id` | `part_categories.id` | `SET NULL` | `backend/app/domain/eda/models.py:64-68` |
+| `eda_footprints.category_id` | `part_categories.id` | `SET NULL` | `backend/app/domain/eda/models.py:96-100` |
+| `eda_footprint_models.footprint_id` | `eda_footprints.id` | `CASCADE` | `backend/app/domain/eda/models.py:155-160` |
+| `eda_footprint_models.datafile_id` | `eda_datafiles.id` | `CASCADE` | `backend/app/domain/eda/models.py:161-166` |
+| `part_eda.part_id` | `parts.id` | `CASCADE` | `backend/app/domain/eda/models.py:207-212` |
+| `part_eda.symbol_id` | `eda_symbols.id` | `SET NULL` (clears the reference, never takes the config) | `backend/app/domain/eda/models.py:214-218` |
+| `part_eda.footprint_id` | `eda_footprints.id` | `SET NULL` | `backend/app/domain/eda/models.py:220-224` |
+| `part_eda.spice_datafile_id` | `eda_datafiles.id` | `SET NULL` | `backend/app/domain/eda/models.py:226-230` |
 
 Constraint names are pinned for the cross-domain `SET NULL` FKs added in `0018_db_schema_cleanup.py` so that downgrade can drop them by name (see migration comments at `backend/app/domain/stock/models.py:61-63`).
 
@@ -216,7 +262,8 @@ Constraint names are pinned for the cross-domain `SET NULL` FKs added in `0018_d
 These are the only behaviours not enforceable purely in application code.
 
 - **`ck_stock_nonneg` (alembic 0013).** AFTER INSERT trigger on `stock_entries`. Re-aggregates `SUM(quantity_delta)` for the matching `(workspace_id, part_id, lot_id, storage_location_id, status)` tuple — uses `IS NOT DISTINCT FROM` so NULL buckets are distinct, not wildcards (`backend/alembic/versions/0013_stock_nonneg_trigger.py:44-69`). Defence-in-depth for the per-part advisory lock — see [ledger](ledger.md) and [ADR-0001](../adr/0001-append-only-stock-ledger.md).
-- **`parts_default_storage_workspace_check` (alembic 0036).** BEFORE trigger on `parts`. Rejects an insert/update where `default_storage_location_id` points at a `storage_locations` row in a different workspace. Raises with `ERRCODE = '23514'` so SQLAlchemy surfaces it as `IntegrityError` (`backend/alembic/versions/0036_parts_default_storage_ws_trigger.py:27-50`). This is the **single** DB-enforced workspace-isolation rule — every other check is in code. See [workspace-isolation](workspace-isolation.md) and [ADR-0002](../adr/0002-code-enforced-workspace-isolation.md).
+- **`parts_default_storage_workspace_check` (alembic 0036).** BEFORE trigger on `parts`. Rejects an insert/update where `default_storage_location_id` points at a `storage_locations` row in a different workspace. Raises with `ERRCODE = '23514'` so SQLAlchemy surfaces it as `IntegrityError` (`backend/alembic/versions/0036_parts_default_storage_ws_trigger.py:27-50`). See [workspace-isolation](workspace-isolation.md) and [ADR-0002](../adr/0002-code-enforced-workspace-isolation.md).
+- **`parts_category_workspace_check` (alembic 0067).** BEFORE trigger on `parts`, same shape as the one above but raising the modern `WS001` SQLSTATE, which `_stock_integrity.py::raise_integrity_as_409` maps to a 409 (`backend/alembic/versions/0067_part_categories.py:141-162`). Together with `0036` these are the **only two** DB-enforced workspace-isolation rules — every other check is in code.
 - **CHECK constraints on `order_entries` and `project_entries`** (alembic 0032): `quantity_ordered >= 0`, `quantity_received >= 0`, `quantity >= 0` (`backend/app/domain/orders/models.py:51-52`, `backend/app/domain/projects/models.py:65`).
 
 ## Partial-unique indexes
@@ -232,6 +279,9 @@ These mediate the soft-archive contract: archiving a row frees its name/MPN for 
 | `uq_catalog_tokens_ws_hmac_active` | `revoked_at IS NULL` | `backend/app/domain/workspaces/models.py:124-130` |
 | `ix_workspaces_catalog_token_hash` | `catalog_token_hash IS NOT NULL` | `backend/app/domain/workspaces/models.py:18-23` |
 | `ix_stock_ws_bag_signature` | `bag_signature IS NOT NULL` | `backend/app/domain/stock/models.py:40-45` |
+| `uq_eda_symbols_ws_name` | `archived_at IS NULL` | `backend/app/domain/eda/models.py:47-53` |
+| `uq_eda_footprints_ws_name` | `archived_at IS NULL` | `backend/app/domain/eda/models.py:82-88` |
+| `uq_eda_datafiles_ws_kind_name` | `archived_at IS NULL` | `backend/app/domain/eda/models.py:113-120` |
 
 See [ADR-0004](../adr/0004-mpn-uniqueness-per-workspace.md) for the MPN-uniqueness rule.
 
@@ -242,6 +292,6 @@ Schema evolves forward-only. The chain runs `0001_initial.py` → the current he
 - `0013_stock_nonneg_trigger.py` — ledger non-negative trigger.
 - `0036_parts_default_storage_ws_trigger.py` — workspace-isolation trigger on `parts.default_storage_location_id`.
 
-Other notable ones cross-referenced from this doc set: `0011` (MPN unique index), `0012` + `0020` (`bag_signature` column + partial index), `0018` (cross-domain SET NULL FKs + partial unique on storage/tag names + pg_trgm GIN), `0030` (`audit_log`), `0031` (poly-orphan-cleanup indexes), `0032` (integer-quantity CHECKs), `0034` (`bulk_import_idempotency`), `0035` (`workspace_catalog_tokens`), `0042` (`workspaces.active_*` JSONB lists).
+Other notable ones cross-referenced from this doc set: `0011` (MPN unique index), `0012` + `0020` (`bag_signature` column + partial index), `0018` (cross-domain SET NULL FKs + partial unique on storage/tag names + pg_trgm GIN), `0030` (`audit_log`), `0031` (poly-orphan-cleanup indexes), `0032` (integer-quantity CHECKs), `0034` (`bulk_import_idempotency`), `0035` (`workspace_catalog_tokens`), `0042` (`workspaces.active_*` JSONB lists), `0067` (`part_categories` + the `parts.category_id` workspace trigger), `0068` (all five `eda_*` / `part_eda` tables), `0069` (`api_tokens`).
 
 Don't edit a merged migration — add a new one. (`CLAUDE.md` Migrations section.)

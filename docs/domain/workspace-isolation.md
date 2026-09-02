@@ -80,7 +80,7 @@ These tables intentionally lack a `workspace_id` column. The model docstrings ca
 - `user_login_failures` — protects the user credential, not a workspace resource (`backend/app/domain/users/models.py:62-64`).
 - `user_sessions` — keyed by token hash; user-scoped, not workspace-scoped.
 
-Everything else either inherits `WorkspaceOwned` (`backend/app/domain/_mixins.py:11-21`) which means `workspace_id` is `nullable=False` with `ON DELETE CASCADE`, or is an explicit child table whose workspace contract is documented here.
+Everything else either inherits `WorkspaceOwned` (`backend/app/domain/_mixins.py:11-20`) which means `workspace_id` is `nullable=False` with `ON DELETE CASCADE`, or is an explicit child table whose workspace contract is documented here.
 
 ## Polymorphic tables
 

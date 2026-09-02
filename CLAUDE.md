@@ -19,7 +19,7 @@ the order a new engineer should read them.
 
 **Reference shelves (engineer):**
 
-- `docs/api/` — per-router REST reference (15 areas + envelope/error/auth
+- `docs/api/` — per-router REST reference (22 areas + envelope/error/auth
   conventions).
 - `docs/domain/` — entity & data-model reference; `data-model.md` has the
   full ER diagram.

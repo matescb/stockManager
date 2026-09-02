@@ -13,8 +13,8 @@ Every public REST endpoint lives here, one file per logical area. This README is
 | `invitations.py` | `/api/invitations` | [invitations](../../../../docs/api/invitations.md) |
 | `parts_core.py` | `/api/parts` (core CRUD) | [parts](../../../../docs/api/parts.md) |
 | `categories.py` | `/api/categories` | [categories](../../../../docs/api/categories.md) |
-| `eda.py` | `/api/eda` + `/api/parts/{id}/eda` | _(docs deferred to phase 9)_ |
-| `eda_import.py` | `/api/eda/import` + `/api/parts/{id}/eda/import`, `/fetch-lcsc` | _(docs deferred to phase 9)_ |
+| `eda.py` | `/api/eda` + `/api/parts/{id}/eda` | [eda](../../../../docs/api/eda.md) |
+| `eda_import.py` | `/api/eda/import` + `/api/parts/{id}/eda/import`, `/fetch-lcsc` | [eda](../../../../docs/api/eda.md#importers) |
 | `parts_relations.py` | `/api/parts` (substitutes, meta members) | [parts](../../../../docs/api/parts.md) |
 | `parts_assets.py` | `/api/parts/assets/...` | [parts](../../../../docs/api/parts.md) |
 | `parts_scan.py` | `/api/parts/scan/...` | [parts](../../../../docs/api/parts.md) |
@@ -36,8 +36,8 @@ Every public REST endpoint lives here, one file per logical area. This README is
 | `_activity.py` | (helpers, no routes) | — |
 | `search.py` | `/api/search` | [search](../../../../docs/api/search.md) |
 | `catalog.py` | `/catalog` | [catalog](../../../../docs/api/catalog.md) |
-| `kicad.py` | `/kicad-api/v1` | _(docs deferred to phase 9)_ |
-| `kicad_pcm.py` | `/kicad-api/pcm/{token}` | _(docs deferred to phase 9)_ |
+| `kicad.py` | `/kicad-api/v1` | [kicad](../../../../docs/api/kicad.md#the-http-library) |
+| `kicad_pcm.py` | `/kicad-api/pcm/{token}` | [kicad](../../../../docs/api/kicad.md#the-pcm-repository) |
 | `sentry_tunnel.py` | `/api/sentry-tunnel` | [sentry-tunnel](../../../../docs/api/sentry-tunnel.md) |
 
 ## Conventions

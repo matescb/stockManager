@@ -1163,3 +1163,32 @@ def test_kicad_setup_root_url_is_where_the_library_actually_answers(ws: Tenant):
     root_url = ws.session.get("/api/eda/kicad-setup").json()["data"]["root_url"]
     path = root_url.split("://", 1)[-1].split("/", 1)[-1]
     assert ws.kicad.get(f"/{path}/v1/").status_code == 200
+
+
+def test_kicad_setup_points_at_the_mcp_endpoint(ws: Tenant):
+    """The settings page hands a freshly-minted token to three surfaces,
+    and `/mcp` is the one that is not KiCad's. Pinned here because the
+    URL is assembled from a constant `app/main.py` mounts and this
+    endpoint only quotes — a moved mount that left this string behind
+    would advertise a 404."""
+    from app.mcp.server import MCP_PATH
+
+    setup = ws.session.get("/api/eda/kicad-setup").json()["data"]
+    assert setup["mcp_url"] == f"http://localhost:5173{MCP_PATH}"
+    # Same origin as the library it sits beside — one deployment, and a
+    # base URL that drifted between the two would be the bug.
+    assert setup["mcp_url"].startswith(setup["root_url"].rsplit("/", 1)[0])
+    assert "Bearer" in setup["mcp_note"]
+
+
+def test_kicad_setup_omits_the_mcp_url_when_the_server_is_off(
+    ws: Tenant, monkeypatch: pytest.MonkeyPatch
+):
+    """`MCP_ENABLED=false` unmounts the endpoint entirely (ADR-0030), so
+    the setup page must stop naming it rather than print a path that
+    404s."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings(), "MCP_ENABLED", False)
+    setup = ws.session.get("/api/eda/kicad-setup").json()["data"]
+    assert setup["mcp_url"] is None

@@ -22,7 +22,7 @@ The single most load-bearing file is `ARCHITECTURE.md`. Don't restate things fro
 | Entities, relationships, invariants | [`domain/`](domain/README.md) |
 | Frontend conventions, lib catalog | [`frontend/`](frontend/README.md) |
 | Why a piece of code looks the way it does | [`adr/`](adr/README.md) |
-| Per-feature rationale (Phases 1–13) | [`phases/`](phases/) |
+| Per-feature rationale (Phases 1–14) | [`phases/`](phases/) |
 | Module-by-module orientation | `backend/app/domain/*/README.md`, `web/src/{lib,components,routes}/README.md` (in-tree) |
 
 ## I'm on-call or running ops
@@ -53,6 +53,7 @@ The single most load-bearing file is `ARCHITECTURE.md`. Don't restate things fro
 | Purchase orders + receiving | [`user/orders.md`](user/orders.md) |
 | Projects and BOM | [`user/projects-and-bom.md`](user/projects-and-bom.md) |
 | Builds — consume stock against a BOM | [`user/builds.md`](user/builds.md) |
+| Use your parts in KiCad | [`user/kicad.md`](user/kicad.md) |
 | Reports | [`user/reports.md`](user/reports.md) |
 | Alerts | [`user/alerts.md`](user/alerts.md) |
 | Workspace members and roles | [`user/workspace-management.md`](user/workspace-management.md) |

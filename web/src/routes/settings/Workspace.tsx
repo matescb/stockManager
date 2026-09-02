@@ -684,6 +684,18 @@ export default function WorkspaceSettings() {
         </Link>
       </div>
 
+      <div className="card p-4 mb-4 space-y-2 text-sm">
+        <h2 className="text-md font-semibold">KiCad setup</h2>
+        <div className="text-xs text-muted">
+          Connect KiCad to this workspace: the HTTP library file, the add-on
+          repository that installs the symbol and footprint files, and the
+          SPICE path variable.
+        </div>
+        <Link to="/settings/kicad" className="btn inline-flex w-fit">
+          Set up KiCad
+        </Link>
+      </div>
+
       {cur && <SourcingCard workspace={cur} workspaceId={workspaceId} />}
       {cur && <ActiveListsCard workspace={cur} workspaceId={workspaceId} />}
 

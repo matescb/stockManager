@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -158,6 +159,17 @@ export default function ApiTokensSettings() {
       </p>
 
       <InlineQueryError query={tokensQuery} label="API tokens" className="mb-3" />
+
+      <div className="card p-4 mb-4">
+        <h2 className="text-md font-semibold mb-1">Using this token in KiCad?</h2>
+        <p className="text-sm text-muted mb-2">
+          The setup page walks through the library file, the add-on repository
+          and the SPICE path variable, and builds the config for you.
+        </p>
+        <Link className="btn inline-block" to="/settings/kicad">
+          KiCad setup
+        </Link>
+      </div>
 
       {minted && (
         <div className="card p-4 mb-4 space-y-2 border-warning/50">

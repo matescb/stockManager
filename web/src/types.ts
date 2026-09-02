@@ -28,6 +28,7 @@ export type {
   PartEdaImport,
   EdaImportRow,
   EdaImportSkip,
+  KicadSetup,
   StorageLocation,
   SpecSource,
   CustomFieldRow,

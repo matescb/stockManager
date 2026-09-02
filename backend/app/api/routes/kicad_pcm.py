@@ -23,7 +23,7 @@ Three things bound that exposure:
   is refused with the same 404 as a revoked one — no hint that the
   credential was real, and no reason for a user to try it twice.
 * **The app's own error log masks the segment**
-  (`core/responses.py::log_safe_path`), so a flood of bad-token probes
+  (`core/responses.py::mask_credential_segment`), so a flood of bad-token probes
   doesn't write live credentials into the journal.
 * **`Cache-Control: no-store` and `Referrer-Policy: no-referrer`** on
   every response, so neither an intermediary nor a browser that wandered

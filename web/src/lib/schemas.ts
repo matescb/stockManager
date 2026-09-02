@@ -277,6 +277,43 @@ export const PartEdaImportSchema = z.object({
 });
 export type PartEdaImport = z.infer<typeof PartEdaImportSchema>;
 
+/**
+ * Everything the KiCad setup page needs, minus the token.
+ * Backend: `app/api/routes/eda.py::kicad_setup`.
+ *
+ * `example` is a `.kicad_httplib` document with a placeholder where the
+ * secret goes — a token's plaintext exists once, in the response that
+ * minted it, so the server cannot hand out a ready-to-use file. Note
+ * `meta.version` is a NUMBER; KiCad refuses to load the file if it is
+ * quoted, which is why it is typed here rather than passed through.
+ */
+export const KicadSetupSchema = z.object({
+  root_url: z.string(),
+  categories_ttl: z.number(),
+  parts_ttl: z.number(),
+  pcm_repository_url_template: z.string(),
+  pcm_package_identifier: z.string(),
+  pcm_spice_path_variable: z.string(),
+  pcm_spice_path_value: z.string(),
+  read_only_note: z.string(),
+  /** Null when the server was started with `MCP_ENABLED=false`. */
+  mcp_url: nullableString,
+  mcp_note: z.string(),
+  example: z.object({
+    meta: z.object({ version: z.number() }),
+    name: z.string(),
+    source: z.object({
+      type: z.string(),
+      api_version: z.string(),
+      root_url: z.string(),
+      token: z.string(),
+      timeout_parts_seconds: z.number(),
+      timeout_categories_seconds: z.number(),
+    }),
+  }),
+});
+export type KicadSetup = z.infer<typeof KicadSetupSchema>;
+
 /** Paged parts response — returned by GET /parts with cursor pagination. */
 export const PagedPartsSchema = z.object({
   items: z.array(PartSchema),
