@@ -279,8 +279,18 @@ on a workstation. See
 [tokens § Using a token with KiCad](tokens.md#using-a-token-with-kicad) for the
 file format, and `GET /api/eda/kicad-setup` for the values to write into it.
 
+## MCP
+
+If the client is an AI assistant rather than a script, there is a second door:
+an MCP server at `/mcp`, authenticated by the same token, exposing 19 named
+tools over the same services these routes call. It exists because a general
+REST surface makes an assistant spend its context re-deriving the domain model.
+Prefer it for assistants; prefer the routes above for anything scripted. See
+[mcp](mcp.md).
+
 ## See also
 
+- [mcp](mcp.md) — the MCP server, for AI assistants
 - [tokens](tokens.md) — the credential itself: minting, model, error codes
 - [API conventions](./README.md) — envelope, error body, pagination
 - [ADR-0029](../adr/0029-api-tokens-and-csrf-exemption.md) — token design and the CSRF exemption

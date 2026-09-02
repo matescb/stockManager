@@ -71,15 +71,25 @@ def _authenticate_api_token(request: Request, db: Session, header: str) -> User:
     return _authenticate_token_value(request, db, raw.strip())
 
 
-def _authenticate_token_value(request: Request, db: Session, raw: str) -> User:
-    """Authenticate a bare token plaintext, however it was transported.
+def resolve_live_token(request: Request, db: Session, raw: str) -> tuple[User, ApiToken]:
+    """Everything a token credential needs EXCEPT the read-only gate.
 
-    Split from `_authenticate_api_token` for the PCM surface, which
-    receives its token in the URL path because the Plugin and Content
-    Manager sends no headers at all. Everything past the transport is
-    identical on purpose: the membership re-check and the telemetry
-    commit below are the two things a second implementation would drift
-    on, and both are security-relevant.
+    Split out of `_authenticate_token_value` because "may this
+    credential write?" is answered differently on different surfaces,
+    while "is this credential live, and whose is it?" must be answered
+    identically everywhere. The HTTP surfaces express the write question
+    as `request.method not in _READ_METHODS`; the MCP surface
+    (`app/mcp/auth.py`) has no methods — every JSON-RPC call is a POST —
+    so it asks the question per TOOL instead, after this function has
+    established the credential.
+
+    Everything security-relevant that both surfaces need lives here and
+    nowhere else: the membership re-check and the telemetry commit are
+    exactly the two things a second implementation would drift on.
+
+    Raises `HTTPException` (401) on any failure, all collapsed to
+    `_invalid_token`'s single body. Callers that need a non-raising
+    variant use `try_authenticate_api_token` / `try_authenticate_url_token`.
     """
     row = tokens_service.resolve_token(db, raw)
     if row is None:
@@ -110,6 +120,15 @@ def _authenticate_token_value(request: Request, db: Session, raw: str) -> User:
     if membership is None:
         _invalid_token()
 
+    # Parks a LIVE ORM instance on request state, which outlives this
+    # function and — for the MCP surface (`app/mcp/auth.py`) — outlives
+    # the session it was loaded in. That is only safe because
+    # `infra/db.py:41` builds `SessionLocal` with
+    # `expire_on_commit=False`: a committed instance keeps its loaded
+    # column values instead of expiring and re-querying on a session
+    # that may already be closed. If that flag is ever turned off, every
+    # reader of `request.state.api_token` becomes a
+    # `DetachedInstanceError` waiting to happen — hand out ids instead.
     request.state.api_token = row
     # Rate-limit buckets key off this (see `core/ratelimit.py::user_key`).
     # Set on both auth paths so the bucket is the same person whichever
@@ -145,10 +164,26 @@ def _authenticate_token_value(request: Request, db: Session, raw: str) -> User:
         )
         db.rollback()
 
+    return user, row
+
+
+def _authenticate_token_value(request: Request, db: Session, raw: str) -> User:
+    """Authenticate a bare token plaintext, however it was transported.
+
+    Split from `_authenticate_api_token` for the PCM surface, which
+    receives its token in the URL path because the Plugin and Content
+    Manager sends no headers at all. Everything past the transport is
+    identical on purpose — see `resolve_live_token`, which is where that
+    shared work lives.
+    """
+    user, row = resolve_live_token(request, db, raw)
+
     # Read-only tokens are the credential shipped to KiCad and the PCM
     # (phases 5/6), where the plaintext ends up in a config file or a URL
     # path. Refusing writes here — before any route sees the request —
-    # bounds the blast radius of that exposure.
+    # bounds the blast radius of that exposure. The MCP surface applies
+    # the same rule per tool rather than per method; see
+    # `app/mcp/tools/_registry.py::require_write`.
     if row.read_only and request.method not in _READ_METHODS:
         raise_http(
             status.HTTP_403_FORBIDDEN,
@@ -438,7 +473,13 @@ def forbid_api_token(request: Request, user: CurrentUser) -> None:
 _ROLE_RANK = {"viewer": 0, "member": 1, "admin": 2, "owner": 3}
 
 
-def _membership_role(db: Session, user: User, ws: Workspace) -> str:
+def membership_role(db: Session, user: User, ws: Workspace) -> str:
+    """The user's active role in this workspace, or "viewer" when there
+    is no active membership.
+
+    Public because the MCP surface needs the same answer without a
+    FastAPI dependency graph to hang `require_member_for_writes` off.
+    """
     m = (
         db.query(WorkspaceMember)
         .filter(
@@ -458,7 +499,7 @@ def require_role(min_role: str):
     floor = _ROLE_RANK[min_role]
 
     def _dep(user: CurrentUser, ws: CurrentWorkspace, db: DbSession) -> None:
-        rank = _ROLE_RANK.get(_membership_role(db, user, ws), 0)
+        rank = _ROLE_RANK.get(membership_role(db, user, ws), 0)
         if rank < floor:
             raise_http(
                 status.HTTP_403_FORBIDDEN,
@@ -481,7 +522,7 @@ def require_member_for_writes(
     on routers that mix read and write endpoints."""
     if request.method in _READ_METHODS:
         return
-    rank = _ROLE_RANK.get(_membership_role(db, user, ws), 0)
+    rank = _ROLE_RANK.get(membership_role(db, user, ws), 0)
     if rank < _ROLE_RANK["member"]:
         raise_http(
             status.HTTP_403_FORBIDDEN,

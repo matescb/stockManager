@@ -8,7 +8,7 @@ from fastapi import status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.deps import _ROLE_RANK, _membership_role
+from app.core.deps import _ROLE_RANK, membership_role
 from app.core.errors import ErrorCodes, raise_http
 from app.domain._mixins import WorkspaceOwned
 from app.domain._polymorphic_cleanup import (
@@ -198,7 +198,7 @@ def require_resource_access(
     # here is correct — it tells the caller "you exist in this
     # workspace, the row exists, but you lack `role`" without leaking
     # anything about other workspaces.
-    rank = _ROLE_RANK.get(_membership_role(db, user, ws), 0)
+    rank = _ROLE_RANK.get(membership_role(db, user, ws), 0)
     if rank < floor:
         raise_http(
             status.HTTP_403_FORBIDDEN,

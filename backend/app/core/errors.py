@@ -306,3 +306,10 @@ class ErrorCodes:
 
     # Legacy parts-provider lookup route.
     PROVIDER_UPSTREAM_ERROR = "provider.upstream_error"
+
+    # MCP surface (ADR-0030). Raised only by the runtime assertion in
+    # `app/mcp/principal.py::unit_of_work`: a tool declared read-only
+    # changed the database, so its transaction was discarded. It is a
+    # server bug, not a caller mistake, and the code says so — an agent
+    # that sees it must not retry.
+    MCP_UNDECLARED_WRITE = "mcp.undeclared_write"

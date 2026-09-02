@@ -311,12 +311,19 @@ async def lifespan(_app: FastAPI):
     """Run synchronous startup assertions before serving requests."""
     assert_cors_origins_not_wildcard()
     assert_proxy_headers_trusted()
-    try:
-        yield
-    finally:
-        from app.domain.sourcing.providers.factory import close_provider_client_pool
+    # The MCP server is a mounted sub-application, and Starlette does not
+    # propagate lifespan into one. Its streamable-HTTP session manager
+    # has to be started here or the first `/mcp` request fails at
+    # runtime with "Task group is not initialized" (ADR-0030).
+    async with mcp_server.lifespan_context(_app):
+        try:
+            yield
+        finally:
+            from app.domain.sourcing.providers.factory import (
+                close_provider_client_pool,
+            )
 
-        close_provider_client_pool()
+            close_provider_client_pool()
 
 
 app = FastAPI(
@@ -512,6 +519,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=CORS_ALLOW_HEADERS,
 )
+
+# The MCP surface (ADR-0030), added here so it sits INSIDE
+# RequestIdMiddleware and OUTSIDE CORS/CSRF. Both halves are deliberate:
+# an MCP request gets a request id like every other (its audit rows carry
+# one), and it skips the CSRF Origin guard because that guard defends
+# cookie authentication, which `/mcp` refuses outright. A no-op when
+# MCP_ENABLED is false, which leaves `/mcp` a plain unrouted 404.
+#
+# Imported here rather than in the block at the top for the same reason
+# the limiter above is: everything before `_init_sentry()` runs ahead of
+# the FastAPI import, and a suppressed E402 is this file's established
+# way of saying an import is deliberately placed after setup code.
+from app.mcp import server as mcp_server  # noqa: E402
+
+mcp_server.mount_mcp(app)
 
 # Added last → outermost. Sees every request before CORS/CSRF run.
 app.add_middleware(RequestIdMiddleware)
