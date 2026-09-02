@@ -6,6 +6,7 @@ import {
   BarChart3,
   Bell,
   Boxes,
+  CircuitBoard,
   FolderKanban,
   Hammer,
   KeyRound,
@@ -118,6 +119,12 @@ export default function CommandPalette() {
             onSelect={() => go("/settings/api-tokens")}
           >
             <KeyRound size={14} /> API tokens
+          </Command.Item>
+          <Command.Item
+            value="nav settings kicad eda library httplib pcm spice setup"
+            onSelect={() => go("/settings/kicad")}
+          >
+            <CircuitBoard size={14} /> KiCad setup
           </Command.Item>
           <Command.Item
             value="nav settings account profile invitation"

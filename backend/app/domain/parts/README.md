@@ -28,7 +28,7 @@ Owns the `Part` aggregate (linked / local / meta / sub-assembly), MPN uniqueness
 
 1. **MPN uniqueness is per-workspace.** Partial unique index `uq_parts_ws_mpn` (`WHERE mpn IS NOT NULL AND archived_at IS NULL`). Create-part returns `409` with `existing_id`+`existing_name`. See [ADR-0004](../../../../docs/adr/0004-mpn-uniqueness-per-workspace.md).
 2. **Assets are content-addressed.** Stored at `{UPLOAD_DIR}/parts/{ws_id}/{sha}.{ext}`; URL is `/api/parts/assets/{ws_id}/{filename}`. See [ADR-0005](../../../../docs/adr/0005-content-addressed-assets.md).
-3. **Catalog vs spec keys are split.** `web/src/lib/providerCatalog.ts` defines the FE catalog-key list. CLAUDE.md asserts the same list also lives server-side (`services/provider.py`), but no such file exists in this module today — see issue #314. Until that's resolved, any new catalog key needs the FE update plus a check that the BE side has actually been wired up. See [ADR-0007](../../../../docs/adr/0007-provider-catalog-vs-spec-split.md).
+3. **Catalog vs spec keys are split.** `web/src/lib/providerCatalog.ts` defines the FE catalog-key list. The server-side mirror is `provider_fields.py` — `PROVIDER_RESERVED_CUSTOM_FIELD_KEYS` and `PROVIDER_ASSET_CUSTOM_FIELD_KINDS`, read by `api/routes/custom_fields.py`, `api/routes/parts_assets.py` and `app/mcp/tools/_shared.py`; the provider-side field shapes live in `providers/base.py`. Adding a catalog key needs the FE list **and** the relevant server-side touchpoint. See [ADR-0007](../../../../docs/adr/0007-provider-catalog-vs-spec-split.md).
 
 ## See also
 

@@ -13,6 +13,54 @@ the canonical record.
   and `throttled:concurrent` for concurrent-request throttles. Downstream
   consumers filtering audit logs by the old value must update their filters.
 
+## 2026-09 — KiCad libraries and the agent API
+
+Nine PRs, migrations `0067`–`0069`. Rationale in
+[`docs/phases/14-kicad-and-agent-api.md`](docs/phases/14-kicad-and-agent-api.md).
+
+- **Part categories** (`0067`) — a workspace-scoped grouping carrying the
+  per-category KiCad defaults (refdes prefix, symbol/footprint refs,
+  footprint filters) and the `library_slug` every generated library name
+  is built from. `parts.category_id` is guarded by a BEFORE trigger, the
+  second DB-enforced workspace-isolation rule.
+- **The EDA domain** (`0068`) — `eda_symbols`, `eda_footprints`,
+  `eda_datafiles`, `eda_footprint_models` and `part_eda`; a separate
+  text-CAD storage lane (the attachment magic-byte allow-list is
+  unchanged); an in-house s-expression tokenizer; the part **CAD** tab.
+- **Vendor and LCSC import** — SnapEDA, Component Search Engine and
+  UltraLibrarian zips are detected by layout and imported whole; LCSC
+  part numbers are fetched and converted through `easyeda2kicad`. A bad
+  member is a skip note, not a failed import. Legacy KiCad 5 `.lib`
+  libraries are refused with the `kicad-cli` upgrade command in the
+  message.
+- **Personal access tokens** (`0069`) — the non-cookie credential for
+  KiCad, scripts and agents, with a `read_only` flag enforced at the
+  single auth choke point. [ADR-0029](docs/adr/0029-api-tokens-and-csrf-exemption.md).
+- **KiCad HTTP library** (`/kicad-api/v1`) — the `kicad_httplib`
+  protocol: `GET`-only, raw JSON outside the app envelope, one
+  indistinguishable 404 for every failure. Plus
+  `GET /api/eda/kicad-setup` and the generated `.kicad_httplib` file.
+- **KiCad PCM repository** (`/kicad-api/pcm/{token}`) — a per-workspace
+  add-on package serving the library files the HTTP library only names.
+  The credential rides the URL because the Plugin & Content Manager
+  sends no headers, so **only `read_only` tokens are accepted there**;
+  archives are byte-deterministic and content-addressed on disk.
+- **Agent REST enablement** — token auth across the whole `/api`
+  surface, with [`docs/api/agents.md`](docs/api/agents.md) as the entry
+  point for non-browser clients.
+- **MCP server at `/mcp`** — mounted in-process, same credential, named
+  tools over the same services. `MCP_ENABLED=false` unmounts it
+  entirely. [ADR-0030](docs/adr/0030-mcp-server-surface.md).
+- **KiCad setup page** (`/settings/kicad`) — builds the
+  `.kicad_httplib` download, the PCM repository URL and the SPICE path
+  variable from a token pasted in the browser. The plaintext never
+  returns to the server.
+- **Deploy gates** — the deploy job now fails loudly on a stale web
+  image: a health gate polling `/api/health`, and a routing gate
+  requiring `/kicad-api/v1/` to answer JSON rather than the SPA shell.
+  A `< /dev/null` on every deploy child that could read stdin fixes an
+  SSH heredoc consuming the rest of the script and exiting green.
+
 ## 2026-05 — feedback brief fixes
 
 - **E2E-1 / #686** Playwright E2E now has smoke/core/nightly project

@@ -41,12 +41,15 @@ slowapi, per-process bucket store, per-IP. The reverse proxy must set `X-Forward
 | [invitations](invitations.md) | `/api/invitations` | Accept invitation (no workspace context) |
 | [parts](parts.md) | `/api/parts` | parts_core + parts_assets + parts_scan + parts_provider |
 | [categories](categories.md) | `/api/categories` | Part categories + per-category EDA defaults |
+| [eda](eda.md) | `/api/eda`, `/api/parts/{id}/eda` | KiCad library CRUD, uploads, vendor-zip + LCSC import, client setup |
+| [kicad](kicad.md) | `/kicad-api` | KiCad's own protocols: the HTTP library and the PCM repository. **Not** the envelope |
 | [stock](stock.md) | `/api/stock`, `/api/lots` | Add/remove/move/adjust + lot management |
 | [storage](storage.md) | `/api/storage` | Storage location CRUD |
 | [projects](projects.md) | `/api/projects`, `/api/bom-presets` | Projects, BOM CRUD, BOM import wizard, presets |
 | [orders](orders.md) | `/api/orders` | Purchase orders + receive workflow |
 | [builds](builds.md) | `/api/builds` | Builds + consume + reservations + shortage analysis |
 | [reports](reports.md) | `/api/reports` | Aggregate queries (low-stock, value, BOM shortage, expiring) |
+| [sourcing](sourcing.md) | `/api/sourcing`, `/api/workspaces` | TrustedParts connection checks, offer search, part/project sourcing reads |
 | [attachments-tags-cf](attachments-tags-cf.md) | `/api/attachments`, `/api/tags`, `/api/custom-fields` | Polymorphic surfaces |
 | [tokens](tokens.md) | `/api/tokens` | Personal access tokens for KiCad / agent access |
 | [agents](agents.md) | — | Cross-cutting guide for non-browser clients: token auth, error codes, curl quickstart |

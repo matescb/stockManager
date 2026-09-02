@@ -141,13 +141,13 @@ default.
 
 ## Working vocabulary
 
-One row per area. Prefixes are the mount points in `backend/app/main.py:490-585`.
+One row per area. Prefixes are the mount points in `backend/app/main.py:548-649`.
 
 | Area | Prefix | What an agent does with it | Reference |
 |---|---|---|---|
 | Parts | `/api/parts` | The central entity. Create, search by `mpn`, read `on_hand` / `available`, patch metadata, attach files. | [parts](parts.md) |
 | Categories | `/api/categories` | File parts into a tree that also supplies KiCad defaults (refdes prefix, symbol/footprint refs). | [categories](categories.md) |
-| EDA | `/api/eda`, `/api/parts/{id}/eda` | Upload `.kicad_sym` / `.kicad_mod` / STEP / SPICE, wire them to a part, import a vendor zip. Multipart. | `backend/app/domain/eda/README.md` |
+| EDA | `/api/eda`, `/api/parts/{id}/eda` | Upload `.kicad_sym` / `.kicad_mod` / STEP / SPICE, wire them to a part, import a vendor zip. Multipart. | [eda](eda.md) |
 | Stock | `/api/stock` | `add` / `remove` / `move` / `adjust`. Append-only ledger — never patch a quantity, post a delta. | [stock](stock.md) |
 | Lots | `/api/lots` | Batch/date-code identity within a part. | [stock](stock.md) |
 | Storage | `/api/storage` | Locations, plus per-location on-hand and history. | [storage](storage.md) |
@@ -160,6 +160,8 @@ One row per area. Prefixes are the mount points in `backend/app/main.py:490-585`
 | Attachments, tags, custom fields | `/api/attachments`, `/api/tags`, `/api/custom-fields` | Polymorphic surfaces over most entities. | [attachments-tags-cf](attachments-tags-cf.md) |
 | Audit | `/api/audit` | Read the trail. Admin+ only, so a member's token gets `403 resource.insufficient_role` here. | [audit](audit.md) |
 | Tokens | `/api/tokens` | **Session-only.** Listed for completeness — a token cannot reach it. | [tokens](tokens.md) |
+| KiCad | `/kicad-api` | Not for agents — KiCad's own read-only protocols, outside the envelope. Same token. | [kicad](kicad.md) |
+| MCP | `/mcp` | The other door for an assistant: named tools over these same services, one JSON-RPC endpoint. | [mcp](mcp.md) |
 
 Writes are attributed to the token's **owner**, not to the token: audit rows and
 ledger entries carry that user id, exactly as if they had clicked the button.
@@ -277,7 +279,8 @@ raw JSON without the envelope, and answers `404` to everything it does not
 like. Use a `read_only` token — its plaintext lands in a `.kicad_httplib` file
 on a workstation. See
 [tokens § Using a token with KiCad](tokens.md#using-a-token-with-kicad) for the
-file format, and `GET /api/eda/kicad-setup` for the values to write into it.
+file format, [kicad](kicad.md) for both protocols, and `GET /api/eda/kicad-setup`
+for the values to write into it.
 
 ## MCP
 
@@ -291,6 +294,8 @@ Prefer it for assistants; prefer the routes above for anything scripted. See
 ## See also
 
 - [mcp](mcp.md) — the MCP server, for AI assistants
+- [eda](eda.md) — the CAD library surface, and the setup endpoint
+- [kicad](kicad.md) — the two KiCad protocols this token also opens
 - [tokens](tokens.md) — the credential itself: minting, model, error codes
 - [API conventions](./README.md) — envelope, error body, pagination
 - [ADR-0029](../adr/0029-api-tokens-and-csrf-exemption.md) — token design and the CSRF exemption

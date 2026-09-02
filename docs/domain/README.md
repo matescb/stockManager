@@ -17,6 +17,7 @@ Start with [`data-model.md`](data-model.md) for the ER diagram and the full tabl
 | [lots-and-serials](lots-and-serials.md) | Lot lifecycle, splits, parent_lot_id, serial-tracked workspaces |
 | [builds-and-bom](builds-and-bom.md) | Reservation, consume, shortage analysis, output_lot creation |
 | [orders-and-receive](orders-and-receive.md) | Receive orchestration → ledger writes + lot creation |
+| [eda](eda.md) | The KiCad library tables, the text-CAD storage lane, the s-expression contract, the import pipeline |
 | [providers](providers.md) | Mouser + DigiKey, OAuth, catalog vs spec key split, per-workspace credentials |
 | [scan-import](scan-import.md) | `bag_signature`, MIL-STD-130N parser, idempotency table |
 | [polymorphic](polymorphic.md) | Attachments, tags, custom_fields — the no-FK surface and how cleanup works |

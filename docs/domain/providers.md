@@ -77,7 +77,7 @@ The canonical `result` shape (`backend/app/domain/parts/providers/base.py:19-34`
 
 `backend/app/domain/parts/providers/mouser.py`. Single endpoint:
 
-- `POST https://api.mouser.com/api/v1/search/partnumber` with the API key as a query param (TODO(verify): exact auth shape — confirm whether key is in URL or header).
+- `POST https://api.mouser.com/api/v1/search/partnumber` with the API key as the `apiKey` **query parameter**, not a header (`backend/app/domain/parts/providers/mouser.py:131`).
 - 8s wall-clock timeout (BE2-011) (`backend/app/domain/parts/providers/mouser.py:12`).
 
 Mouser populates `ProductAttributes` only with packaging info; the parametric values live in the free-text `Description`. The provider runs unit-aware regex inference on description tokens to recover specs (`backend/app/domain/parts/providers/mouser.py:23-40`). Tokens that don't match a known pattern are skipped — better to omit a row than write garbage.
@@ -125,7 +125,7 @@ The truth is on the **frontend** in `web/src/lib/providerCatalog.ts:17-52`:
 
 The PartSpecs and PartSourcing tabs split on this boundary. The classification is at render time so adding a new catalog field doesn't need a DB migration to re-categorise historical rows.
 
-`CLAUDE.md` invariant: "the same key list lives server-side in `backend/app/domain/parts/services/provider.py`". TODO(verify): that file path doesn't exist in the current tree — only `services/{assets,bag_signature,provider_cache}.py`. Confirm where the server-side mirror landed (or whether it's now read by the catalog endpoint from a constants module).
+The server-side mirror is `backend/app/domain/parts/provider_fields.py`: `PROVIDER_RESERVED_CUSTOM_FIELD_KEYS` (`image_url`, `datasheet_url`, `source_url`) and `PROVIDER_ASSET_CUSTOM_FIELD_KINDS`, consumed by `api/routes/custom_fields.py:15`, `api/routes/parts_assets.py:32` and `app/mcp/tools/_shared.py:51`. The provider-side field shapes are separate, in `providers/base.py`. Adding a catalog field needs the frontend list **and** the relevant server-side touchpoint.
 
 ## Cache + circuit breaker
 
