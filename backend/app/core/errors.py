@@ -290,6 +290,11 @@ class ErrorCodes:
     # Catalog router.
     CATALOG_NOT_FOUND = "catalog.not_found"
 
+    # KiCad HTTP-library router. The ONLY code it raises: every failure
+    # on that surface — bad token, unknown category, ineligible part —
+    # is the same 404, so nothing there is an oracle.
+    KICAD_NOT_FOUND = "kicad.not_found"
+
     # Custom fields router.
     CUSTOM_FIELD_RESERVED_KEY = "custom_field.reserved_key"
     CUSTOM_FIELD_NOT_OVERRIDE = "custom_field.not_override"
