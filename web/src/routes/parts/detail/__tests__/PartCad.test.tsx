@@ -3,7 +3,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
+import { PartEdaImportSchema } from "@/lib/schemas";
 import type { Part } from "@/types";
 import PartCad from "../PartCad";
 
@@ -304,5 +305,209 @@ describe("PartCad", () => {
     // and the server rejects anything else.
     expect(options).toContain("R_0402.step");
     expect(options).not.toContain("resistor.lib");
+  });
+});
+
+describe("PartCad vendor imports", () => {
+  const importResult = {
+    vendor: "snapeda",
+    symbol: { id: SYMBOL_ID, name: "MYPART", created: true, kind: null },
+    footprint: { id: FOOTPRINT_ID, name: "MYPART_FP", created: false, kind: null },
+    datafiles: [{ id: STEP_ID, name: "MYPART.step", created: true, kind: "step" }],
+    part_eda_updated: true,
+    skipped: [{ filename: "readme.txt", reason: "unsupported file type" }],
+  };
+
+  beforeEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+  });
+
+  it("uploads a vendor zip and reports what it created, reused and skipped", async () => {
+    mockReads();
+    const upload = vi.spyOn(api, "upload").mockResolvedValue(importResult);
+    renderPartCad();
+
+    const input = (await screen.findByLabelText(
+      "Import from vendor zip",
+    )) as HTMLInputElement;
+    fireEvent.click(screen.getAllByLabelText("Replace what’s already set")[0]);
+    const file = new File(["PK"], "LIB_MYPART.zip", { type: "application/zip" });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => expect(upload).toHaveBeenCalled());
+    const [path, form] = upload.mock.calls[0];
+    expect(path).toBe(`/parts/${PART_ID}/eda/import`);
+    expect((form as FormData).get("file")).toBe(file);
+    // The checkbox is what decides whether occupied slots get replaced.
+    expect((form as FormData).get("overwrite")).toBe("true");
+
+    expect(await screen.findByText("2 new, 1 already in the library.")).toBeDefined();
+    expect(screen.getByText("MYPART.step")).toBeDefined();
+    // The footprint came back reused — the row says so rather than
+    // claiming a new file.
+    expect(screen.getByText("MYPART_FP (reused)")).toBeDefined();
+    expect(
+      screen.getByText("Skipped readme.txt: unsupported file type"),
+    ).toBeDefined();
+  });
+
+  it("surfaces the API message when a zip import is refused", async () => {
+    mockReads();
+    // `userMessage` is derived from the envelope's status category, not
+    // from the raw server string — asserting on the derived value is what
+    // keeps this test honest if that mapping changes.
+    const refusal = new ApiError(
+      422,
+      {
+        data: null,
+        status: { category: "validation_error", message: "legacy format" },
+        code: "eda.legacy_format",
+      },
+      "legacy format",
+    );
+    vi.spyOn(api, "upload").mockRejectedValue(refusal);
+    renderPartCad();
+
+    const input = (await screen.findByLabelText(
+      "Import from vendor zip",
+    )) as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: [new File(["PK"], "old.zip", { type: "application/zip" })] },
+    });
+
+    expect(await screen.findByText(refusal.userMessage)).toBeDefined();
+  });
+
+  it("fetches an LCSC part and posts the trimmed, upper-cased id", async () => {
+    mockReads();
+    // The LCSC card goes through the schema-validating flavour, so the
+    // response shape is checked the same way every read in this file is.
+    const post = vi
+      .spyOn(api.parsed, "post")
+      .mockResolvedValue({ ...importResult, vendor: "easyeda" });
+    renderPartCad();
+
+    fireEvent.change(await screen.findByLabelText("LCSC part number"), {
+      target: { value: " c25804 " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch" }));
+
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][0]).toBe(`/parts/${PART_ID}/eda/fetch-lcsc`);
+    expect(post.mock.calls[0][1]).toBe(PartEdaImportSchema);
+    expect(post.mock.calls[0][2]).toEqual({ lcsc_id: "C25804", overwrite: false });
+    expect(await screen.findByText(/Imported from/)).toBeDefined();
+  });
+
+  it("keeps the LCSC button disabled until a part number is typed", async () => {
+    mockReads();
+    renderPartCad();
+
+    const button = (await screen.findByRole("button", {
+      name: "Fetch",
+    })) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText("LCSC part number"), {
+      target: { value: "C1" },
+    });
+    expect(button.disabled).toBe(false);
+  });
+
+  it("surfaces the API message when EasyEDA is unreachable", async () => {
+    mockReads();
+    const outage = new ApiError(
+      502,
+      {
+        data: null,
+        status: { category: "error", message: "EasyEDA could not be reached" },
+        code: "eda.lcsc_unavailable",
+      },
+      "EasyEDA could not be reached",
+    );
+    vi.spyOn(api.parsed, "post").mockRejectedValue(outage);
+    renderPartCad();
+
+    fireEvent.change(await screen.findByLabelText("LCSC part number"), {
+      target: { value: "C25804" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch" }));
+
+    expect(await screen.findByText(outage.userMessage)).toBeDefined();
+  });
+});
+
+describe("PartCad import response handling", () => {
+  const seededConfig = {
+    part_id: PART_ID,
+    symbol_id: null,
+    symbol_ref_external: null,
+    footprint_id: null,
+    footprint_ref_external: null,
+    spice_datafile_id: null,
+    value: "10k",
+    keywords: null,
+    footprint_filters: null,
+    exclude_from_bom: false,
+    exclude_from_board: false,
+    exclude_from_sim: true,
+    sim_device: null,
+    sim_pins: null,
+    sim_params: null,
+  };
+
+  beforeEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+  });
+
+  it("rejects an import response that does not match the schema", async () => {
+    mockReads();
+    // Shape drift on the endpoint that rewrites the configuration is the
+    // worst place for a silent cast to hide, so the response is parsed.
+    vi.spyOn(api, "upload").mockResolvedValue({ vendor: "snapeda" });
+    renderPartCad();
+
+    const input = (await screen.findByLabelText(
+      "Import from vendor zip",
+    )) as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: [new File(["PK"], "x.zip", { type: "application/zip" })] },
+    });
+
+    expect(await screen.findByText("Import failed")).toBeDefined();
+    expect(screen.queryByText(/already in the library/)).toBeNull();
+  });
+
+  it("re-seeds the form after an import even when the config is unchanged", async () => {
+    // The refetch hands back the SAME object, so TanStack's structural
+    // sharing keeps the reference stable and the seeding effect only
+    // re-runs because the seed token moved. Without that token the form
+    // would keep the stale edit and get stomped by a later refetch
+    // instead.
+    mockReads(seededConfig);
+    vi.spyOn(api, "upload").mockResolvedValue({
+      vendor: "snapeda",
+      symbol: null,
+      footprint: null,
+      datafiles: [],
+      part_eda_updated: false,
+      skipped: [],
+    });
+    renderPartCad();
+
+    const value = (await screen.findByLabelText("Value")) as HTMLInputElement;
+    await waitFor(() => expect(value.value).toBe("10k"));
+    fireEvent.change(value, { target: { value: "22k" } });
+    expect(value.value).toBe("22k");
+
+    fireEvent.change(screen.getByLabelText("Import from vendor zip"), {
+      target: { files: [new File(["PK"], "x.zip", { type: "application/zip" })] },
+    });
+
+    await waitFor(() => expect(value.value).toBe("10k"));
   });
 });

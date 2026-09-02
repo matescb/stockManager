@@ -171,6 +171,7 @@ from app.api.routes import (
     categories,
     custom_fields,
     eda,
+    eda_import,
     invitations,
     lots,
     orders,
@@ -481,10 +482,22 @@ app.include_router(
     tags=["eda"],
     dependencies=_member_gate,
 )
+app.include_router(
+    eda_import.router,
+    prefix="/api/eda",
+    tags=["eda"],
+    dependencies=_member_gate,
+)
 # Second mount: the per-part EDA config lives under the part it belongs
 # to. Same multi-mount shape as `sourcing.parts_router` below.
 app.include_router(
     eda.parts_router,
+    prefix="/api/parts",
+    tags=["eda"],
+    dependencies=_member_gate,
+)
+app.include_router(
+    eda_import.parts_router,
     prefix="/api/parts",
     tags=["eda"],
     dependencies=_member_gate,

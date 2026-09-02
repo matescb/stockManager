@@ -20,6 +20,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
     "EDA_NAME_MAX",
+    "LCSC_ID_PATTERN",
+    "EdaImportRowOut",
+    "EdaImportSkipOut",
+    "EdaLibraryImportOut",
+    "LcscFetchIn",
+    "PartEdaImportOut",
     "EdaSymbolPatch",
     "EdaSymbolOut",
     "EdaFootprintPatch",
@@ -158,6 +164,74 @@ class PartEdaIn(BaseModel):
     sim_device: str | None = Field(default=None, max_length=60)
     sim_pins: str | None = Field(default=None, max_length=300)
     sim_params: str | None = Field(default=None, max_length=500)
+
+
+# ---------------------------------------------------------------------
+# Imports — vendor zips and LCSC
+# ---------------------------------------------------------------------
+
+# An LCSC part number: a capital C and up to ten digits. Anchored so a
+# path fragment or a URL can't ride in on it.
+LCSC_ID_PATTERN = r"^C\d{1,10}$"
+
+
+class EdaImportRowOut(BaseModel):
+    """One library row an import touched.
+
+    `created` is false when the row already held these exact bytes —
+    the store is content-addressed, so a re-import reuses rather than
+    duplicating, and the UI says so rather than claiming a new file.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    created: bool
+    kind: str | None = None
+
+
+class EdaImportSkipOut(BaseModel):
+    """A member the importer deliberately did not take, and why."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    filename: str
+    reason: str
+
+
+class PartEdaImportOut(BaseModel):
+    """The result of a part-bound import — zip or LCSC."""
+
+    vendor: str
+    symbol: EdaImportRowOut | None
+    footprint: EdaImportRowOut | None
+    datafiles: list[EdaImportRowOut]
+    part_eda_updated: bool
+    skipped: list[EdaImportSkipOut]
+
+
+class EdaLibraryImportOut(BaseModel):
+    """The result of a library-level import — no part wiring."""
+
+    vendor: str
+    created: int
+    reused: int
+    symbols: list[EdaImportRowOut]
+    footprints: list[EdaImportRowOut]
+    datafiles: list[EdaImportRowOut]
+    skipped: list[EdaImportSkipOut]
+
+
+class LcscFetchIn(BaseModel):
+    """The body of `POST /api/parts/{part_id}/eda/fetch-lcsc`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lcsc_id: str = Field(pattern=LCSC_ID_PATTERN, max_length=11)
+    # Same meaning as the zip importer's form flag: fill empty slots only
+    # unless the caller asks for a replacement.
+    overwrite: bool = False
 
 
 class PartEdaOut(BaseModel):

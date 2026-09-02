@@ -152,7 +152,7 @@ def _raise_for_unique_violation(exc: IntegrityError, Model: type, *, name: str) 
         )
 
 
-def _assert_category(db: Session, *, ws: Any, category_id: UUID | None, changed: bool):
+def assert_category(db: Session, *, ws: Any, category_id: UUID | None, changed: bool):
     """Validate a `category_id` against the workspace.
 
     Rejecting an ARCHIVED category only when the value actually changes
@@ -246,7 +246,7 @@ def upload_entry(
     # or unknown category_id 404s on every path — it is still not APPLIED
     # on the dedupe path (re-filing an entry is a PATCH), but silently
     # ignoring an invalid reference was inconsistent with create.
-    _assert_category(db, ws=ws, category_id=category_id, changed=True)
+    assert_category(db, ws=ws, category_id=category_id, changed=True)
 
     existing = _active_by_name(db, ws=ws, Model=Model, name=name, kind=kind)
     if existing is not None:
@@ -300,7 +300,7 @@ def update_entry(
             )
 
     if "category_id" in data:
-        _assert_category(
+        assert_category(
             db,
             ws=ws,
             category_id=data["category_id"],

@@ -215,6 +215,41 @@ export const PartEdaWriteSchema = z.object({
 }).strict();
 export type PartEdaWrite = z.infer<typeof PartEdaWriteSchema>;
 
+/**
+ * One library row an import touched. `created: false` means the row
+ * already held these exact bytes — the store is content-addressed, so a
+ * re-import reuses instead of duplicating.
+ */
+export const EdaImportRowSchema = z.object({
+  id: uuid,
+  name: z.string(),
+  created: z.boolean(),
+  kind: nullableString.optional(),
+});
+export type EdaImportRow = z.infer<typeof EdaImportRowSchema>;
+
+/** A member the importer deliberately did not take, and why. */
+export const EdaImportSkipSchema = z.object({
+  filename: z.string(),
+  reason: z.string(),
+});
+export type EdaImportSkip = z.infer<typeof EdaImportSkipSchema>;
+
+/**
+ * The result of a part-bound import — a vendor zip or an LCSC fetch.
+ * Backend: `app/domain/eda/schemas.py::PartEdaImportOut`.
+ */
+export const PartEdaImportSchema = z.object({
+  /** snapeda | samacsys | ultralibrarian | easyeda. */
+  vendor: z.string(),
+  symbol: EdaImportRowSchema.nullable(),
+  footprint: EdaImportRowSchema.nullable(),
+  datafiles: z.array(EdaImportRowSchema),
+  part_eda_updated: z.boolean(),
+  skipped: z.array(EdaImportSkipSchema),
+});
+export type PartEdaImport = z.infer<typeof PartEdaImportSchema>;
+
 /** Paged parts response — returned by GET /parts with cursor pagination. */
 export const PagedPartsSchema = z.object({
   items: z.array(PartSchema),

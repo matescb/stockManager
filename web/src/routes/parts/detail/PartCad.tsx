@@ -25,6 +25,7 @@ import {
   EdaFootprintModelsListSchema,
   EdaFootprintsListSchema,
   EdaSymbolsListSchema,
+  PartEdaImportSchema,
   PartEdaSchema,
 } from "@/lib/schemas";
 import { InlineQueryError, type QueryLike } from "@/components/QueryStateBoundary";
@@ -35,6 +36,7 @@ import type {
   EdaSymbol,
   Part,
   PartEda,
+  PartEdaImport,
   PartEdaWrite,
 } from "@/types";
 
@@ -105,13 +107,17 @@ export default function PartCad() {
   const [simParams, setSimParams] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
-  // Seed the form from the server once the config lands. Keyed on the
-  // fetch status rather than the object so a background refetch that
-  // returns the same data doesn't stomp on edits in progress.
-  const seeded = useRef(false);
+  // Seed the form from the server once the config lands, and again each
+  // time `seedToken` moves. Keyed on a token rather than a boolean ref:
+  // when an import returns a structurally identical config, TanStack
+  // hands back the SAME object, the effect never re-runs, and a bare
+  // `seeded.current = false` would stay false until some later refetch
+  // changed the reference — stomping edits in progress at random.
+  const [seedToken, setSeedToken] = useState(0);
+  const seededToken = useRef(-1);
   useEffect(() => {
-    if (seeded.current || !configQuery.isSuccess) return;
-    seeded.current = true;
+    if (!configQuery.isSuccess || seededToken.current === seedToken) return;
+    seededToken.current = seedToken;
     if (!config) return;
     setSymbolMode(modeFor(config.symbol_id, config.symbol_ref_external));
     setSymbolId(config.symbol_id ?? "");
@@ -129,7 +135,7 @@ export default function PartCad() {
     setSimDevice(config.sim_device ?? "");
     setSimPins(config.sim_pins ?? "");
     setSimParams(config.sim_params ?? "");
-  }, [config, configQuery.isSuccess]);
+  }, [config, configQuery.isSuccess, seedToken]);
 
   const saveMutation = useApiMutation<PartEda, PartEdaWrite>({
     mutationKey: ["part", partId, "eda"],
@@ -163,6 +169,23 @@ export default function PartCad() {
     });
   }
 
+  /**
+   * An import rewrites the configuration server-side, so the form has to
+   * forget what it seeded and take the new answer.
+   *
+   * The token is bumped only AFTER the refetch resolves —
+   * `invalidateQueries` settles once the query has refetched. Bumping it
+   * first would re-seed the form from the config the import just
+   * replaced.
+   */
+  async function reseed() {
+    qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "eda") });
+    await qc.invalidateQueries({
+      queryKey: wsKeyOf(workspaceId, "part", partId, "eda"),
+    });
+    setSeedToken((token) => token + 1);
+  }
+
   const busy = saveMutation.isPending;
   const spiceFiles = (datafilesQuery.data ?? []).filter((d) => d.kind === "spice");
 
@@ -170,6 +193,9 @@ export default function PartCad() {
     <div className="max-w-3xl space-y-4">
       <InlineQueryError query={configQuery} label="EDA configuration" />
       {err && <div className="text-danger text-sm">{err}</div>}
+
+      <VendorZipCard partId={partId ?? ""} onImported={reseed} />
+      <LcscCard partId={partId ?? ""} onImported={reseed} />
 
       <RefSlot
         idPrefix="cad-symbol"
@@ -345,6 +371,194 @@ export default function PartCad() {
         {busy ? "Saving…" : "Save"}
       </button>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Vendor imports
+//
+// Both cards hit an endpoint that creates library rows AND wires them
+// into this part in one request, so both re-seed the form afterwards
+// rather than leaving the slots showing what the user last saved.
+// ---------------------------------------------------------------------
+
+/** What both import cards need from their caller. */
+type ImportCardProps = {
+  partId: string;
+  onImported: () => void;
+};
+
+/** Renders what an import did — created vs reused, and what it skipped. */
+function ImportSummary({ result }: { result: PartEdaImport }) {
+  const rows = [result.symbol, result.footprint, ...result.datafiles].filter(
+    (row): row is NonNullable<typeof row> => !!row,
+  );
+  const created = rows.filter((r) => r.created).length;
+
+  return (
+    <div className="text-sm space-y-1" role="status">
+      <p>
+        Imported from <span className="pill">{result.vendor}</span>
+      </p>
+      <p>{`${created} new, ${rows.length - created} already in the library.`}</p>
+      <ul className="text-muted text-xs">
+        {rows.map((row) => (
+          <li key={row.id}>{row.created ? row.name : `${row.name} (reused)`}</li>
+        ))}
+      </ul>
+      {!result.part_eda_updated && (
+        <p className="text-muted text-xs">
+          Nothing was wired to this part — its slots were already filled. Tick
+          &ldquo;Replace what&rsquo;s already set&rdquo; to overwrite them.
+        </p>
+      )}
+      {result.skipped.length > 0 && (
+        <ul className="text-muted text-xs">
+          {result.skipped.map((skip) => (
+            <li key={`${skip.filename}:${skip.reason}`}>
+              {`Skipped ${skip.filename}: ${skip.reason}`}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function VendorZipCard({ partId, onImported }: ImportCardProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [overwrite, setOverwrite] = useState(false);
+  const [result, setResult] = useState<PartEdaImport | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const importMutation = useApiMutation<PartEdaImport, File>({
+    mutationKey: ["part", partId, "eda", "import"],
+    mutationFn: async (file) => {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("overwrite", String(overwrite));
+      // There is no `api.parsed.upload`, so validate here: every other
+      // response in this file is schema-checked and a silent shape drift
+      // on the one that rewrites the config would be the worst place for
+      // it to hide.
+      const raw = await api.upload<unknown>(`/parts/${partId}/eda/import`, form);
+      return PartEdaImportSchema.parse(raw);
+    },
+    onSuccess: (data) => {
+      setResult(data);
+      onImported();
+    },
+    onError: (e) => setErr(e instanceof ApiError ? e.userMessage : "Import failed"),
+  });
+
+  return (
+    <section className="card p-4 space-y-3">
+      <h3 className="text-md font-semibold">Import from vendor zip</h3>
+      <p className="text-muted text-sm">
+        A SnapEDA, SamacSys or UltraLibrarian download — the symbol, footprint, 3D
+        models and SPICE model it carries are added to the library and wired to
+        this part.
+      </p>
+      {err && <div className="text-danger text-sm">{err}</div>}
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={overwrite}
+          onChange={(e) => setOverwrite(e.target.checked)}
+        />
+        Replace what&rsquo;s already set
+      </label>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".zip"
+        className="hidden"
+        aria-label="Import from vendor zip"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          // Reset first so re-picking the same file fires onChange again.
+          e.target.value = "";
+          if (!file) return;
+          setErr(null);
+          setResult(null);
+          importMutation.mutate(file);
+        }}
+      />
+      <button
+        className="btn"
+        disabled={importMutation.isPending}
+        onClick={() => inputRef.current?.click()}
+      >
+        {importMutation.isPending ? "Importing…" : "Choose zip"}
+      </button>
+      {result && <ImportSummary result={result} />}
+    </section>
+  );
+}
+
+function LcscCard({ partId, onImported }: ImportCardProps) {
+  const [lcscId, setLcscId] = useState("");
+  const [overwrite, setOverwrite] = useState(false);
+  const [result, setResult] = useState<PartEdaImport | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const fetchMutation = useApiMutation<PartEdaImport, string>({
+    mutationKey: ["part", partId, "eda", "fetch-lcsc"],
+    mutationFn: (id) =>
+      api.parsed.post(`/parts/${partId}/eda/fetch-lcsc`, PartEdaImportSchema, {
+        lcsc_id: id,
+        overwrite,
+      }),
+    onSuccess: (data) => {
+      setResult(data);
+      onImported();
+    },
+    onError: (e) => setErr(e instanceof ApiError ? e.userMessage : "Fetch failed"),
+  });
+
+  const trimmed = lcscId.trim().toUpperCase();
+
+  return (
+    <section className="card p-4 space-y-3">
+      <h3 className="text-md font-semibold">Fetch from LCSC</h3>
+      <p className="text-muted text-sm">
+        Converts the EasyEDA symbol, footprint and 3D model for an LCSC part
+        number into KiCad format.
+      </p>
+      {err && <div className="text-danger text-sm">{err}</div>}
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={overwrite}
+          onChange={(e) => setOverwrite(e.target.checked)}
+        />
+        Replace what&rsquo;s already set
+      </label>
+      <div className="flex items-end gap-2">
+        <div className="flex-1">
+          <label className="label" htmlFor="cad-lcsc">LCSC part number</label>
+          <input
+            id="cad-lcsc"
+            className="input"
+            value={lcscId}
+            onChange={(e) => setLcscId(e.target.value)}
+            placeholder="C25804"
+          />
+        </div>
+        <button
+          className="btn"
+          disabled={!trimmed || fetchMutation.isPending}
+          onClick={() => {
+            setErr(null);
+            setResult(null);
+            fetchMutation.mutate(trimmed);
+          }}
+        >
+          {fetchMutation.isPending ? "Fetching…" : "Fetch"}
+        </button>
+      </div>
+      {result && <ImportSummary result={result} />}
+    </section>
   );
 }
 

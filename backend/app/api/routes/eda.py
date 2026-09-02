@@ -35,12 +35,14 @@ from fastapi import (
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
+from app.api.routes._eda_shared import audit as _audit
+from app.api.routes._eda_shared import patch_comment as _patch_comment
+from app.api.routes._eda_shared import read_upload as _read_upload
 from app.api.routes._parts_shared import get_part as _get_part
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import Envelope, ok
-from app.domain.audit.service import log as _audit_log
 from app.domain.eda import service as eda_service
 from app.domain.eda import storage
 from app.domain.eda.models import EdaDatafile, EdaFootprint, EdaSymbol
@@ -64,64 +66,6 @@ parts_router = APIRouter()
 # get their own tighter bucket.
 _UPLOAD_RATE = "20/minute"
 _CONFIG_RATE = "60/minute"
-
-
-# ---------------------------------------------------------------------
-# Shared route mechanics
-# ---------------------------------------------------------------------
-
-
-async def _read_upload(file: UploadFile, *, kind: str) -> bytes:
-    """Read an upload, bounded by the per-kind cap.
-
-    Streaming-bounded read: take at most `cap + 1` bytes to detect
-    over-cap, then reject. Starlette's UploadFile is spooled, so the
-    extra byte stays in the spool — never lands in active memory beyond
-    what we explicitly read here. Same shape as `attachments.py::upload`.
-    """
-    cap = storage.max_bytes_for(kind)
-    contents = await file.read(cap + 1)
-    if len(contents) > cap:
-        raise_http(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            code=ErrorCodes.EDA_FILE_TOO_LARGE,
-            message=f"{kind} upload exceeds {cap} bytes",
-            max_bytes=cap,
-        )
-    if not contents:
-        raise_http(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            code=ErrorCodes.EDA_EMPTY_FILE,
-            message="empty upload",
-        )
-    return contents
-
-
-def _audit(
-    request: Request,
-    db,
-    ws,
-    user,
-    *,
-    action: str,
-    target_type: str,
-    target_id: UUID,
-    comment: str | None = None,
-) -> None:
-    _audit_log(
-        db,
-        ws=ws,
-        user=user,
-        action=action,
-        target_type=target_type,
-        target_ids=[target_id],
-        comment=comment,
-        request_id=getattr(request.state, "request_id", None),
-    )
-
-
-def _patch_comment(payload) -> str:
-    return "fields=" + ",".join(sorted(payload.model_fields_set))
 
 
 # ---------------------------------------------------------------------

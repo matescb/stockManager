@@ -15,6 +15,9 @@ from app.domain.parts.models import Part
 from tests.test_eda import STEP_BYTES as EDA_STEP_BYTES
 from tests.test_eda import _footprint_text as _eda_footprint_text
 from tests.test_eda import _symbol_text as _eda_symbol_text
+from tests.test_eda_import import _snapeda_zip as _eda_vendor_zip
+from tests.test_eda_import import _symbol_lib as _eda_symbol_lib
+from tests.test_eda_import import _zip_bytes as _eda_zip_bytes
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 FORBIDDEN_COMMENT_VALUES = (
@@ -443,6 +446,36 @@ def _setup_part_eda_delete(client, _db) -> Operation:
     }
 
 
+def _setup_part_eda_import(client, _db) -> Operation:
+    part_id = _create_part(client, "AUD-124 vendor import target")
+    return {
+        "method": "post",
+        "path": f"/api/parts/{part_id}/eda/import",
+        "files": {
+            "file": ("LIB_AUD124.zip", _eda_vendor_zip("AUD124"), "application/zip"),
+        },
+        "expected_status": 200,
+        "target_id": part_id,
+        # One row per created entry (symbol, footprint, STEP) plus the
+        # wiring row.
+        "expected_rows": 4,
+    }
+
+
+def _setup_eda_library_import(_client, _db) -> Operation:
+    """A 25-symbol library — over the per-entry audit limit, so the whole
+    import collapses into one `eda_library.imported` row."""
+    names = [f"AUD124_SYM{i}" for i in range(25)]
+    archive = _eda_zip_bytes({"lib.kicad_sym": _eda_symbol_lib(*names)})
+    return {
+        "method": "post",
+        "path": "/api/eda/import",
+        "files": {"file": ("library.zip", archive, "application/zip")},
+        "expected_status": 200,
+        "expected_rows": 1,
+    }
+
+
 def _setup_attachment_delete(client, _db) -> Operation:
     part_id = _create_part(client, "AUD-124 attachment target")
     r = client.post(
@@ -738,4 +771,60 @@ def test_aud_124_mutators_write_exactly_one_sanitized_audit_row(
     assert row.comment is None or all(
         forbidden not in row.comment
         for forbidden in FORBIDDEN_COMMENT_VALUES
+    )
+
+
+@pytest.mark.parametrize(
+    ("route_name", "setup", "action", "target_type"),
+    [
+        (
+            "eda_import.import_part_archive",
+            _setup_part_eda_import,
+            "part_eda.imported",
+            "part_eda",
+        ),
+        (
+            "eda_import.import_library",
+            _setup_eda_library_import,
+            "eda_library.imported",
+            "eda_library",
+        ),
+    ],
+)
+def test_aud_124_import_mutators_write_sanitized_audit_rows(
+    authed_client,
+    db,
+    route_name: str,
+    setup: Setup,
+    action: str,
+    target_type: str,
+):
+    """The import routes are the one family that writes MORE than one row.
+
+    An import touches several library entries at once, so it records one
+    row per created entry plus (for a part-bound import) the wiring — and
+    collapses to a single summary row past 20 entries, because a trail
+    nobody can read is worse than counts. `expected_rows` in the setup is
+    the exact number that grammar produces, so a change to it has to be
+    deliberate.
+    """
+    context = setup(authed_client, db)
+    before = _audit_count(db)
+
+    response = getattr(authed_client, str(context["method"]))(
+        str(context["path"]), files=context["files"]
+    )
+
+    assert response.status_code == context["expected_status"], f"{route_name}: {response.text}"
+    assert _audit_count(db) == before + int(str(context["expected_rows"]))
+
+    row = _latest_action(db, action)
+    assert row is not None
+    assert row.target_type == target_type
+    if "target_id" in context:
+        assert row.target_ids == [UUID(str(context["target_id"]))]
+    assert row.workspace_id is not None
+    assert row.user_id is not None
+    assert row.comment is None or all(
+        forbidden not in row.comment for forbidden in FORBIDDEN_COMMENT_VALUES
     )

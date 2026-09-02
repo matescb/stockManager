@@ -290,3 +290,28 @@ def test_depth_cap_is_generous_for_real_files_but_bounded():
     sexpr.parse("(a " * 30 + "(leaf)" + ")" * 30)
     with pytest.raises(sexpr.SexprError, match="nesting"):
         sexpr.parse("(a " * 40 + "(leaf)" + ")" * 40)
+
+
+def test_rewrite_model_paths_drops_a_node_when_the_callback_returns_none():
+    """The zip importer points a vendor footprint at our own storage and
+    has to DROP a `(model …)` whose file the archive didn't carry —
+    otherwise KiCad reports a missing model on every board that places
+    the footprint."""
+    node = sexpr.parse(FOOTPRINT)
+    before = sexpr.model_paths(node)
+    assert len(before) > 1
+
+    kept = before[0]
+    rewritten = sexpr.rewrite_model_paths(node, lambda p: "/eda/kept" if p == kept else None)
+
+    assert sexpr.model_paths(rewritten) == ["/eda/kept"]
+    # Non-model children survive, and the input is untouched.
+    assert sexpr.model_paths(node) == before
+    assert sexpr.entry_name(rewritten) == sexpr.entry_name(node)
+
+
+def test_rewrite_model_paths_can_drop_every_model():
+    node = sexpr.parse(FOOTPRINT)
+    rewritten = sexpr.rewrite_model_paths(node, lambda _p: None)
+    assert sexpr.model_paths(rewritten) == []
+    assert sexpr.head(rewritten) == sexpr.head(node)
