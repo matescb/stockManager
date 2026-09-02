@@ -627,6 +627,68 @@ app.include_router(kicad.router, prefix=kicad.API_PREFIX, tags=["kicad"])
 app.include_router(kicad_pcm.router, prefix=kicad.API_PREFIX, tags=["kicad"])
 
 
+# --------------------------------------------------------------------------
+# OpenAPI: declare the two credentials so /docs grows an Authorize button.
+#
+# DOCUMENTATION ONLY. This decorates the generated schema and adds no
+# dependency to any route, so runtime authentication is untouched — the
+# only thing that authenticates a request is still
+# `core/deps.py::get_current_user`. An agent reading /openapi.json cold
+# otherwise has no way to learn that the API takes a header token at all.
+#
+# `security` lists `{}` first: an empty requirement object is how OpenAPI
+# spells "credentials are optional here". It is needed because the list is
+# app-wide and some routes (`/api/health`, `/api/auth/login`) legitimately
+# take none — without it the schema would claim every operation requires a
+# token, which is both wrong and would make the playground unusable for
+# logging in.
+# --------------------------------------------------------------------------
+_generated_openapi = app.openapi
+
+
+def _openapi_with_auth_schemes() -> dict:
+    """`app.openapi()` plus the security schemes FastAPI can't infer.
+
+    Delegates to the bound method rather than re-calling `get_openapi()`
+    with a copied argument list — that list grows between FastAPI
+    versions, and a stale copy would silently drop fields from the
+    schema. The delegate also owns the `app.openapi_schema` cache, so
+    this runs its mutation once and every later call gets the cached
+    dict back.
+    """
+    schema = _generated_openapi()
+    components = schema.setdefault("components", {})
+    components.setdefault("securitySchemes", {}).update(
+        {
+            "ApiToken": {
+                "type": "http",
+                "scheme": "bearer",
+                "description": (
+                    "Personal access token, `smk_{id}.{secret}`. Sent as "
+                    "`Authorization: Bearer <token>` or `Authorization: "
+                    "Token <token>` — both schemes are accepted. Pinned to "
+                    "the workspace it was minted in. See docs/api/agents.md."
+                ),
+            },
+            "SessionCookie": {
+                "type": "apiKey",
+                "in": "cookie",
+                "name": settings().SESSION_COOKIE_NAME,
+                "description": (
+                    "Browser session from POST /api/auth/login. Required for "
+                    "the credential- and tenancy-administration routes, which "
+                    "refuse an API token (core/deps.py::forbid_api_token)."
+                ),
+            },
+        }
+    )
+    schema["security"] = [{}, {"ApiToken": []}, {"SessionCookie": []}]
+    return schema
+
+
+app.openapi = _openapi_with_auth_schemes  # type: ignore[method-assign]
+
+
 @app.get("/api/health")
 def health():
     """Liveness + DB + uploads-volume check.
