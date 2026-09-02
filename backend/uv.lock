@@ -431,6 +431,15 @@ wheels = [
 ]
 
 [[package]]
+name = "easyeda2kicad"
+version = "1.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ab/8b/9a7abcdbb2a3a86d55e40f59f7c28b24e7e8fe9fcc08949509fff386a9a5/easyeda2kicad-1.0.1.tar.gz", hash = "sha256:122a48fafa3b918e730185c973dd342183928b8a0dbe24436d13d58b90290e84", size = 65774, upload-time = "2026-04-06T09:09:06.988Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/47/be/9be36eb493d6a8eef8b8e73957e83d75f064b97d6abb1dcdfb3537b4f056/easyeda2kicad-1.0.1-py3-none-any.whl", hash = "sha256:b5a460650c5dd0af35a70658f433f63355fdbdf2c2b9e3bc411bc11ea98d06ed", size = 68704, upload-time = "2026-04-06T09:09:05.595Z" },
+]
+
+[[package]]
 name = "email-validator"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1216,6 +1225,7 @@ dependencies = [
     { name = "argon2-cffi" },
     { name = "chardet" },
     { name = "cryptography" },
+    { name = "easyeda2kicad" },
     { name = "email-validator" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -1250,6 +1260,7 @@ requires-dist = [
     { name = "argon2-cffi", specifier = ">=23.1" },
     { name = "chardet", specifier = ">=5.2" },
     { name = "cryptography", specifier = ">=42.0" },
+    { name = "easyeda2kicad", specifier = ">=1.0.1" },
     { name = "email-validator", specifier = ">=2.2" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },

@@ -1095,3 +1095,41 @@ def test_rejected_upload_writes_no_orphan_blob(authed_client):
     assert r.status_code == 409, r.text
     orphan = eda_storage.path_for(_ws_id(authed_client), f"{sha}.kicad_sym")
     assert not os.path.exists(orphan)
+
+
+def test_concurrent_stores_of_identical_bytes_do_not_race_on_the_scratch_file(tmp_path):
+    """The content-addressed write resolves two callers carrying the same
+    bytes to the same target. With one shared `{sha}.tmp` scratch name the
+    first `os.replace` moved the file out from under the second, which
+    died with FileNotFoundError — surfaced by the concurrent-import test
+    in `test_eda_import.py`.
+    """
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app.core.config import settings
+    from app.domain.eda import storage as eda_storage
+
+    ws_id = uuid.uuid4()
+    original = settings().UPLOAD_DIR
+    settings().UPLOAD_DIR = str(tmp_path)
+    try:
+        data = b"ISO-10303-21;\n" + b"X" * 200_000 + b"\nEND-ISO-10303-21;\n"
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = [
+                f.result()
+                for f in [
+                    pool.submit(eda_storage.store, ws_id, data, kind="step")
+                    for _ in range(8)
+                ]
+            ]
+
+        sha = results[0][0]
+        assert all(r == results[0] for r in results)
+        directory = os.path.dirname(eda_storage.path_for(ws_id, "x"))
+        # One blob, and no scratch files left behind.
+        assert os.listdir(directory) == [f"{sha}.step"]
+        with open(eda_storage.path_for(ws_id, f"{sha}.step"), "rb") as fh:
+            assert fh.read() == data
+    finally:
+        settings().UPLOAD_DIR = original

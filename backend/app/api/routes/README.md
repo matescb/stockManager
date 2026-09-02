@@ -14,6 +14,7 @@ Every public REST endpoint lives here, one file per logical area. This README is
 | `parts_core.py` | `/api/parts` (core CRUD) | [parts](../../../../docs/api/parts.md) |
 | `categories.py` | `/api/categories` | [categories](../../../../docs/api/categories.md) |
 | `eda.py` | `/api/eda` + `/api/parts/{id}/eda` | _(docs deferred to phase 9)_ |
+| `eda_import.py` | `/api/eda/import` + `/api/parts/{id}/eda/import`, `/fetch-lcsc` | _(docs deferred to phase 9)_ |
 | `parts_relations.py` | `/api/parts` (substitutes, meta members) | [parts](../../../../docs/api/parts.md) |
 | `parts_assets.py` | `/api/parts/assets/...` | [parts](../../../../docs/api/parts.md) |
 | `parts_scan.py` | `/api/parts/scan/...` | [parts](../../../../docs/api/parts.md) |

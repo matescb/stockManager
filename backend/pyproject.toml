@@ -25,6 +25,9 @@ dependencies = [
     "sentry-sdk[fastapi]>=2.18",
     # In-process rate limiter on the auth endpoints.
     "slowapi>=0.1.9",
+    # LCSC / EasyEDA → KiCad conversion, used as a library (never its CLI)
+    # by `app/domain/eda/lcsc.py`. Pure-Python, no transitive runtime deps.
+    "easyeda2kicad>=1.0.1",
 ]
 
 [project.optional-dependencies]

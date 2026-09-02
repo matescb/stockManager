@@ -259,6 +259,14 @@ class ErrorCodes:
     EDA_UNSUPPORTED_KIND = "eda.unsupported_kind"
     EDA_EMPTY_FILE = "eda.empty_file"
     EDA_MULTIPLE_SYMBOLS = "eda.multiple_symbols"
+    # Vendor-zip / LCSC import lane (domain/eda/{vendor_zip,lcsc}.py).
+    EDA_INVALID_ARCHIVE = "eda.invalid_archive"
+    EDA_ARCHIVE_TOO_LARGE = "eda.archive_too_large"
+    EDA_LEGACY_FORMAT = "eda.legacy_format"
+    EDA_MULTIPLE_FOOTPRINTS = "eda.multiple_footprints"
+    EDA_NO_ENTRIES = "eda.no_entries"
+    EDA_LCSC_NOT_FOUND = "eda.lcsc_not_found"
+    EDA_LCSC_UNAVAILABLE = "eda.lcsc_unavailable"
     # part_eda config.
     EDA_REF_CONFLICT = "eda.ref_conflict"
     EDA_ARCHIVED = "eda.archived"

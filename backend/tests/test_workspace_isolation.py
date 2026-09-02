@@ -39,6 +39,7 @@ from tests._factories import (
 from tests.test_eda import STEP_BYTES as _EDA_STEP_BYTES
 from tests.test_eda import _footprint_text as _eda_footprint_text
 from tests.test_eda import _symbol_text as _eda_symbol_text
+from tests.test_eda_import import _snapeda_zip as _eda_vendor_zip
 from tests.test_purchase_plan_route import (
     _configure_sourcing as _configure_purchase_plan_sourcing,
 )
@@ -2005,3 +2006,37 @@ def test_part_eda_rejects_foreign_symbol_and_footprint_ids():
     r = b.put(f"/api/parts/{part_b}/eda", json={"symbol_id": symbol_a["id"]})
     assert r.status_code == 404, r.text
     assert b.get(f"/api/parts/{part_b}/eda").json()["data"] is None
+
+
+def test_part_bound_eda_imports_reject_a_foreign_part_id():
+    """The vendor-zip and LCSC importers both write library rows AND wire
+    a part — a missed workspace check here would let B seed A's part with
+    its own CAD files."""
+    a, b = _two_workspaces()
+    part_a = _create_part(a, "A-part")
+
+    archive = _eda_vendor_zip("ISO_PART")
+    r = b.post(
+        f"/api/parts/{part_a}/eda/import",
+        files={"file": ("LIB_ISO_PART.zip", archive, "application/zip")},
+    )
+    assert r.status_code == 404, r.text
+
+    r = b.post(f"/api/parts/{part_a}/eda/fetch-lcsc", json={"lcsc_id": "C25804"})
+    assert r.status_code == 404, r.text
+
+    # Nothing landed on either side: A keeps no config, B gains no library.
+    assert a.get(f"/api/parts/{part_a}/eda").json()["data"] is None
+    assert b.get("/api/eda/symbols").json()["data"] == []
+
+
+def test_library_import_rejects_a_foreign_category_id():
+    a, b = _two_workspaces()
+    category_a = a.post("/api/categories", json={"name": "A cat"}).json()["data"]["id"]
+
+    r = b.post(
+        "/api/eda/import",
+        files={"file": ("LIB_ISO.zip", _eda_vendor_zip("ISO_LIB"), "application/zip")},
+        data={"category_id": category_a},
+    )
+    assert r.status_code == 404, r.text

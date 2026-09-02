@@ -33,8 +33,10 @@ is where the CPU goes.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
+import tempfile
 from typing import NoReturn
 
 from fastapi import status
@@ -52,6 +54,8 @@ __all__ = [
     "SPICE_EXTENSIONS",
     "max_bytes_for",
     "datafile_kind_from_filename",
+    "canonical_entry_bytes",
+    "decode_text",
     "canonical_symbol",
     "canonical_footprint",
     "validated_datafile",
@@ -103,12 +107,17 @@ def _reject(message: str, *, code: str = ErrorCodes.EDA_INVALID_FILE) -> NoRetur
     raise_http(status.HTTP_422_UNPROCESSABLE_ENTITY, code=code, message=message)
 
 
-def _decode_text(raw: bytes, *, kind: str) -> str:
+def decode_text(raw: bytes, *, kind: str) -> str:
     """UTF-8 decode with a NUL-byte guard.
 
     The NUL check catches the common "uploaded the binary by mistake"
     case that UTF-8 alone lets through (a lone NUL is valid UTF-8), and
-    keeps a stray NUL out of the Postgres `text` columns downstream.
+    keeps a stray NUL out of the Postgres `text` columns downstream —
+    where it lands as a DataError 500 rather than a 422.
+
+    Public because the zip importer decodes archive members and has to
+    apply exactly this guard; a second, laxer decoder is how the NUL
+    reaches Postgres (P3 security review HIGH-2).
     """
     if b"\x00" in raw:
         _reject(f"{kind} file contains NUL bytes — expected a text file")
@@ -149,12 +158,16 @@ def datafile_kind_from_filename(filename: str | None) -> str:
 _MAX_ENTRY_NAME = 200
 
 
-def _canonical_entry_bytes(node, *, kind: str, name: str) -> bytes:
+def canonical_entry_bytes(node, *, kind: str, name: str) -> bytes:
     """Emit `node` and enforce the caps on the STORED form.
 
     The upload cap bounds the input, but re-emitting regenerates
     indentation — a deep-and-wide file amplified ~198x past the input
     cap before this check existed (P2 security review HIGH-1).
+
+    Public because the zip/LCSC importers already hold a parsed node —
+    the footprint's model paths are rewritten before it is stored — and
+    would otherwise have to re-emit and re-parse to reach this cap.
     """
     if len(name) > _MAX_ENTRY_NAME:
         _reject(f"entry name exceeds {_MAX_ENTRY_NAME} characters")
@@ -181,7 +194,7 @@ def canonical_symbol(raw: bytes) -> tuple[str, bytes]:
     first": the file is not wrong, it just needs the zip importer that
     lands in phase 3, and the message says so.
     """
-    text = _decode_text(raw, kind="symbol")
+    text = decode_text(raw, kind="symbol")
     try:
         found = sexpr.entries(text)
     except sexpr.SexprError as exc:
@@ -206,7 +219,7 @@ def canonical_symbol(raw: bytes) -> tuple[str, bytes]:
     name, node = found[0]
     if not name:
         _reject("symbol has an empty name")
-    return name, _canonical_entry_bytes(node, kind=SYMBOL_KIND, name=name)
+    return name, canonical_entry_bytes(node, kind=SYMBOL_KIND, name=name)
 
 
 def canonical_footprint(raw: bytes) -> tuple[str, bytes]:
@@ -215,7 +228,7 @@ def canonical_footprint(raw: bytes) -> tuple[str, bytes]:
     A `.kicad_mod` holds exactly one footprint, so unlike symbols there
     is no multi-entry case to reject.
     """
-    text = _decode_text(raw, kind="footprint")
+    text = decode_text(raw, kind="footprint")
     try:
         node = sexpr.parse(text)
     except sexpr.SexprError as exc:
@@ -231,7 +244,7 @@ def canonical_footprint(raw: bytes) -> tuple[str, bytes]:
         _reject(str(exc))
     if not name:
         _reject("footprint has an empty name")
-    return name, _canonical_entry_bytes(node, kind=FOOTPRINT_KIND, name=name)
+    return name, canonical_entry_bytes(node, kind=FOOTPRINT_KIND, name=name)
 
 
 def validated_datafile(kind: str, raw: bytes) -> bytes:
@@ -253,7 +266,7 @@ def validated_datafile(kind: str, raw: bytes) -> bytes:
             _reject('not a VRML file — expected it to start with "#VRML"')
         return raw
     if kind == "spice":
-        _decode_text(raw, kind="SPICE model")
+        decode_text(raw, kind="SPICE model")
         return raw
     raise_http(
         status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -294,8 +307,19 @@ def store(workspace_id, data: bytes, *, kind: str) -> tuple[str, int]:
     target_path = os.path.join(target_dir, f"{sha}.{ext}")
     if not os.path.exists(target_path):
         os.makedirs(target_dir, exist_ok=True)
-        tmp_path = f"{target_path}.tmp"
-        with open(tmp_path, "wb") as fh:
-            fh.write(data)
-        os.replace(tmp_path, target_path)
+        # The scratch name has to be unique PER WRITER, not per target.
+        # Two concurrent imports carrying the same bytes resolve to the
+        # same content-addressed target, and with a shared `{sha}.tmp`
+        # the first `os.replace` moved the file out from under the
+        # second, which then died with FileNotFoundError. `os.replace`
+        # is atomic, so both landing the same final content is fine.
+        fd, tmp_path = tempfile.mkstemp(dir=target_dir, prefix=f"{sha}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+            os.replace(tmp_path, target_path)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path)
+            raise
     return sha, len(data)

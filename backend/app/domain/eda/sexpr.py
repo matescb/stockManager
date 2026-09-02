@@ -407,14 +407,25 @@ def model_paths(node: Node) -> list[str]:
     return [str(child[1]) for child in node if _is_model(child)]
 
 
-def rewrite_model_paths(node: Node, fn: Callable[[str], str]) -> Node:
+def rewrite_model_paths(node: Node, fn: Callable[[str], str | None]) -> Node:
     """Return a copy of `node` with every model path passed through `fn`.
 
     Everything else in the `(model …)` node — `(offset …)`, `(scale …)`,
     `(rotate …)` — is carried over untouched, so re-pointing a model at
     our own storage never disturbs how it's placed on the board.
+
+    `fn` returning None DROPS that `(model …)` node. The zip importer
+    needs it: a vendor footprint references a 3D file by the vendor's own
+    path, and one that wasn't in the archive would otherwise leave KiCad
+    reporting a missing model on every board that places the footprint.
     """
-    return [
-        [child[0], Quoted(fn(str(child[1]))), *child[2:]] if _is_model(child) else child
-        for child in node
-    ]
+    out: Node = []
+    for child in node:
+        if not _is_model(child):
+            out.append(child)
+            continue
+        replacement = fn(str(child[1]))
+        if replacement is None:
+            continue
+        out.append([child[0], Quoted(replacement), *child[2:]])
+    return out

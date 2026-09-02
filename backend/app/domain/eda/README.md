@@ -13,6 +13,9 @@ Owns the workspace's KiCad library — schematic symbols, PCB footprints, 3D mod
 | `service.py` | List / upload / rename / archive / restore, model links, part config |
 | `storage.py` | The text-CAD upload lane: per-kind validation + content-addressed writes |
 | `sexpr.py` | KiCad s-expression reader/writer (no dependency) |
+| `vendor_zip.py` | Reads a SnapEDA / SamacSys / UltraLibrarian zip into an `ImportPlan` |
+| `lcsc.py` | The `easyeda2kicad` seam — one LCSC part fetched and converted into the same plan |
+| `importer.py` | Turns a plan into rows, blobs and part wiring |
 
 ## Public surface
 
@@ -25,8 +28,13 @@ Owns the workspace's KiCad library — schematic symbols, PCB footprints, 3D mod
 | Read / write / drop a part's config | `service.py::get_part_eda`, `::upsert_part_eda`, `::delete_part_eda` |
 | Validate + store an uploaded file | `storage.py::canonical_symbol`, `::canonical_footprint`, `::validated_datafile`, `::store` |
 | Parse / emit / edit KiCad s-expressions | `sexpr.py::parse`, `::emit`, `::entries`, `::rename`, `::set_property`, `::rewrite_model_paths` |
+| Read a vendor archive | `vendor_zip.py::read_archive`, `::read_symbol_library`, `::narrow_to_part` |
+| Fetch + convert an LCSC part | `lcsc.py::fetch_plan` |
+| Write a plan down | `importer.py::import_plan`, `::wire_part` |
 
-REST surface: `backend/app/api/routes/eda.py` (`/api/eda` and `/api/parts/{part_id}/eda`).
+REST surface: `backend/app/api/routes/eda.py` (library CRUD + per-part config) and
+`backend/app/api/routes/eda_import.py` (the three import endpoints), both mounted
+under `/api/eda` and `/api/parts/{part_id}/eda`.
 
 ## Hard rules (this module)
 
@@ -35,7 +43,13 @@ REST surface: `backend/app/api/routes/eda.py` (`/api/eda` and `/api/parts/{part_
 3. **Names are unique per workspace among active rows** — partial unique indexes `uq_eda_symbols_ws_name`, `uq_eda_footprints_ws_name`, `uq_eda_datafiles_ws_kind_name` (`WHERE archived_at IS NULL`, alembic 0068), the same shape `part_categories` uses. Archiving frees a name, so `restore_entry` re-checks and returns `409` with `existing_id`.
 4. **`part_eda` slots are exclusive.** `symbol_id` (a definition we host) and `symbol_ref_external` (a `LibNick:Entry` in the user's own libraries) never coexist — same for the footprint pair. Enforced in `service._resolve_ref` as a 422 and by the `ck_part_eda_*_ref_exclusive` CHECK constraints.
 5. **`PUT /api/parts/{id}/eda` replaces, it does not merge.** An omitted field is written as its default. It's the only way "clear the symbol" is expressible, and the CAD tab posts the whole form on every save.
-6. **One symbol per upload.** A multi-symbol `.kicad_sym` is a 422 (`eda.multiple_symbols`), not a silent "took the first" — that file needs the zip importer landing in phase 3.
+6. **One symbol per *upload*.** A multi-symbol `.kicad_sym` is a 422 (`eda.multiple_symbols`) on `POST /api/eda/symbols`, not a silent "took the first" — that file goes to `POST /api/eda/import`, and the error message says so.
+7. **An import suffixes on a name conflict; an upload 409s.** A single upload can hand the 409 back and let the user rename. An archive can't — refusing six files because one name is taken is useless — so `importer._store_entry` walks ` (2)`…` (9)` and only then lets the 409 through. The suffix renames the **s-expression as well as the row**: a symbol carries its entry name inside the file, so `_store_entry` re-renders the bytes for every candidate name. A row called `MYPART (2)` holding bytes that say `(symbol "MYPART")` breaks the same invariant `service._rewrite_stored_entry_name` exists to hold. For a DATA file the suffix goes before the extension (`P (2).step`, never `P.step (2)`): KiCad picks its 3D plugin by extension, and the row name is what the rewritten `(model …)` path points at.
+8. **A bad member is a note, never a failed archive.** Anything that fails validation lands in the response's `skipped` list with a reason. The four whole-archive rejections are deliberate and few: not a zip (`eda.invalid_archive`), past the member/size caps (`eda.archive_too_large`), KiCad-5-only (`eda.legacy_format`), and genuine ambiguity about which symbol or footprint belongs to the part (`eda.multiple_symbols` / `eda.multiple_footprints`).
+9. **Model paths are rewritten before the footprint is stored.** A vendor footprint points at the vendor's own tree; `importer._rewrite_models` repoints it at `${STOCKMGR_3D}/<row name>` (phase 6 substitutes the variable) and DROPS a `(model …)` whose file wasn't in the archive. The stored bytes are what phase 6 packages, so the rewrite has to happen before `storage.canonical_entry_bytes`.
+10. **An import fills empty slots only.** `overwrite` is opt-in, and `value`, `keywords` and the exclusion flags are never touched — no vendor archive knows better than the user.
+11. **Three budgets bound an archive, and the parse budget is the one that bounds memory.** `MAX_MEMBERS` and `MAX_UNCOMPRESSED_BYTES` are checked against the central directory, which a hostile zip simply lies about — so `_Budget.inflate` re-checks the real total as chunks come out of zlib, and `MAX_PARSED_TEXT_BYTES` caps what reaches the s-expression reader. A parsed node tree runs ~20x its source text; without that last cap a ~130 KiB upload peaked at 1.2 GiB RSS. All three are enforced INSIDE the member walk — trimming a finished list means everything was parsed and retained first, which is the cost the caps exist to avoid.
+12. **Every path an upstream name touches is sanitised before it is used.** `easyeda2kicad` builds its output path from EasyEDA's own JSON title, so `lcsc._rename_model` flattens the name before the exporter runs, and `_read_converted` re-checks with `os.path.realpath` that what came back is still inside the conversion directory.
 
 ## See also
 
@@ -49,3 +63,11 @@ REST surface: `backend/app/api/routes/eda.py` (`/api/eda` and `/api/parts/{part_
 - Don't make `sexpr.parse` recursive. It takes uploads, and a deeply nested file has to be a 422, not a `RecursionError` behind a 500.
 - Don't drop the `Quoted` marker when touching `sexpr.py`. The bare token `yes` and the string `"yes"` mean different things to KiCad, and collapsing them corrupts round-tripped files.
 - Don't hard-delete a library entry to "clear" it from parts — archive it, so the audit trail and the `SET NULL` references survive.
+- Don't shell out to `easyeda2kicad`'s CLI. `lcsc.py` drives its converter classes directly; the CLI would mean a subprocess, a writable working directory and no way to bound the fetch.
+- Don't fold case when detecting a vendor. `KiCad/` is SamacSys and `KiCAD/` is UltraLibrarian — one letter apart, and the only discriminator either archive carries.
+- Don't parse an archive on the event loop. Inflating and re-emitting up to 200 entries is CPU-bound, prod runs one uvicorn worker, and `run_in_threadpool` is what keeps the rest of the API answering.
+- Don't decode an archive member with a bare `raw.decode()`. Use `storage.decode_text` — a lone NUL is valid UTF-8 and reaches Postgres as a DataError 500 rather than a 422.
+- Don't union the evidence when picking which symbol or footprint belongs to a part. `vendor_zip._pick_*` tries tiers in order and the first that resolves wins; unioning lets a filename hint veto a footprint reference the vendor wrote down explicitly.
+- Don't give the content-addressed write a scratch name derived only from the hash. Two concurrent imports of the same bytes share the target, and a shared `.tmp` meant the first `os.replace` pulled the file out from under the second.
+- Don't let an entry disappear between the archive and the response. Anything not imported — a member we couldn't place, a `(model …)` whose file was missing, a library entry narrowed away from the part — is a `skipped` note naming it.
+- Don't set the route's `asyncio.wait_for` to `lcsc.FETCH_BUDGET_SECONDS`. The outer wait needs headroom (`HARD_TIMEOUT_SECONDS`) or it fires first every time and the per-stage deadline checks become dead code.
