@@ -137,6 +137,16 @@ class ErrorCodes:
     AUTH_SESSION_IDLE_TIMEOUT = "auth.session_idle_timeout"
     AUTH_USER_MISSING = "auth.user_missing"
 
+    # API tokens (PATs) — deps.py + routes/tokens.py.
+    # AUTH_INVALID_TOKEN is deliberately the ONLY code for every token
+    # failure (malformed, unknown, wrong secret, revoked, expired, owner
+    # lost membership). Splitting it would hand an attacker an oracle
+    # telling them which half of a guess was right.
+    AUTH_INVALID_TOKEN = "auth.invalid_token"
+    AUTH_TOKEN_READ_ONLY = "auth.token_read_only"
+    AUTH_TOKEN_WORKSPACE_MISMATCH = "auth.token_workspace_mismatch"
+    AUTH_TOKEN_NO_TOKEN_MANAGEMENT = "auth.token_no_token_management"
+
     # Generic resource lookup — _helpers.py / require_resource_access.
     # Prefer a domain-specific 404 code where one exists (e.g.
     # WORKSPACE_NOT_FOUND); use this on the polymorphic helpers where

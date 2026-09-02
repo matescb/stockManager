@@ -118,6 +118,33 @@ export type PartCategory = z.infer<typeof PartCategorySchema>;
 export const PartCategoriesListSchema = z.array(PartCategorySchema);
 
 // ---------------------------------------------------------------------
+// API tokens (PATs) — the non-cookie credential for KiCad and agents.
+// Backend: `app/domain/tokens/schemas.py`. `user_email` is only
+// populated by the admin-only `?all=true` listing.
+// ---------------------------------------------------------------------
+
+export const ApiTokenSchema = z.object({
+  id: uuid,
+  label: z.string(),
+  read_only: z.boolean(),
+  created_at: z.string(),
+  expires_at: nullableString,
+  revoked_at: nullableString,
+  last_used_at: nullableString,
+  user_email: nullableString,
+});
+export type ApiToken = z.infer<typeof ApiTokenSchema>;
+
+export const ApiTokensListSchema = z.array(ApiTokenSchema);
+
+/** Mint response. `token` is the plaintext, shown once and never again —
+ * the server stores only its HMAC and has no recovery path. */
+export const ApiTokenCreatedSchema = ApiTokenSchema.extend({
+  token: z.string(),
+});
+export type ApiTokenCreated = z.infer<typeof ApiTokenCreatedSchema>;
+
+// ---------------------------------------------------------------------
 // EDA libraries — the workspace's KiCad symbols, footprints, 3D models
 // and SPICE models, plus the per-part config naming which it uses.
 // Backend: `app/domain/eda/schemas.py`.

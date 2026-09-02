@@ -1,21 +1,26 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Annotated
+from typing import Annotated, NoReturn
 from uuid import UUID
 
 from fastapi import Cookie, Depends, Request, status
+from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
 from app.core.auth import hash_session_token
 from app.core.config import settings
 from app.core.errors import ErrorCodes, raise_http
 from app.core.time import utcnow
+from app.domain.tokens import service as tokens_service
+from app.domain.tokens.models import ApiToken
 from app.domain.users.models import User, UserSession
 from app.domain.workspaces.models import Workspace, WorkspaceMember
 from app.infra.db import get_db
 
 DbSession = Annotated[Session, Depends(get_db)]
+
+_READ_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
 def _session_idle_window() -> timedelta:
@@ -24,10 +29,85 @@ def _session_idle_window() -> timedelta:
     return timedelta(hours=settings().SESSION_IDLE_HOURS)
 
 
+def _record_token_use(db: Session, row: ApiToken, request: Request) -> None:
+    """Best-effort last-used telemetry. Split out as a module-level
+    function so the failure path is directly testable."""
+    tokens_service.record_use(db, row, client_ip=get_remote_address(request))
+
+
+def _invalid_token() -> NoReturn:
+    """The single failure for every API-token rejection.
+
+    One code, one message, one status for malformed / unknown / wrong
+    secret / revoked / expired / owner-no-longer-a-member. Anything
+    finer-grained is an oracle (ADR-0029).
+    """
+    raise_http(
+        status.HTTP_401_UNAUTHORIZED,
+        ErrorCodes.AUTH_INVALID_TOKEN,
+        "invalid api token",
+    )
+
+
+def _authenticate_api_token(request: Request, db: Session, header: str) -> User:
+    """Authenticate a request carrying an `Authorization` header.
+
+    Reached for ANY non-empty Authorization header, including one whose
+    scheme we don't recognise. That total-ness is load-bearing: the CSRF
+    middleware skips its Origin check whenever the header is present, and
+    that is only sound while a present header provably excludes cookie
+    auth. If an unknown scheme fell through to the cookie path, a
+    cross-site form post carrying a junk Authorization value would ride
+    the victim's session with no Origin check. So: header present →
+    token path → valid token or 401. Never a fallback.
+    """
+    scheme, _, raw = header.partition(" ")
+    if scheme.lower() not in ("token", "bearer"):
+        _invalid_token()
+
+    row = tokens_service.resolve_token(db, raw.strip())
+    if row is None:
+        _invalid_token()
+
+    user = db.get(User, row.user_id)
+    if user is None:
+        _invalid_token()
+
+    # Read-only tokens are the credential shipped to KiCad and the PCM
+    # (phases 5/6), where the plaintext ends up in a config file or a URL
+    # path. Refusing writes here — before any route sees the request —
+    # bounds the blast radius of that exposure.
+    if row.read_only and request.method not in _READ_METHODS:
+        raise_http(
+            status.HTTP_403_FORBIDDEN,
+            ErrorCodes.AUTH_TOKEN_READ_ONLY,
+            "read-only api token",
+        )
+
+    request.state.api_token = row
+    try:
+        _record_token_use(db, row, request)
+    except Exception:
+        # Telemetry must never fail auth. Roll back so the session is
+        # usable — nothing else has been written at this point, since
+        # authentication is the first dependency to touch the DB.
+        db.rollback()
+    return user
+
+
 def get_current_user(
     request: Request,
     db: DbSession,
 ) -> User:
+    # API-token path (ADR-0029). Any non-empty Authorization header
+    # commits the request to it; there is deliberately no fallback to
+    # the cookie below. An empty header value is treated as absent, and
+    # `CsrfOriginMiddleware` uses the identical truthiness test so the
+    # two can never disagree about which path a request is on.
+    auth_header = request.headers.get("Authorization")
+    if auth_header:
+        return _authenticate_api_token(request, db, auth_header)
+
     token = request.cookies.get(settings().SESSION_COOKIE_NAME)
     if not token:
         raise_http(
@@ -94,12 +174,68 @@ def get_current_user(
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
+def _workspace_for_api_token(
+    request: Request, db: Session, user: User, token: ApiToken
+) -> Workspace:
+    """Resolve the workspace for a token-authenticated request.
+
+    The workspace is PINNED to the one the token was minted in — a token
+    is a credential for one tenant, so neither the `X-Workspace-Id`
+    header nor the workspace cookie can move it.
+    """
+    header_ws = request.headers.get("X-Workspace-Id")
+    if header_ws:
+        # A client that sends a workspace header AND a token is either
+        # confused or trying to pivot. Echoing the pinned workspace back
+        # would silently do the wrong thing, so surface it distinctly —
+        # unlike the token-validity failures, this one leaks nothing an
+        # attacker doesn't already hold (they have the token, and its
+        # workspace is implied by every response it gets).
+        try:
+            requested = UUID(header_ws)
+        except ValueError:
+            requested = None
+        if requested != token.workspace_id:
+            raise_http(
+                status.HTTP_403_FORBIDDEN,
+                ErrorCodes.AUTH_TOKEN_WORKSPACE_MISMATCH,
+                "token is not valid for the requested workspace",
+            )
+
+    # Re-check membership on every request: revoking someone's seat has
+    # to kill their tokens immediately, without a sweep over api_tokens.
+    # A lost membership is indistinguishable from a bad token (401), so
+    # this can't be used to probe who is still in a workspace.
+    membership = (
+        db.query(WorkspaceMember)
+        .filter(
+            WorkspaceMember.user_id == user.id,
+            WorkspaceMember.workspace_id == token.workspace_id,
+            WorkspaceMember.status == "active",
+        )
+        .first()
+    )
+    if membership is None:
+        _invalid_token()
+
+    ws = db.get(Workspace, token.workspace_id)
+    if ws is None:
+        _invalid_token()
+
+    request.state.workspace_id = str(ws.id)
+    return ws
+
+
 def get_current_workspace(
     request: Request,
     db: DbSession,
     user: CurrentUser,
     x_workspace_cookie: Annotated[str | None, Cookie(alias="stockmgr_workspace")] = None,
 ) -> Workspace:
+    api_token = getattr(request.state, "api_token", None)
+    if api_token is not None:
+        return _workspace_for_api_token(request, db, user, api_token)
+
     header_ws = request.headers.get("X-Workspace-Id")
     raw = header_ws or x_workspace_cookie
 
@@ -187,9 +323,6 @@ def require_role(min_role: str):
             )
 
     return _dep
-
-
-_READ_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
 def require_member_for_writes(

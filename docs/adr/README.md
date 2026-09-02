@@ -38,3 +38,4 @@ New ADRs follow the template in [STYLE.md](../STYLE.md#adr-pages-docsadrnnnn-slu
 | 0026 | [Sentry traces are explicitly sampled; Replay is opt-in](0026-sentry-sampling-and-replay.md) |
 | 0027 | [Preserve ledger history on part delete](0027-ledger-history-on-part-delete.md) |
 | 0028 | [Hard-delete policy and workspace trigger contract](0028-hard-delete-policy-and-workspace-trigger-contract.md) |
+| 0029 | [API tokens, and the CSRF exemption for `Authorization`-bearing requests](0029-api-tokens-and-csrf-exemption.md) |

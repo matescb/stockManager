@@ -188,6 +188,7 @@ from app.api.routes import (
     stock,
     storage,
     tags,
+    tokens,
     workspaces,
 )
 from app.core.config import settings
@@ -387,6 +388,27 @@ class CsrfOriginMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if request.url.path in self._exempt:
             return await call_next(request)
+        # API-token requests are exempt (ADR-0029). Two facts make this
+        # safe, and BOTH have to hold:
+        #  (a) A browser cannot attach an `Authorization` header to a
+        #      cross-site request without a CORS preflight, and
+        #      `CORS_ALLOW_HEADERS` (above) deliberately omits
+        #      `Authorization` — so the preflight fails even from an
+        #      allow-listed origin. Form posts, <img>, and friends — the
+        #      shapes CSRF actually takes — cannot set headers at all.
+        #      Do not add "Authorization" to CORS_ALLOW_HEADERS.
+        #  (b) `core/deps.py::get_current_user` treats ANY non-empty
+        #      Authorization header as a commitment to the token path
+        #      with no cookie fallback. So a forged header doesn't ride
+        #      the victim's session — it just needs a valid token, and
+        #      an attacker who has one doesn't need CSRF.
+        # The truthiness test here must stay identical to the one in
+        # deps.py: if the two disagreed about what counts as "present",
+        # a value that skips CSRF here but falls back to the cookie
+        # there would be a real forgery hole. Pinned by
+        # tests/test_api_tokens.py's CSRF matrix.
+        if request.headers.get("Authorization"):
+            return await call_next(request)
         origin = _origin_host(request.headers.get("origin")) or _origin_host(
             request.headers.get("referer")
         )
@@ -504,6 +526,10 @@ app.include_router(
 )
 app.include_router(custom_fields.router, prefix="/api/custom-fields", tags=["custom_fields"], dependencies=_member_gate)
 app.include_router(tags.router, prefix="/api/tags", tags=["tags"], dependencies=_member_gate)
+# No `_member_gate`: a viewer may mint their own token, because the token
+# inherits the viewer role and so can't do anything the viewer couldn't.
+# See the module docstring in routes/tokens.py.
+app.include_router(tokens.router, prefix="/api/tokens", tags=["tokens"])
 app.include_router(search.router, prefix="/api/search", tags=["search"], dependencies=_member_gate)
 app.include_router(sourcing.router, prefix="/api/workspaces", tags=["sourcing"])
 app.include_router(sourcing.search_router, prefix="/api/sourcing", tags=["sourcing"])

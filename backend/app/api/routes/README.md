@@ -31,6 +31,7 @@ Every public REST endpoint lives here, one file per logical area. This README is
 | `attachments.py` | `/api/attachments` | [attachments-tags-cf](../../../../docs/api/attachments-tags-cf.md) |
 | `tags.py` | `/api/tags` | [attachments-tags-cf](../../../../docs/api/attachments-tags-cf.md) |
 | `custom_fields.py` | `/api/custom-fields` | [attachments-tags-cf](../../../../docs/api/attachments-tags-cf.md) |
+| `tokens.py` | `/api/tokens` | [tokens](../../../../docs/api/tokens.md) |
 | `audit.py` | `/api/audit` | [audit](../../../../docs/api/audit.md) |
 | `_activity.py` | (helpers, no routes) | — |
 | `search.py` | `/api/search` | [search](../../../../docs/api/search.md) |
@@ -40,7 +41,7 @@ Every public REST endpoint lives here, one file per logical area. This README is
 ## Conventions
 
 - Every response uses `core/responses.py::ok` / `::err`. Envelope is `{ data, status }`. See [ADR-0003](../../../../docs/adr/0003-api-envelope-data-status.md).
-- `core/deps.py::get_current_user` is on every route; `get_current_workspace` is on every route except invitations and the public catalog.
+- `core/deps.py::get_current_user` is on every route; `get_current_workspace` is on every route except invitations and the public catalog. A request carrying an `Authorization` header authenticates with an API token instead of the session cookie, with **no fallback** either way — see [ADR-0029](../../../../docs/adr/0029-api-tokens-and-csrf-exemption.md).
 - Workspace isolation is the route author's job. Use the helpers in `app/api/_helpers.py`: `assert_in_workspace(db, Model, id_, workspace_id)` for any caller-supplied UUID, and `assert_child_in_parent(...)` when a child id must also match a parent id. They raise 404 on miss *or* on cross-workspace match — replacing the workspace-blind `db.get(Model, id)`. See [ADR-0002](../../../../docs/adr/0002-code-enforced-workspace-isolation.md) and [docs/domain/workspace-isolation.md](../../../../docs/domain/workspace-isolation.md).
 - Rate limiting via slowapi, single-process bucket. See [ADR-0012](../../../../docs/adr/0012-uvicorn-single-worker-slowapi.md).
 
