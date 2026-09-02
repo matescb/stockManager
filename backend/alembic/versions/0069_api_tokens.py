@@ -84,18 +84,26 @@ def upgrade() -> None:
     op.create_index("ix_api_tokens_workspace_id", "api_tokens", ["workspace_id"])
     op.create_index("ix_api_tokens_archived_at", "api_tokens", ["archived_at"])
     op.create_index("ix_api_tokens_user_id", "api_tokens", ["user_id"])
-    # Drives both listing paths (own tokens, and the admin "every token
-    # in the workspace" view). Authentication itself is a primary-key
-    # lookup — the token id travels in the plaintext — so no index on
-    # token_hmac is needed, and deliberately none exists: nothing should
-    # ever scan that column.
+    # Covers both listing paths in the order they actually query:
+    # `list_own` filters (workspace_id, user_id) and sorts by created_at
+    # desc; the admin `list_workspace` uses the workspace_id prefix with
+    # the same sort. `revoked_at` is not part of it — no query filters on
+    # revocation (revoked tokens still render in the UI), so indexing it
+    # would buy nothing and cost write throughput.
+    #
+    # Authentication needs no index at all: the token id travels in the
+    # plaintext, so resolution is a primary-key lookup. There is
+    # deliberately no index on token_hmac — nothing should ever scan
+    # that column.
     op.create_index(
-        "ix_api_tokens_ws_revoked", "api_tokens", ["workspace_id", "revoked_at"]
+        "ix_api_tokens_ws_user_created",
+        "api_tokens",
+        ["workspace_id", "user_id", "created_at"],
     )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_api_tokens_ws_revoked", table_name="api_tokens")
+    op.drop_index("ix_api_tokens_ws_user_created", table_name="api_tokens")
     op.drop_index("ix_api_tokens_user_id", table_name="api_tokens")
     op.drop_index("ix_api_tokens_archived_at", table_name="api_tokens")
     op.drop_index("ix_api_tokens_workspace_id", table_name="api_tokens")

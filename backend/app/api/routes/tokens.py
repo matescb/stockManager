@@ -23,10 +23,11 @@ from app.core.deps import (
     CurrentUser,
     CurrentWorkspace,
     DbSession,
+    forbid_api_token,
     require_role,
 )
 from app.core.errors import ErrorCodes, raise_http
-from app.core.ratelimit import limiter, workspace_key
+from app.core.ratelimit import limiter, user_key, workspace_key
 from app.core.responses import Envelope, ok
 from app.domain.audit.service import log as _audit_log
 from app.domain.tokens import service as tokens_service
@@ -35,31 +36,12 @@ from app.domain.tokens.schemas import ApiTokenCreated, ApiTokenIn, ApiTokenOut
 from app.domain.users.models import User
 from app.domain.workspaces.models import Workspace
 
-
-def _no_token_auth(request: Request, user: CurrentUser) -> None:
-    """Refuse every request on this router that authenticated with an API
-    token, whatever the method.
-
-    Takes `user` purely to order the dependency graph: router-level
-    dependencies resolve before the route's own, so without this the
-    gate would run before `get_current_user` has set
-    `request.state.api_token` and would wave every token through.
-
-    A leaked token must not be able to widen itself (mint a second,
-    longer-lived, non-read-only one), clean up after itself (revoke the
-    token whose `last_used_at` would betray the intrusion), or enumerate
-    the workspace's other credentials. Token management is a
-    human-at-a-browser action, so it requires the session cookie.
-    """
-    if getattr(request.state, "api_token", None) is not None:
-        raise_http(
-            status.HTTP_403_FORBIDDEN,
-            ErrorCodes.AUTH_TOKEN_NO_TOKEN_MANAGEMENT,
-            "api tokens cannot manage api tokens",
-        )
-
-
-router = APIRouter(dependencies=[Depends(_no_token_auth)])
+# Every route here — GET included. A leaked token must not be able to
+# widen itself (mint a longer-lived successor), clean up after itself
+# (revoke the sibling whose `last_used_at` would betray the intrusion),
+# or enumerate the workspace's other credentials. The same dependency
+# guards the tenancy routes in `workspaces.py` / `invitations.py`.
+router = APIRouter(dependencies=[Depends(forbid_api_token)])
 
 
 def _serialize(row: ApiToken, email: str | None = None) -> ApiTokenOut:
@@ -95,9 +77,11 @@ def list_tokens(
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 # Minting is cheap for us and expensive to clean up after, and every
-# legitimate flow is a human clicking a button. 10/hour per workspace
-# leaves room for a bad first attempt without leaving room for a script.
-@limiter.limit("10/hour", key_func=workspace_key)
+# legitimate flow is a human clicking a button. 10/hour leaves room for
+# a bad first attempt without leaving room for a script. Keyed per USER,
+# not per workspace: a token is personal, so one member burning their
+# allowance must not lock their teammates out of minting.
+@limiter.limit("10/hour", key_func=user_key)
 def create_token(
     request: Request,
     payload: ApiTokenIn,

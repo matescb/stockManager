@@ -15,6 +15,7 @@ from app.core.deps import (
     CurrentUser,
     CurrentWorkspace,
     DbSession,
+    forbid_api_token,
     require_role,
 )
 from app.core.errors import ErrorCodes, raise_http
@@ -83,10 +84,14 @@ def _serialize(inv: WorkspaceInvitation, *, plaintext_token: str | None = None) 
     }
 
 
+# `forbid_api_token` on every mutating route here: issuing, revoking and
+# accepting invitations are tenancy administration. A leaked API token
+# must not be able to invite an accomplice (persistence that outlives
+# revoking the token) or move its owner between tenants. ADR-0029.
 @router.post(
     "",
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_role("admin"))],
+    dependencies=[Depends(require_role("admin")), Depends(forbid_api_token)],
 )
 @limiter.limit("60/hour", key_func=workspace_key)
 def create_invitation(
@@ -229,7 +234,10 @@ def list_invitations(
     return ok([_serialize(r) for r in rows])
 
 
-@router.delete("/{invitation_id}", dependencies=[Depends(require_role("admin"))])
+@router.delete(
+    "/{invitation_id}",
+    dependencies=[Depends(require_role("admin")), Depends(forbid_api_token)],
+)
 @limiter.limit("120/hour", key_func=workspace_key)
 def revoke_invitation(
     request: Request,
@@ -273,7 +281,7 @@ def revoke_invitation(
 # unauthenticated-by-workspace and could otherwise be hammered.
 # 10/min/IP is well above any legitimate user's behaviour and well
 # below useful enumeration speed.
-@router.post("/accept")
+@router.post("/accept", dependencies=[Depends(forbid_api_token)])
 @limiter.limit("10/minute")
 def accept_invitation(request: Request, payload: AcceptIn, db: DbSession, user: CurrentUser):
     # SEC2-013: the composite token encodes "{invitation_id}:{plaintext}".

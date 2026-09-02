@@ -24,9 +24,18 @@ class ApiToken(WorkspaceOwned, Base):
 
     __tablename__ = "api_tokens"
     __table_args__ = (
-        # The listing paths filter on (workspace_id, revoked_at); auth
-        # itself is a PK lookup and needs no index of its own.
-        Index("ix_api_tokens_ws_revoked", "workspace_id", "revoked_at"),
+        # Matches what the listings actually do: `list_own` filters
+        # (workspace_id, user_id) and orders by created_at desc; the admin
+        # `list_workspace` uses the workspace_id prefix and the same order.
+        # `revoked_at` is deliberately NOT in here — nothing filters on it
+        # (a revoked token still has to appear in the UI, greyed out), so
+        # an index on it would only cost write throughput.
+        Index(
+            "ix_api_tokens_ws_user_created",
+            "workspace_id",
+            "user_id",
+            "created_at",
+        ),
     )
 
     # CASCADE: a deleted user's tokens must not outlive them. There is no

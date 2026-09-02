@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 from typing import Annotated, NoReturn
 from uuid import UUID
@@ -18,6 +19,8 @@ from app.domain.users.models import User, UserSession
 from app.domain.workspaces.models import Workspace, WorkspaceMember
 from app.infra.db import get_db
 
+_log = logging.getLogger(__name__)
+
 DbSession = Annotated[Session, Depends(get_db)]
 
 _READ_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -29,10 +32,11 @@ def _session_idle_window() -> timedelta:
     return timedelta(hours=settings().SESSION_IDLE_HOURS)
 
 
-def _record_token_use(db: Session, row: ApiToken, request: Request) -> None:
-    """Best-effort last-used telemetry. Split out as a module-level
-    function so the failure path is directly testable."""
-    tokens_service.record_use(db, row, client_ip=get_remote_address(request))
+def _record_token_use(db: Session, row: ApiToken, request: Request) -> bool:
+    """Best-effort last-used telemetry. Returns True when a row was written
+    (the throttle in `record_use` suppresses most calls). Split out as a
+    module-level function so the failure path is directly testable."""
+    return tokens_service.record_use(db, row, client_ip=get_remote_address(request))
 
 
 def _invalid_token() -> NoReturn:
@@ -73,6 +77,62 @@ def _authenticate_api_token(request: Request, db: Session, header: str) -> User:
     if user is None:
         _invalid_token()
 
+    # Membership re-check lives HERE, not in get_current_workspace, because
+    # not every route depends on get_current_workspace. `GET /api/auth/me`,
+    # `GET`/`POST /api/workspaces`, `/workspaces/{id}/switch` and
+    # `/invitations/accept` take only CurrentUser — when this check sat in
+    # the workspace dependency those five routes kept working for a token
+    # whose owner had already been removed from the workspace. Authentication
+    # is the one place every request passes through, so the check belongs
+    # here. A lost membership is indistinguishable from a bad token (401),
+    # so this can't be used to probe who is still in a workspace.
+    membership = (
+        db.query(WorkspaceMember)
+        .filter(
+            WorkspaceMember.user_id == row.user_id,
+            WorkspaceMember.workspace_id == row.workspace_id,
+            WorkspaceMember.status == "active",
+        )
+        .first()
+    )
+    if membership is None:
+        _invalid_token()
+
+    request.state.api_token = row
+    # Rate-limit buckets key off this (see `core/ratelimit.py::user_key`).
+    # Set on both auth paths so the bucket is the same person whichever
+    # credential they used.
+    request.state.user_id = str(user.id)
+
+    # Telemetry BEFORE the read-only check, deliberately. The credential
+    # is valid at this point; what follows is an authorization decision.
+    # Recording only on allowed requests would make someone probing a
+    # stolen read-only token with writes completely invisible in
+    # `last_used_at` — exactly the pattern the field exists to surface.
+    try:
+        if _record_token_use(db, row, request):
+            # Commit the telemetry on its own rather than letting it ride
+            # the request transaction. Without this the write is lost
+            # whenever the request goes on to fail — including the
+            # read-only 403 below, which is exactly the probe
+            # `last_used_at` exists to surface. Safe here for the same
+            # reason the cookie path commits its sliding-expiry bump a few
+            # lines down: authentication is the first dependency to touch
+            # the DB, so there is no half-finished route work to strand.
+            # The throttle keeps this to at most one commit per 300s per
+            # token, so it is not a per-request cost.
+            db.commit()
+    except Exception:
+        # Telemetry must never fail auth. Roll back so the session is
+        # usable — nothing else has been written at this point, since
+        # authentication is the first dependency to touch the DB. Logged
+        # (not silently swallowed) so a persistently failing write is
+        # visible in Sentry rather than only as a stale last_used_at.
+        _log.warning(
+            "api-token telemetry write failed for token %s", row.id, exc_info=True
+        )
+        db.rollback()
+
     # Read-only tokens are the credential shipped to KiCad and the PCM
     # (phases 5/6), where the plaintext ends up in a config file or a URL
     # path. Refusing writes here — before any route sees the request —
@@ -84,14 +144,6 @@ def _authenticate_api_token(request: Request, db: Session, header: str) -> User:
             "read-only api token",
         )
 
-    request.state.api_token = row
-    try:
-        _record_token_use(db, row, request)
-    except Exception:
-        # Telemetry must never fail auth. Roll back so the session is
-        # usable — nothing else has been written at this point, since
-        # authentication is the first dependency to touch the DB.
-        db.rollback()
     return user
 
 
@@ -168,6 +220,7 @@ def get_current_user(
     db.commit()
 
     request.state.session_token = token
+    request.state.user_id = str(user.id)
     return user
 
 
@@ -175,13 +228,17 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 def _workspace_for_api_token(
-    request: Request, db: Session, user: User, token: ApiToken
+    request: Request, db: Session, token: ApiToken
 ) -> Workspace:
     """Resolve the workspace for a token-authenticated request.
 
     The workspace is PINNED to the one the token was minted in — a token
     is a credential for one tenant, so neither the `X-Workspace-Id`
     header nor the workspace cookie can move it.
+
+    Membership was already verified by `_authenticate_api_token`, which
+    runs for EVERY token-authed request. Do not move that check back
+    here: routes that take only `CurrentUser` never reach this function.
     """
     header_ws = request.headers.get("X-Workspace-Id")
     if header_ws:
@@ -202,22 +259,6 @@ def _workspace_for_api_token(
                 "token is not valid for the requested workspace",
             )
 
-    # Re-check membership on every request: revoking someone's seat has
-    # to kill their tokens immediately, without a sweep over api_tokens.
-    # A lost membership is indistinguishable from a bad token (401), so
-    # this can't be used to probe who is still in a workspace.
-    membership = (
-        db.query(WorkspaceMember)
-        .filter(
-            WorkspaceMember.user_id == user.id,
-            WorkspaceMember.workspace_id == token.workspace_id,
-            WorkspaceMember.status == "active",
-        )
-        .first()
-    )
-    if membership is None:
-        _invalid_token()
-
     ws = db.get(Workspace, token.workspace_id)
     if ws is None:
         _invalid_token()
@@ -234,7 +275,7 @@ def get_current_workspace(
 ) -> Workspace:
     api_token = getattr(request.state, "api_token", None)
     if api_token is not None:
-        return _workspace_for_api_token(request, db, user, api_token)
+        return _workspace_for_api_token(request, db, api_token)
 
     header_ws = request.headers.get("X-Workspace-Id")
     raw = header_ws or x_workspace_cookie
@@ -288,6 +329,44 @@ def get_current_workspace(
 
 
 CurrentWorkspace = Annotated[Workspace, Depends(get_current_workspace)]
+
+
+def api_token_workspace_id(request: Request) -> UUID | None:
+    """The workspace an API-token request is pinned to, or None for a
+    cookie session.
+
+    Routes that list things *across* workspaces (`/auth/me`,
+    `GET /api/workspaces`) must narrow their results to this id — a
+    token is a credential for one tenant and must not enumerate the
+    others its owner happens to belong to.
+    """
+    token = getattr(request.state, "api_token", None)
+    return token.workspace_id if token is not None else None
+
+
+def forbid_api_token(request: Request, user: CurrentUser) -> None:
+    """Dependency: refuse any request that authenticated with an API token.
+
+    For routes that administer credentials or tenancy — minting and
+    revoking tokens, creating a workspace, switching the active one,
+    accepting or issuing an invitation. A leaked token must not be able
+    to widen itself (mint a longer-lived successor, or invite an
+    accomplice), clean up after itself (revoke the sibling whose
+    `last_used_at` would betray the intrusion), or move its owner
+    between tenants. Those are human-at-a-browser actions, so they
+    require the session cookie.
+
+    Takes `user` purely to order the dependency graph: router- and
+    route-level dependencies resolve before the endpoint's own, so
+    without this `request.state.api_token` would not be set yet and the
+    gate would wave every token through.
+    """
+    if getattr(request.state, "api_token", None) is not None:
+        raise_http(
+            status.HTTP_403_FORBIDDEN,
+            ErrorCodes.AUTH_TOKEN_NO_TOKEN_MANAGEMENT,
+            "api tokens cannot manage credentials or workspace membership",
+        )
 
 
 _ROLE_RANK = {"viewer": 0, "member": 1, "admin": 2, "owner": 3}

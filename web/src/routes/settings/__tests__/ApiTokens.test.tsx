@@ -54,7 +54,7 @@ const minted: ApiTokenCreated = {
   token: "smk_33333333333343338333333333333333.s3cr3t-plaintext-value",
 };
 
-function renderTokens() {
+function renderTokens(): QueryClient {
   const client = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
@@ -67,6 +67,7 @@ function renderTokens() {
       </ConfirmDialogProvider>
     </QueryClientProvider>,
   );
+  return client;
 }
 
 beforeEach(() => {
@@ -161,5 +162,69 @@ describe("ApiTokensSettings", () => {
       await screen.findByText("Expiry must be a whole number of days between 1 and 365."),
     ).toBeDefined();
     expect(post).not.toHaveBeenCalled();
+  });
+
+  it("evicts the plaintext from the mutation cache once it is on screen", async () => {
+    vi.spyOn(api.parsed, "get").mockResolvedValue([]);
+    vi.spyOn(api, "get").mockResolvedValue([]);
+    vi.spyOn(api, "post").mockResolvedValue(minted);
+
+    const client = renderTokens();
+
+    fireEvent.click(await screen.findByRole("button", { name: "+ Token" }));
+    fireEvent.change(await screen.findByLabelText("Label"), { target: { value: "Agent" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await screen.findByTestId("minted-token");
+
+    // TanStack retains a settled mutation's `data` in the shared cache.
+    // `reset()` alone does NOT clear it — it detaches the observer and
+    // leaves the mutation, plaintext included. Only `gcTime: 0` + reset()
+    // actually evicts, which is what this pins.
+    await waitFor(() => {
+      const states = client.getMutationCache().findAll().map(m => m.state);
+      expect(states.every(st => st.status === "idle")).toBe(true);
+      expect(JSON.stringify(states)).not.toContain(minted.token);
+    });
+  });
+
+  it("lets an admin list everyone's tokens and requests ?all=true", async () => {
+    const parsedGet = vi.spyOn(api.parsed, "get").mockResolvedValue(tokens);
+    vi.spyOn(api, "get").mockResolvedValue([{ user_id: "user-1", role: "admin" }]);
+
+    renderTokens();
+
+    const toggle = await screen.findByLabelText("Show everyone's tokens");
+    expect(parsedGet).toHaveBeenCalledWith("/tokens", expect.anything(), expect.anything());
+
+    fireEvent.click(toggle);
+
+    await waitFor(() =>
+      expect(parsedGet).toHaveBeenCalledWith(
+        "/tokens?all=true",
+        expect.anything(),
+        expect.anything(),
+      ),
+    );
+    // The owner column only appears in the all-workspace view.
+    await waitFor(() => expect(screen.getByText("Owner")).toBeDefined());
+  });
+
+  it("revokes a token after the confirmation is accepted", async () => {
+    vi.spyOn(api.parsed, "get").mockResolvedValue(tokens);
+    vi.spyOn(api, "get").mockResolvedValue([{ user_id: "user-1", role: "member" }]);
+    const post = vi.spyOn(api, "post").mockResolvedValue(null);
+
+    renderTokens();
+
+    const table = await screen.findByRole("table");
+    fireEvent.click(within(table).getByRole("button", { name: "Revoke" }));
+
+    // useConfirm() renders a dialog; accept it.
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Revoke" }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(post).toHaveBeenCalledWith(`/tokens/${tokens[0].id}/revoke`);
   });
 });

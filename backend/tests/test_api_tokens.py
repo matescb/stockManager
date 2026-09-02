@@ -20,8 +20,10 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from app.core import deps
 from app.core.time import utcnow
 from app.domain.audit.models import AuditLog
+from app.domain.tokens import service as tokens_service
 from app.domain.tokens.models import ApiToken
 from app.domain.workspaces.models import WorkspaceMember
 from app.main import app
@@ -540,3 +542,382 @@ def test_mint_and_revoke_write_sanitized_audit_rows(authed_client, db):
     ).scalar_one()
     assert revoked.target_type == "api_token"
     assert revoked.target_ids == [uuid.UUID(data["id"])]
+
+
+# ---------------------------------------------------------------------------
+# Routes that take only CurrentUser (regression: the HIGH from code review)
+#
+# Workspace pinning and the membership re-check used to live exclusively in
+# `get_current_workspace`. These five routes never depend on it, so a token
+# sailed straight past both: it could enumerate every workspace its owner
+# belonged to, create new ones, switch tenants, accept a stranger's
+# invitation, and keep doing all of it after the owner's seat was deleted.
+# ---------------------------------------------------------------------------
+
+
+def _two_workspace_user(authed_client) -> tuple[TestClient, str, str]:
+    """A user who belongs to TWO workspaces: their own, plus the host's.
+
+    Returns (client, own_workspace_id, host_workspace_id).
+    """
+    host_ws = authed_client.get("/api/workspaces/current").json()["data"]["id"]
+    joiner, _ = _invite_and_join(authed_client, "member")
+    own_ws = next(
+        w["id"] for w in joiner.get("/api/workspaces").json()["data"] if w["id"] != host_ws
+    )
+    return joiner, own_ws, host_ws
+
+
+@pytest.mark.parametrize("read_only", [False, True])
+def test_token_scoped_reads_hide_the_owners_other_workspaces(authed_client, read_only):
+    joiner, own_ws, host_ws = _two_workspace_user(authed_client)
+
+    # Sanity: the cookie session really does see both workspaces.
+    assert {w["id"] for w in joiner.get("/api/workspaces").json()["data"]} == {
+        own_ws,
+        host_ws,
+    }
+
+    minted = joiner.post(
+        "/api/tokens",
+        json={"label": "pinned", "read_only": read_only},
+        headers={"X-Workspace-Id": host_ws},
+    )
+    assert minted.status_code == 201, minted.text
+    plaintext = minted.json()["data"]["token"]
+
+    anon = TestClient(app)
+    listed = anon.get("/api/workspaces", headers=_auth(plaintext))
+    assert listed.status_code == 200, listed.text
+    assert [w["id"] for w in listed.json()["data"]] == [host_ws]
+
+    me = anon.get("/api/auth/me", headers=_auth(plaintext))
+    assert me.status_code == 200, me.text
+    assert [w["id"] for w in me.json()["data"]["workspaces"]] == [host_ws]
+
+
+@pytest.mark.parametrize("read_only", [False, True])
+def test_token_cannot_create_switch_or_accept_into_a_tenant(authed_client, read_only):
+    """The three CurrentUser-only WRITES are refused for both token kinds.
+
+    A read-only token is stopped one step earlier (`auth.token_read_only`,
+    in deps) than a full one (`auth.token_no_token_management`, by the
+    route guard) — both are 403 and neither reaches the handler.
+    """
+    joiner, own_ws, host_ws = _two_workspace_user(authed_client)
+    plaintext = joiner.post(
+        "/api/tokens",
+        json={"label": "tenancy probe", "read_only": read_only},
+        headers={"X-Workspace-Id": host_ws},
+    ).json()["data"]["token"]
+    expected = "auth.token_read_only" if read_only else "auth.token_no_token_management"
+
+    # A real, currently-valid invitation into a THIRD workspace — so the
+    # accept is refused by the guard, not by an invalid token.
+    outsider, _ = _signup("outsider")
+    invite = outsider.post(
+        "/api/invitations", json={"email": f"x-{uuid.uuid4().hex[:8]}@x.com", "role": "admin"}
+    ).json()["data"]
+
+    anon = TestClient(app)
+    probes = [
+        ("post", "/api/workspaces", {"name": "smuggled org"}),
+        ("post", f"/api/workspaces/{own_ws}/switch", None),
+        ("post", "/api/invitations/accept", {"token": invite["token"]}),
+    ]
+    for method, path, body in probes:
+        kwargs = {"headers": _auth(plaintext)}
+        if body is not None:
+            kwargs["json"] = body
+        r = getattr(anon, method)(path, **kwargs)
+        assert r.status_code == 403, f"{path}: {r.text}"
+        assert _code(r) == expected, f"{path}: {r.text}"
+
+
+def test_token_cannot_administer_credentials_or_membership(authed_client):
+    """Catalog tokens and member administration are session-only too — a
+    leaked token must not mint a credential that outlives its own
+    revocation, nor change roles / remove seats."""
+    plaintext = _mint(authed_client, label="admin probe")["token"]
+    members = authed_client.get("/api/workspaces/members").json()["data"]
+    member_id = members[0]["id"]
+
+    anon = TestClient(app)
+    probes = [
+        ("post", "/api/workspaces/current/catalog/tokens", {"label": "smuggled"}),
+        ("delete", f"/api/workspaces/current/catalog/tokens/{uuid.uuid4()}", None),
+        ("patch", f"/api/workspaces/members/{member_id}", {"role": "admin"}),
+        ("delete", f"/api/workspaces/members/{member_id}", None),
+        ("post", "/api/invitations", {"email": "a@x.com", "role": "admin"}),
+        ("delete", f"/api/invitations/{uuid.uuid4()}", None),
+        # Writes the workspace's encrypted provider credentials.
+        ("patch", "/api/workspaces/current", {"name": "renamed by a token"}),
+    ]
+    for method, path, body in probes:
+        kwargs = {"headers": _auth(plaintext)}
+        if body is not None:
+            kwargs["json"] = body
+        r = getattr(anon, method)(path, **kwargs)
+        assert r.status_code == 403, f"{path}: {r.text}"
+        assert _code(r) == "auth.token_no_token_management", f"{path}: {r.text}"
+
+
+def test_seat_removal_401s_every_route_including_currentuser_only(authed_client, db):
+    """The membership re-check must run at AUTHENTICATION, not only in
+    `get_current_workspace` — otherwise these three routes keep working
+    for a token whose owner was already removed."""
+    data = _mint(authed_client)
+    row = db.get(ApiToken, uuid.UUID(data["id"]))
+    membership = db.execute(
+        select(WorkspaceMember).where(
+            WorkspaceMember.user_id == row.user_id,
+            WorkspaceMember.workspace_id == row.workspace_id,
+        )
+    ).scalar_one()
+    db.delete(membership)
+    # commit(), not flush(): the first probe below 401s, and `get_db`'s
+    # error path rolls the session back — which would resurrect the seat
+    # before the second probe ran.
+    db.commit()
+
+    anon = TestClient(app)
+    for path in ("/api/auth/me", "/api/workspaces", "/api/parts"):
+        r = anon.get(path, headers=_auth(data["token"]))
+        assert r.status_code == 401, f"{path}: {r.text}"
+        assert _code(r) == "auth.invalid_token", f"{path}: {r.text}"
+
+
+def test_removing_a_member_revokes_their_tokens_permanently(authed_client):
+    """Revocation at removal, so a later re-invite at a LOWER role can't
+    reanimate a credential minted under the old one."""
+    host_ws = authed_client.get("/api/workspaces/current").json()["data"]["id"]
+    member, email = _invite_and_join(authed_client, "member")
+    plaintext = member.post(
+        "/api/tokens", json={"label": "departing"}, headers={"X-Workspace-Id": host_ws}
+    ).json()["data"]["token"]
+
+    anon = TestClient(app)
+    assert anon.get("/api/parts", headers=_auth(plaintext)).status_code == 200
+
+    members = authed_client.get("/api/workspaces/members").json()["data"]
+    member_id = next(m["id"] for m in members if m["email"] == email)
+    assert authed_client.delete(f"/api/workspaces/members/{member_id}").status_code == 200
+
+    assert anon.get("/api/parts", headers=_auth(plaintext)).status_code == 401
+
+    # Re-invite the same person, this time as a viewer. The old token must
+    # stay dead — it was revoked, not merely orphaned by the missing seat.
+    re_invite = authed_client.post(
+        "/api/invitations", json={"email": email, "role": "viewer"}
+    ).json()["data"]
+    assert member.post(
+        "/api/invitations/accept", json={"token": re_invite["token"]}
+    ).status_code == 200
+
+    revived = anon.get("/api/parts", headers=_auth(plaintext))
+    assert revived.status_code == 401, revived.text
+    assert _code(revived) == "auth.invalid_token"
+
+
+def test_last_used_write_is_throttled(authed_client, db):
+    """KiCad's chooser polls on a 60s cadence; one UPDATE per request would
+    make every read a contended write on a single row."""
+    data = _mint(authed_client)
+    token_id = uuid.UUID(data["id"])
+
+    assert authed_client.get("/api/parts", headers=_auth(data["token"])).status_code == 200
+    first = db.get(ApiToken, token_id).last_used_at
+    assert first is not None
+
+    assert authed_client.get("/api/parts", headers=_auth(data["token"])).status_code == 200
+    row = db.get(ApiToken, token_id)
+    db.refresh(row)
+    assert row.last_used_at == first, "second immediate request must not re-write"
+
+    # Once the interval has elapsed the next request does record.
+    row.last_used_at = first - timedelta(
+        seconds=tokens_service.TELEMETRY_MIN_INTERVAL_SECONDS + 1
+    )
+    db.flush()
+    stale = row.last_used_at
+    assert authed_client.get("/api/parts", headers=_auth(data["token"])).status_code == 200
+    db.refresh(row)
+    assert row.last_used_at > stale
+
+
+def test_mint_rate_limit_buckets_per_user_not_per_workspace(authed_client):
+    """Two members of one workspace must not share a minting budget.
+
+    A token is personal, so `create_token` keys its limiter on `user_key`
+    rather than `workspace_key`. Both members here sit in the SAME
+    workspace, so `workspace_key` would collapse them into one bucket and
+    let either lock the other out.
+    """
+    from app.core.ratelimit import user_key, workspace_key
+
+    host_ws = authed_client.get("/api/workspaces/current").json()["data"]["id"]
+    member, _ = _invite_and_join(authed_client, "member")
+
+    owner_id = authed_client.get("/api/auth/me").json()["data"]["user"]["id"]
+    member_id = member.get("/api/auth/me").json()["data"]["user"]["id"]
+    assert owner_id != member_id
+
+    # Both mint successfully in the shared workspace.
+    _mint(authed_client, label="owner mint")
+    minted = member.post(
+        "/api/tokens", json={"label": "member mint"}, headers={"X-Workspace-Id": host_ws}
+    )
+    assert minted.status_code == 201, minted.text
+
+    class _Req:
+        def __init__(self, **state):
+            self.state = type("S", (), state)()
+
+    owner_req = _Req(user_id=owner_id, workspace_id=host_ws)
+    member_req = _Req(user_id=member_id, workspace_id=host_ws)
+
+    assert user_key(owner_req) != user_key(member_req)
+    # The bucket the route deliberately does NOT use would have merged them.
+    assert workspace_key(owner_req) == workspace_key(member_req)
+
+
+# ---------------------------------------------------------------------------
+# The CSRF exemption is global; its compensating control is not.
+#
+# `get_current_user` refusing to fall back to the cookie is what makes the
+# Origin skip safe — but that only covers routes that authenticate THROUGH
+# it. `/api/auth/logout` reads `request.cookies` directly, so an
+# Authorization header does not disable cookie auth there. The middleware
+# therefore never applies the skip under /api/auth/.
+# ---------------------------------------------------------------------------
+
+
+_AUTH_ROUTES_THAT_READ_COOKIES_OR_MUTATE = [
+    ("/api/auth/logout", None),
+    ("/api/auth/request-password-reset", {"email": "victim@x.com"}),
+    ("/api/auth/reset-password", {"token": "whatever", "password": "TestPass-2026-Stronk"}),
+]
+
+
+@pytest.mark.parametrize(("path", "body"), _AUTH_ROUTES_THAT_READ_COOKIES_OR_MUTATE)
+def test_auth_routes_never_lose_csrf_to_an_authorization_header(path, body):
+    """An attacker-origin POST carrying a junk Authorization header must
+    still be blocked. Before this fix the header alone bought a CSRF
+    bypass on routes whose only defence was the Origin check."""
+    evil = TestClient(app, headers={"Origin": "http://evil.example"})
+    signup_user(evil, email=f"victim-{uuid.uuid4().hex[:8]}@x.com")
+
+    kwargs = {"headers": {"Authorization": "Basic YWxhZGRpbjpvcGVuc2VzYW1l"}}
+    if body is not None:
+        kwargs["json"] = body
+    r = evil.post(path, **kwargs)
+
+    assert r.status_code == 403, f"{path}: {r.text}"
+    assert r.json()["status"]["message"] == "cross-origin request blocked"
+
+
+def test_forced_logout_via_the_csrf_exemption_is_blocked():
+    """The concrete repro: the session must survive the attempt."""
+    evil = TestClient(app, headers={"Origin": "http://evil.example"})
+    signup_user(evil, email=f"victim-{uuid.uuid4().hex[:8]}@x.com")
+    assert evil.get("/api/auth/me").status_code == 200
+
+    blocked = evil.post(
+        "/api/auth/logout", headers={"Authorization": "Basic YWxhZGRpbjpvcGVuc2VzYW1l"}
+    )
+    assert blocked.status_code == 403, blocked.text
+
+    # Still logged in — the session cookie was never revoked.
+    assert evil.get("/api/auth/me").status_code == 200
+
+
+def test_the_auth_path_carve_out_does_not_break_token_writes_elsewhere(authed_client):
+    """The narrowed skip must still exempt genuine token traffic."""
+    plaintext = _mint(authed_client)["token"]
+    anon = _strip_origin(TestClient(app))
+    assert "origin" not in anon.headers
+
+    r = anon.post(
+        "/api/parts",
+        json={"name": "still works", "part_type": "local"},
+        headers=_auth(plaintext),
+    )
+    assert r.status_code in (200, 201), r.text
+
+
+@pytest.mark.parametrize("header", [" ", "  ", "\t"])
+def test_whitespace_only_authorization_is_a_401_not_a_cookie_login(authed_client, header):
+    """ASGI does not strip header values even though most parsers do, so a
+    whitespace-only header is `truthy` — it takes the token path (401) on
+    both sides rather than quietly falling back to the cookie."""
+    _strip_origin(authed_client)
+
+    r = authed_client.post(
+        "/api/parts",
+        json={"name": "whitespace auth", "part_type": "local"},
+        headers={"Authorization": header},
+    )
+    assert r.status_code == 401, r.text
+    assert _code(r) == "auth.invalid_token"
+
+
+def test_read_only_refusal_still_stamps_telemetry(authed_client, monkeypatch):
+    """Telemetry runs BEFORE the read-only 403, so probing a stolen
+    read-only token with writes reaches `record_use`.
+
+    Asserts BOTH halves: that `record_use` runs before the refusal, and
+    that the write survives it. The refusal raises and `get_db` rolls the
+    request transaction back, so the telemetry is committed on its own at
+    auth time — without that commit the row write would vanish with the
+    403 and probing would stay invisible.
+    """
+    minted = _mint(authed_client, read_only=True)
+    plaintext, token_id = minted["token"], minted["id"]
+
+    calls: list[str] = []
+    real = deps._record_token_use
+
+    def _spy(db, row, request):
+        calls.append(request.method)
+        return real(db, row, request)
+
+    monkeypatch.setattr(deps, "_record_token_use", _spy)
+
+    anon = TestClient(app)
+    r = anon.post(
+        "/api/parts",
+        json={"name": "probe", "part_type": "local"},
+        headers=_auth(plaintext),
+    )
+    assert r.status_code == 403, r.text
+    assert _code(r) == "auth.token_read_only"
+    assert calls == ["POST"], "telemetry must run before the read-only refusal"
+
+    # Survives the rollback that the 403 triggers. Read through a fresh
+    # session so the assertion cannot be satisfied by an uncommitted
+    # in-identity-map value.
+    from app.infra.db import SessionLocal
+
+    probe = SessionLocal()
+    try:
+        persisted = probe.get(ApiToken, uuid.UUID(token_id))
+        assert persisted is not None
+        assert persisted.last_used_at is not None, (
+            "refused write must still leave a last_used_at trail"
+        )
+        assert persisted.last_used_ip == "testclient"
+    finally:
+        probe.close()
+
+
+def test_api_token_plaintext_is_scrubbed_from_sentry_text():
+    """A bare `smk_…` in an exception message carries no `token=` prefix,
+    so the generic key/value scrubber would miss it entirely."""
+    from app.main import _scrub_sensitive_text
+
+    plaintext = f"smk_{uuid.uuid4().hex}.S3cr3t-Val_ue"
+    scrubbed = _scrub_sensitive_text(f"upstream rejected {plaintext} while syncing")
+
+    assert plaintext not in scrubbed
+    assert "S3cr3t-Val_ue" not in scrubbed
+    assert "smk_[Filtered]" in scrubbed

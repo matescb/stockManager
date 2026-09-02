@@ -37,8 +37,13 @@ export default function ApiTokensSettings() {
   const [readOnly, setReadOnly] = useState(false);
   const [expiryDays, setExpiryDays] = useState("");
   const [err, setErr] = useState<string | null>(null);
-  // The plaintext lives in component state and nowhere else — it is never
-  // written to the query cache, so it can't reappear on a later render.
+  // Where the plaintext lives while it's on screen, and the only place.
+  // TanStack keeps a settled mutation's `data` in the shared
+  // MutationCache, so the mint response — plaintext and all — would
+  // otherwise sit there long after the panel is dismissed, reachable by
+  // anything holding the QueryClient. `gcTime: 0` plus `reset()` on the
+  // create mutation evicts it; `reset()` alone is NOT enough (it detaches
+  // the observer but leaves the settled mutation, and its data, cached).
   const [minted, setMinted] = useState<ApiTokenCreated | null>(null);
 
   // The role isn't on /auth/me, so read it off the membership list the
@@ -77,10 +82,14 @@ export default function ApiTokensSettings() {
 
   const createMutation = useApiMutation<ApiTokenCreated, CreateBody>({
     mutationKey: ["api-tokens", "create"],
+    // Together these evict the plaintext from the shared MutationCache the
+    // moment it reaches component state — see the `minted` declaration.
+    gcTime: 0,
     mutationFn: (body) => api.post<ApiTokenCreated, CreateBody>("/tokens", body),
     onSuccess: (created) => {
       invalidate();
       setMinted(created);
+      createMutation.reset();
       closeModal();
     },
     onError: (e) => {

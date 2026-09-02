@@ -35,3 +35,16 @@ def test_cors_allow_headers_are_explicit():
 
     assert allowed_headers == CORS_ALLOW_HEADERS
     assert "*" not in allowed_headers
+
+
+def test_authorization_is_not_a_cors_allowed_header():
+    """Load-bearing for the CSRF exemption (ADR-0029).
+
+    `CsrfOriginMiddleware` skips the Origin check whenever an
+    `Authorization` header is present. One of the two legs holding that
+    up is that a browser cannot attach that header cross-site without a
+    CORS preflight — and the preflight fails because we never allow the
+    header. Adding "Authorization" here would let an allow-listed origin
+    preflight it successfully and weaken the argument.
+    """
+    assert "authorization" not in {h.lower() for h in CORS_ALLOW_HEADERS}

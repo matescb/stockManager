@@ -48,10 +48,12 @@ __all__ = [
     "parse_plaintext",
     "resolve_token",
     "record_use",
+    "TELEMETRY_MIN_INTERVAL_SECONDS",
     "list_own",
     "list_workspace",
     "get_in_workspace",
     "revoke",
+    "revoke_all_for_user",
 ]
 
 TOKEN_PREFIX = "smk_"
@@ -59,6 +61,9 @@ TOKEN_PREFIX = "smk_"
 # 32 bytes → 43 urlsafe-base64 chars. Matches the entropy of the session
 # and invitation tokens already in use.
 _SECRET_BYTES = 32
+
+# Minimum gap between `last_used_at` writes for one token. See `record_use`.
+TELEMETRY_MIN_INTERVAL_SECONDS = 300
 
 
 def hmac_secret(secret: str) -> str:
@@ -154,11 +159,27 @@ def resolve_token(db: Session, raw: str) -> ApiToken | None:
     return row
 
 
-def record_use(db: Session, row: ApiToken, *, client_ip: str | None) -> None:
-    """Stamp last-used telemetry. Callers MUST treat this as best-effort —
-    see `core/deps.py`, which swallows any failure rather than turning a
-    telemetry problem into a 500 on an otherwise valid request."""
-    row.last_used_at = utcnow()
+def record_use(db: Session, row: ApiToken, *, client_ip: str | None) -> bool:
+    """Stamp last-used telemetry. Returns True when a write happened.
+
+    Callers MUST treat this as best-effort — see `core/deps.py`, which
+    logs and swallows any failure rather than turning a telemetry
+    problem into a 500 on an otherwise valid request.
+
+    Throttled to one UPDATE per `TELEMETRY_MIN_INTERVAL_SECONDS`: KiCad's
+    part chooser polls on a 60s parts / 600s categories cadence and an
+    agent loop can be far busier, so an unthrottled write would make
+    every read a read-write transaction contending on one row. The cost
+    is precision — `last_used_at` is accurate to within the interval,
+    which is all "is this token still in use?" needs.
+    """
+    now = utcnow()
+    if (
+        row.last_used_at is not None
+        and (now - row.last_used_at).total_seconds() < TELEMETRY_MIN_INTERVAL_SECONDS
+    ):
+        return False
+    row.last_used_at = now
     if client_ip:
         # Column is String(64) — an IPv6 address with a zone id fits, but
         # a spoofed X-Forwarded-For chain would not. get_remote_address
@@ -166,6 +187,7 @@ def record_use(db: Session, row: ApiToken, *, client_ip: str | None) -> None:
         # slice is belt-and-braces against a future proxy-header change.
         row.last_used_ip = client_ip[:64]
     db.flush()
+    return True
 
 
 def list_own(db: Session, *, ws: Workspace, user: User) -> list[ApiToken]:
@@ -205,6 +227,27 @@ def get_in_workspace(db: Session, *, ws: Workspace, token_id: UUID) -> ApiToken 
         .where(ApiToken.id == token_id)
         .where(ApiToken.workspace_id == ws.id)
     ).scalar_one_or_none()
+
+
+def revoke_all_for_user(db: Session, *, workspace_id: UUID, user_id: UUID) -> int:
+    """Revoke every live token a user holds in one workspace. Returns the count.
+
+    Called when a member is removed from a workspace. Authentication
+    re-checks membership on every request, so a departed member's tokens
+    already fail with a 401 — but leaving them un-revoked means a
+    re-invite (possibly at a *lower* role) silently reanimates every
+    credential they held before. Revoking at removal makes the seat and
+    its tokens one lifecycle.
+    """
+    return int(
+        db.query(ApiToken)
+        .filter(
+            ApiToken.workspace_id == workspace_id,
+            ApiToken.user_id == user_id,
+            ApiToken.revoked_at.is_(None),
+        )
+        .update({ApiToken.revoked_at: utcnow()}, synchronize_session=False)
+    )
 
 
 def revoke(db: Session, *, row: ApiToken, user: User) -> ApiToken:

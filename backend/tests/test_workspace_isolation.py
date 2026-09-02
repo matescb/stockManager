@@ -2040,3 +2040,65 @@ def test_library_import_rejects_a_foreign_category_id():
         data={"category_id": category_a},
     )
     assert r.status_code == 404, r.text
+
+
+def test_api_token_pins_a_dual_member_to_one_workspace():
+    """A user who belongs to TWO workspaces holds a token pinned to one.
+
+    The dangerous case for PATs: the owner legitimately has access to both
+    tenants via their cookie session, so nothing about the *user* is
+    out-of-bounds — only the credential is. Every read must stay inside the
+    pinned workspace, and neither the `X-Workspace-Id` header nor the
+    workspace cookie may move it (ADR-0029).
+    """
+    a = TestClient(app)
+    b = TestClient(app)
+    ws_a = _signup(a, f"dual-a-{uuid.uuid4().hex[:6]}@x.com")
+    _signup(b, f"dual-b-{uuid.uuid4().hex[:6]}@x.com")
+
+    # B invites A into workspace B, so A is a member of both.
+    a_email = a.get("/api/auth/me").json()["data"]["user"]["email"]
+    invite = b.post("/api/invitations", json={"email": a_email, "role": "member"})
+    assert invite.status_code in (200, 201), invite.text
+    assert a.post(
+        "/api/invitations/accept", json={"token": invite.json()["data"]["token"]}
+    ).status_code == 200
+    ws_b = next(
+        w["id"] for w in a.get("/api/workspaces").json()["data"] if w["id"] != ws_a
+    )
+
+    part_b = b.post(
+        "/api/parts", json={"name": "B private part", "part_type": "local"}
+    ).json()["data"]["id"]
+
+    # A mints a token pinned to workspace A.
+    minted = a.post(
+        "/api/tokens", json={"label": "pinned to A"}, headers={"X-Workspace-Id": ws_a}
+    )
+    assert minted.status_code == 201, minted.text
+    token = minted.json()["data"]["token"]
+    auth = {"Authorization": f"Token {token}"}
+
+    anon = TestClient(app)
+    listed = anon.get("/api/parts", headers=auth)
+    assert listed.status_code == 200, listed.text
+    assert all(p["id"] != part_b for p in listed.json()["data"])
+
+    assert anon.get(f"/api/parts/{part_b}", headers=auth).status_code == 404
+
+    crossed = anon.get("/api/parts", headers={**auth, "X-Workspace-Id": ws_b})
+    assert crossed.status_code == 403, crossed.text
+    assert crossed.json().get("code") == "auth.token_workspace_mismatch"
+
+    # The workspace cookie is not a way in either — it is ignored entirely
+    # under token auth, so the response stays A-scoped rather than 403ing.
+    cookied = TestClient(app)
+    cookied.cookies.set("stockmgr_workspace", ws_b)
+    still_a = cookied.get("/api/parts", headers=auth)
+    assert still_a.status_code == 200, still_a.text
+    assert all(p["id"] != part_b for p in still_a.json()["data"])
+
+    # And the cross-workspace reads stay pinned.
+    assert [
+        w["id"] for w in anon.get("/api/workspaces", headers=auth).json()["data"]
+    ] == [ws_a]

@@ -34,6 +34,14 @@ _SENTRY_SENSITIVE_TEXT_RE = re.compile(
     """
 )
 
+# API-token plaintexts (`smk_{id_hex}.{secret}`, ADR-0029) carry no
+# `token=` prefix when they land in an exception message or a breadcrumb —
+# e.g. a client echoing back the header value, or a ValueError built from
+# the raw string. The prefix rule above would miss those entirely, so the
+# `smk_` shape is matched on its own. Deliberately anchored on the literal
+# prefix, which is exactly why the plaintext carries one.
+_SENTRY_API_TOKEN_RE = re.compile(r"\bsmk_[0-9a-fA-F]{32}\.[A-Za-z0-9_-]+")
+
 
 def _strip_query_string(raw_url: str) -> str:
     fragment_index = raw_url.find("#")
@@ -52,7 +60,8 @@ def _strip_query_string(raw_url: str) -> str:
 
 
 def _scrub_sensitive_text(value: str) -> str:
-    return _SENTRY_SENSITIVE_TEXT_RE.sub(r"\g<prefix>[Filtered]", value)
+    scrubbed = _SENTRY_SENSITIVE_TEXT_RE.sub(r"\g<prefix>[Filtered]", value)
+    return _SENTRY_API_TOKEN_RE.sub("smk_[Filtered]", scrubbed)
 
 
 def _scrub_event_strings(event: dict) -> None:
@@ -407,7 +416,19 @@ class CsrfOriginMiddleware(BaseHTTPMiddleware):
         # a value that skips CSRF here but falls back to the cookie
         # there would be a real forgery hole. Pinned by
         # tests/test_api_tokens.py's CSRF matrix.
-        if request.headers.get("Authorization"):
+        #
+        # ...but leg (b) only holds for routes that authenticate through
+        # `get_current_user`. `/api/auth/logout` reads the session cookie
+        # DIRECTLY, so an Authorization header does not disable cookie
+        # auth there and the exemption would strip its only defence. The
+        # skip is therefore never applied under /api/auth/ — no API-token
+        # client has any business calling logout, password-reset-request
+        # or reset-password, so nothing legitimate is lost. (The pre-auth
+        # auth routes that DO need an exemption are in _CSRF_EXEMPT_PATHS
+        # above, checked before we get here.)
+        if request.headers.get("Authorization") and not request.url.path.startswith(
+            "/api/auth/"
+        ):
             return await call_next(request)
         origin = _origin_host(request.headers.get("origin")) or _origin_host(
             request.headers.get("referer")

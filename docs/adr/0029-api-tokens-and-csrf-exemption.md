@@ -63,8 +63,29 @@ cookie can move a token to another tenant. A mismatched header is
 `403 auth.token_workspace_mismatch` — distinct from the 401s because it leaks
 nothing (the holder already has the token, whose workspace every successful
 response implies) and because silently ignoring it would do the wrong thing.
-Membership is re-checked on every request, so removing someone's seat kills
-their tokens without a sweep.
+
+Pinning is enforced in two places, and it has to be. `get_current_workspace`
+resolves the `Workspace` object, but a handful of routes take only
+`CurrentUser` and never depend on it — `/auth/me`, `GET` and `POST
+/api/workspaces`, `/workspaces/{id}/switch`, `/invitations/accept`. So the
+membership re-check lives in `_authenticate_api_token`, which every
+token-authed request passes through, and the two cross-workspace *reads*
+(`/auth/me`, `GET /api/workspaces`) narrow their own results to
+`api_token_workspace_id(request)`. Removing someone's seat kills their tokens
+on the next request everywhere, without a sweep over `api_tokens` — and
+`remove_member` additionally revokes them, so a later re-invite at a lower
+role can't reanimate a credential minted under the old one.
+
+**Credential and tenancy administration is session-cookie only.** Every route
+on `/api/tokens`, plus workspace creation, workspace switching, member role
+changes and removals, catalog-token minting and revocation, issuing, revoking
+or accepting an invitation, and `PATCH /api/workspaces/current` (it writes the
+workspace's encrypted provider credentials), refuse a token-authed request with
+`403 auth.token_no_token_management` (`core/deps.py::forbid_api_token`). One
+code for the whole class: the client-actionable fact is "this route needs a
+browser session", not which flavour of administration it was. A leaked token
+must not be able to widen itself, mint a second credential that outlives its
+own revocation, invite an accomplice, or move its owner between tenants.
 
 **No cookie fallback.** `core/deps.py::get_current_user` treats **any**
 non-empty `Authorization` header — including one with an unrecognised scheme —
@@ -85,6 +106,20 @@ The argument has two halves and needs both:
 - Even granting an attacker the header, the no-fallback rule means the request
   no longer rides the victim's cookie. It needs a valid token, and an attacker
   holding one has no use for CSRF.
+
+**The skip is never applied under `/api/auth/`.** Leg two above says a forged
+header gains nothing because the request can no longer reach cookie auth — but
+that is a property of `get_current_user`, and not every route authenticates
+through it. `/api/auth/logout` reads `request.cookies` directly, so an
+`Authorization` header does not disable cookie auth there; exempting it would
+have removed its only defence and left a forced-logout CSRF. The same applies
+to `/api/auth/request-password-reset` and `/api/auth/reset-password`, which are
+state-changing and cookie-adjacent. No API-token client has any business
+calling any of them, so the carve-out costs nothing. (The pre-auth routes that
+genuinely need an exemption — login, signup, verify — are in
+`_CSRF_EXEMPT_PATHS`, matched earlier.) The general lesson is the one that bit
+here: **a global exemption paired with a per-route compensating control is only
+as strong as the routes that actually implement the control.**
 
 The truthiness test for "header present" is deliberately identical in the
 middleware and in `deps.py`. If they ever disagreed — a value that skips CSRF
@@ -115,18 +150,32 @@ Gating it would only block viewers from read features like the KiCad library.
   coupling across two files. It is documented at both ends and covered by
   tests, but a future refactor that "helpfully" restores a cookie fallback
   would silently open a CSRF hole.
-- **Trade-offs**: A token carries its owner's *full* authority in the pinned
-  workspace, minus the `/api/tokens` router. An admin's full-access token can
-  therefore still invite a new admin, rotate the workspace's provider
-  credentials, or mint a catalog token — all persistence paths that survive
-  revoking the token itself. The mitigation is operational, not structural:
-  prefer `read_only`, prefer minting from a low-privilege account, and treat
-  the audit log as the detection surface. A capability model narrower than the
-  role hierarchy was rejected above; revisit if this proves insufficient.
-- **Trade-offs**: `last_used_at` rides the request's transaction, so it is only
-  persisted for requests that reach a clean commit. A token that authenticates
-  and is then refused by a route (`403`) leaves no telemetry, which blunts
-  last-used as an intrusion signal for probing.
+- **Good**: No route reachable by a token can issue another credential or
+  change who holds one. The security review's remaining persistence paths —
+  inviting an accomplice, minting a catalog token, rotating the workspace's
+  provider API keys — are all blocked, so revoking a leaked token is sufficient
+  rather than merely necessary.
+- **Trade-offs**: `PATCH /api/workspaces/current` is now closed to tokens even
+  though most of its payload is ordinary settings, because it also writes the
+  encrypted provider credentials. An agent that legitimately needs to change a
+  non-credential setting will need a narrower endpoint; splitting the route was
+  out of scope here, and the safe default won.
+- **Trade-offs**: Rotating `SESSION_SECRET` invalidates every API token, because
+  the stored `token_hmac` is keyed on it. See
+  `docs/runbooks/secret-rotation.md` — the rotation is not complete until every
+  KiCad workstation, PCM consumer and agent has been re-issued a token.
+- **Good**: Probing a stolen token is visible. `record_use` runs BEFORE the
+  read-only check, and when it actually writes (the throttle suppresses most
+  calls) the row is committed on its own at auth time — so the trail survives
+  the `403` that follows, and the rollback `get_db` performs on the failed
+  request. Committing inside a dependency is the one documented exception to
+  "routes never commit", and it is the same exception the cookie path already
+  takes for its sliding-expiry bump: authentication runs before any route
+  work, so there is nothing half-finished to strand.
+- **Trade-offs**: `last_used_at` is a "still in use?" signal, not an access
+  log. It is throttled to one write per 300s per token so KiCad's polling
+  doesn't turn every read into a contended write, which also bounds the extra
+  commit to at most one per token per interval.
 - **Trade-offs**: A token is bearer authority with no second factor. Mitigations
   are the `smk_` prefix (scanner-friendly), optional expiry, `read_only`,
   workspace pinning, per-token revocation, and last-used telemetry — not
@@ -134,7 +183,12 @@ Gating it would only block viewers from read features like the KiCad library.
 - **What it forbids**: Do not add a cookie fallback for header-bearing requests.
   Do not split `auth.invalid_token` into finer codes. Do not index or query
   `token_hmac`. Do not add a plaintext-recovery or un-revoke endpoint. Do not
-  let a token-authed request reach `/api/tokens`.
+  let a token-authed request reach `/api/tokens` or any other route listed under
+  *Credential and tenancy administration*. Do not move the membership re-check
+  out of `_authenticate_api_token` and back into `get_current_workspace` — that
+  is precisely the bug this ADR's second revision fixed, and it is invisible
+  until someone adds a route that takes only `CurrentUser`. Do not drop the
+  explicit narrowing in `/auth/me` and `GET /api/workspaces`.
 
 ## Alternatives considered
 

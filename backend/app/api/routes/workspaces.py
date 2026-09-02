@@ -13,13 +13,21 @@ from sqlalchemy import select
 from app.api._helpers import assert_in_workspace
 from app.core.config import settings
 from app.core.cookies import WORKSPACE_COOKIE_NAME, workspace_cookie_attrs
-from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
+from app.core.deps import (
+    CurrentUser,
+    CurrentWorkspace,
+    DbSession,
+    api_token_workspace_id,
+    forbid_api_token,
+    require_role,
+)
 from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter
 from app.core.responses import ok
 from app.core.secrets import decrypt, encrypt
 from app.domain.audit.service import log as _audit_log
 from app.domain.sourcing import cache as sourcing_cache
+from app.domain.tokens import service as tokens_service
 from app.domain.users.models import User
 from app.domain.workspaces.master_lists import (
     ALL_COUNTRIES,
@@ -118,12 +126,18 @@ def _validate_sourcing_defaults_against_active_lists(data: dict, ws: Workspace) 
 
 
 @router.get("")
-def list_workspaces(user: CurrentUser, db: DbSession):
-    memberships = (
-        db.query(WorkspaceMember)
-        .filter(WorkspaceMember.user_id == user.id, WorkspaceMember.status == "active")
-        .all()
+def list_workspaces(request: Request, user: CurrentUser, db: DbSession):
+    query = db.query(WorkspaceMember).filter(
+        WorkspaceMember.user_id == user.id, WorkspaceMember.status == "active"
     )
+    # A token is scoped to one tenant and must not enumerate the others
+    # its owner belongs to. This route takes only CurrentUser, so the
+    # pinning in `get_current_workspace` never runs — narrow explicitly
+    # (ADR-0029).
+    pinned = api_token_workspace_id(request)
+    if pinned is not None:
+        query = query.filter(WorkspaceMember.workspace_id == pinned)
+    memberships = query.all()
     out = []
     for m in memberships:
         ws = db.get(Workspace, m.workspace_id)
@@ -139,7 +153,11 @@ def list_workspaces(user: CurrentUser, db: DbSession):
     return ok(out)
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(forbid_api_token)],
+)
 @limiter.limit("10/hour")
 def create_workspace(
     request: Request,
@@ -277,7 +295,15 @@ def current_scanner_license_key(ws: CurrentWorkspace):
     return ok({"license_key": decrypt(ws.scanner_license_key) or ""})
 
 
-@router.patch("/current", dependencies=[Depends(require_role("admin"))])
+# Session-cookie only (ADR-0029): this route writes the workspace's
+# encrypted provider credentials, so a leaked admin token could rotate
+# them — durable control that survives revoking the token. The ordinary
+# settings it also carries are not worth that, and an agent that needs
+# them can get a narrower endpoint later.
+@router.patch(
+    "/current",
+    dependencies=[Depends(require_role("admin")), Depends(forbid_api_token)],
+)
 def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     data = payload.model_dump(exclude_unset=True)
     regenerate = bool(data.pop("regenerate_catalog_token", False))
@@ -460,10 +486,14 @@ def list_catalog_tokens(db: DbSession, ws: CurrentWorkspace):
     return ok([_serialize_catalog_token(t) for t in tokens])
 
 
+# Credential and membership administration is session-cookie only: an API
+# token must not be able to mint another credential (a catalog token
+# outlives revoking the PAT), change anyone's role, or remove a seat.
+# ADR-0029 / `core/deps.py::forbid_api_token`.
 @router.post(
     "/current/catalog/tokens",
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_role("admin"))],
+    dependencies=[Depends(require_role("admin")), Depends(forbid_api_token)],
 )
 def create_catalog_token(
     payload: CatalogTokenIn,
@@ -491,7 +521,7 @@ def create_catalog_token(
 
 @router.delete(
     "/current/catalog/tokens/{token_id}",
-    dependencies=[Depends(require_role("admin"))],
+    dependencies=[Depends(require_role("admin")), Depends(forbid_api_token)],
 )
 def revoke_catalog_token(token_id: UUID, db: DbSession, ws: CurrentWorkspace):
     """Revoke a catalog token (admin+).
@@ -553,7 +583,10 @@ def _active_owner_count(db, ws_id):
     )
 
 
-@router.patch("/members/{member_id}", dependencies=[Depends(require_role("admin"))])
+@router.patch(
+    "/members/{member_id}",
+    dependencies=[Depends(require_role("admin")), Depends(forbid_api_token)],
+)
 def patch_member(
     member_id: UUID,
     payload: MemberPatch,
@@ -595,7 +628,10 @@ def patch_member(
     return ok({"id": str(m.id), "role": m.role, "status": m.status})
 
 
-@router.delete("/members/{member_id}", dependencies=[Depends(require_role("admin"))])
+@router.delete(
+    "/members/{member_id}",
+    dependencies=[Depends(require_role("admin")), Depends(forbid_api_token)],
+)
 def remove_member(member_id: UUID, db: DbSession, ws: CurrentWorkspace, user: CurrentUser):
     try:
         m = assert_in_workspace(db, WorkspaceMember, member_id, ws.id, label="member")
@@ -617,11 +653,18 @@ def remove_member(member_id: UUID, db: DbSession, ws: CurrentWorkspace, user: Cu
             ErrorCodes.WORKSPACE_LAST_OWNER,
             "cannot remove the last owner",
         )
+    # Revoke the departing member's API tokens BEFORE the membership row
+    # goes away. Authentication re-checks membership, so those tokens
+    # already 401 the moment the seat is gone — but an un-revoked token
+    # would silently come back to life if the person is later re-invited,
+    # possibly at a lower role than the token was minted under. The seat
+    # and its credentials share one lifecycle (ADR-0029).
+    tokens_service.revoke_all_for_user(db, workspace_id=ws.id, user_id=m.user_id)
     db.delete(m)
     return ok(None, "removed")
 
 
-@router.post("/{workspace_id}/switch")
+@router.post("/{workspace_id}/switch", dependencies=[Depends(forbid_api_token)])
 def switch_workspace(
     workspace_id: UUID,
     response: Response,
