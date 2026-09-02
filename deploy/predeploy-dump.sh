@@ -69,8 +69,15 @@ if ! docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" ps --status ru
     exit 1
 fi
 
+# `< /dev/null` is load-bearing: `compose exec` attaches the caller's
+# stdin by default (-T only drops the TTY). This script runs inside the
+# deploy's `ssh 'bash -se' <<HEREDOC` — without the starvation, exec
+# SWALLOWS the remainder of the deploy script off stdin, bash sees EOF
+# after the dump, and the deploy "succeeds" without ever running
+# `docker compose up`. That failure mode shipped nothing for a night
+# while every job stayed green.
 docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" exec -T db \
-    pg_dump -U "${POSTGRES_USER}" "${POSTGRES_DB}" \
+    pg_dump -U "${POSTGRES_USER}" "${POSTGRES_DB}" < /dev/null \
     | gzip \
     | age -r "${BACKUP_AGE_RECIPIENT}" > "${OUT}.tmp"
 mv "${OUT}.tmp" "${OUT}"

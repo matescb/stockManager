@@ -1002,7 +1002,11 @@ jobs:
           # of the running Postgres is captured. Fails loud — if the
           # dump can't be written, the deploy aborts here and the old
           # containers keep serving the old code.
-          bash deploy/predeploy-dump.sh "${SENTRY_RELEASE}"
+          # < /dev/null: belt-and-braces stdin starvation — this whole
+          # script arrives on bash's stdin via the ssh heredoc, and any
+          # child that reads stdin (compose exec did, inside this script)
+          # eats the rest of the deploy and exits the session "green".
+          bash deploy/predeploy-dump.sh "${SENTRY_RELEASE}" < /dev/null
 
           if ! docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build; then
             echo "docker compose up failed — current service state:"
@@ -1052,7 +1056,7 @@ jobs:
           docker compose -f docker-compose.prod.yml --env-file .env.prod ps web || true
           docker compose -f docker-compose.prod.yml --env-file .env.prod images web || true
           docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T web \
-            sh -c 'grep -c "location /kicad-api/" /etc/nginx/conf.d/default.conf' || \
+            sh -c 'grep -c "location /kicad-api/" /etc/nginx/conf.d/default.conf' < /dev/null || \
             echo "  (kicad-api location MISSING from live nginx config)"
           routing_ok=0
           for i in $(seq 1 12); do
@@ -1070,7 +1074,7 @@ jobs:
             echo "nginx routing gate FAILED — /kicad-api/v1/ content-type: ${content_type}"
             echo "--- live nginx config head ---"
             docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T web \
-              sh -c 'nginx -T 2>/dev/null | grep -n "location" | head -20' || true
+              sh -c 'nginx -T 2>/dev/null | grep -n "location" | head -20' < /dev/null || true
             exit 1
           fi
           REMOTE_DEPLOY
