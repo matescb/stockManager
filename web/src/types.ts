@@ -17,6 +17,8 @@
 export type {
   Part,
   PartCategory,
+  ApiToken,
+  ApiTokenCreated,
   EdaSymbol,
   EdaFootprint,
   EdaDatafile,

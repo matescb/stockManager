@@ -8,6 +8,7 @@ import {
   Boxes,
   FolderKanban,
   Hammer,
+  KeyRound,
   Package,
   Settings,
   ShoppingCart,
@@ -111,6 +112,12 @@ export default function CommandPalette() {
             onSelect={() => go("/settings/categories")}
           >
             <Boxes size={14} /> Categories
+          </Command.Item>
+          <Command.Item
+            value="nav settings api tokens pat kicad agent"
+            onSelect={() => go("/settings/api-tokens")}
+          >
+            <KeyRound size={14} /> API tokens
           </Command.Item>
           <Command.Item
             value="nav settings account profile invitation"

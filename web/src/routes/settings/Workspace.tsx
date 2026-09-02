@@ -673,6 +673,17 @@ export default function WorkspaceSettings() {
         </Link>
       </div>
 
+      <div className="card p-4 mb-4 space-y-2 text-sm">
+        <h2 className="text-md font-semibold">API tokens</h2>
+        <div className="text-xs text-muted">
+          Personal access tokens for KiCad, scripts and agents. Each one acts as
+          the person who created it and can never exceed their role.
+        </div>
+        <Link to="/settings/api-tokens" className="btn inline-flex w-fit">
+          Manage API tokens
+        </Link>
+      </div>
+
       {cur && <SourcingCard workspace={cur} workspaceId={workspaceId} />}
       {cur && <ActiveListsCard workspace={cur} workspaceId={workspaceId} />}
 

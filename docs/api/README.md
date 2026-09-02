@@ -48,6 +48,7 @@ slowapi, per-process bucket store, per-IP. The reverse proxy must set `X-Forward
 | [builds](builds.md) | `/api/builds` | Builds + consume + reservations + shortage analysis |
 | [reports](reports.md) | `/api/reports` | Aggregate queries (low-stock, value, BOM shortage, expiring) |
 | [attachments-tags-cf](attachments-tags-cf.md) | `/api/attachments`, `/api/tags`, `/api/custom-fields` | Polymorphic surfaces |
+| [tokens](tokens.md) | `/api/tokens` | Personal access tokens for KiCad / agent access |
 | [audit](audit.md) | `/api/audit` | Activity log query |
 | [search](search.md) | `/api/search` | Cross-entity search |
 | [catalog](catalog.md) | `/catalog` | Public token-gated read-only catalog |

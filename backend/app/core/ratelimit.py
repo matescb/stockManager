@@ -47,3 +47,25 @@ def workspace_key(request: Request) -> str:
         return f"ws:{ws_id}"
 
     return get_remote_address(request)
+
+
+def user_key(request: Request) -> str:
+    """Rate-limit key that buckets by authenticated user.
+
+    For endpoints where the resource is personal rather than shared —
+    minting an API token is the motivating case. Bucketing those by
+    workspace lets one member exhaust the whole team's budget, and there
+    is no shared quota to protect: a token belongs to the person, not
+    the tenant.
+
+    Reads `request.state.user_id`, set by `core/deps.py::get_current_user`
+    on BOTH auth paths after the credential has been verified. As with
+    `workspace_key`, never key off raw client input — a caller who could
+    rotate the bucket id would fragment their way past the limit. Falls
+    back to the remote address before authentication resolves.
+    """
+    user_id = getattr(request.state, "user_id", None)
+    if user_id:
+        return f"user:{user_id}"
+
+    return get_remote_address(request)

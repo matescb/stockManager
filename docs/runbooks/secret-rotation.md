@@ -15,7 +15,7 @@ Related runbooks: see `docs/deployment.md` for general VPS operations and the
 
 | Secret | Location | Used by | Blast radius if leaked | Escrow location | Rotation cadence |
 |--------|----------|---------|------------------------|-----------------|------------------|
-| `SESSION_SECRET` | `.env.prod` on VPS | backend (session signing) | Attacker can forge login sessions | Operator password manager alongside `WORKSPACE_SECRETS_KEY` | Annual; on personnel change; on leak |
+| `SESSION_SECRET` | `.env.prod` on VPS | backend (session signing, **API-token HMAC**, invitation + email-verification HMAC) | Attacker can forge login sessions | Operator password manager alongside `WORKSPACE_SECRETS_KEY` | Annual; on personnel change; on leak |
 | `PASSWORD_PEPPER` | `.env.prod` on VPS | backend password hashing | Helps verify guessed passwords if DB hashes are leaked; losing/changing it blocks login for peppered hashes | Operator password manager alongside `SESSION_SECRET` | Annual only with planned password reset / migration; immediately on leak |
 | `POSTGRES_PASSWORD` | `.env.prod` on VPS | backend (DB connection), `db` service init | Full DB read/write access from inside the docker network | Operator password manager | Annual; on personnel change; on leak |
 | `WORKSPACE_SECRETS_KEY` | `.env.prod` on VPS | backend (`core/secrets.py`) | Decrypts every stored provider API key / secret / scanner licence key for every workspace | Operator password manager — **escrow is mandatory; losing it is unrecoverable** | Annual; on personnel change; on leak |
@@ -37,6 +37,31 @@ Related runbooks: see `docs/deployment.md` for general VPS operations and the
 
 **Effect of rotation:** all active user sessions are immediately invalidated —
 every logged-in user is logged out.  No data loss.
+
+**Also invalidated — permanently — is every API token** (ADR-0029). Personal
+access tokens are stored as `HMAC-SHA256(secret, SESSION_SECRET)`, so a new
+`SESSION_SECRET` makes every existing `api_tokens` row unmatchable. Unlike a
+session, there is no re-login that fixes it: the plaintext is unrecoverable, so
+each token has to be re-minted and reinstalled at its consumer. Pending
+invitations and unused email-verification links break the same way.
+
+Before rotating, list who is affected:
+
+```sql
+SELECT w.name, u.email, t.label, t.last_used_at
+FROM api_tokens t
+JOIN users u ON u.id = t.user_id
+JOIN workspaces w ON w.id = t.workspace_id
+WHERE t.revoked_at IS NULL
+  AND (t.expires_at IS NULL OR t.expires_at > now())
+ORDER BY w.name, u.email;
+```
+
+The rotation is **not complete** until every row above has been re-issued and
+reinstalled — a KiCad workstation (`.kicad_httplib` file), a PCM repository URL,
+or an agent/CI credential. Warn those users before rotating, not after: their
+tooling will fail with `401 auth.invalid_token` and the cause is not
+self-evident from the client side.
 
 **Steps:**
 

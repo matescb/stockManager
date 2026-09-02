@@ -36,7 +36,7 @@ from app.core.cookies import (
     delete_workspace_cookie,
     session_cookie_attrs,
 )
-from app.core.deps import CurrentUser, DbSession
+from app.core.deps import CurrentUser, DbSession, api_token_workspace_id
 from app.core.errors import ErrorCodes, raise_http
 from app.core.logging import get_logger
 from app.core.mail import (
@@ -739,12 +739,18 @@ def logout(request: Request, response: Response, db: DbSession) -> Envelope[None
 
 
 @router.get("/me")
-def me(user: CurrentUser, db: DbSession) -> Envelope[dict]:
-    memberships = (
-        db.query(WorkspaceMember)
-        .filter(WorkspaceMember.user_id == user.id, WorkspaceMember.status == "active")
-        .all()
+def me(request: Request, user: CurrentUser, db: DbSession) -> Envelope[dict]:
+    query = db.query(WorkspaceMember).filter(
+        WorkspaceMember.user_id == user.id, WorkspaceMember.status == "active"
     )
+    # An API token is a credential for ONE tenant, so it must not
+    # enumerate the other workspaces its owner belongs to. This route
+    # takes only CurrentUser, so the pinning in `get_current_workspace`
+    # never runs here — narrow explicitly (ADR-0029).
+    pinned = api_token_workspace_id(request)
+    if pinned is not None:
+        query = query.filter(WorkspaceMember.workspace_id == pinned)
+    memberships = query.all()
     workspaces = []
     for m in memberships:
         ws = db.get(Workspace, m.workspace_id)

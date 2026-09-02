@@ -493,6 +493,27 @@ def _setup_attachment_delete(client, _db) -> Operation:
     }
 
 
+def _setup_api_token_create(_client, _db) -> Operation:
+    return {
+        "method": "post",
+        "path": "/api/tokens",
+        "json": {"label": "AUD-124 token", "read_only": True},
+        "expected_status": 201,
+        "target_ids": _created_part_id,
+    }
+
+
+def _setup_api_token_revoke(client, _db) -> Operation:
+    r = client.post("/api/tokens", json={"label": "AUD-124 token revoke"})
+    assert r.status_code == 201, r.text
+    return {
+        "method": "post",
+        "path": f"/api/tokens/{r.json()['data']['id']}/revoke",
+        "expected_status": 200,
+        "target_id": r.json()["data"]["id"],
+    }
+
+
 @pytest.mark.parametrize(
     ("route_name", "setup", "method", "path", "body", "action", "target_type"),
     [
@@ -666,6 +687,20 @@ def test_each_mutator_writes_audit_row(
             _setup_custom_field_restore,
             "custom_field.override_restored",
             "custom_field",
+            _target_id,
+        ),
+        (
+            "tokens.create_token",
+            _setup_api_token_create,
+            "api_token.created",
+            "api_token",
+            _created_part_id,
+        ),
+        (
+            "tokens.revoke_token",
+            _setup_api_token_revoke,
+            "api_token.revoked",
+            "api_token",
             _target_id,
         ),
         (

@@ -37,6 +37,7 @@ _AUTHED_2XX_ROUTES: list[tuple[str, str]] = [
     ("bom_presets.list", "/api/bom-presets"),
     ("tags.list", "/api/tags"),
     ("categories.list", "/api/categories"),
+    ("tokens.list", "/api/tokens"),
     ("eda.symbols", "/api/eda/symbols"),
     ("search", "/api/search?q=anything"),
     ("health", "/api/health"),

@@ -4,6 +4,12 @@ State-changing requests must carry an `Origin` (or fallback `Referer`)
 that resolves to one of the configured CORS allow-list entries. Reads
 (GET / HEAD / OPTIONS) are unaffected. The login / signup / sentry
 tunnel paths are explicitly exempt — see app/main.py for why.
+
+There is a second, non-path-based exemption: any request carrying an
+`Authorization` header skips the Origin check (ADR-0029). Its matrix —
+including the "cookie + junk Authorization" case that proves the
+exemption can't be used to ride a session — lives in
+`tests/test_api_tokens.py`, not here, because it needs a real token.
 """
 from __future__ import annotations
 

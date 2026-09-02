@@ -34,6 +34,14 @@ _SENTRY_SENSITIVE_TEXT_RE = re.compile(
     """
 )
 
+# API-token plaintexts (`smk_{id_hex}.{secret}`, ADR-0029) carry no
+# `token=` prefix when they land in an exception message or a breadcrumb —
+# e.g. a client echoing back the header value, or a ValueError built from
+# the raw string. The prefix rule above would miss those entirely, so the
+# `smk_` shape is matched on its own. Deliberately anchored on the literal
+# prefix, which is exactly why the plaintext carries one.
+_SENTRY_API_TOKEN_RE = re.compile(r"\bsmk_[0-9a-fA-F]{32}\.[A-Za-z0-9_-]+")
+
 
 def _strip_query_string(raw_url: str) -> str:
     fragment_index = raw_url.find("#")
@@ -52,7 +60,8 @@ def _strip_query_string(raw_url: str) -> str:
 
 
 def _scrub_sensitive_text(value: str) -> str:
-    return _SENTRY_SENSITIVE_TEXT_RE.sub(r"\g<prefix>[Filtered]", value)
+    scrubbed = _SENTRY_SENSITIVE_TEXT_RE.sub(r"\g<prefix>[Filtered]", value)
+    return _SENTRY_API_TOKEN_RE.sub("smk_[Filtered]", scrubbed)
 
 
 def _scrub_event_strings(event: dict) -> None:
@@ -188,6 +197,7 @@ from app.api.routes import (
     stock,
     storage,
     tags,
+    tokens,
     workspaces,
 )
 from app.core.config import settings
@@ -387,6 +397,39 @@ class CsrfOriginMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if request.url.path in self._exempt:
             return await call_next(request)
+        # API-token requests are exempt (ADR-0029). Two facts make this
+        # safe, and BOTH have to hold:
+        #  (a) A browser cannot attach an `Authorization` header to a
+        #      cross-site request without a CORS preflight, and
+        #      `CORS_ALLOW_HEADERS` (above) deliberately omits
+        #      `Authorization` — so the preflight fails even from an
+        #      allow-listed origin. Form posts, <img>, and friends — the
+        #      shapes CSRF actually takes — cannot set headers at all.
+        #      Do not add "Authorization" to CORS_ALLOW_HEADERS.
+        #  (b) `core/deps.py::get_current_user` treats ANY non-empty
+        #      Authorization header as a commitment to the token path
+        #      with no cookie fallback. So a forged header doesn't ride
+        #      the victim's session — it just needs a valid token, and
+        #      an attacker who has one doesn't need CSRF.
+        # The truthiness test here must stay identical to the one in
+        # deps.py: if the two disagreed about what counts as "present",
+        # a value that skips CSRF here but falls back to the cookie
+        # there would be a real forgery hole. Pinned by
+        # tests/test_api_tokens.py's CSRF matrix.
+        #
+        # ...but leg (b) only holds for routes that authenticate through
+        # `get_current_user`. `/api/auth/logout` reads the session cookie
+        # DIRECTLY, so an Authorization header does not disable cookie
+        # auth there and the exemption would strip its only defence. The
+        # skip is therefore never applied under /api/auth/ — no API-token
+        # client has any business calling logout, password-reset-request
+        # or reset-password, so nothing legitimate is lost. (The pre-auth
+        # auth routes that DO need an exemption are in _CSRF_EXEMPT_PATHS
+        # above, checked before we get here.)
+        if request.headers.get("Authorization") and not request.url.path.startswith(
+            "/api/auth/"
+        ):
+            return await call_next(request)
         origin = _origin_host(request.headers.get("origin")) or _origin_host(
             request.headers.get("referer")
         )
@@ -504,6 +547,10 @@ app.include_router(
 )
 app.include_router(custom_fields.router, prefix="/api/custom-fields", tags=["custom_fields"], dependencies=_member_gate)
 app.include_router(tags.router, prefix="/api/tags", tags=["tags"], dependencies=_member_gate)
+# No `_member_gate`: a viewer may mint their own token, because the token
+# inherits the viewer role and so can't do anything the viewer couldn't.
+# See the module docstring in routes/tokens.py.
+app.include_router(tokens.router, prefix="/api/tokens", tags=["tokens"])
 app.include_router(search.router, prefix="/api/search", tags=["search"], dependencies=_member_gate)
 app.include_router(sourcing.router, prefix="/api/workspaces", tags=["sourcing"])
 app.include_router(sourcing.search_router, prefix="/api/sourcing", tags=["sourcing"])
