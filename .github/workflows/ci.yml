@@ -1040,4 +1040,37 @@ jobs:
             docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=80 backend || true
             exit 1
           fi
+
+          # Non-/api routing gate (P5 follow-up). The health gate above only
+          # proves the backend proxy path; a stale web image serves the SPA
+          # shell (HTTP 200 text/html) for /kicad-api — the one failure mode
+          # KiCad accepts and then chokes on. Require backend JSON here so a
+          # web container running an old nginx config fails the deploy
+          # loudly instead of silently.
+          echo "post-deploy nginx routing gate"
+          echo "--- web container evidence ---"
+          docker compose -f docker-compose.prod.yml --env-file .env.prod ps web || true
+          docker compose -f docker-compose.prod.yml --env-file .env.prod images web || true
+          docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T web \
+            sh -c 'grep -c "location /kicad-api/" /etc/nginx/conf.d/default.conf' || \
+            echo "  (kicad-api location MISSING from live nginx config)"
+          routing_ok=0
+          for i in $(seq 1 12); do
+            content_type=$(curl -s -o /dev/null -w '%{content_type}' https://parts.matescb.cz/kicad-api/v1/ || true)
+            case "${content_type}" in
+              application/json*)
+                echo "  /kicad-api/v1/ serves JSON after ${i} attempts"
+                routing_ok=1
+                break
+                ;;
+            esac
+            sleep 5
+          done
+          if [ "${routing_ok}" -ne 1 ]; then
+            echo "nginx routing gate FAILED — /kicad-api/v1/ content-type: ${content_type}"
+            echo "--- live nginx config head ---"
+            docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T web \
+              sh -c 'nginx -T 2>/dev/null | grep -n "location" | head -20' || true
+            exit 1
+          fi
           REMOTE_DEPLOY
