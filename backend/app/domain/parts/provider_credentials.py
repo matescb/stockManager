@@ -9,7 +9,7 @@ columns) and any number of SECONDARY ones, whose credentials live in
 unification of the two stores, and the primary flow does not go through
 it: four call sites read and decrypt the legacy columns directly —
 
-    api/routes/parts_assets.py     (refresh-from-provider, primary path)
+    api/routes/parts_refresh.py    (refresh-from-provider, primary path)
     api/routes/parts_provider.py   (lookup-mpn)
     api/routes/parts_scan.py       (bulk-import-from-scan)
     domain/projects/bom_import_provider.py

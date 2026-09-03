@@ -142,6 +142,10 @@ jobs:
           check backend/app/api/routes/parts_core.py    700
           check backend/app/api/routes/parts_scan.py    700
           check backend/app/api/routes/parts_assets.py  400
+          # parts_refresh.py was split back out of parts_assets.py when the
+          # secondary-provider work pushed it over budget. Capped from birth
+          # so it can't become the next thing that has to be split.
+          check backend/app/api/routes/parts_refresh.py 500
 
           # CQ-003: frontend ScanImport split
           check web/src/routes/parts/ScanImport/ScanImportQueue.tsx    400

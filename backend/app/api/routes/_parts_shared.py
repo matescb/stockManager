@@ -26,6 +26,25 @@ from app.domain.parts.models import Part
 from app.domain.parts.schemas import BulkDeleteIn, PartIn, PartPatch  # noqa: F401
 
 
+def audit_fields_comment(fields: list[str] | set[str]) -> str:
+    """The `fields=a,b,c` audit comment every PATCH-shaped route writes."""
+    if not fields:
+        return "fields=none"
+    return "fields=" + ",".join(sorted(fields))
+
+
+def raise_mpn_conflict(existing: Part) -> None:
+    """409 naming the part that already holds this MPN — the shape the
+    create-part client reads `existing_id` / `existing_name` from."""
+    raise_http(
+        status.HTTP_409_CONFLICT,
+        code=ErrorCodes.PART_MPN_CONFLICT,
+        message=f"MPN already used by part \"{existing.name}\"",
+        existing_id=str(existing.id),
+        existing_name=existing.name,
+    )
+
+
 def image_urls_for_parts(db, ws_id, part_ids: list) -> dict:
     """Single-shot SELECT for the per-part image_url custom_field row,
     keyed by part_id. The /parts list endpoint uses this so we don't

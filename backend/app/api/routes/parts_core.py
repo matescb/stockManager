@@ -20,6 +20,9 @@ from app.api.routes._activity import (
     route_activity,
 )
 from app.api.routes._parts_shared import (
+    audit_fields_comment as _audit_fields_comment,
+)
+from app.api.routes._parts_shared import (
     get_part as _get_part,
 )
 from app.api.routes._parts_shared import (
@@ -27,6 +30,9 @@ from app.api.routes._parts_shared import (
 )
 from app.api.routes._parts_shared import (
     provider_links_for as _provider_links_for,
+)
+from app.api.routes._parts_shared import (
+    raise_mpn_conflict as _raise_mpn_conflict,
 )
 from app.api.routes._parts_shared import (
     serialize_part as _serialize,
@@ -67,22 +73,6 @@ from app.domain.storage.models import StorageLocation
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-
-def _audit_fields_comment(fields: list[str] | set[str]) -> str:
-    if not fields:
-        return "fields=none"
-    return "fields=" + ",".join(sorted(fields))
-
-
-def _raise_mpn_conflict(existing: Part) -> None:
-    raise_http(
-        status.HTTP_409_CONFLICT,
-        code=ErrorCodes.PART_MPN_CONFLICT,
-        message=f"MPN already used by part \"{existing.name}\"",
-        existing_id=str(existing.id),
-        existing_name=existing.name,
-    )
 
 
 @router.get("")

@@ -15,7 +15,7 @@ Caching the assets locally fixes that, but introduces three sub-problems: where 
 
 ## Decision
 
-Provider images and datasheets are downloaded once by `domain/parts/services/assets.py::fetch_provider_asset` and stored at `{UPLOAD_DIR}/parts/{ws_id}/{sha256}.{ext}`. They're served by `GET /api/parts/assets/{ws_id}/{filename}` (route in `backend/app/api/routes/parts_assets.py:67`), with an optional `?name=` query parameter for the Save-As dialog filename.
+Provider images and datasheets are downloaded once by `domain/parts/services/assets.py::fetch_provider_asset` and stored at `{UPLOAD_DIR}/parts/{ws_id}/{sha256}.{ext}`. They're served by `GET /api/parts/assets/{ws_id}/{filename}` (route in `backend/app/api/routes/parts_assets.py:53`), with an optional `?name=` query parameter for the Save-As dialog filename.
 
 The frontend builds the URL directly via `withDownloadName()` (`web/src/routes/parts/detail/PartInfo.tsx:27`); no server round-trip is needed to resolve "what's the URL for part X's image". The download path enforces magic-byte validation, host allow-listing, no redirects, and rejects SVG (SEC2-006 / SEC2-012).
 
@@ -37,6 +37,6 @@ The frontend builds the URL directly via `withDownloadName()` (`web/src/routes/p
 ## References
 
 - Source: `backend/app/domain/parts/services/assets.py:1-30` (module docstring, hardening notes)
-- Source: `backend/app/api/routes/parts_assets.py:43-110`
+- Source: `backend/app/api/routes/parts_assets.py:29-122`
 - Source: `web/src/routes/parts/detail/PartInfo.tsx:27` (`withDownloadName`)
 - Rule: `CLAUDE.md:109-113`

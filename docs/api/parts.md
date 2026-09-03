@@ -2,7 +2,7 @@
 
 Audience: engineer
 
-Parts CRUD, provider asset serving, MPN lookup, and the scan-import pipeline. Combines four routers — `parts_core`, `parts_assets`, `parts_scan`, `parts_provider` — that all mount at `/api/parts` (`backend/app/main.py:367-392`).
+Parts CRUD, provider asset serving, MPN lookup, and the scan-import pipeline. Combines five routers — `parts_core`, `parts_assets`, `parts_refresh`, `parts_scan`, `parts_provider` — that all mount at `/api/parts` (`backend/app/main.py:367-392`).
 
 ## Conventions
 
@@ -316,32 +316,32 @@ Combined timeline of stock entries plus synthetic `part_created` / `part_updated
 
 ### `GET /api/parts/assets/{ws_id}/{filename}`
 
-Serve a content-addressed provider asset. Served with `Cache-Control: public, max-age=31536000, immutable` and `X-Content-Type-Options: nosniff` (`parts_assets.py:91-97`).
+Serve a content-addressed provider asset. Served with `Cache-Control: public, max-age=31536000, immutable` and `X-Content-Type-Options: nosniff` (`parts_assets.py:92-98`).
 
 **Path**
 
 | Field | Type | Notes |
 |---|---|---|
-| `ws_id` | UUID | Must equal the caller's current workspace, else `404` (`parts_assets.py:75-76`). |
-| `filename` | string | Flat name, no `/`, `\`, or leading `.` (`parts_assets.py:78-79`). |
+| `ws_id` | UUID | Must equal the caller's current workspace, else `404` (`parts_assets.py:63-64`). |
+| `filename` | string | Flat name, no `/`, `\`, or leading `.` (`parts_assets.py:70-71`). |
 
 **Query**
 
 | Field | Type | Notes |
 |---|---|---|
-| `name` | string ≤ 120 | Save-As filename for the `Content-Disposition` header (`parts_assets.py:98-106`). |
+| `name` | string ≤ 120 | Save-As filename for the `Content-Disposition` header (`parts_assets.py:99-110`). |
 
-**Response — image extensions** (`jpg`, `jpeg`, `png`, `gif`, `webp`) — served `inline`. Datasheets (`pdf`) and unknown extensions (served as `application/octet-stream`) are forced `attachment` (`parts_assets.py:54-62`, `parts_assets.py:109-117`).
+**Response — image extensions** (`jpg`, `jpeg`, `png`, `gif`, `webp`) — served `inline`. Datasheets (`pdf`) and unknown extensions (served as `application/octet-stream`) are forced `attachment` (`parts_assets.py:42-50`, `parts_assets.py:90-114`).
 
 **Errors**
 
-- `404` — wrong workspace, file missing on disk (`parts_assets.py:75-83`).
-- `400` — invalid filename (`parts_assets.py:78-79`).
+- `404` — wrong workspace, file missing on disk (`parts_assets.py:63-84`).
+- `400` — invalid filename (`parts_assets.py:70-76`).
 
 **Notes**
 
-- SVG is intentionally excluded from the inline list (SEC2-006 / SEC2-011) (`parts_assets.py:53-62`).
-- Source: `backend/app/api/routes/parts_assets.py:65-118`.
+- SVG is intentionally excluded from the inline list (SEC2-006 / SEC2-011) (`parts_assets.py:41-50`).
+- Source: `backend/app/api/routes/parts_assets.py:53-122`.
 
 ### `POST /api/parts/{part_id}/refresh-from-provider`
 
@@ -390,7 +390,7 @@ The two tiers differ in what they may write — see ADR-0031.
 - **Non-interference:** each reconciliation is scoped to its own namespace — the primary sees only un-namespaced keys, a secondary only its own prefix — so the trailing "delete rows absent from my payload" pass can never touch another provider's rows (`provider_fields.py::provider_owns_custom_field_key`).
 - `summary.skipped` counts secondary fields dropped because the namespaced key would overflow `custom_fields.key` (varchar 256) — the prefix adds characters to an upstream name we don't control, and truncating a key would collide two attributes onto one row. Always `0` on the primary path, which writes bare keys.
 - Provider assets (`image_url`, `datasheet_url`) are downloaded locally via `fetch_provider_asset` on the primary path only; failure leaves the upstream URL.
-- Source: `backend/app/api/routes/parts_assets.py`.
+- Source: `backend/app/api/routes/parts_refresh.py`.
 
 ### `DELETE /api/parts/{part_id}/provider-links/{provider}`
 
@@ -416,7 +416,7 @@ Unlink a **secondary** provider from a part. Drops its `part_provider_links` row
 - Rate limit: `60/minute` per workspace. Member+ (router gate).
 - Audit: `part.provider_unlinked`, comment `provider=<name>`.
 - Nothing outside the `"{provider}:"` namespace is touched.
-- Source: `backend/app/api/routes/parts_assets.py`.
+- Source: `backend/app/api/routes/parts_refresh.py`.
 
 ## Provider lookup
 

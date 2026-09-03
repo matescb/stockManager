@@ -59,8 +59,8 @@ It writes **no part column at all**.
 is the whole rule: the primary owns every key that is not namespaced, a secondary
 owns exactly its own prefix. The two sets are disjoint by construction, so the
 delete pass physically cannot see another provider's rows. The refresh route
-passes it as the `owns_key` argument to `_reconcile_provider_fields`; there is no
-second place the boundary is expressed.
+(`api/routes/parts_refresh.py`) passes it as the `owns_key` argument to
+`_reconcile_provider_fields`; there is no second place the boundary is expressed.
 
 Only names in `KNOWN_PROVIDER_NAMES` count as a namespace, so an upstream spec
 genuinely called `Vref:max` stays the primary's.
@@ -85,7 +85,7 @@ legacy columns.
 point**, not a unification. Its primary fallback exists for the one caller that
 must accept either tier behind a single name — the `?provider=` refresh. The
 primary's own flows read the legacy columns directly, at four call sites:
-`api/routes/parts_assets.py` (the primary refresh path), `api/routes/parts_provider.py`,
+`api/routes/parts_refresh.py` (the primary refresh path), `api/routes/parts_provider.py`,
 `api/routes/parts_scan.py`, and `domain/projects/bom_import_provider.py`.
 Retiring the legacy columns means migrating those four first.
 

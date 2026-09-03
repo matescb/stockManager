@@ -35,14 +35,14 @@ Owns the `Part` aggregate (linked / local / meta / sub-assembly), MPN uniqueness
 1. **MPN uniqueness is per-workspace.** Partial unique index `uq_parts_ws_mpn` (`WHERE mpn IS NOT NULL AND archived_at IS NULL`). Create-part returns `409` with `existing_id`+`existing_name`. See [ADR-0004](../../../../docs/adr/0004-mpn-uniqueness-per-workspace.md).
 2. **Assets are content-addressed.** Stored at `{UPLOAD_DIR}/parts/{ws_id}/{sha}.{ext}`; URL is `/api/parts/assets/{ws_id}/{filename}`. See [ADR-0005](../../../../docs/adr/0005-content-addressed-assets.md).
 3. **One primary provider, many secondaries, disjoint namespaces.** The primary (`workspaces.parts_provider`) owns the part columns and the un-namespaced `source='provider'` rows. A secondary writes no part column and only `"{provider}:"`-prefixed fields. Every reconciliation scopes itself through `provider_fields.py::provider_owns_custom_field_key`, which is what stops one provider's refresh from deleting another's rows. See [ADR-0031](../../../../docs/adr/0031-primary-and-secondary-parts-providers.md).
-4. **Catalog vs spec keys are split.** `web/src/lib/providerCatalog.ts` defines the FE catalog-key list. The server-side mirror is `provider_fields.py` — `PROVIDER_RESERVED_CUSTOM_FIELD_KEYS` and `PROVIDER_ASSET_CUSTOM_FIELD_KINDS`, read by `api/routes/custom_fields.py`, `api/routes/parts_assets.py` and `app/mcp/tools/_shared.py`; the provider-side field shapes live in `providers/base.py`. Adding a catalog key needs the FE list **and** the relevant server-side touchpoint. See [ADR-0007](../../../../docs/adr/0007-provider-catalog-vs-spec-split.md).
+4. **Catalog vs spec keys are split.** `web/src/lib/providerCatalog.ts` defines the FE catalog-key list. The server-side mirror is `provider_fields.py` — `PROVIDER_RESERVED_CUSTOM_FIELD_KEYS` and `PROVIDER_ASSET_CUSTOM_FIELD_KINDS`, read by `api/routes/custom_fields.py`, `api/routes/parts_refresh.py` and `app/mcp/tools/_shared.py`; the provider-side field shapes live in `providers/base.py`. Adding a catalog key needs the FE list **and** the relevant server-side touchpoint. See [ADR-0007](../../../../docs/adr/0007-provider-catalog-vs-spec-split.md).
 
 ## See also
 
 - [Domain doc — parts](../../../../docs/domain/parts.md) — part types, archival, ER position
 - [Domain doc — providers](../../../../docs/domain/providers.md) — Mouser / DigiKey
 - [Domain doc — scan-import](../../../../docs/domain/scan-import.md) — `bag_signature` + MIL-STD-130N
-- [API — parts](../../../../docs/api/parts.md) — REST surface (parts_core / parts_assets / parts_scan / parts_provider)
+- [API — parts](../../../../docs/api/parts.md) — REST surface (parts_core / parts_assets / parts_refresh / parts_scan / parts_provider)
 
 ## Don't
 

@@ -17,6 +17,7 @@ Every public REST endpoint lives here, one file per logical area. This README is
 | `eda_import.py` | `/api/eda/import` + `/api/parts/{id}/eda/import`, `/fetch-lcsc` | [eda](../../../../docs/api/eda.md#importers) |
 | `parts_relations.py` | `/api/parts` (substitutes, meta members) | [parts](../../../../docs/api/parts.md) |
 | `parts_assets.py` | `/api/parts/assets/...` | [parts](../../../../docs/api/parts.md) |
+| `parts_refresh.py` | `/api/parts/{id}/refresh-from-provider`, `/provider-links/{provider}` | [parts](../../../../docs/api/parts.md) |
 | `parts_scan.py` | `/api/parts/scan/...` | [parts](../../../../docs/api/parts.md) |
 | `parts_provider.py` | `/api/parts/provider/...` | [parts](../../../../docs/api/parts.md) |
 | `_parts_shared.py` | (helpers, no routes) | — |

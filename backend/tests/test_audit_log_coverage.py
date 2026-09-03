@@ -756,7 +756,7 @@ def test_each_mutator_writes_audit_row(
             None,
         ),
         (
-            "parts_assets.delete_provider_link",
+            "parts_refresh.delete_provider_link",
             _setup_part_provider_unlink,
             "part.provider_unlinked",
             "part",

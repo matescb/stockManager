@@ -28,7 +28,7 @@ Each refresh reconciles only its own namespace — `backend/app/domain/parts/pro
 
 | Call site | Flow |
 |---|---|
-| `backend/app/api/routes/parts_assets.py` | `refresh-from-provider`, primary path |
+| `backend/app/api/routes/parts_refresh.py` | `refresh-from-provider`, primary path |
 | `backend/app/api/routes/parts_provider.py` | `lookup-mpn` |
 | `backend/app/api/routes/parts_scan.py` | `bulk-import-from-scan` |
 | `backend/app/domain/projects/bom_import_provider.py` | BOM import from provider |
@@ -156,7 +156,7 @@ The truth is on the **frontend** in `web/src/lib/providerCatalog.ts:17-52`:
 
 The PartSpecs and PartSourcing tabs split on this boundary. The classification is at render time so adding a new catalog field doesn't need a DB migration to re-categorise historical rows.
 
-The server-side mirror is `backend/app/domain/parts/provider_fields.py`: `PROVIDER_RESERVED_CUSTOM_FIELD_KEYS` (`image_url`, `datasheet_url`, `source_url`) and `PROVIDER_ASSET_CUSTOM_FIELD_KINDS`, consumed by `api/routes/custom_fields.py:15`, `api/routes/parts_assets.py:32` and `app/mcp/tools/_shared.py:51`. The provider-side field shapes are separate, in `providers/base.py`. Adding a catalog field needs the frontend list **and** the relevant server-side touchpoint.
+The server-side mirror is `backend/app/domain/parts/provider_fields.py`: `PROVIDER_RESERVED_CUSTOM_FIELD_KEYS` (`image_url`, `datasheet_url`, `source_url`) and `PROVIDER_ASSET_CUSTOM_FIELD_KINDS`, consumed by `api/routes/custom_fields.py:15`, `api/routes/parts_refresh.py:34` and `app/mcp/tools/_shared.py:51`. The provider-side field shapes are separate, in `providers/base.py`. Adding a catalog field needs the frontend list **and** the relevant server-side touchpoint.
 
 ## Cache + circuit breaker
 

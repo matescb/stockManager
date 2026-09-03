@@ -147,7 +147,7 @@ def truncate_provider_field_value(value: str) -> str:
     """Cap a provider-supplied value at the `custom_fields.value` width.
 
     Public because the secondary-provider refresh in
-    `api/routes/parts_assets.py` writes the same kind of upstream string
+    `api/routes/parts_refresh.py` writes the same kind of upstream string
     and must apply the same cap and sentinel.
     """
     if len(value) <= _CUSTOM_FIELD_VALUE_MAX:
