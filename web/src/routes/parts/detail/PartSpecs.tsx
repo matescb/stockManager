@@ -10,6 +10,7 @@ import { useWsKey } from "@/lib/queryKeys";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { isSafeHttpUrl } from "@/lib/url";
 import type { CustomFieldRow, Part, SpecSource } from "@/types";
+import { providerLabel, providerSearchUrl } from "@/lib/providers";
 
 const SOURCE_BADGE: Record<SpecSource, string> = {
   provider: "bg-accent/15 text-accent",
@@ -21,18 +22,6 @@ const SOURCE_LABEL: Record<SpecSource, string> = {
   provider: "Provider",
   manual:   "Manual",
   override: "Override",
-};
-
-const PROVIDER_LABEL: Record<string, string> = {
-  mouser: "Mouser",
-  digikey: "DigiKey",
-};
-
-// Per-provider deep link to the catalog search for an MPN. Used as a
-// fallback when we don't have a stored canonical product URL.
-const PROVIDER_SEARCH_URL: Record<string, (mpn: string) => string> = {
-  mouser: mpn => `https://www.mouser.com/c/?q=${encodeURIComponent(mpn)}`,
-  digikey: mpn => `https://www.digikey.com/en/products/result?keywords=${encodeURIComponent(mpn)}`,
 };
 
 /**
@@ -152,7 +141,7 @@ export default function PartSpecs() {
     !!part.linked_provider && providerCount > 0 && providerCount < 4;
   const productPageUrl =
     part.linked_provider && part.mpn
-      ? (PROVIDER_SEARCH_URL[part.linked_provider] ?? PROVIDER_SEARCH_URL.mouser)(part.mpn)
+      ? (providerSearchUrl(part.linked_provider, part.mpn) ?? providerSearchUrl("mouser", part.mpn))
       : null;
   const safeProductPageUrl = isSafeHttpUrl(productPageUrl) ? productPageUrl : null;
 
@@ -165,7 +154,7 @@ export default function PartSpecs() {
 
       {showSparseHint && (
         <div className="rounded-md border border-border bg-panel2/50 p-3 mb-3 text-xs text-muted">
-          {PROVIDER_LABEL[part.linked_provider!] ?? part.linked_provider}'s
+          {providerLabel(part.linked_provider)}'s
           API doesn't always expose the full parametric table — what's
           shown above is what we could pull. Add specs below, or copy
           remaining ones from the

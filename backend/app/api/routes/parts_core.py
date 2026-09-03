@@ -26,6 +26,9 @@ from app.api.routes._parts_shared import (
     image_urls_for_parts as _image_urls_for_parts,
 )
 from app.api.routes._parts_shared import (
+    provider_links_for as _provider_links_for,
+)
+from app.api.routes._parts_shared import (
     serialize_part as _serialize,
 )
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
@@ -38,6 +41,12 @@ from app.domain.audit.service import log as _audit_log
 from app.domain.categories.models import PartCategory
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part
+from app.domain.parts.provider_links import (
+    delete_link as _delete_provider_link,
+)
+from app.domain.parts.provider_links import (
+    get_link as _get_provider_link,
+)
 from app.domain.parts.schemas import (
     BulkDeleteIn,
     PartIn,
@@ -275,7 +284,15 @@ def get_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
     on_hand = total_for_part(db, workspace_id=ws.id, part_id=p.id)
     reserved = reserved_quantity(db, workspace_id=ws.id, part_id=p.id)
     image_url = _image_urls_for_parts(db, ws.id, [p.id]).get(p.id)
-    return ok(_serialize(p, on_hand=on_hand, reserved=reserved, image_url=image_url))
+    return ok(
+        _serialize(
+            p,
+            on_hand=on_hand,
+            reserved=reserved,
+            image_url=image_url,
+            provider_links=_provider_links_for(db, ws.id, p.id),
+        )
+    )
 
 
 @router.patch("/{part_id}")
@@ -343,6 +360,15 @@ def patch_part(
     p.updated_by = user.id
 
     if unlink:
+        # The link row for the provider being released has to go with it,
+        # or the part keeps advertising a link whose part columns are now
+        # locally owned. Secondary links are untouched.
+        if p.linked_provider:
+            primary_link = _get_provider_link(
+                db, workspace_id=ws.id, part_id=p.id, provider=p.linked_provider
+            )
+            if primary_link is not None:
+                _delete_provider_link(db, primary_link)
         p.linked_provider = None
         p.last_refresh_at = None
         p.description_locally_edited = False
@@ -377,6 +403,7 @@ def patch_part(
             p,
             on_hand=total_for_part(db, workspace_id=ws.id, part_id=p.id),
             reserved=reserved_quantity(db, workspace_id=ws.id, part_id=p.id),
+            provider_links=_provider_links_for(db, ws.id, p.id),
         )
     )
 

@@ -703,6 +703,7 @@ EXPECTED_BLOCKED = sorted(
         ("POST", "/api/tokens/{token_id}/revoke"),
         ("POST", "/api/workspaces"),
         ("PATCH", "/api/workspaces/current"),
+        ("PUT", "/api/workspaces/current/provider-credentials"),
         ("POST", "/api/workspaces/current/catalog/tokens"),
         ("DELETE", "/api/workspaces/current/catalog/tokens/{token_id}"),
         ("PATCH", "/api/workspaces/members/{member_id}"),
@@ -720,6 +721,10 @@ _BLOCKED_BODIES: dict[tuple[str, str], dict] = {
     ("POST", "/api/workspaces"): {"name": "smuggled org"},
     ("PATCH", "/api/workspaces/current"): {"name": "renamed by a token"},
     ("POST", "/api/workspaces/current/catalog/tokens"): {"label": "smuggled"},
+    ("PUT", "/api/workspaces/current/provider-credentials"): {
+        "provider": "mouser",
+        "api_key": "smuggled-key",
+    },
     ("PATCH", "/api/workspaces/members/{member_id}"): {"role": "admin"},
     ("POST", "/api/invitations"): {"email": "accomplice@x.com", "role": "admin"},
     ("POST", "/api/invitations/accept"): {"token": "smk_deadbeef.nope"},

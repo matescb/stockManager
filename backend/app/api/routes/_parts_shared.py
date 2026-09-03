@@ -49,12 +49,21 @@ def serialize_part(
     reserved: int | None = None,
     available: int | None = None,
     image_url: str | None = None,
+    provider_links: list[dict] | None = None,
 ) -> dict:
+    """Serialize a Part for API responses.
+
+    `provider_links` is emitted only when the caller loaded it. Part
+    LISTS deliberately don't — it would be a second query per page for
+    something no list column renders — and the key is absent there
+    rather than an empty array that would read as "no links". Detail-
+    shaped responses pass it; see `provider_links_for`.
+    """
     if reserved is None:
         reserved = 0
     if available is None and on_hand is not None:
         available = on_hand - reserved
-    return {
+    out = {
         "id": str(p.id),
         "part_type": p.part_type,
         "name": p.name,
@@ -85,6 +94,19 @@ def serialize_part(
         # download failed. None when no image was ever attached.
         "image_url": image_url,
     }
+    if provider_links is not None:
+        out["provider_links"] = provider_links
+    return out
+
+
+def provider_links_for(db, ws_id, part_id) -> list[dict]:
+    """Serialized `part_provider_links` rows for one part."""
+    from app.domain.parts.provider_links import links_for_part, serialize_link
+
+    return [
+        serialize_link(row)
+        for row in links_for_part(db, workspace_id=ws_id, part_id=part_id)
+    ]
 
 
 def get_part(db, ws_id, part_id, *, include_archived: bool = False) -> Part:

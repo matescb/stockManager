@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { bagLotName, bagComments, type BagCode } from "@/lib/bagCode";
 import { isSafeHttpOrSameOriginUrl, isSafeHttpUrl } from "@/lib/url";
-import { PROVIDER_LABEL, manufacturerMatches, type LookupState, type Row } from "./types";
+import { providerDisplayName, manufacturerMatches, type LookupState, type Row } from "./types";
 
 // ─── BagRescanCard ────────────────────────────────────────────────────────────
 
@@ -136,7 +136,7 @@ function FoundDetails({
           <div className="text-sm">
             <span className="font-medium">{r.manufacturer ?? "—"}</span>
             <span className="text-muted ml-2 text-xs">
-              {PROVIDER_LABEL[state.provider] ?? state.provider}
+              {providerDisplayName(state.provider)}
             </span>
           </div>
           {mfrMismatch && (

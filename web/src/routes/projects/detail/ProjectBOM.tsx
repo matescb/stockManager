@@ -16,6 +16,7 @@ import AddPartFromLibraryModal from "./AddPartFromLibraryModal";
 import BomProviderAmbiguityModal, { type BomProviderPendingChoice } from "./BomProviderAmbiguityModal";
 import BomProviderFailuresPanel, { type BomProviderFailure } from "./BomProviderFailuresPanel";
 import { SourceBomButton } from "@/routes/projects/sourcing/SourceBomButton";
+import { providerLabel } from "@/lib/providers";
 
 type WorkspaceProviderSettings = {
   parts_provider: "none" | "mouser" | "digikey";
@@ -34,11 +35,11 @@ type BomProviderImportPayload = {
   entry_ids: string[] | null;
 };
 
-const PROVIDER_LABEL: Record<string, string> = {
-  none: "provider",
-  mouser: "Mouser",
-  digikey: "DigiKey",
-};
+// "none" reads as a generic noun in this context; real names come from
+// the registry.
+function displayName(name: string): string {
+  return name === "none" ? "provider" : providerLabel(name);
+}
 
 export default function ProjectBOM() {
   const { projectId } = useParams();
@@ -63,7 +64,7 @@ export default function ProjectBOM() {
   const [failures, setFailures] = useState<BomProviderFailure[]>([]);
 
   const provider = workspace?.parts_provider ?? "none";
-  const providerLabel = PROVIDER_LABEL[provider] ?? provider;
+  const providerName = displayName(provider);
   const unmatchedEntries = (entries ?? []).filter(entry => entry.entry_type === "unmatched" && !entry.part_id);
 
   const bulkDeleteMutation = useApiMutation<null[], string[]>({
@@ -85,7 +86,7 @@ export default function ProjectBOM() {
     if (result.created > 0 || result.linked_existing > 0) {
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "project", projectId, "entries") });
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
-      const providerName = PROVIDER_LABEL[result.provider] ?? result.provider;
+      const resultProviderName = displayName(result.provider);
       const messages: string[] = [];
       if (result.created > 0) {
         messages.push(`Created ${result.created} part${result.created === 1 ? "" : "s"}`);
@@ -95,7 +96,9 @@ export default function ProjectBOM() {
           `${result.created > 0 ? "linked" : "Linked"} ${result.linked_existing} existing part${result.linked_existing === 1 ? "" : "s"}`,
         );
       }
-      toast.success(`${messages.join(" and ")} from ${providerName}.`);
+      // The provider named in the RESULT, not the workspace's current
+      // setting — the import may have run before a settings change.
+      toast.success(`${messages.join(" and ")} from ${resultProviderName}.`);
     }
     if (result.pending_choices.length > 0) {
       setPendingChoices(result.pending_choices);
@@ -152,7 +155,7 @@ export default function ProjectBOM() {
             onClick={() => importProviderMutation.mutate({ entry_ids: null })}
           >
             {importProviderMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <CloudDownload size={14} />}
-            Import all unmatched from {providerLabel}
+            Import all unmatched from {providerName}
           </button>
         )}
         {projectId && (

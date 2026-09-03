@@ -13,6 +13,7 @@
  * Reserved keys (`image_url`, `datasheet_url`, `source_url`) are provider
  * metadata and are NOT in either tab.
  */
+import { KNOWN_PROVIDER_NAMES } from "./providers";
 
 const CATALOG_LITERAL_KEYS = new Set<string>([
   // Availability
@@ -35,10 +36,29 @@ const CATALOG_LITERAL_KEYS = new Set<string>([
   "Series",
 ]);
 
+// Which providers can own a `"{provider}:"` namespace comes from the one
+// registry in `lib/providers.ts` — the regex is built from it rather than
+// spelled out again, so adding a provider needs no edit here.
+const PROVIDER_NAMESPACE_RE = new RegExp(`^(${KNOWN_PROVIDER_NAMES.join("|")}):`);
+
 // Pricing rows look like "Unit price (1+)", "Unit price (10+)", etc.
 const CATALOG_REGEX_KEYS: RegExp[] = [
   /^Unit price \(\d+\+\)$/,
+  // Everything a SECONDARY provider writes is namespaced, and all of it
+  // is catalog data — it belongs on Sourcing, never in the user's Specs
+  // tab. The backend writes these keys; see the provider_fields module.
+  PROVIDER_NAMESPACE_RE,
 ];
+
+/** `"mouser:Resistance"` → `"mouser"`; an un-namespaced key → null. */
+export function providerNamespaceOf(key: string): string | null {
+  return PROVIDER_NAMESPACE_RE.exec(key)?.[1] ?? null;
+}
+
+/** `"mouser:Resistance"` → `"Resistance"`; leaves other keys alone. */
+export function stripProviderNamespace(key: string): string {
+  return key.replace(PROVIDER_NAMESPACE_RE, "");
+}
 
 export const PROVIDER_RESERVED_KEYS = ["image_url", "datasheet_url", "source_url"] as const;
 

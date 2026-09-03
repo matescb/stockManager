@@ -173,6 +173,21 @@ them, that's the bug.
   `PROVIDER_RESERVED_CUSTOM_FIELD_KEYS` in
   `backend/app/domain/parts/provider_fields.py`. Adding a new catalog
   field needs the FE list AND the relevant server-side touchpoint.
+- **One primary parts provider, many secondaries, disjoint field
+  namespaces.** `workspaces.parts_provider` is the primary: it owns the
+  part columns, `parts.linked_*`, and the un-namespaced
+  `source='provider'` custom fields. A secondary (credentials in
+  `workspace_provider_credentials`) writes no part column and only
+  `"{provider}:"`-prefixed fields. Every reconciliation scopes itself
+  through `provider_fields.py::provider_owns_custom_field_key` — the
+  refresh's trailing "delete rows absent from my payload" pass would
+  otherwise wipe every other provider's rows on each refresh. The
+  primary's credentials live in the legacy `workspaces.parts_provider_api_*`
+  columns, NOT in `workspace_provider_credentials` — that table holds
+  secondaries only, migration 0070 backfills nothing into it, and the
+  PUT route refuses the primary, so no provider ever has two credential
+  stores. ADR-0031; `tests/test_secondary_provider.py` pins both
+  directions.
 - **Polymorphic cleanup on hard delete.** `attachments`, `custom_fields`,
   and `tag_links` have no FK on `object_id`. Hard-deleting a registered
   parent (`part`, `order`, `project`, `build`, `lot`, `storage_location`)

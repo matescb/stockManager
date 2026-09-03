@@ -127,7 +127,7 @@ def _add_provider_field(
     key: str,
     value: str,
 ) -> bool:
-    stored_value = _provider_field_value(value)
+    stored_value = truncate_provider_field_value(value)
     db.add(
         CustomField(
             workspace_id=workspace_id,
@@ -143,7 +143,13 @@ def _add_provider_field(
     return stored_value != value
 
 
-def _provider_field_value(value: str) -> str:
+def truncate_provider_field_value(value: str) -> str:
+    """Cap a provider-supplied value at the `custom_fields.value` width.
+
+    Public because the secondary-provider refresh in
+    `api/routes/parts_assets.py` writes the same kind of upstream string
+    and must apply the same cap and sentinel.
+    """
     if len(value) <= _CUSTOM_FIELD_VALUE_MAX:
         return value
     keep = _CUSTOM_FIELD_VALUE_MAX - len(_TRUNCATION_SENTINEL)

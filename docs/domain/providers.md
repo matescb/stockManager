@@ -6,6 +6,35 @@ Mouser and DigiKey are the two shipped parts-data providers. This page covers th
 
 For the catalog/spec split decision see [ADR-0007](../adr/0007-provider-catalog-vs-spec-split.md).
 
+## Primary vs secondary
+
+A workspace configures **one primary** provider and any number of **secondaries**.
+
+| | Primary | Secondary |
+|---|---|---|
+| Named by | `workspaces.parts_provider` | any other `KNOWN_PROVIDER_NAMES` entry with credentials |
+| Credentials | legacy `parts_provider_api_*` columns (or a `workspace_provider_credentials` row) | `workspace_provider_credentials` row |
+| Part columns (`manufacturer`, `mpn`, `footprint`, `description`) | owns them | writes none |
+| `parts.linked_*` | owns them | writes none |
+| Custom fields | un-namespaced (`Resistance`, `source_url`) | `"{provider}:"` prefixed (`mouser:Resistance`) |
+| Link row | `part_provider_links` | `part_provider_links` |
+| Scan-import, lookup-mpn | yes | no |
+
+Each refresh reconciles only its own namespace — `backend/app/domain/parts/provider_fields.py::provider_owns_custom_field_key` is the boundary, and the reason a DigiKey refresh cannot delete the `mouser:` rows. See [ADR-0031](../adr/0031-primary-and-secondary-parts-providers.md).
+
+**The two credential stores are separate, and no provider is in both.** The primary's key is in the legacy `workspaces.parts_provider_api_*` columns; `workspace_provider_credentials` holds secondaries only. Migration 0070 backfills nothing into it, and `PUT /api/workspaces/current/provider-credentials` returns `400 workspace.provider_is_primary` for the workspace's own `parts_provider`.
+
+`backend/app/domain/parts/provider_credentials.py::credentials_for` is the **secondary** resolution point, not a unification of the two. It checks the `workspace_provider_credentials` row, then falls back to the legacy columns for the primary — a convenience for the single caller that has to accept either tier behind one name (the `?provider=` refresh). The primary's own flows read and decrypt the legacy columns directly, at four call sites:
+
+| Call site | Flow |
+|---|---|
+| `backend/app/api/routes/parts_assets.py` | `refresh-from-provider`, primary path |
+| `backend/app/api/routes/parts_provider.py` | `lookup-mpn` |
+| `backend/app/api/routes/parts_scan.py` | `bulk-import-from-scan` |
+| `backend/app/domain/projects/bom_import_provider.py` | BOM import from provider |
+
+Retiring the legacy columns requires migrating those four onto `credentials_for` first; dropping them while they still read the columns breaks the entire primary flow.
+
 ## Per-workspace credentials
 
 Provider state lives on the `Workspace` row (`backend/app/domain/workspaces/models.py:41-47`):
@@ -17,6 +46,8 @@ Provider state lives on the `Workspace` row (`backend/app/domain/workspaces/mode
 | `parts_provider_api_secret` | Only DigiKey uses it (`client_secret`). Mouser leaves NULL. Same encryption envelope. |
 
 Encryption envelope: `app.core.secrets.encrypt` / `decrypt`. Plaintext never appears in a column. Read paths call `decrypt(ws.parts_provider_api_key)` immediately before passing to the provider.
+
+Secondary credentials live in `workspace_provider_credentials` instead — one active row per `(workspace_id, provider)`, with `api_key_encrypted` / `api_secret_encrypted` under the same Fernet keyring. The table starts empty (migration 0070 backfills nothing) and never holds the primary. Written through `PUT /api/workspaces/current/provider-credentials`; exposed only as presence flags in `provider_credentials[]` on `GET /api/workspaces/current`.
 
 ## Workspace sourcing settings
 
@@ -165,3 +196,5 @@ The content-addressed asset URL contract (`{UPLOAD_DIR}/parts/{ws_id}/{sha}.{ext
 - **Never change `_HIT_TTL_SEC` to be workspace-aware.** Two workspaces share cache hits because the upstream payload is public catalog data; making the key workspace-scoped would burn quota for no gain.
 - **Never bypass `lookup_with_cache` in scan-import flows.** Bulk-import does N MPN lookups under a wall-clock deadline; without the cache + breaker, a flaky upstream takes the whole batch down.
 - **Never log decrypted credentials.** The audit-log invariant explicitly forbids passing key material through `comment` (`backend/app/domain/audit/service.py:38-40`).
+- **Never reconcile provider custom fields without a namespace scope.** The delete pass drops every `source='provider'` row absent from the payload; unscoped, one provider's refresh wipes every other provider's rows. `provider_owns_custom_field_key` is the only place that boundary is expressed (ADR-0031).
+- **Never let a secondary provider write a part column.** `manufacturer` / `mpn` / `footprint` / `description` and `parts.linked_*` belong to the primary. A second claimant on them is exactly the ambiguity the namespace model exists to avoid.

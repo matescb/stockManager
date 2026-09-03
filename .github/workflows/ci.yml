@@ -304,6 +304,19 @@ jobs:
           TEST_DATABASE_URL: postgresql+psycopg://stockmgr:stockmgr@localhost:5432/stockmgr_test
         run: pytest -q --tb=short --cov=app --cov-report=term-missing --cov-report=xml --cov-report=html
 
+      # `addopts = "-m 'not slow'"` in pyproject.toml means the step above
+      # never ran a single slow-marked test — which is every migration test
+      # that walks the real chain (schema drop + full alembic upgrade, ~1-2s
+      # each). Those are exactly the ones a bad migration breaks, so they
+      # get their own step rather than being excluded from CI entirely.
+      # Not folded into the main run: they'd add minutes to every PR for
+      # coverage that only matters when a migration changes.
+      - name: pytest (slow — migration chain)
+        working-directory: backend
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://stockmgr:stockmgr@localhost:5432/stockmgr_test
+        run: pytest -q --tb=short -m slow tests/test_migrations.py tests/test_migration_0070_backfill.py
+
       - name: Upload backend coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         if: always()
