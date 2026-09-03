@@ -13,7 +13,7 @@
  * posts every field every time, which is what makes "clear the symbol"
  * expressible at all. See `app/domain/eda/schemas.py::PartEdaIn`.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useOutletContext, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
@@ -29,6 +29,8 @@ import {
   PartEdaSchema,
 } from "@/lib/schemas";
 import { InlineQueryError, type QueryLike } from "@/components/QueryStateBoundary";
+import { SymbolPreview } from "@/components/eda/SymbolPreview";
+import { FootprintPreview } from "@/components/eda/FootprintPreview";
 import type {
   EdaDatafile,
   EdaFootprint,
@@ -217,6 +219,7 @@ export default function PartCad() {
           setSymbolId(id);
         }}
         invalidateKey={wsKeyOf(workspaceId, "eda", "symbols")}
+        renderPreview={(id) => <SymbolPreview symbolId={id} />}
       />
 
       <RefSlot
@@ -239,6 +242,7 @@ export default function PartCad() {
           setFootprintId(id);
         }}
         invalidateKey={wsKeyOf(workspaceId, "eda", "footprints")}
+        renderPreview={(id) => <FootprintPreview footprintId={id} />}
       />
 
       <FootprintModels
@@ -583,6 +587,13 @@ type RefSlotProps = {
   uploadAccept: string;
   onUploaded: (id: string) => void;
   invalidateKey: unknown[];
+  /**
+   * Rendered under the picker once a hosted entry is chosen. A render
+   * prop rather than a node so the preview is only constructed when
+   * there is something to preview — the slot itself knows nothing about
+   * KiCanvas.
+   */
+  renderPreview?: (selectedId: string) => ReactNode;
 };
 
 function RefSlot({
@@ -602,6 +613,7 @@ function RefSlot({
   uploadAccept,
   onUploaded,
   invalidateKey,
+  renderPreview,
 }: RefSlotProps) {
   const options: { mode: RefMode; label: string }[] = [
     { mode: "hosted", label: "Hosted here" },
@@ -650,6 +662,9 @@ function RefSlot({
             invalidateKey={invalidateKey}
             onUploaded={onUploaded}
           />
+          {selectedId && renderPreview ? (
+            <div className="mt-3">{renderPreview(selectedId)}</div>
+          ) : null}
         </div>
       )}
 

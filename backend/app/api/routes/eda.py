@@ -44,7 +44,7 @@ from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import Envelope, ok
-from app.domain.eda import kicad_library, kicad_refs, pcm, storage
+from app.domain.eda import kicad_library, kicad_refs, pcm, preview, sexpr, storage
 from app.domain.eda import service as eda_service
 from app.domain.eda.models import EdaDatafile, EdaFootprint, EdaSymbol
 from app.domain.eda.schemas import (
@@ -697,6 +697,136 @@ def kicad_setup(ws: CurrentWorkspace) -> Envelope[dict]:
             },
         }
     )
+
+
+# ---------------------------------------------------------------------
+# 2D preview documents
+#
+# The CAD tab renders hosted entries with KiCanvas, which cannot read
+# `.kicad_sym` or `.kicad_mod` — the two formats this domain stores. Both
+# routes therefore serve a synthetic document that embeds the stored bytes
+# in a container KiCanvas does read; `domain/eda/preview.py` explains the
+# wrapping and the constraints on it.
+#
+# Three things about these responses are load-bearing:
+#
+# * **The `.kicad_sch` / `.kicad_pcb` suffix in the URL is not cosmetic.**
+#   KiCanvas types a document by `basename(url)` and dispatches on the
+#   filename suffix, so renaming these paths breaks rendering with no
+#   error worth the name.
+# * **`text/plain` + `nosniff`, never `text/html`.** The body embeds
+#   attacker-supplied stored text and is served from our own origin, so
+#   it must never be sniffable into a document — the same reasoning that
+#   makes `/files/` an unconditional attachment. Unlike `/files/` this is
+#   deliberately *not* an attachment: it is fetched by the viewer's JS,
+#   never saved, and `Content-Disposition: attachment` is irrelevant to
+#   a `fetch()` while making the URL useless to paste into a tab.
+# * **`private`, not `public`.** These URLs are keyed by row id rather
+#   than content, so the bytes behind one change when the entry is
+#   renamed or re-uploaded, and they are workspace-scoped. A short
+#   private window absorbs the viewer's re-fetches without letting a
+#   shared cache hold another workspace's geometry.
+# ---------------------------------------------------------------------
+
+# Long enough to cover a tab switch or a remount, short enough that a
+# rename shows up without a hard reload.
+_PREVIEW_CACHE_CONTROL = "private, max-age=300"
+
+# Generous, because a preview is a read the UI fires on every selection
+# change and the 300 s private cache already absorbs remounts. It exists
+# to bound the one thing these routes do that a plain list read does not:
+# open a file and parse attacker-supplied s-expressions, on the single
+# uvicorn worker prod runs.
+_PREVIEW_RATE = "120/minute"
+
+
+def _stored_bytes(ws, entry, *, kind: str) -> bytes:
+    """Read an entry's stored blob, or 503.
+
+    The store is content-addressed and append-only, so a missing blob is
+    a "can't happen" — which is exactly why it is answered loudly rather
+    than with an empty preview. Same stance as `pcm.py::_read_stored`.
+    """
+    ext = storage.EXT_BY_KIND[kind]
+    path = storage.path_for(ws.id, f"{entry.sha256}.{ext}")
+    try:
+        with open(path, "rb") as handle:
+            return handle.read()
+    except OSError:
+        raise_http(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            code=ErrorCodes.EDA_PREVIEW_UNAVAILABLE,
+            message="preview unavailable",
+        )
+
+
+def _preview_response(body: str) -> Response:
+    return Response(
+        content=body,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Cache-Control": _PREVIEW_CACHE_CONTROL,
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.get("/symbols/{symbol_id}/preview.kicad_sch")
+@limiter.limit(_PREVIEW_RATE, key_func=workspace_key)
+def get_symbol_preview(
+    request: Request,
+    symbol_id: UUID,
+    db: DbSession,
+    ws: CurrentWorkspace,
+) -> Response:
+    """The symbol as a one-symbol schematic KiCanvas can render.
+
+    Archived symbols preview too. `get_entry` includes them by design and
+    the restore flow depends on it: an operator deciding whether to bring
+    an archived symbol back needs to see what it is, and this surface is
+    read-only so showing it costs nothing.
+    """
+    row = eda_service.get_entry(db, ws=ws, Model=EdaSymbol, entry_id=symbol_id)
+    raw = _stored_bytes(ws, row, kind=storage.SYMBOL_KIND)
+    try:
+        # Declared sync on purpose: parsing stored text is CPU-bound and
+        # prod runs one uvicorn worker, so a sync def — which FastAPI runs
+        # on the threadpool — keeps it off the event loop. Same reasoning
+        # as the upload path's explicit `run_in_threadpool` hop.
+        body = preview.symbol_document(raw)
+    except (UnicodeDecodeError, sexpr.SexprError):
+        raise_http(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            code=ErrorCodes.EDA_PREVIEW_UNAVAILABLE,
+            message="preview unavailable",
+        )
+    return _preview_response(body)
+
+
+@router.get("/footprints/{footprint_id}/preview.kicad_pcb")
+@limiter.limit(_PREVIEW_RATE, key_func=workspace_key)
+def get_footprint_preview(
+    request: Request,
+    footprint_id: UUID,
+    db: DbSession,
+    ws: CurrentWorkspace,
+) -> Response:
+    """The footprint as a one-footprint board KiCanvas can render.
+
+    Archived footprints preview too, for the reason given on
+    `get_symbol_preview`.
+    """
+    row = eda_service.get_entry(db, ws=ws, Model=EdaFootprint, entry_id=footprint_id)
+    raw = _stored_bytes(ws, row, kind=storage.FOOTPRINT_KIND)
+    try:
+        body = preview.footprint_document(raw)
+    except UnicodeDecodeError:
+        raise_http(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            code=ErrorCodes.EDA_PREVIEW_UNAVAILABLE,
+            message="preview unavailable",
+        )
+    return _preview_response(body)
 
 
 # ---------------------------------------------------------------------

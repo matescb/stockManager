@@ -575,6 +575,28 @@ def test_read_only_token_reads_every_surface(read_only_walk, path):
     assert set(r.json()) >= {"data", "status"}, f"{path}: {r.text}"
 
 
+# Reads that answer a raw document rather than the envelope. Kept apart
+# from READ_PATHS because the assertion differs, not because the surface
+# does: a read-only token must reach these too, and the 2D previews are
+# the only part of the EDA surface an agent could otherwise be locked out
+# of while holding every list route that names them.
+RAW_READ_PATHS = [
+    ("/api/eda/symbols/{symbol}/preview.kicad_sch", "(kicad_sch"),
+    ("/api/eda/footprints/{footprint}/preview.kicad_pcb", "(kicad_pcb"),
+]
+
+
+@pytest.mark.parametrize(("path", "root"), RAW_READ_PATHS, ids=lambda v: v[:24])
+def test_read_only_token_reads_the_preview_documents(read_only_walk, path, root):
+    agent, w = read_only_walk
+    r = agent.get(path.format(**w.ids))
+    assert r.status_code == 200, f"{path}: {r.text}"
+    # Deliberately not the envelope — these are documents a KiCad viewer
+    # parses, so assert the shape that proves it rather than `{data,status}`.
+    assert r.headers["content-type"].startswith("text/plain"), path
+    assert r.text.startswith(root), f"{path}: {r.text[:80]}"
+
+
 # One write per area the walk exercised, in the same shapes.
 WRITE_PROBES: list[tuple[str, str, dict | None]] = [
     ("post", "/api/categories", {"name": "Capacitors"}),

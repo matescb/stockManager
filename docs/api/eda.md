@@ -8,7 +8,7 @@ Audience: engineer
 
 See [API conventions](./README.md) for envelope, errors, pagination.
 
-Two routers, mounted four times (`backend/app/main.py:581-606`), all four with `dependencies=_member_gate`:
+Two routers, mounted four times (`backend/app/main.py:588-613`), all four with `dependencies=_member_gate`:
 
 | Router | Prefix |
 |---|---|
@@ -17,13 +17,13 @@ Two routers, mounted four times (`backend/app/main.py:581-606`), all four with `
 | `eda_import.router` | `/api/eda` |
 | `eda_import.parts_router` | `/api/parts` |
 
-`_member_gate` (`backend/app/main.py:546`) lets `GET` / `HEAD` / `OPTIONS` through for any role and answers `403` `resource.insufficient_role` to a viewer on anything else (`backend/app/core/deps.py:514-532`). So every read below is open to viewers; every write needs member+.
+`_member_gate` (`backend/app/main.py:547`) lets `GET` / `HEAD` / `OPTIONS` through for any role and answers `403` `resource.insufficient_role` to a viewer on anything else (`backend/app/core/deps.py:514-532`). So every read below is open to viewers; every write needs member+.
 
-Rate limits bucket per workspace (`key_func=workspace_key`), and are live only in prod ([ADR-0012](../adr/0012-uvicorn-single-worker-slowapi.md)): uploads `20/minute` (`backend/app/api/routes/eda.py:68`), configuration `60/minute` (`eda.py:69`), imports `10/minute` (`backend/app/api/routes/eda_import.py:61`), LCSC `5/minute` (`eda_import.py:63`).
+Rate limits bucket per workspace (`key_func=workspace_key`), and are live only in prod ([ADR-0012](../adr/0012-uvicorn-single-worker-slowapi.md)): uploads `20/minute` (`backend/app/api/routes/eda.py:68`), configuration `60/minute` (`eda.py:69`), imports `10/minute` (`backend/app/api/routes/eda_import.py:61`), LCSC `5/minute` (`eda_import.py:63`), 2D previews `120/minute` (`eda.py:740`).
 
-Two routes on this surface do **not** return the envelope: `GET /api/eda/files/{ws_id}/{filename}` streams a `FileResponse`, and the KiCad-facing surfaces live outside `/api` entirely — see [kicad](kicad.md).
+Three routes on this surface do **not** return the envelope: `GET /api/eda/files/{ws_id}/{filename}` streams a `FileResponse`, and the two [2D preview](#2d-previews) routes return a raw KiCad document. The KiCad-facing surfaces live outside `/api` entirely — see [kicad](kicad.md).
 
-Cross-workspace and unknown ids are `404`, never `403` (`backend/app/domain/eda/service.py:218-236`). Codes: `eda_symbol.not_found`, `eda_footprint.not_found`, `eda_datafile.not_found`, `part.not_found` (`backend/app/core/errors.py:261-263`).
+Cross-workspace and unknown ids are `404`, never `403` (`backend/app/domain/eda/service.py:218-236`). Codes: `eda_symbol.not_found`, `eda_footprint.not_found`, `eda_datafile.not_found`, `part.not_found` (`backend/app/core/errors.py:273-275`, `:225`).
 
 ## The library
 
@@ -179,7 +179,7 @@ Detach. Unlinking a pair that was never linked answers `200` — `DELETE` is ide
 
 ### `GET /api/parts/{part_id}/eda`
 
-The part's EDA configuration, or `data: null` if it has none. Works on archived parts (`eda.py:788`).
+The part's EDA configuration, or `data: null` if it has none. Works on archived parts (`eda.py:915-918`).
 
 **Response** — `200 OK`
 
@@ -231,7 +231,7 @@ Each slot is named **either** by a hosted id or by an external ref, never both. 
 
 **Notes**
 
-- Source: `backend/app/api/routes/eda.py:793-825`
+- Source: `backend/app/api/routes/eda.py:923-955`
 - Audit: `part_eda.updated`, target `part_eda`, target id the **part's** id, comment `fields=<sorted set>`.
 
 ### `DELETE /api/parts/{part_id}/eda`
@@ -373,14 +373,44 @@ Stream a stored library file. `filename` is the content-addressed `{sha256}.{ext
 
 **Not the envelope** — this returns the bytes. `Cache-Control: public, max-age=31536000, immutable` (the content hash is in the URL), `X-Content-Type-Options: nosniff`, media type always `application/octet-stream`.
 
-**Never inline.** A `.kicad_sym` is attacker-supplied text on our own origin; rendering it in a tab would be a same-origin XSS. `Content-Disposition: attachment` always; the optional `?name=` query (max 120) supplies a filename for the Save-As dialog, filtered to ASCII alphanumerics plus `. _ -` because Unicode blows up Starlette's latin-1 header encoding with a 500 (`eda.py:756-762`).
+**Never inline.** A `.kicad_sym` is attacker-supplied text on our own origin; rendering it in a tab would be a same-origin XSS. `Content-Disposition: attachment` always; the optional `?name=` query (max 120) supplies a filename for the Save-As dialog, filtered to ASCII alphanumerics plus `. _ -` because Unicode blows up Starlette's latin-1 header encoding with a 500 (`eda.py:886-892`).
 
 **Errors** — `404` `eda.file_not_found` when `ws_id` is not the caller's workspace or the file is absent; `400` `eda.invalid_filename` when the name carries a separator or a leading dot.
 
 **Notes**
 
-- Source: `backend/app/api/routes/eda.py:715-769`
+- Source: `backend/app/api/routes/eda.py:845-899`
 - Layout: `{UPLOAD_DIR}/eda/{ws_id}/{sha}.{ext}` (`backend/app/domain/eda/storage.py:12`)
+
+## 2D previews
+
+### `GET /api/eda/symbols/{symbol_id}/preview.kicad_sch`
+### `GET /api/eda/footprints/{footprint_id}/preview.kicad_pcb`
+
+Return the entry as a KiCad document the in-browser viewer can render. The CAD tab embeds these; nothing else consumes them.
+
+**Not the envelope** — these return a raw document, like `/files/` above.
+
+**Why a wrapper exists.** KiCanvas, the viewer the frontend embeds, reads only `.kicad_sch`, `.kicad_pcb`, `.kicad_wks` and `.kicad_pro`. It has no reader for `.kicad_sym` or `.kicad_mod`, which is exactly what this domain stores — pointing it at `/api/eda/files/…` yields "Unknown file type". So a symbol is served inside a synthetic one-symbol schematic and a footprint inside a synthetic one-footprint board, with the stored bytes embedded verbatim (never re-emitted). `backend/app/domain/eda/preview.py` carries the full rationale and the two constraints that make the documents render rather than draw blank.
+
+**The suffix is part of the contract.** KiCanvas types a document by the basename of its URL, so these paths cannot be renamed to something without a `.kicad_sch` / `.kicad_pcb` ending.
+
+**Headers** — `Cache-Control: private, max-age=300`, `X-Content-Type-Options: nosniff`, media type `text/plain; charset=utf-8`. Unlike `/files/` these are deliberately *not* attachments: they are fetched by the viewer's JS, never saved. `private` rather than `public` because the URL is keyed by row id rather than by content, so what it returns changes when the entry is renamed or re-uploaded, and because the response is workspace-scoped.
+
+**Archived entries preview.** `get_entry` includes them and the restore flow depends on it — deciding whether to bring an archived symbol back means seeing what it is. This surface is read-only, so showing it costs nothing.
+
+**Errors** — `404` `eda_symbol.not_found` / `eda_footprint.not_found` for an unknown id or one in another workspace; `503` `eda.preview_unavailable` when the stored blob is missing or unparseable, which the content-addressed append-only store makes a "can't happen".
+
+**Rate limit** — `120/minute` per workspace. Generous because the UI fires a preview on every selection change and the 300 s private cache absorbs remounts; it exists to bound the one thing these routes do that a list read does not, which is open a file and parse attacker-supplied s-expressions on the single uvicorn worker prod runs.
+
+**A malformed wrapper is silent.** KiCanvas draws nothing and reports nothing when it cannot parse a document, so the wrapping is pinned from both ends: `backend/tests/test_eda_preview_fixtures.py` holds `preview.py` to documents checked in at `backend/tests/fixtures/eda/preview/`, and `web/src/components/eda/__tests__/kicanvasContract.test.ts` parses those same files with KiCanvas's real parsers. Change a builder → refresh the fixtures (the backend test says how) → re-run the vitest test, which is the half that proves the result still renders.
+
+**Notes**
+
+- Source: `backend/app/api/routes/eda.py` — the "2D preview documents" section
+- Wrapping: `backend/app/domain/eda/preview.py`
+- Viewer pin and its limitations: [kicanvas-provenance](../frontend/kicanvas-provenance.md)
+- Why there are two KiCanvas builds: `web/test-vendor/kicanvas-parsers/README.md`
 
 ## See also
 

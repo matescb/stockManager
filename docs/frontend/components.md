@@ -288,6 +288,60 @@ from a stale lazy-import after a deploy, reloads once via
 attempt also fails. See [routing](routing.md) → "Chunk-load error
 recovery".
 
+## KiCad 2D previews
+
+`web/src/components/eda/`. `SymbolPreview` and `FootprintPreview` render a
+hosted symbol or footprint as KiCad draws it; the CAD tab mounts one under
+each picker once a hosted entry is selected
+(`routes/parts/detail/PartCad.tsx`, the `renderPreview` prop on `RefSlot`).
+Both are thin wrappers over `KicanvasFrame`, which is where everything
+awkward about the dependency lives.
+
+**The viewer is vendored and alpha.** KiCanvas ships no npm package, so a
+built bundle is checked in at `web/public/kicanvas/`, pinned to an exact
+upstream commit, with [kicanvas-provenance](kicanvas-provenance.md) recording the pin, the build command
+that reproduces it byte-for-byte, and — more useful day to day — which
+`<kicanvas-embed>` attributes actually work at that commit. Read that page before
+changing an attribute or bumping the pin; most of the documented API is
+marked not-yet-implemented upstream and silently ignored, including every
+`kicanvas:*` event.
+
+**It is not in the JS bundle.** The file lives under `public/` rather than
+`src/` and is fetched on first mount by `components/eda/kicanvas.ts`, which
+appends one module script and memoises the promise. Nothing is downloaded
+by a user who never opens the CAD tab, or who opens it without selecting a
+hosted entry. `public/` also keeps a minified third-party bundle out of
+`eslint src` and out of rollup's input graph — see [kicanvas-provenance](kicanvas-provenance.md).
+
+**Failure is expected, not exceptional.** KiCanvas parses files this app
+did not write, and a parse failure on the tab where you configure that very
+entry must not take the form with it. `PreviewBoundary` catches and shows a
+plain "Preview unavailable" card, and deliberately does *not* re-throw to
+the outer Sentry boundary — there is no action to take on "an alpha viewer
+could not draw this symbol". A failed bundle fetch degrades the same way.
+
+**The URLs are backend-synthesised.** KiCanvas cannot read `.kicad_sym` or
+`.kicad_mod`, so the components point at
+`/api/eda/{symbols,footprints}/{id}/preview.kicad_{sch,pcb}` rather than at
+the stored file, and the extension in the path is load-bearing — the viewer
+types a document by its URL's basename. See [api/eda](../api/eda.md) →
+"2D previews".
+
+**A broken preview is silent, so it is pinned from both ends.** A document
+KiCanvas cannot parse draws nothing and reports nothing. Two tests make
+that loud instead:
+`backend/tests/test_eda_preview_fixtures.py` holds the builders to
+documents checked in at `backend/tests/fixtures/eda/preview/`, and
+`src/components/eda/__tests__/kicanvasContract.test.ts` parses those same
+files with KiCanvas's real `KicadSch` / `KicadPCB` — asserting the symbol
+keeps its units and pins, the placement resolves its `lib_symbol`, and
+every layer a footprint draws on is one the synthetic board declares. The
+parsers come from a second, test-only build of the pinned commit at
+`web/test-vendor/kicanvas-parsers/`, because the shipped bundle exports
+nothing; `kicanvasPin.test.ts` keeps the two builds on the same commit. If
+the contract test fails after a bump, the preview is broken — fix the
+wrapper, don't relax the test.
+
 ## Smaller helpers
 
 | Component | Source | Purpose |

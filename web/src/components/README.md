@@ -27,6 +27,7 @@ Reusable presentational + behavioural components shared across pages. Page-speci
 | `Brand.tsx` | App logo / wordmark |
 | `layout/AppShell.tsx` | App chrome — sidebar, top bar, route outlet |
 | `scanner/Scanner.tsx`, `ZxingScanner.tsx`, `ScanditScanner.tsx` | Dual-engine barcode scanner |
+| `eda/SymbolPreview.tsx`, `FootprintPreview.tsx` | KiCad 2D previews of a hosted symbol / footprint |
 | `__tests__/`, `__dom__/` | Test trees |
 
 ## Public surface
@@ -48,6 +49,7 @@ Every component is its default / named export. The most commonly reused:
 2. **Use `Modal` before adding a route-local dialog shell.** API: `open`, `onClose`, `title`, `children`, optional `initialFocusRef`, `size`, and `className` for the panel.
 3. **Use the `index.css` utility set** (`btn`, `card`, `pill`, `input`, …) before adding new ones. See [tailwind-utilities](../../../docs/frontend/tailwind-utilities.md).
 4. **Lazy routes wrap their suspense in `RouteSkeleton`** and their data in `QueryStateBoundary` for uniform loading / error UX.
+5. **Don't move `public/kicanvas/` into `src/`.** It is a vendored, minified, alpha third-party bundle: under `src` it would be linted, type-checked and pulled into rollup's input graph, and it is loaded on demand precisely so it never reaches the main chunk. `docs/frontend/kicanvas-provenance.md` has the pin and the reasoning.
 
 ## See also
 
