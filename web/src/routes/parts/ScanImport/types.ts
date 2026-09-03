@@ -12,12 +12,14 @@
  */
 import type { BagCode } from "@/lib/bagCode";
 import type { MpnLookupResult, Part } from "@/types";
+import { providerLabel } from "@/lib/providers";
 
-export const PROVIDER_LABEL: Record<string, string> = {
-  mouser: "Mouser",
-  digikey: "DigiKey",
-  none: "no provider",
-};
+// Real provider names come from the one registry; only the "none"
+// sentinel needs wording of its own here.
+export function providerDisplayName(name: string | null | undefined): string {
+  if (!name || name === "none") return "no provider";
+  return providerLabel(name);
+}
 
 // Module-level constant — referenced by `<Scanner symbologies={...}>`.
 // Inline `["DataMatrix", "QR"]` would be a fresh array on every render,

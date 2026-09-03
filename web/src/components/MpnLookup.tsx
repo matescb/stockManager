@@ -2,17 +2,17 @@ import { useState } from "react";
 import { Loader2, Search } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { MpnLookupResult } from "@/types";
+import { providerLabel } from "@/lib/providers";
 
 type Props = {
   mpn: string;
   onResult: (result: NonNullable<MpnLookupResult["result"]>) => void;
 };
 
-const PROVIDER_LABEL: Record<string, string> = {
-  none: "no provider",
-  mouser: "Mouser",
-  digikey: "DigiKey",
-};
+// "none" needs wording of its own; every real name comes from the registry.
+function displayName(name: string): string {
+  return name === "none" ? "no provider" : providerLabel(name);
+}
 
 /**
  * MpnLookup — small affordance that POSTs the current MPN to
@@ -34,7 +34,7 @@ export default function MpnLookup({ mpn, onResult }: Props) {
     setNote(null);
     try {
       const data = await api.post<MpnLookupResult>("/parts/lookup-mpn", { mpn: trimmed });
-      const label = PROVIDER_LABEL[data.provider] ?? data.provider;
+      const label = displayName(data.provider);
       if (data.found && data.result) {
         onResult(data.result);
         setNote(`Populated from ${label}`);

@@ -105,6 +105,74 @@ class Part(WorkspaceOwned, Base):
     description_locally_edited = Column(Boolean, nullable=False, default=False)
 
 
+class WorkspaceProviderCredential(WorkspaceOwned, Base):
+    """Per-workspace credentials for one SECONDARY parts provider.
+
+    `workspaces.parts_provider_api_key` / `_api_secret` stay where they
+    are and remain the PRIMARY provider's only store — this table is what
+    lets a workspace configure a *second* provider alongside it, and
+    holds nothing else. Migration 0070 backfills no rows and the PUT
+    route refuses a payload naming the workspace's own `parts_provider`,
+    so no provider ever has a key in both places (see
+    `provider_credentials.py`).
+
+    Both value columns hold Fernet ciphertext from `core/secrets.py`,
+    never plaintext. Providers that need one credential (Mouser's search
+    key) leave `api_secret_encrypted` NULL; DigiKey uses both as
+    client_id / client_secret.
+    """
+
+    __tablename__ = "workspace_provider_credentials"
+    __table_args__ = (
+        # One active row per (workspace, provider). Archiving frees the
+        # slot so a cleared credential can be re-added later without
+        # colliding with its own tombstone.
+        Index(
+            "uq_workspace_provider_credentials_ws_provider",
+            "workspace_id",
+            "provider",
+            unique=True,
+            postgresql_where=text("archived_at IS NULL"),
+        ),
+    )
+
+    provider = Column(String(40), nullable=False)
+    api_key_encrypted = Column(Text, nullable=True)
+    api_secret_encrypted = Column(Text, nullable=True)
+
+
+class PartProviderLink(WorkspaceOwned, Base):
+    """One part's link to one provider's catalog entry.
+
+    Written for the primary provider too (alongside `parts.linked_*`,
+    which stays the primary's source of truth for the part columns) so
+    this table alone answers "which providers know this part".
+    """
+
+    __tablename__ = "part_provider_links"
+    __table_args__ = (
+        Index(
+            "uq_part_provider_links_part_provider",
+            "part_id",
+            "provider",
+            unique=True,
+            postgresql_where=text("archived_at IS NULL"),
+        ),
+        Index("ix_part_provider_links_ws_provider", "workspace_id", "provider"),
+    )
+
+    part_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("parts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    provider = Column(String(40), nullable=False)
+    external_id = Column(String(300), nullable=True)
+    source_url = Column(String(500), nullable=True)
+    last_refresh_at = Column(DateTime(timezone=True), nullable=True)
+
+
 class PartCadKey(Base):
     __tablename__ = "part_cad_keys"
     __table_args__ = (

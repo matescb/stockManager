@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import unittest.mock as _mock
 from collections.abc import Callable
 from uuid import UUID
 
@@ -18,6 +19,12 @@ from tests.test_eda import _symbol_text as _eda_symbol_text
 from tests.test_eda_import import _snapeda_zip as _eda_vendor_zip
 from tests.test_eda_import import _symbol_lib as _eda_symbol_lib
 from tests.test_eda_import import _zip_bytes as _eda_zip_bytes
+from tests.test_secondary_provider import MPN as _SECONDARY_MPN
+from tests.test_secondary_provider import (
+    _configure_mouser_secondary,
+    _enable_digikey_primary,
+    mouser_response,
+)
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 FORBIDDEN_COMMENT_VALUES = (
@@ -514,6 +521,44 @@ def _setup_api_token_revoke(client, _db) -> Operation:
     }
 
 
+def _setup_provider_credentials_put(_client, _db) -> Operation:
+    # The api_key carries a FORBIDDEN_COMMENT_VALUES sentinel so the
+    # sanitization assertion actually has something to catch.
+    return {
+        "method": "put",
+        "path": "/api/workspaces/current/provider-credentials",
+        "json": {"provider": "mouser", "api_key": "credential-aud-124"},
+        "expected_status": 200,
+    }
+
+
+def _setup_part_provider_unlink(client, _db) -> Operation:
+    _enable_digikey_primary(client)
+    _configure_mouser_secondary(client)
+    part_id = client.post(
+        "/api/parts",
+        json={
+            "name": "AUD-124 secondary link",
+            "part_type": "linked",
+            "mpn": _SECONDARY_MPN,
+        },
+    ).json()["data"]["id"]
+    # `_mock.patch` rather than the monkeypatch fixture — a Setup only
+    # receives (client, db).
+    with _mock.patch(
+        "app.domain.parts.providers.mouser._post_mouser",
+        return_value=mouser_response(),
+    ):
+        r = client.post(f"/api/parts/{part_id}/refresh-from-provider?provider=mouser")
+    assert r.status_code == 200, r.text
+    return {
+        "method": "delete",
+        "path": f"/api/parts/{part_id}/provider-links/mouser",
+        "expected_status": 200,
+        "target_id": part_id,
+    }
+
+
 @pytest.mark.parametrize(
     ("route_name", "setup", "method", "path", "body", "action", "target_type"),
     [
@@ -701,6 +746,20 @@ def test_each_mutator_writes_audit_row(
             _setup_api_token_revoke,
             "api_token.revoked",
             "api_token",
+            _target_id,
+        ),
+        (
+            "workspaces.put_provider_credentials",
+            _setup_provider_credentials_put,
+            "workspace.credentials_rotated",
+            "workspace",
+            None,
+        ),
+        (
+            "parts_refresh.delete_provider_link",
+            _setup_part_provider_unlink,
+            "part.provider_unlinked",
+            "part",
             _target_id,
         ),
         (

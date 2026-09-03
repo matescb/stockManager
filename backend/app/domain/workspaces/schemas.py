@@ -12,7 +12,14 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, StringConstraints
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    StringConstraints,
+    model_validator,
+)
 
 __all__ = [
     "WorkspaceCreateIn",
@@ -21,6 +28,7 @@ __all__ = [
     "MemberPatch",
     "InviteIn",
     "AcceptIn",
+    "ProviderCredentialsIn",
 ]
 
 CurrencyCode = Annotated[str, StringConstraints(pattern=r"^[A-Z]{3}$")]
@@ -81,6 +89,35 @@ class WorkspacePatch(BaseModel):
     active_countries: list[CountryCode] | None = Field(default=None, min_length=1)
     active_distributors: list[DistributorName] | None = Field(default=None, min_length=1)
     sourcing_use_cached_for_dashboards: bool | None = None
+
+
+class ProviderCredentialsIn(BaseModel):
+    """Body of `PUT /api/workspaces/current/provider-credentials`.
+
+    Configures ONE provider's credentials in
+    `workspace_provider_credentials` — the storage a secondary provider
+    uses. The primary's own key still rides on `WorkspacePatch`.
+
+    The Literal is the "known provider" gate: an unknown name is a
+    pydantic 422 with no route code. Keep it in sync with
+    `parts_provider` above and `provider_fields.KNOWN_PROVIDER_NAMES`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["mouser", "digikey"]
+    # Same '' clears / non-empty replaces / omitted leaves alone semantics
+    # as the parts_provider_api_key field on WorkspacePatch.
+    api_key: str | None = Field(default=None, max_length=256)
+    api_secret: str | None = Field(default=None, max_length=256)
+
+    @model_validator(mode="after")
+    def _require_a_credential_field(self) -> "ProviderCredentialsIn":
+        # A body naming only a provider would write nothing and still cost
+        # an audit row. Make the caller say what they meant.
+        if not {"api_key", "api_secret"} & self.model_fields_set:
+            raise ValueError("provide api_key and/or api_secret")
+        return self
 
 
 class CatalogTokenIn(BaseModel):

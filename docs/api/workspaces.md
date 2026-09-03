@@ -68,9 +68,12 @@ Return the active workspace.
     "active_currencies": ["EUR", "USD"], "active_countries": ["CZ", "DE"],
     "sourcing_language_code": null,
     "active_distributors": ["DigiKey", "Mouser"],
-    "scanner": "zxing", "has_scanner_license_key": false
+    "scanner": "zxing", "has_scanner_license_key": false,
+    "provider_credentials": [ { "provider": "mouser", "has_api_key": true, "has_api_secret": false } ]
 }, "status": { … } }
 ```
+
+`provider_credentials` lists the live `workspace_provider_credentials` rows — one per configured **secondary** provider, presence flags only. The primary never appears here: its key is in `has_parts_provider_api_key` / `has_parts_provider_api_secret` above. See [ADR-0031](../adr/0031-primary-and-secondary-parts-providers.md).
 
 **Notes**
 
@@ -143,6 +146,29 @@ Update workspace settings, rotate provider/scanner credentials, and (re)mint the
 - Credential rotation emits an audit row `workspace.credentials_rotated` listing only field names (`workspaces.py:234-244`).
 - Active-list updates emit `workspace.active_lists_updated` with changed field names and values (`workspaces.py:308-323`).
 - Source: `backend/app/api/routes/workspaces.py:160-246`.
+
+### `PUT /api/workspaces/current/provider-credentials`
+
+Set or clear one provider's credentials in `workspace_provider_credentials` — how a **secondary** parts provider is configured. The primary's own key still rides on `PATCH /current`.
+
+**Body**
+
+```json
+{ "provider": "mouser", "api_key": "…", "api_secret": "…" }
+```
+
+- `provider` — `mouser` or `digikey`. Anything else is `422` (pydantic `Literal`). Naming the workspace's own `parts_provider` is `400` `workspace.provider_is_primary`: this table holds secondaries only, and two credential stores for one provider means clearing either reports success while the other keeps authenticating.
+- `api_key` / `api_secret` — omitted leaves the stored value alone, `""` clears it. At least one must be present, else `422`. Clearing both retires the row.
+
+**Response** — `200 OK` with `{ provider, has_api_key, has_api_secret, provider_credentials }`. No credential is ever echoed.
+
+**Notes**
+
+- `require_role("admin")` + `Depends(forbid_api_token)` — session-cookie only, same reasoning as `PATCH /current` (ADR-0029): a leaked admin token must not be able to swap the workspace's provider key for one it controls.
+- Rate limit: `30/minute` per workspace.
+- Values are encrypted at rest with `core/secrets.py` (same keyring as the legacy columns).
+- Audit: `workspace.credentials_rotated`, comment `provider=<name>,fields=<names>` — field NAMES only, never values.
+- Source: `backend/app/api/routes/workspaces.py`.
 
 ## Catalog tokens
 

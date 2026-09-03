@@ -26,6 +26,25 @@ from app.domain.parts.models import Part
 from app.domain.parts.schemas import BulkDeleteIn, PartIn, PartPatch  # noqa: F401
 
 
+def audit_fields_comment(fields: list[str] | set[str]) -> str:
+    """The `fields=a,b,c` audit comment every PATCH-shaped route writes."""
+    if not fields:
+        return "fields=none"
+    return "fields=" + ",".join(sorted(fields))
+
+
+def raise_mpn_conflict(existing: Part) -> None:
+    """409 naming the part that already holds this MPN — the shape the
+    create-part client reads `existing_id` / `existing_name` from."""
+    raise_http(
+        status.HTTP_409_CONFLICT,
+        code=ErrorCodes.PART_MPN_CONFLICT,
+        message=f"MPN already used by part \"{existing.name}\"",
+        existing_id=str(existing.id),
+        existing_name=existing.name,
+    )
+
+
 def image_urls_for_parts(db, ws_id, part_ids: list) -> dict:
     """Single-shot SELECT for the per-part image_url custom_field row,
     keyed by part_id. The /parts list endpoint uses this so we don't
@@ -49,12 +68,21 @@ def serialize_part(
     reserved: int | None = None,
     available: int | None = None,
     image_url: str | None = None,
+    provider_links: list[dict] | None = None,
 ) -> dict:
+    """Serialize a Part for API responses.
+
+    `provider_links` is emitted only when the caller loaded it. Part
+    LISTS deliberately don't — it would be a second query per page for
+    something no list column renders — and the key is absent there
+    rather than an empty array that would read as "no links". Detail-
+    shaped responses pass it; see `provider_links_for`.
+    """
     if reserved is None:
         reserved = 0
     if available is None and on_hand is not None:
         available = on_hand - reserved
-    return {
+    out = {
         "id": str(p.id),
         "part_type": p.part_type,
         "name": p.name,
@@ -85,6 +113,19 @@ def serialize_part(
         # download failed. None when no image was ever attached.
         "image_url": image_url,
     }
+    if provider_links is not None:
+        out["provider_links"] = provider_links
+    return out
+
+
+def provider_links_for(db, ws_id, part_id) -> list[dict]:
+    """Serialized `part_provider_links` rows for one part."""
+    from app.domain.parts.provider_links import links_for_part, serialize_link
+
+    return [
+        serialize_link(row)
+        for row in links_for_part(db, workspace_id=ws_id, part_id=part_id)
+    ]
 
 
 def get_part(db, ws_id, part_id, *, include_archived: bool = False) -> Part:

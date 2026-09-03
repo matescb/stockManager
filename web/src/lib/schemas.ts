@@ -41,6 +41,19 @@ const optionalNullableUuid = uuid.nullable().optional();
 // have a single source of truth (types.ts re-exports these).
 // ---------------------------------------------------------------------
 
+/**
+ * One row of `part_provider_links` — which providers know this part.
+ * The primary appears here alongside every secondary; `linked_provider`
+ * is what distinguishes it.
+ */
+export const ProviderLinkSchema = z.object({
+  provider: z.string(),
+  external_id: nullableString,
+  source_url: nullableString,
+  last_refresh_at: nullableString,
+});
+export type ProviderLink = z.infer<typeof ProviderLinkSchema>;
+
 export const PartSchema = z.object({
   id: uuid,
   part_type: z.enum(["linked", "local", "meta", "sub_assembly"]),
@@ -72,6 +85,10 @@ export const PartSchema = z.object({
   reserved: z.number(),
   available: z.number(),
   image_url: nullableString,
+  // Detail-shaped responses only — part LISTS omit the key rather than
+  // send an empty array that would read as "no links". Optional so a
+  // list row still parses.
+  provider_links: z.array(ProviderLinkSchema).optional(),
 });
 export type Part = z.infer<typeof PartSchema>;
 

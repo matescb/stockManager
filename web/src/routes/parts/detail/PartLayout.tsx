@@ -27,9 +27,13 @@ function PartLayoutQuery({ partId }: { partId: string }) {
   const items = [
     { to: `/parts/${part.id}/info`, label: "Part info" },
     { to: `/parts/${part.id}/specs`, label: "Specs" },
-    // Sourcing only makes sense for parts that have a provider linked —
-    // it surfaces stock/price/lead-time/etc. pulled by Mouser or DigiKey.
-    ...(part.linked_provider ? [{ to: `/parts/${part.id}/sourcing`, label: "Sourcing" }] : []),
+    // Sourcing only makes sense for parts some provider actually knows —
+    // it surfaces stock/price/lead-time/etc. `linked_provider` is the
+    // primary; `provider_links` also covers a part linked to a secondary
+    // provider only, which has no primary link to show.
+    ...(part.linked_provider || (part.provider_links?.length ?? 0) > 0
+      ? [{ to: `/parts/${part.id}/sourcing`, label: "Sourcing" }]
+      : []),
     { to: `/parts/${part.id}/cad`, label: "CAD" },
     { to: `/parts/${part.id}/authorized-supply`, label: "Authorized supply" },
     { to: `/parts/${part.id}/stock`, label: "Stock" },

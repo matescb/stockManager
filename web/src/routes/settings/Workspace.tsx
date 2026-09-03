@@ -9,6 +9,7 @@ import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { InlineQueryError } from "@/components/QueryStateBoundary";
 import { ActiveListsCard } from "./ActiveListsCard";
+import { ProvidersCard, type ProviderCredential } from "./ProvidersCard";
 import { SourcingCard } from "./SourcingCard";
 
 type Ws = {
@@ -30,6 +31,9 @@ type Ws = {
   parts_provider: "none" | "mouser" | "digikey";
   has_parts_provider_api_key: boolean;
   has_parts_provider_api_secret: boolean;
+  // Secondary providers configured in workspace_provider_credentials —
+  // presence flags only, never the values. See ProvidersCard.
+  provider_credentials: ProviderCredential[];
   sourcing_provider: "none" | "trustedparts";
   sourcing_country_code: string | null;
   sourcing_currency_code: string | null;
@@ -696,6 +700,7 @@ export default function WorkspaceSettings() {
         </Link>
       </div>
 
+      {cur && <ProvidersCard workspace={cur} workspaceId={workspaceId} />}
       {cur && <SourcingCard workspace={cur} workspaceId={workspaceId} />}
       {cur && <ActiveListsCard workspace={cur} workspaceId={workspaceId} />}
 

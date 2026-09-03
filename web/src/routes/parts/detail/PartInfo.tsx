@@ -9,11 +9,7 @@ import { useAuth } from "@/lib/auth";
 import { InlineQueryError } from "@/components/QueryStateBoundary";
 import { isSafeHttpOrSameOriginUrl } from "@/lib/url";
 import type { CustomFieldRow, Part } from "@/types";
-
-const PROVIDER_LABEL: Record<string, string> = {
-  mouser: "Mouser",
-  digikey: "DigiKey",
-};
+import { providerLabel } from "@/lib/providers";
 
 const STALE_DAYS = 30;
 
@@ -81,7 +77,7 @@ export default function PartInfo() {
       if (r.found && r.summary) {
         const { added, updated, removed } = r.summary;
         toast.success(
-          `Refreshed from ${PROVIDER_LABEL[r.provider!] ?? r.provider}: ` +
+          `Refreshed from ${providerLabel(r.provider)}: ` +
             `${added} added, ${updated} updated, ${removed} removed.`,
         );
       } else {
@@ -97,9 +93,7 @@ export default function PartInfo() {
   }
 
   const linked = !!part.linked_provider;
-  const providerLabel = linked
-    ? PROVIDER_LABEL[part.linked_provider as string] ?? part.linked_provider
-    : null;
+  const linkedProviderName = linked ? providerLabel(part.linked_provider) : null;
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -112,7 +106,7 @@ export default function PartInfo() {
         <div className="card p-3 col-span-2 flex items-center gap-3 text-sm">
           <RefreshCw size={14} className="text-accent shrink-0" />
           <div className="flex-1">
-            <span className="font-medium">Linked to {providerLabel}</span>
+            <span className="font-medium">Linked to {linkedProviderName}</span>
             <span className="text-muted ml-2">
               · last refreshed {relativeTime(part.last_refresh_at)}
               {isStale(part.last_refresh_at) && (
@@ -130,7 +124,7 @@ export default function PartInfo() {
             className="btn"
             onClick={refresh}
             disabled={refreshing}
-            title={`Re-pull ${providerLabel} data`}
+            title={`Re-pull ${linkedProviderName} data`}
           >
             {refreshing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
             Refresh
@@ -143,12 +137,12 @@ export default function PartInfo() {
         <Field
           label="Manufacturer"
           value={part.manufacturer}
-          badge={linked ? <ProviderBadge label={providerLabel!} /> : null}
+          badge={linked ? <ProviderBadge label={linkedProviderName!} /> : null}
         />
         <Field
           label="MPN"
           value={part.mpn}
-          badge={linked ? <ProviderBadge label={providerLabel!} /> : null}
+          badge={linked ? <ProviderBadge label={linkedProviderName!} /> : null}
         />
         <Field label="Internal P/N" value={part.internal_part_number} />
         <Field label="Footprint" value={part.footprint} />
@@ -178,7 +172,7 @@ export default function PartInfo() {
             part.description_locally_edited ? (
               <span className="pill ml-2 bg-warning/20 text-warning">Locally edited</span>
             ) : (
-              <ProviderBadge label={providerLabel!} className="ml-2" />
+              <ProviderBadge label={linkedProviderName!} className="ml-2" />
             )
           )}
         </div>

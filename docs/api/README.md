@@ -2,7 +2,7 @@
 
 Audience: engineer
 
-Per-router REST reference for every public endpoint. One file per logical area; routers that share a path prefix are grouped (e.g. `parts.md` covers parts_core, parts_assets, parts_scan, parts_provider).
+Per-router REST reference for every public endpoint. One file per logical area; routers that share a path prefix are grouped (e.g. `parts.md` covers parts_core, parts_assets, parts_refresh, parts_scan, parts_provider).
 
 ## Conventions
 
@@ -39,7 +39,7 @@ slowapi, per-process bucket store, per-IP. The reverse proxy must set `X-Forward
 | [auth](auth.md) | `/api/auth` | Signup, email verification, login, logout, `me` |
 | [workspaces](workspaces.md) | `/api/workspaces` | Workspace CRUD, members, invitations, catalog tokens |
 | [invitations](invitations.md) | `/api/invitations` | Accept invitation (no workspace context) |
-| [parts](parts.md) | `/api/parts` | parts_core + parts_assets + parts_scan + parts_provider |
+| [parts](parts.md) | `/api/parts` | parts_core + parts_assets + parts_refresh + parts_scan + parts_provider |
 | [categories](categories.md) | `/api/categories` | Part categories + per-category EDA defaults |
 | [eda](eda.md) | `/api/eda`, `/api/parts/{id}/eda` | KiCad library CRUD, uploads, vendor-zip + LCSC import, client setup |
 | [kicad](kicad.md) | `/kicad-api` | KiCad's own protocols: the HTTP library and the PCM repository. **Not** the envelope |

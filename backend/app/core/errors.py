@@ -115,6 +115,11 @@ class ErrorCodes:
     WORKSPACE_LAST_OWNER = "workspace.last_owner"
     WORKSPACE_SELF_REMOVE = "workspace.self_remove"
     WORKSPACE_ISOLATION = "workspace.isolation"
+    # Refusing to write the PRIMARY provider's credentials into the
+    # secondary table — that's `PATCH /api/workspaces/current`. Two
+    # stores holding a key for the same provider is the two-writer trap:
+    # clearing one reports success while the other keeps working.
+    WORKSPACE_PROVIDER_IS_PRIMARY = "workspace.provider_is_primary"
 
     # Invitations
     INVITATION_NOT_FOUND = "invitation.not_found"
@@ -227,6 +232,13 @@ class ErrorCodes:
     PART_META_MEMBER_META = "part.meta_member_meta"
     PART_PROVIDER_NOT_CONFIGURED = "part.provider_not_configured"
     PART_PROVIDER_MISSING_MPN = "part.provider_missing_mpn"
+    # A provider name `make_provider` doesn't know. Distinct from
+    # NOT_CONFIGURED, which means "known provider, no credentials".
+    PART_PROVIDER_UNKNOWN = "part.provider_unknown"
+    PART_PROVIDER_LINK_NOT_FOUND = "part.provider_link_not_found"
+    # Refusing to unlink the primary through the secondary-link route —
+    # that's `PATCH /api/parts/{id}` with unlink_provider=true.
+    PART_PROVIDER_LINK_IS_PRIMARY = "part.provider_link_is_primary"
     PART_ASSET_NOT_FOUND = "part.asset_not_found"
     PART_ASSET_INVALID_FILENAME = "part.asset_invalid_filename"
 

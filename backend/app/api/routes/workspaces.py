@@ -22,10 +22,17 @@ from app.core.deps import (
     require_role,
 )
 from app.core.errors import ErrorCodes, raise_http
-from app.core.ratelimit import limiter
+from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import ok
 from app.core.secrets import decrypt, encrypt
 from app.domain.audit.service import log as _audit_log
+from app.domain.parts.provider_credentials import (
+    active_credential_rows,
+    serialize_credential,
+)
+from app.domain.parts.provider_credentials import (
+    upsert as _upsert_provider_credentials,
+)
 from app.domain.sourcing import cache as sourcing_cache
 from app.domain.tokens import service as tokens_service
 from app.domain.users.models import User
@@ -38,6 +45,7 @@ from app.domain.workspaces.models import Workspace, WorkspaceCatalogToken, Works
 from app.domain.workspaces.schemas import (
     CatalogTokenIn,
     MemberPatch,
+    ProviderCredentialsIn,
     WorkspaceCreateIn,
     WorkspacePatch,
 )
@@ -210,7 +218,11 @@ def _hmac_token(token: str) -> str:
     ).hexdigest()
 
 
-def _serialize_workspace(ws: Workspace, new_token: str | None = None) -> dict:
+def _serialize_workspace(
+    ws: Workspace,
+    new_token: str | None = None,
+    provider_credentials: list[dict] | None = None,
+) -> dict:
     """Serialize a workspace for API responses.
 
     SEC2-008: the plaintext catalog_token is no longer echoed in read
@@ -254,6 +266,11 @@ def _serialize_workspace(ws: Workspace, new_token: str | None = None) -> dict:
         "scanner": ws.scanner or "zxing",
         # Same secret-handling pattern as the parts-provider key.
         "has_scanner_license_key": bool(ws.scanner_license_key),
+        # Secondary-provider credentials — presence flags only, same rule
+        # as every has_* above. One entry per configured provider; the
+        # primary appears here too once it has a row (migration 0070
+        # backfilled one for every workspace that had a key).
+        "provider_credentials": provider_credentials or [],
     }
     if new_token is not None:
         # Shown once — the frontend must present a copy-once UI.
@@ -261,9 +278,17 @@ def _serialize_workspace(ws: Workspace, new_token: str | None = None) -> dict:
     return out
 
 
+def _provider_credentials_payload(db, ws: Workspace) -> list[dict]:
+    return [serialize_credential(row) for row in active_credential_rows(db, ws.id)]
+
+
 @router.get("/current")
-def current(ws: CurrentWorkspace):
-    return ok(_serialize_workspace(ws))
+def current(db: DbSession, ws: CurrentWorkspace):
+    return ok(
+        _serialize_workspace(
+            ws, provider_credentials=_provider_credentials_payload(db, ws)
+        )
+    )
 
 
 @router.get("/master-lists")
@@ -441,7 +466,85 @@ def patch_current(payload: WorkspacePatch, db: DbSession, ws: CurrentWorkspace, 
             ),
         )
 
-    return ok(_serialize_workspace(ws, new_token=new_token))
+    return ok(
+        _serialize_workspace(
+            ws,
+            new_token=new_token,
+            provider_credentials=_provider_credentials_payload(db, ws),
+        )
+    )
+
+
+# Session-cookie only, same reasoning as PATCH /current: this writes an
+# encrypted third-party credential, so a leaked admin token must not be
+# able to swap the workspace's provider key for one it controls
+# (ADR-0029).
+@router.put(
+    "/current/provider-credentials",
+    dependencies=[Depends(require_role("admin")), Depends(forbid_api_token)],
+)
+@limiter.limit("30/minute", key_func=workspace_key)
+def put_provider_credentials(
+    request: Request,
+    payload: ProviderCredentialsIn,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
+    """Set or clear one SECONDARY provider's credentials (admin+).
+
+    `workspace_provider_credentials` holds secondaries and nothing else.
+    The primary's key lives in the legacy `workspaces.parts_provider_api_*`
+    columns and is written by `PATCH /current`; letting it also land here
+    would give one provider two credential stores, and clearing either
+    one would report success while the other kept authenticating. So a
+    payload naming the workspace's own `parts_provider` is refused.
+
+    Omitted fields are left alone, an empty string clears one, and
+    clearing both retires the row.
+
+    Never echoes a credential: the response carries presence flags, and
+    the audit row records the provider plus the field NAMES only.
+    """
+    if payload.provider == (ws.parts_provider or None):
+        raise_http(
+            400,
+            ErrorCodes.WORKSPACE_PROVIDER_IS_PRIMARY,
+            (
+                f"'{payload.provider}' is this workspace's primary provider; "
+                "rotate its credentials with PATCH /api/workspaces/current"
+            ),
+            provider=payload.provider,
+        )
+
+    row = _upsert_provider_credentials(
+        db,
+        ws=ws,
+        user_id=user.id,
+        provider=payload.provider,
+        api_key=payload.api_key,
+        api_secret=payload.api_secret,
+    )
+
+    changed = sorted(payload.model_fields_set - {"provider"})
+    _audit_log(
+        db,
+        ws=ws,
+        user=user,
+        action="workspace.credentials_rotated",
+        target_type="workspace",
+        target_ids=[ws.id],
+        comment=f"provider={payload.provider},fields={','.join(changed)}",
+        request_id=getattr(request.state, "request_id", None),
+    )
+    return ok(
+        {
+            "provider": payload.provider,
+            "has_api_key": bool(row is not None and row.api_key_encrypted),
+            "has_api_secret": bool(row is not None and row.api_secret_encrypted),
+            "provider_credentials": _provider_credentials_payload(db, ws),
+        }
+    )
 
 
 # ---------------------------------------------------------------------------

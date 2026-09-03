@@ -44,7 +44,9 @@ from app.domain.parts.models import (  # noqa: F401
     Part,
     PartCadKey,
     PartMetaMember,
+    PartProviderLink,
     PartSubstitute,
+    WorkspaceProviderCredential,
 )
 from app.domain.projects.models import (  # noqa: F401
     BomImportPreset,
