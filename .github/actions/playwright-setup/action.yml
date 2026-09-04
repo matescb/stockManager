@@ -54,6 +54,43 @@ runs:
           exit 1
         fi
 
+    - name: Wait for web (vite :5173 + its /api proxy)
+      shell: bash
+      run: |
+        # The backend health wait above only proves :8000. The @smoke suite
+        # drives PLAYWRIGHT_BASE_URL (:5173, the vite dev container) and its
+        # very first call is POST :5173/api/auth/signup, which vite proxies
+        # to backend:8000. If :5173 isn't serving yet the request comes back
+        # "socket hang up" — a flake that, on a post-merge run, FAILS
+        # playwright-e2e and thereby SKIPS the gated deploy (deploy needs it).
+        #
+        # Root cause of the slowness: the dev web service command is
+        # `npm install && npm run dev` (docker-compose.dev.yml) over a
+        # web_node_modules volume that `down -v` wipes every run, so a COLD
+        # npm install runs at container start before vite serves. Under npm
+        # registry stress that easily exceeds the 60s backend budget — hence
+        # this step gets its own generous 300s window, polling the exact
+        # proxied path the smoke test uses so readiness is proven end-to-end
+        # before Playwright installs and runs.
+        ok=0
+        deadline=$((SECONDS + 300))
+        attempt=0
+        while [ "${SECONDS}" -lt "${deadline}" ]; do
+          attempt=$((attempt + 1))
+          if curl -fsS http://localhost:5173/api/health > /dev/null 2>&1; then
+            echo "web :5173 + /api proxy OK after ${attempt} attempt(s) (~$((attempt * 3))s)"
+            ok=1
+            break
+          fi
+          sleep 3
+        done
+        if [ "${ok}" -ne 1 ]; then
+          echo "web :5173 never proxied /api within 300s — dumping web container state:"
+          docker compose -f docker-compose.dev.yml ps || true
+          docker compose -f docker-compose.dev.yml logs --tail=120 web || true
+          exit 1
+        fi
+
     - name: Install Playwright + Chromium
       shell: bash
       working-directory: web
