@@ -216,6 +216,7 @@ from app.api.routes import (
     custom_fields,
     eda,
     eda_import,
+    eda_preview3d,
     invitations,
     kicad,
     kicad_pcm,
@@ -593,6 +594,12 @@ app.include_router(
 )
 app.include_router(
     eda_import.router,
+    prefix="/api/eda",
+    tags=["eda"],
+    dependencies=_member_gate,
+)
+app.include_router(
+    eda_preview3d.router,
     prefix="/api/eda",
     tags=["eda"],
     dependencies=_member_gate,

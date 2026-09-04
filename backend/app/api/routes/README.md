@@ -15,6 +15,7 @@ Every public REST endpoint lives here, one file per logical area. This README is
 | `categories.py` | `/api/categories` | [categories](../../../../docs/api/categories.md) |
 | `eda.py` | `/api/eda` + `/api/parts/{id}/eda` | [eda](../../../../docs/api/eda.md) |
 | `eda_import.py` | `/api/eda/import` + `/api/parts/{id}/eda/import`, `/fetch-lcsc` | [eda](../../../../docs/api/eda.md#importers) |
+| `eda_preview3d.py` | `/api/eda/datafiles/{id}/preview.glb` (STEP→GLB) | [eda](../../../../docs/api/eda.md#d-model-preview) |
 | `parts_relations.py` | `/api/parts` (substitutes, meta members) | [parts](../../../../docs/api/parts.md) |
 | `parts_assets.py` | `/api/parts/assets/...` | [parts](../../../../docs/api/parts.md) |
 | `parts_refresh.py` | `/api/parts/{id}/refresh-from-provider`, `/provider-links/{provider}` | [parts](../../../../docs/api/parts.md) |
