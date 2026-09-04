@@ -295,6 +295,10 @@ class ErrorCodes:
     # File serving.
     EDA_FILE_NOT_FOUND = "eda.file_not_found"
     EDA_INVALID_FILENAME = "eda.invalid_filename"
+    # 2D preview documents (domain/eda/preview.py). Only ever raised when
+    # a stored blob is missing or unparseable, which the content-addressed
+    # append-only store makes a "can't happen" — hence 503, not 4xx.
+    EDA_PREVIEW_UNAVAILABLE = "eda.preview_unavailable"
 
     # Reports router.
     REPORT_PROJECT_NOT_FOUND = "report.project_not_found"

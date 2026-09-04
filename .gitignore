@@ -67,3 +67,9 @@ web/playwright-report/
 web/test-results/
 web/.playwright/
 
+
+# Agent-harness scratch worktrees. CLAUDE.md notes that transient
+# review-*/ dirs and stray venvs appear at the repo root during agent
+# sessions and are gitignored; this one was not, and showed up as
+# untracked noise in every `git status`.
+.claude/worktrees/
