@@ -67,6 +67,20 @@ describe("SymbolPreview", () => {
     await user.click(screen.getByRole("button", { name: "Show" }));
     expect(img()).not.toBeNull();
   });
+
+  it("zooms in from the buttons and resets with Fit", () => {
+    render(<SymbolPreview symbolId="abc-123" />);
+    // The zoom controls appear only once the image has loaded.
+    fireEvent.load(img()!);
+    const stage = () =>
+      document.querySelector("[data-testid='svg-preview-stage']") as HTMLElement;
+
+    expect(stage().style.transform).toContain("scale(1)");
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    expect(stage().style.transform).toContain("scale(1.25)");
+    fireEvent.click(screen.getByRole("button", { name: "Reset view" }));
+    expect(stage().style.transform).toContain("scale(1)");
+  });
 });
 
 describe("FootprintPreview", () => {
