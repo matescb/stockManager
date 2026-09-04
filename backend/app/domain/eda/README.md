@@ -19,7 +19,7 @@ Owns the workspace's KiCad library — schematic symbols, PCB footprints, 3D mod
 | `kicad_refs.py` | The naming contract: file stem `SM_<slug>`, reference `PCM_SM_<slug>:<entry>`, `${STOCKMGR_3D}/…`, `${STOCKMGR_SPICE}/…` |
 | `kicad_library.py` | The `/kicad-api/v1` documents: eligibility, the one-query listing, JSON shaping |
 | `pcm.py` | The PCM package: the zip, `repository.json` / `packages.json`, stateless versioning |
-| `preview.py` | Synthetic `.kicad_sch` / `.kicad_pcb` wrappers so the browser viewer can draw a stored entry |
+| `render.py` | kicad-cli SVG rendering (via the `kicad-render` sidecar) + content-addressed SVG cache for the 2D preview |
 | `preview3d.py` | STEP→GLB conversion (cascadio/OCC) + content-addressed GLB cache for the 3D preview |
 
 ## Public surface
@@ -40,7 +40,7 @@ Owns the workspace's KiCad library — schematic symbols, PCB footprints, 3D mod
 | Serve the KiCad library | `kicad_library.py::root_document`, `::list_categories`, `::list_parts`, `::part_detail` |
 | Build the PCM package | `pcm.py::plan_package`, `::materialise`, `::build_package` |
 | Shape the PCM documents | `pcm.py::repository_document`, `::packages_document`, `::metadata_document` |
-| Wrap an entry for the browser viewer | `preview.py::symbol_document`, `::footprint_document` |
+| Render a 2D preview (cached) | `render.py::get_or_build_svg` |
 | Build a STEP's 3D preview (cached) | `preview3d.py::get_or_build_glb` |
 
 REST surface: `backend/app/api/routes/eda.py` (library CRUD + per-part config) and
@@ -93,6 +93,6 @@ by header for the first, by URL path (read-only tokens only) for the second.
 - Don't give the content-addressed write a scratch name derived only from the hash. Two concurrent imports of the same bytes share the target, and a shared `.tmp` meant the first `os.replace` pulled the file out from under the second.
 - Don't let an entry disappear between the archive and the response. Anything not imported — a member we couldn't place, a `(model …)` whose file was missing, a library entry narrowed away from the part — is a `skipped` note naming it.
 - Don't set the route's `asyncio.wait_for` to `lcsc.FETCH_BUDGET_SECONDS`. The outer wait needs headroom (`HARD_TIMEOUT_SECONDS`) or it fires first every time and the per-stage deadline checks become dead code.
-- Don't refresh `tests/fixtures/eda/preview/` to make a test pass without running the vitest contract test afterwards. The backend test only proves the fixtures match the builder; the vitest one proves KiCanvas can still parse them, and a document it can't parse renders blank with no error anywhere. Regenerating to green the backend half is exactly how a blank preview would ship.
-- Don't merge `preview.py`'s wrappers with `pcm.py`'s. They look alike and are not interchangeable: `pcm.py` builds `(kicad_symbol_lib …)`, the format KiCad installs, and `preview.py` builds `(kicad_sch …)` / `(kicad_pcb …)`, the only formats the browser viewer can read. Pointing either at the other's consumer fails — silently, in the viewer's case. Nor should `preview.py` bind the placement's `lib_id` to the row's `name`: upload can rename the row without rewriting the blob, and a `lib_id` that doesn't match the name inside the file renders a blank symbol with no error.
+- Don't render 2D previews in-process. `render.py` hands the geometry to the `kicad-render` sidecar (see `render/`) precisely so a ~200 MB KiCad install stays out of the slim backend image and no request path runs a subprocess. A sidecar that is down degrades to a 503 "preview unavailable"; it never 500s the app. Bump `render.py::KICAD_SERIES` and the sidecar's `Dockerfile` digest together — the series is baked into the SVG cache tag so a version change invalidates it.
+- Don't confuse `render.py`'s symbol wrapper with `pcm.py`'s. Both put a bare `(symbol …)` into `(kicad_symbol_lib …)`, but `pcm.py` builds the package KiCad installs and `render.py` builds the throwaway one-symbol library it hands kicad-cli to draw. They share a shape, not a purpose.
 20. **A package is never held in memory if it can be helped.** `MAX_CONTENT_BYTES` allows 200 MiB of source content and the archive route allows 30 requests a minute, so buffering would multiply that into resident memory. `pcm.py::write_archive` streams into a scratch file (blobs copied chunk-wise, symbols written entry-by-entry into an open member), a `<fingerprint>.json` sidecar records the digest and both sizes so a warm `packages.json` never opens the zip, and `package.zip` is served with `FileResponse` off disk. Concurrent BUILDS are capped at `_BUILD_SLOTS` (2) with a bounded wait; cache HITS are deliberately uncapped, because they neither build nor buffer. A cache entry that will not open is discarded and rebuilt — letting `BadZipFile` escape would turn one corrupt file into a permanent 500 for that workspace.

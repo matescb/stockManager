@@ -142,64 +142,20 @@ def _csp() -> dict[str, str]:
     return directives
 
 
-def test_csp_allows_the_kicanvas_sprite_sheet():
-    """The KiCad preview toolbar's icons load over a `blob:` URL.
+def test_csp_locks_executable_directives_to_self():
+    """The CSP keeps the executable directives locked down.
 
-    KiCanvas builds its icon sprite sheet at runtime with
-    `URL.createObjectURL(new Blob([svg]))` and references it as
-    `<use xlink:href="blob:…#zoom_page">`, which the browser fetches under
-    `img-src`. Without `blob:` there the zoom buttons render as blank
-    boxes — a silent, image-only failure that no other gate here can see,
-    since nothing in this repo's test harness renders WebGL.
-    """
-    assert "blob:" in _csp()["img-src"], (
-        "img-src lost `blob:` — the KiCad preview's toolbar icons will "
-        "render as blank boxes. See docs/frontend/kicanvas-provenance.md."
-    )
-
-
-def test_csp_keeps_blob_scoped_to_images():
-    """`blob:` is an images-only concession, and must stay one.
-
-    A `blob:` script source would let anything that can build a Blob
-    execute it, which is most of the way to defeating `script-src 'self'`.
-    Nothing the viewer does needs blob: script, style or font.
+    `default-src` stays `'self'`, and the permissive schemes the image
+    directive allows (`data:`) must never leak into `script-src`,
+    `style-src` or `connect-src` — a `data:`/`blob:` script source is most
+    of the way to defeating `script-src 'self'`. (The 2D CAD previews are
+    server-rendered SVGs shown via `<img>`, so `img-src 'self' data:` is
+    all they need — no `blob:` — see ADR-0032.)
     """
     csp = _csp()
     assert csp["default-src"] == "'self'"
     for directive in ("script-src", "style-src", "connect-src", "default-src"):
-        assert "blob:" not in csp.get(directive, ""), (
-            f"blob: leaked into {directive}; it belongs in img-src only"
-        )
-
-
-def _location_body(prefix: str) -> str:
-    conf = _NGINX_CONF.read_text()
-    match = re.search(rf"location {re.escape(prefix)}\s*\{{", conf)
-    assert match, f"no `location {prefix}` block in {_NGINX_CONF.name}"
-    return conf[match.end() : conf.find("}", match.end())]
-
-
-def test_kicanvas_bundle_is_served_but_never_cached_immutably():
-    """The KiCad viewer's URL is reused across version bumps.
-
-    `/assets/` and `/zxing/` are safe to mark `immutable` because their
-    filenames change when their content does — a Vite hash, a package
-    version. `kicanvas.js` has neither: upgrading the pinned commit
-    overwrites the same path. Marked immutable, a returning visitor would
-    keep whichever build they first fetched for up to a year, and the only
-    way out would be renaming the file.
-
-    Serving it at all is also load-bearing: without the block it falls
-    through to the SPA fallback and the browser gets `index.html` with a
-    200, so the viewer never defines its custom element and every preview
-    silently stays on "Loading preview…".
-    """
-    body = _location_body("/kicanvas/")
-    assert "try_files" in body, "/kicanvas/ must serve the static file"
-    assert "immutable" not in body, (
-        "/kicanvas/ must not be immutable — the URL is reused across viewer "
-        "upgrades, so a long immutable cache pins users to an old build. "
-        "See docs/frontend/kicanvas-provenance.md."
-    )
-    assert "must-revalidate" in body
+        for scheme in ("blob:", "data:"):
+            assert scheme not in csp.get(directive, ""), (
+                f"{scheme} leaked into {directive}; it belongs in img-src only"
+            )

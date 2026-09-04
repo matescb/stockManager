@@ -27,7 +27,6 @@ What you need to navigate `web/src/`. Conventions are sketched in [`CLAUDE.md`](
 | [tailwind-utilities](tailwind-utilities.md) | The `index.css` utility set (`btn`, `card`, `pill`, …) |
 | [auth-flow](auth-flow.md) | `AuthProvider`, workspace switch, 401 redirect bus |
 | [scanner](scanner.md) | ZXing / Scandit dual-mode + `bagCode.ts` parser |
-| [kicanvas-provenance](kicanvas-provenance.md) | The vendored KiCad 2D viewer: pin, local patch, CSP interactions |
 | [testing](testing.md) | Vitest setup (`crypto.subtle` patch), dom tests, Playwright e2e |
 
 ## In-tree READMEs

@@ -384,33 +384,31 @@ Stream a stored library file. `filename` is the content-addressed `{sha256}.{ext
 
 ## 2D previews
 
-### `GET /api/eda/symbols/{symbol_id}/preview.kicad_sch`
-### `GET /api/eda/footprints/{footprint_id}/preview.kicad_pcb`
+### `GET /api/eda/symbols/{symbol_id}/preview.svg`
+### `GET /api/eda/footprints/{footprint_id}/preview.svg`
 
-Return the entry as a KiCad document the in-browser viewer can render. The CAD tab embeds these; nothing else consumes them.
+Return the entry rendered to SVG **by kicad-cli**, so it is drawn exactly as KiCad draws it. The CAD tab embeds these; nothing else consumes them.
 
-**Not the envelope** — these return a raw document, like `/files/` above.
+**Not the envelope** — these return a raw `image/svg+xml` body, like `/files/` above.
 
-**Why a wrapper exists.** KiCanvas, the viewer the frontend embeds, reads only `.kicad_sch`, `.kicad_pcb`, `.kicad_wks` and `.kicad_pro`. It has no reader for `.kicad_sym` or `.kicad_mod`, which is exactly what this domain stores — pointing it at `/api/eda/files/…` yields "Unknown file type". So a symbol is served inside a synthetic one-symbol schematic and a footprint inside a synthetic one-footprint board, with the stored bytes embedded verbatim (never re-emitted). `backend/app/domain/eda/preview.py` carries the full rationale and the two constraints that make the documents render rather than draw blank.
+**How it renders.** The stored `.kicad_sym` / `.kicad_mod` are handed to `kicad-cli … export svg` running in the `kicad-render` sidecar (see `render/`), and the SVG is cached content-addressed at `{UPLOAD_DIR}/eda/{ws}/preview/{sha}.{tag}.svg` (`backend/app/domain/eda/render.py`). This replaced an in-browser viewer (KiCanvas) that dropped pins on complex symbols and crashed on KiCad-9 footprints — see ADR-0032. The sidecar is hit once per unique entry; every later request is served from the cache.
 
-**The suffix is part of the contract.** KiCanvas types a document by the basename of its URL, so these paths cannot be renamed to something without a `.kicad_sch` / `.kicad_pcb` ending.
+**Rendered via `<img>`, not inlined.** The SVG is generated from attacker-supplied stored geometry and served from our own origin. An SVG placed in the document can execute script; the frontend loads it in an `<img>`, which never does. That plus `nosniff` is the XSS defence (`web/src/components/eda/SvgPreview.tsx`).
 
-**Headers** — `Cache-Control: private, max-age=300`, `X-Content-Type-Options: nosniff`, media type `text/plain; charset=utf-8`. Unlike `/files/` these are deliberately *not* attachments: they are fetched by the viewer's JS, never saved. `private` rather than `public` because the URL is keyed by row id rather than by content, so what it returns changes when the entry is renamed or re-uploaded, and because the response is workspace-scoped.
+**Headers** — `Cache-Control: private, max-age=300`, `X-Content-Type-Options: nosniff`, media type `image/svg+xml`. `private` rather than `public` because the URL is keyed by row id rather than by content, so what it returns changes when the entry is renamed or re-uploaded, and because the response is workspace-scoped.
 
 **Archived entries preview.** `get_entry` includes them and the restore flow depends on it — deciding whether to bring an archived symbol back means seeing what it is. This surface is read-only, so showing it costs nothing.
 
-**Errors** — `404` `eda_symbol.not_found` / `eda_footprint.not_found` for an unknown id or one in another workspace; `503` `eda.preview_unavailable` when the stored blob is missing or unparseable, which the content-addressed append-only store makes a "can't happen".
+**Errors** — `404` `eda_symbol.not_found` / `eda_footprint.not_found` for an unknown id or one in another workspace; `503` `eda.preview_unavailable` when the render sidecar is unreachable or could not render (the app degrades, never 500s); `413` `eda.file_too_large` for a pathologically large SVG.
 
-**Rate limit** — `120/minute` per workspace. Generous because the UI fires a preview on every selection change and the 300 s private cache absorbs remounts; it exists to bound the one thing these routes do that a list read does not, which is open a file and parse attacker-supplied s-expressions on the single uvicorn worker prod runs.
-
-**A malformed wrapper is silent.** KiCanvas draws nothing and reports nothing when it cannot parse a document, so the wrapping is pinned from both ends: `backend/tests/test_eda_preview_fixtures.py` holds `preview.py` to documents checked in at `backend/tests/fixtures/eda/preview/`, and `web/src/components/eda/__tests__/kicanvasContract.test.ts` parses those same files with KiCanvas's real parsers. Change a builder → refresh the fixtures (the backend test says how) → re-run the vitest test, which is the half that proves the result still renders.
+**Rate limit** — `120/minute` per workspace. Generous because the UI fires a preview on every selection change and the 300 s private cache absorbs remounts; it exists to bound the one thing these routes do that a list read does not, which is a cold render — a blocking call to the sidecar's kicad-cli — on the single uvicorn worker prod runs.
 
 **Notes**
 
-- Source: `backend/app/api/routes/eda.py` — the "2D preview documents" section
-- Wrapping: `backend/app/domain/eda/preview.py`
-- Viewer pin and its limitations: [kicanvas-provenance](../frontend/kicanvas-provenance.md)
-- Why there are two KiCanvas builds: `web/test-vendor/kicanvas-parsers/README.md`
+- Route source: `backend/app/api/routes/eda.py` — the "2D preview images" section
+- Render client + cache: `backend/app/domain/eda/render.py`
+- Render sidecar: `render/` (`render/README.md`)
+- Rationale for the switch: [ADR-0032](../adr/0032-server-side-kicad-cli-2d-rendering.md)
 
 ## 3D model preview
 

@@ -126,6 +126,14 @@ class Settings(BaseSettings):
     # to be stopped without a redeploy of the whole app.
     MCP_ENABLED: bool = True
 
+    # Base URL of the `kicad-render` sidecar (see render/). The CAD tab's
+    # 2D symbol/footprint previews POST stored entries there to be drawn by
+    # kicad-cli and cached as SVG (domain/eda/render.py). If the sidecar is
+    # unreachable the previews degrade to a 503 "preview unavailable" — the
+    # app never fails on a missing render service. The dev/prod compose
+    # files point this at the internal service name.
+    EDA_RENDER_URL: str = "http://kicad-render:8080"
+
     @field_validator("SENTRY_TRACES_SAMPLE_RATE", mode="before")
     @classmethod
     def _blank_sentry_traces_rate_to_none(cls, value):

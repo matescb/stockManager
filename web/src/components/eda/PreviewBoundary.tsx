@@ -3,17 +3,21 @@ import React from "react";
 /**
  * Keeps a broken preview from taking the CAD tab with it.
  *
- * KiCanvas is alpha software (see `docs/frontend/kicanvas-provenance.md`) and
- * it parses files this app did not write — a symbol uploaded from any
- * vendor, in any dialect of the format. A parse failure there is a
- * normal outcome, not an exceptional one, and the tab it lives on is
- * where users configure the very entry that failed. Losing the form
- * because the picture didn't draw would be the worse bug.
+ * The 3D model viewer (`ModelPreview`) renders through three.js/WebGL and
+ * parses model files this app did not write — a STEP or WRL from any
+ * vendor. A parse or WebGL failure there is a normal outcome, not an
+ * exceptional one, and the tab it lives on is where users configure the
+ * very entry that failed. Losing the form because the picture didn't draw
+ * would be the worse bug.
  *
  * Deliberately NOT re-thrown to the outer Sentry boundary, unlike
- * `ChunkLoadErrorBoundary`: there is no action to take on "an alpha
- * viewer could not draw this symbol", and one malformed upload would
- * otherwise generate an event per render.
+ * `ChunkLoadErrorBoundary`: there is no action to take on "a viewer could
+ * not draw this model", and one malformed upload would otherwise generate
+ * an event per render.
+ *
+ * The 2D symbol/footprint previews render server-side and are shown via an
+ * `<img>` (see `SvgPreview`), so they degrade on `onError` and do not need
+ * this boundary.
  */
 
 interface Props {

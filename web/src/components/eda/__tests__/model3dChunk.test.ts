@@ -2,7 +2,7 @@
  * three.js is a ~600 KB dependency the CAD tab needs only when a 3D model
  * is actually opened. It earns its keep only if it stays out of the main
  * bundle — so this is the source-level guard that keeps the lazy boundary
- * intact, the analogue of the KiCanvas chunk check in `kicanvasPin.test.ts`.
+ * intact.
  *
  * Two invariants, either of which silently pulls three.js back into the
  * eager graph if broken:

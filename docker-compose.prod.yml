@@ -62,6 +62,11 @@ x-backend-env: &backend-env
   SMTP_PASSWORD: ${SMTP_PASSWORD}
   MAIL_FROM: ${MAIL_FROM}
   APP_BASE_URL: ${APP_BASE_URL}
+  # Internal render sidecar for the CAD tab's 2D symbol/footprint SVGs
+  # (see render/). Reached over the docker network; if it is down the
+  # previews degrade to 503 rather than failing the app, so it is not a
+  # backend startup dependency. Has a default, so .env.prod need not set it.
+  EDA_RENDER_URL: ${EDA_RENDER_URL:-http://kicad-render:8080}
 
 services:
   db:
@@ -321,6 +326,35 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     cap_add: ["CHOWN", "SETUID", "SETGID", "NET_BIND_SERVICE"]
+
+  # KiCad render sidecar — draws the CAD tab's 2D symbol/footprint SVGs via
+  # kicad-cli (see render/). Internal only; the backend reaches it at
+  # kicad-render:8080 and degrades to 503 if it is unavailable, so it is
+  # deliberately NOT a backend startup dependency. Stateless — no volume.
+  kicad-render:
+    build: ./render
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: "1.0"
+    pids_limit: 512
+    oom_kill_disable: false
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    environment:
+      RENDER_PORT: "8080"
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3).read()==b'ok' else 1)\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
 
 volumes:
   db_data:

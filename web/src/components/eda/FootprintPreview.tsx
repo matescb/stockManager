@@ -1,17 +1,17 @@
-import { KicanvasFrame } from "./KicanvasFrame";
+import { SvgPreview } from "./SvgPreview";
 
 /**
- * 2D preview of a hosted footprint.
+ * 2D preview of a hosted footprint, rendered by kicad-cli.
  *
- * Like the symbol preview this points at a synthetic wrapper rather than
- * the stored `.kicad_mod`, because KiCanvas reads boards, not footprint
- * files. See `backend/app/domain/eda/preview.py`.
+ * Like the symbol preview this points at the backend's SVG render route
+ * (`domain/eda/render.py`), served as `image/svg+xml` and shown through an
+ * `<img>`. See `SvgPreview`.
  */
 export function FootprintPreview({ footprintId }: { footprintId: string }) {
   return (
-    <KicanvasFrame
+    <SvgPreview
       title="Footprint preview"
-      src={`/api/eda/footprints/${footprintId}/preview.kicad_pcb`}
+      src={`/api/eda/footprints/${footprintId}/preview.svg`}
     />
   );
 }

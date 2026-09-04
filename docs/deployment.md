@@ -83,6 +83,7 @@ Practical consequences:
                        │                ├─ web   (nginx + Vite dist/)
                        │                │   └─ /api/* → backend
                        │                ├─ backend (uvicorn, 2 workers)
+                       │                ├─ kicad-render (kicad-cli SVG sidecar)
                        │                └─ db (postgres:16-alpine)
                        └─ … other vhosts (icicle.cz, odbor.matescb.cz, …)
 ```
@@ -93,10 +94,18 @@ nginx handles the `/api/*` → backend split internally so Apache only needs
 one ProxyPass per app, matching the convention every other vhost on this
 VPS already uses.
 
+`kicad-render` is an internal-only sidecar that draws the CAD tab's 2D
+symbol/footprint previews with `kicad-cli` (ADR-0032, `render/`). It is
+stateless and **not** a backend startup dependency: the backend degrades to
+a 503 "preview unavailable" if it is down. Its base is the official KiCad
+image, so its first build on the VPS pulls ~a couple of GB once — budget for
+that on the initial deploy of this change.
+
 Files involved (all version-controlled):
 
 - `docker-compose.prod.yml` — service definitions.
 - `backend/Dockerfile` — Python 3.12 slim + `pip install -e .`.
+- `render/Dockerfile` — the KiCad render sidecar (kicad-cli + a stdlib HTTP wrapper).
 - `web/Dockerfile.prod` — multi-stage Vite build → nginx:alpine.
 - `deploy/nginx-web.conf` — in-container nginx (SPA routing + `/api/` proxy).
 - `deploy/parts.matescb.cz.conf` — canonical Apache vhost. The active file
