@@ -342,6 +342,38 @@ nothing; `kicanvasPin.test.ts` keeps the two builds on the same commit. If
 the contract test fails after a bump, the preview is broken — fix the
 wrapper, don't relax the test.
 
+## KiCad 3D preview
+
+`web/src/components/eda/`. `ModelPreview` is the 3D sibling of the 2D
+previews: the CAD tab mounts one under the footprint's attached 3D models
+(`routes/parts/detail/PartCad.tsx`, `ModelPreviewPanel`), with a small
+selector when more than one is attached. It renders with three.js.
+
+**three.js is a lazy chunk.** three plus its GLTF/VRML loaders is ~800 KB,
+and the tab needs it only once a model is actually opened. Everything that
+touches three lives in `components/eda/modelRenderer.ts`, which `ModelPreview`
+imports through a dynamic `import("./modelRenderer")` — so Rollup splits it
+into its own chunk, absent from the main bundle. `model3dChunk.test.ts` is
+the guard: it fails if `three` is imported anywhere else, or if `ModelPreview`
+stops loading it lazily (the analogue of `kicanvasPin`'s "out of the module
+graph" check). Unlike KiCanvas, three *is* a normal npm dependency
+(exact-pinned in `package.json`), not a vendored bundle.
+
+**The URL branches on kind.** STEP has no browser renderer, so it goes
+through the server-side conversion route `/api/eda/datafiles/{id}/preview.glb`
+(GLB, drawn with `GLTFLoader`). WRL is a mesh three.js reads directly, so it
+is fetched straight from `/api/eda/files/{ws}/{sha}.wrl` and drawn with
+`VRMLLoader` — no server conversion. See [api/eda](../api/eda.md) → "3D model
+preview".
+
+**Failure degrades the same way as the 2D previews.** `ModelPreview` reuses
+`PreviewBoundary`, and any fetch/convert/parse failure (a corrupt STEP is a
+`422` from the route, an unreadable WRL throws in the loader) shows a plain
+"3D preview unavailable" card rather than taking the tab down. jsdom has no
+WebGL, so `ModelPreview.dom.test.tsx` mocks `modelRenderer` and pins the
+wiring — the right URL and format reach it, and the WebGL context is released
+(`dispose`) when the card collapses.
+
 ## Smaller helpers
 
 | Component | Source | Purpose |

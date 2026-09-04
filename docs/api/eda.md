@@ -412,6 +412,36 @@ Return the entry as a KiCad document the in-browser viewer can render. The CAD t
 - Viewer pin and its limitations: [kicanvas-provenance](../frontend/kicanvas-provenance.md)
 - Why there are two KiCanvas builds: `web/test-vendor/kicanvas-parsers/README.md`
 
+## 3D model preview
+
+### `GET /api/eda/datafiles/{datafile_id}/preview.glb`
+
+Return a STEP datafile tessellated to a glTF binary (GLB) the CAD tab's three.js viewer can draw. No browser renders STEP; KiCad shows 3D through its OCC viewer, so this does the web equivalent — convert once, server-side, cache, and hand the browser a mesh.
+
+**Not the envelope** — the body is a `model/gltf-binary`, like `/files/` above.
+
+**STEP only, by design.** This route converts STEP (`.step`/`.stp`) and nothing else. WRL is already a mesh three.js reads natively (`VRMLLoader`), so the frontend fetches a `.wrl` straight from `GET /api/eda/files/{ws}/{sha}.wrl` and branches on kind — converting it here would spend CPU and cache for no gain. SPICE is not 3D. Both non-STEP kinds answer `422 eda.preview_unavailable`.
+
+**The converter.** `cascadio` (an in-process OpenCASCADE binding, MIT, shipping manylinux wheels — no apt OCC). It is wrapped so a corrupt or unconvertible STEP is a `422`, never a `500`: on bad input it returns no glTF, which the wrapper detects. Source in `backend/app/domain/eda/preview3d.py`.
+
+**Caching.** The GLB is content-addressed at `{UPLOAD_DIR}/eda/{ws}/preview/{source_sha}.{CACHE_TAG}.glb`, where `CACHE_TAG` encodes the converter identity — a converter bump lands on a new filename and the stale one is pruned rather than served. A cache hit skips the conversion entirely. The conversion runs in a threadpool (it is CPU-heavy and prod is one uvicorn worker).
+
+**Caps.** A source over 25 MiB is refused before conversion and a GLB over 50 MiB after — both `413 eda.file_too_large`. (Uploads already cap STEP well below the source ceiling; it guards the zip-importer lane.)
+
+**Headers** — `Cache-Control: private, max-age=300`, `X-Content-Type-Options: nosniff`, media type `model/gltf-binary`. `private` because the response is workspace-scoped and keyed by row id.
+
+**Archived datafiles preview**, for the same reason the 2D previews do.
+
+**Errors** — `404 eda_datafile.not_found` for an unknown id or one in another workspace; `422 eda.preview_unavailable` for a non-STEP kind or an unconvertible STEP; `413 eda.file_too_large` for the size caps; `503 eda.preview_unavailable` when the stored source blob is missing.
+
+**Rate limit** — `30/minute` per workspace; the on-disk cache absorbs the repeats, so this bounds cold conversions.
+
+**Notes**
+
+- Route: `backend/app/api/routes/eda_preview3d.py`
+- Converter + cache: `backend/app/domain/eda/preview3d.py`
+- Frontend viewer (lazy three.js chunk): `web/src/components/eda/ModelPreview.tsx`, `web/src/components/eda/modelRenderer.ts`
+
 ## See also
 
 - [domain/eda](../domain/eda.md) — the tables, the storage lanes, the s-expression contract

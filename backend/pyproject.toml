@@ -29,6 +29,15 @@ dependencies = [
     # by `app/domain/eda/lcsc.py`. Pure-Python, no transitive runtime deps.
     "easyeda2kicad>=1.0.1",
     "mcp>=2.1.1",
+    # STEP → GLB conversion for the CAD tab's 3D preview, used as a library
+    # by `app/domain/eda/preview3d.py`. Bundles OpenCASCADE in a wheel-only
+    # (cp312-abi3 manylinux_2_28) ~28 MB build — no apt OCC, so the Docker
+    # image and its digest-pin story are untouched. MIT-licensed.
+    "cascadio==0.1.1",
+    # cascadio imports numpy at import time (its trimesh-extension handler)
+    # but does not declare it — pin it here so the wheel-only install is
+    # self-contained. Not otherwise used by the app.
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]

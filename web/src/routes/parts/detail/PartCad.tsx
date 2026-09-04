@@ -31,6 +31,7 @@ import {
 import { InlineQueryError, type QueryLike } from "@/components/QueryStateBoundary";
 import { SymbolPreview } from "@/components/eda/SymbolPreview";
 import { FootprintPreview } from "@/components/eda/FootprintPreview";
+import { ModelPreview } from "@/components/eda/ModelPreview";
 import type {
   EdaDatafile,
   EdaFootprint,
@@ -783,6 +784,12 @@ function FootprintModels({
               ))}
             </ul>
           )}
+          <ModelPreviewPanel
+            models={linked
+              .map((row) => byId.get(row.datafile_id))
+              .filter((d): d is EdaDatafile => !!d)}
+            workspaceId={workspaceId}
+          />
           <div className="flex items-end gap-2">
             <div className="flex-1">
               <label className="label" htmlFor="cad-model-add">Attach a model</label>
@@ -821,6 +828,60 @@ function FootprintModels({
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * Renders a 3D preview for the footprint's attached models, with a small
+ * selector when more than one is attached.
+ *
+ * The URL branches on kind: STEP goes through the server-side `preview.glb`
+ * conversion route, WRL is fetched straight from `/files` (three.js reads
+ * VRML natively). A WRL preview needs the workspace id to build that
+ * `/files` URL, so it is skipped until the id is known.
+ */
+function ModelPreviewPanel({
+  models,
+  workspaceId,
+}: {
+  models: EdaDatafile[];
+  workspaceId: string | null;
+}) {
+  const [selectedId, setSelectedId] = useState("");
+  if (models.length === 0) return null;
+
+  const active = models.find((m) => m.id === selectedId) ?? models[0];
+  if (active.kind === "wrl" && !workspaceId) return null;
+
+  const src =
+    active.kind === "step"
+      ? `/api/eda/datafiles/${active.id}/preview.glb`
+      : `/api/eda/files/${workspaceId}/${active.sha256}.wrl`;
+
+  return (
+    <div className="space-y-2">
+      {models.length > 1 && (
+        <div>
+          <label className="label" htmlFor="cad-model-preview">Preview</label>
+          <select
+            id="cad-model-preview"
+            className="input"
+            value={active.id}
+            onChange={(e) => setSelectedId(e.target.value)}
+          >
+            {models.map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+      <ModelPreview
+        key={active.id}
+        src={src}
+        format={active.kind === "step" ? "glb" : "wrl"}
+        title={`${active.name} (${active.kind.toUpperCase()})`}
+      />
+    </div>
   );
 }
 

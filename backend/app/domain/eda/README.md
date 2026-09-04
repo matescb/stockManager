@@ -20,6 +20,7 @@ Owns the workspace's KiCad library — schematic symbols, PCB footprints, 3D mod
 | `kicad_library.py` | The `/kicad-api/v1` documents: eligibility, the one-query listing, JSON shaping |
 | `pcm.py` | The PCM package: the zip, `repository.json` / `packages.json`, stateless versioning |
 | `preview.py` | Synthetic `.kicad_sch` / `.kicad_pcb` wrappers so the browser viewer can draw a stored entry |
+| `preview3d.py` | STEP→GLB conversion (cascadio/OCC) + content-addressed GLB cache for the 3D preview |
 
 ## Public surface
 
@@ -40,6 +41,7 @@ Owns the workspace's KiCad library — schematic symbols, PCB footprints, 3D mod
 | Build the PCM package | `pcm.py::plan_package`, `::materialise`, `::build_package` |
 | Shape the PCM documents | `pcm.py::repository_document`, `::packages_document`, `::metadata_document` |
 | Wrap an entry for the browser viewer | `preview.py::symbol_document`, `::footprint_document` |
+| Build a STEP's 3D preview (cached) | `preview3d.py::get_or_build_glb` |
 
 REST surface: `backend/app/api/routes/eda.py` (library CRUD + per-part config) and
 `backend/app/api/routes/eda_import.py` (the three import endpoints), both mounted
