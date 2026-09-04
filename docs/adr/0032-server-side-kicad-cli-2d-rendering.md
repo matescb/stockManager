@@ -58,9 +58,9 @@ SVG.
   provenance doc, the synthetic-document builder (`preview.py`), and the
   contract/fixture tests.
 
-The sidecar pins `kicad/kicad:9.0` by digest (INFRA2-015). KiCad 9 renders
-the gen-9 parts natively; the non-`full` image omits the 3D-model library
-packages the 2D export never touches.
+The sidecar pins the `kicad/kicad` image (tag 9.0) by digest (INFRA2-015).
+KiCad 9 renders the gen-9 parts natively; the non-`full` image omits the
+3D-model library packages the 2D export never touches.
 
 ## Consequences
 
