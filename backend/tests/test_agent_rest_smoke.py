@@ -581,20 +581,31 @@ def test_read_only_token_reads_every_surface(read_only_walk, path):
 # the only part of the EDA surface an agent could otherwise be locked out
 # of while holding every list route that names them.
 RAW_READ_PATHS = [
-    ("/api/eda/symbols/{symbol}/preview.kicad_sch", "(kicad_sch"),
-    ("/api/eda/footprints/{footprint}/preview.kicad_pcb", "(kicad_pcb"),
+    "/api/eda/symbols/{symbol}/preview.svg",
+    "/api/eda/footprints/{footprint}/preview.svg",
 ]
 
 
-@pytest.mark.parametrize(("path", "root"), RAW_READ_PATHS, ids=lambda v: v[:24])
-def test_read_only_token_reads_the_preview_documents(read_only_walk, path, root):
+@pytest.mark.parametrize("path", RAW_READ_PATHS, ids=lambda v: v[:24])
+def test_read_only_token_reads_the_preview_documents(read_only_walk, path, monkeypatch):
+    # The 2D previews render through the kicad-render sidecar, which is not
+    # running under pytest; stub the one call that crosses to it so this
+    # stays an authorization check (a read-only token reaches the surface),
+    # not a rendering check.
+    from app.domain.eda import render
+
+    monkeypatch.setattr(
+        render,
+        "_render_via_sidecar",
+        lambda kind, payload: b'<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg"/>\n',
+    )
     agent, w = read_only_walk
     r = agent.get(path.format(**w.ids))
     assert r.status_code == 200, f"{path}: {r.text}"
-    # Deliberately not the envelope — these are documents a KiCad viewer
-    # parses, so assert the shape that proves it rather than `{data,status}`.
-    assert r.headers["content-type"].startswith("text/plain"), path
-    assert r.text.startswith(root), f"{path}: {r.text[:80]}"
+    # Deliberately not the envelope — these serve an SVG image, so assert
+    # that shape rather than `{data,status}`.
+    assert r.headers["content-type"] == "image/svg+xml", path
+    assert r.text.lstrip().startswith("<"), f"{path}: {r.text[:80]}"
 
 
 # One write per area the walk exercised, in the same shapes.

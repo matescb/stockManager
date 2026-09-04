@@ -49,7 +49,7 @@ Every component is its default / named export. The most commonly reused:
 2. **Use `Modal` before adding a route-local dialog shell.** API: `open`, `onClose`, `title`, `children`, optional `initialFocusRef`, `size`, and `className` for the panel.
 3. **Use the `index.css` utility set** (`btn`, `card`, `pill`, `input`, …) before adding new ones. See [tailwind-utilities](../../../docs/frontend/tailwind-utilities.md).
 4. **Lazy routes wrap their suspense in `RouteSkeleton`** and their data in `QueryStateBoundary` for uniform loading / error UX.
-5. **Don't move `public/kicanvas/` into `src/`.** It is a vendored, minified, alpha third-party bundle: under `src` it would be linted, type-checked and pulled into rollup's input graph, and it is loaded on demand precisely so it never reaches the main chunk. `docs/frontend/kicanvas-provenance.md` has the pin and the reasoning.
+5. **2D CAD previews are server-rendered SVGs shown via `<img>`** (`eda/SvgPreview.tsx`) — kicad-cli draws them in the `kicad-render` sidecar (see `render/`, ADR-0032). The `<img>` is deliberate: an SVG from attacker-supplied geometry can run script if inlined, and an `<img>` never does. The 3D preview keeps its own lazy three.js chunk (`eda/modelRenderer.ts`).
 
 ## See also
 

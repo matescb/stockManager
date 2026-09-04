@@ -20,6 +20,7 @@ from pathlib import Path
 DEFAULT_DOCKERFILES = (
     Path("backend/Dockerfile"),
     Path("web/Dockerfile.prod"),
+    Path("render/Dockerfile"),
 )
 
 PINNED_ON_RE = re.compile(r"^\s*#\s*Digest pinned on (\d{4}-\d{2}-\d{2})\b")

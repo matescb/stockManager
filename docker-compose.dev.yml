@@ -26,6 +26,8 @@ services:
       UPLOAD_DIR: /data/uploads
       APP_ENV: ${APP_ENV:-dev}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      # The kicad-render sidecar draws the CAD tab's 2D previews (see render/).
+      EDA_RENDER_URL: http://kicad-render:8080
     volumes:
       - ./backend:/app
       - uploads:/data/uploads
@@ -48,6 +50,16 @@ services:
     ports:
       - "5173:5173"
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+
+  # KiCad render sidecar — draws the CAD tab's 2D symbol/footprint SVGs via
+  # kicad-cli (see render/). Internal only; the backend reaches it at
+  # kicad-render:8080. To eyeball a rendered SVG from the host, temporarily
+  # add:  ports: ["18080:8080"]  and GET one of the sidecar's endpoints.
+  kicad-render:
+    build: ./render
+    environment:
+      RENDER_PORT: "8080"
+    restart: unless-stopped
 
 volumes:
   db_data:

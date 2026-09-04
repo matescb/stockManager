@@ -41,3 +41,4 @@ New ADRs follow the template in [STYLE.md](../STYLE.md#adr-pages-docsadrnnnn-slu
 | 0029 | [API tokens, and the CSRF exemption for `Authorization`-bearing requests](0029-api-tokens-and-csrf-exemption.md) |
 | 0030 | [The MCP server is an in-process, stateless mount over the service layer](0030-mcp-server-surface.md) |
 | 0031 | [A workspace has one primary parts provider and any number of secondaries, each in its own field namespace](0031-primary-and-secondary-parts-providers.md) |
+| 0032 | [2D symbol/footprint previews render server-side with kicad-cli, not in-browser](0032-server-side-kicad-cli-2d-rendering.md) |

@@ -291,56 +291,39 @@ recovery".
 ## KiCad 2D previews
 
 `web/src/components/eda/`. `SymbolPreview` and `FootprintPreview` render a
-hosted symbol or footprint as KiCad draws it; the CAD tab mounts one under
-each picker once a hosted entry is selected
+hosted symbol or footprint exactly as KiCad draws it; the CAD tab mounts
+one under each picker once a hosted entry is selected
 (`routes/parts/detail/PartCad.tsx`, the `renderPreview` prop on `RefSlot`).
-Both are thin wrappers over `KicanvasFrame`, which is where everything
-awkward about the dependency lives.
+Both are thin wrappers over `SvgPreview`.
 
-**The viewer is vendored and alpha.** KiCanvas ships no npm package, so a
-built bundle is checked in at `web/public/kicanvas/`, pinned to an exact
-upstream commit, with [kicanvas-provenance](kicanvas-provenance.md) recording the pin, the build command
-that reproduces it byte-for-byte, and — more useful day to day — which
-`<kicanvas-embed>` attributes actually work at that commit. Read that page before
-changing an attribute or bumping the pin; most of the documented API is
-marked not-yet-implemented upstream and silently ignored, including every
-`kicanvas:*` event.
+**The rendering is server-side.** The image is produced by `kicad-cli`
+in the `kicad-render` sidecar and served as SVG from
+`/api/eda/{symbols,footprints}/{id}/preview.svg`
+(`backend/app/domain/eda/render.py`). This replaced an in-browser viewer
+(KiCanvas) that dropped pins on complex symbols and crashed on KiCad-9
+footprints — [ADR-0032](../adr/0032-server-side-kicad-cli-2d-rendering.md)
+has the full story. There is nothing vendored on the frontend any more and
+no WebGL: the component is a plain `<img>`.
 
-**It is not in the JS bundle.** The file lives under `public/` rather than
-`src/` and is fetched on first mount by `components/eda/kicanvas.ts`, which
-appends one module script and memoises the promise. Nothing is downloaded
-by a user who never opens the CAD tab, or who opens it without selecting a
-hosted entry. `public/` also keeps a minified third-party bundle out of
-`eslint src` and out of rollup's input graph — see [kicanvas-provenance](kicanvas-provenance.md).
+**It is loaded via `<img>`, deliberately.** The SVG is generated from
+attacker-supplied stored geometry and served from our own origin, and an
+SVG placed in the document can execute script — an `<img>` never does, so
+that is how it is loaded (plus `nosniff` on the response). The same-origin
+request carries the session cookie, so the workspace-scoped route
+authorises normally.
 
-**Failure is expected, not exceptional.** KiCanvas parses files this app
-did not write, and a parse failure on the tab where you configure that very
-entry must not take the form with it. `PreviewBoundary` catches and shows a
-plain "Preview unavailable" card, and deliberately does *not* re-throw to
-the outer Sentry boundary — there is no action to take on "an alpha viewer
-could not draw this symbol". A failed bundle fetch degrades the same way.
+**Failure degrades quietly.** `SvgPreview` tracks the `<img>`'s load: a
+`Loading preview…` hint until `onLoad`, and on `onError` (a 404, a 503 when
+the render sidecar is down) it swaps in a plain "Preview unavailable" card
+rather than leaving a broken-image glyph. No error boundary is needed here
+— an `<img>` does not throw — so `PreviewBoundary` is now only the 3D
+viewer's concern.
 
-**The URLs are backend-synthesised.** KiCanvas cannot read `.kicad_sym` or
-`.kicad_mod`, so the components point at
-`/api/eda/{symbols,footprints}/{id}/preview.kicad_{sch,pcb}` rather than at
-the stored file, and the extension in the path is load-bearing — the viewer
-types a document by its URL's basename. See [api/eda](../api/eda.md) →
-"2D previews".
-
-**A broken preview is silent, so it is pinned from both ends.** A document
-KiCanvas cannot parse draws nothing and reports nothing. Two tests make
-that loud instead:
-`backend/tests/test_eda_preview_fixtures.py` holds the builders to
-documents checked in at `backend/tests/fixtures/eda/preview/`, and
-`src/components/eda/__tests__/kicanvasContract.test.ts` parses those same
-files with KiCanvas's real `KicadSch` / `KicadPCB` — asserting the symbol
-keeps its units and pins, the placement resolves its `lib_symbol`, and
-every layer a footprint draws on is one the synthetic board declares. The
-parsers come from a second, test-only build of the pinned commit at
-`web/test-vendor/kicanvas-parsers/`, because the shipped bundle exports
-nothing; `kicanvasPin.test.ts` keeps the two builds on the same commit. If
-the contract test fails after a bump, the preview is broken — fix the
-wrapper, don't relax the test.
+**Tests.** `src/components/eda/__dom__/Previews.dom.test.tsx` pins the
+wiring (the right `.svg` URL, the loading/failed states, the collapse
+teardown, the src update on selection change). jsdom does not fetch or
+decode images, so the fidelity of the actual kicad-cli output is proven out
+of band — see the backend route tests and ADR-0032.
 
 ## KiCad 3D preview
 
@@ -355,9 +338,8 @@ touches three lives in `components/eda/modelRenderer.ts`, which `ModelPreview`
 imports through a dynamic `import("./modelRenderer")` — so Rollup splits it
 into its own chunk, absent from the main bundle. `model3dChunk.test.ts` is
 the guard: it fails if `three` is imported anywhere else, or if `ModelPreview`
-stops loading it lazily (the analogue of `kicanvasPin`'s "out of the module
-graph" check). Unlike KiCanvas, three *is* a normal npm dependency
-(exact-pinned in `package.json`), not a vendored bundle.
+stops loading it lazily. three is a normal npm dependency (exact-pinned in
+`package.json`).
 
 **The URL branches on kind.** STEP has no browser renderer, so it goes
 through the server-side conversion route `/api/eda/datafiles/{id}/preview.glb`

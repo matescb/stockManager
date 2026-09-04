@@ -5,17 +5,17 @@ import type { ModelFormat, ModelViewerHandle } from "./modelRenderer";
 /**
  * A collapsible fixed-height card holding one three.js 3D model view.
  *
- * The sibling of `KicanvasFrame` for 3D: STEP models are fetched as GLB
- * from the `preview.glb` route, WRL straight from `/files` (the browser
- * reads VRML natively). Everything three.js touches lives in
- * `./modelRenderer`, which this component imports **dynamically** so the
- * ~600 KB of three + loaders is a lazy chunk, fetched only when a preview
- * actually mounts — most CAD-tab visits never open one.
+ * The 3D sibling of `SvgPreview`: STEP models are fetched as GLB from the
+ * `preview.glb` route, WRL straight from `/files` (the browser reads VRML
+ * natively). Everything three.js touches lives in `./modelRenderer`, which
+ * this component imports **dynamically** so the ~600 KB of three + loaders
+ * is a lazy chunk, fetched only when a preview actually mounts — most
+ * CAD-tab visits never open one.
  *
- * The viewer is created imperatively and only while expanded, for the
- * same reasons `KicanvasFrame` gives: it owns a WebGL context and does
- * real work on mount, so a clean create-per-src beats reusing one across
- * URL changes, and `dispose()` on teardown is what frees the context.
+ * The viewer is created imperatively and only while expanded, because it
+ * owns a WebGL context and does real work on mount: a clean create-per-src
+ * beats reusing one across URL changes, and `dispose()` on teardown is
+ * what frees the context.
  */
 
 type Props = {

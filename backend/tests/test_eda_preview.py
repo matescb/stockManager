@@ -1,25 +1,41 @@
-"""`/api/eda/{symbols,footprints}/{id}/preview.kicad_*` — the 2D preview documents.
+"""`/api/eda/{symbols,footprints}/{id}/preview.svg` — the 2D preview images.
 
-These two routes exist because KiCanvas, the viewer the CAD tab embeds,
-cannot read the `.kicad_sym` / `.kicad_mod` files this domain stores;
-`domain/eda/preview.py` explains the wrapping. What the viewer needs from
-the documents is narrow and easy to break invisibly — a wrong `lib_id`
-renders a blank symbol rather than an error — so the assertions here are
-about the *shape KiCanvas parses*, not just about a 200.
+The CAD tab draws a hosted symbol or footprint exactly as KiCad does, by
+rendering it through kicad-cli in the `kicad-render` sidecar and serving
+the SVG (`domain/eda/render.py`). The sidecar is a separate container and
+is not running under pytest, so these route tests stub the one call that
+crosses to it (`render._render_via_sidecar`) with a canned SVG and assert
+on the HTTP contract — status, `image/svg+xml`, the security headers, the
+cache behaviour, workspace isolation, and the degrade-to-503 when the
+sidecar is down. The fidelity of the actual kicad-cli output is proven out
+of band (the switch's spike), the same way `test_eda_preview3d.py` leaves
+the true render to the build.
 
 Isolation follows the house pattern (`test_eda.py`): a second signup gets
 a second workspace and every cross-workspace id must come back 404.
 """
 from __future__ import annotations
 
+import os
+import shutil
 import uuid
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.domain.eda import sexpr
+from app.core.config import settings
+from app.domain.eda import render
 from app.main import app
 from tests._factories import signup_user
+
+# A minimal but real SVG the stubbed sidecar returns. Opens with the XML
+# prolog so it passes `render`'s own is-this-an-SVG check.
+CANNED_SVG = (
+    b'<?xml version="1.0" standalone="no"?>\n'
+    b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">'
+    b'<rect width="10" height="10"/></svg>\n'
+)
+
 
 # ---------------------------------------------------------------------
 # Fixture content + helpers
@@ -55,6 +71,34 @@ def other_client(db):
     return c
 
 
+@pytest.fixture
+def sidecar(monkeypatch):
+    """Stub the sidecar call. Exposes a call counter and a settable outcome.
+
+    Default: returns `CANNED_SVG`. Set `state["raise"]` to a `RenderError`
+    to simulate a sidecar that is down or could not render.
+    """
+    state = {"calls": 0, "raise": None, "svg": CANNED_SVG}
+
+    def fake_render(kind: str, payload: bytes) -> bytes:
+        state["calls"] += 1
+        if state["raise"] is not None:
+            raise state["raise"]
+        return state["svg"]
+
+    monkeypatch.setattr(render, "_render_via_sidecar", fake_render)
+    return state
+
+
+def _clear_preview_cache() -> None:
+    """Drop every workspace's on-disk preview cache so a test starts cold."""
+    root = os.path.join(settings().UPLOAD_DIR, "eda")
+    if not os.path.isdir(root):
+        return
+    for ws_dir in os.listdir(root):
+        shutil.rmtree(os.path.join(root, ws_dir, "preview"), ignore_errors=True)
+
+
 def _upload(client, path: str, filename: str, content: str, **form):
     data = {k: str(v) for k, v in form.items() if v is not None}
     r = client.post(
@@ -83,23 +127,11 @@ def _upload_footprint(client, entry: str = "R_0402", **form):
 
 
 def _symbol_preview(client, symbol_id):
-    return client.get(f"/api/eda/symbols/{symbol_id}/preview.kicad_sch")
+    return client.get(f"/api/eda/symbols/{symbol_id}/preview.svg")
 
 
 def _footprint_preview(client, footprint_id):
-    return client.get(f"/api/eda/footprints/{footprint_id}/preview.kicad_pcb")
-
-
-def _children(node, token: str):
-    return [c for c in node[1:] if isinstance(c, list) and sexpr.head(c) == token]
-
-
-def _placement(doc):
-    """The `(symbol (lib_id …) …)` placement — the schematic's direct
-    `symbol` child, as opposed to the entries nested in `lib_symbols`."""
-    placements = _children(doc, "symbol")
-    assert len(placements) == 1, f"expected one placement, got {len(placements)}"
-    return placements[0]
+    return client.get(f"/api/eda/footprints/{footprint_id}/preview.svg")
 
 
 # ---------------------------------------------------------------------
@@ -107,96 +139,87 @@ def _placement(doc):
 # ---------------------------------------------------------------------
 
 
-def test_symbol_preview_is_a_schematic_wrapping_the_stored_entry(authed_client):
+def test_symbol_preview_returns_svg(authed_client, sidecar):
     row = _upload_symbol(authed_client, "R")
     r = _symbol_preview(authed_client, row["id"])
     assert r.status_code == 200, r.text
-
-    doc = sexpr.parse(r.text)
-    assert sexpr.head(doc) == "kicad_sch"
-
-    lib_symbols = _children(doc, "lib_symbols")
-    assert len(lib_symbols) == 1
-    entries = _children(lib_symbols[0], "symbol")
-    assert [sexpr.entry_name(e) for e in entries] == ["R"]
+    assert r.headers["content-type"] == "image/svg+xml"
+    assert r.content.lstrip().startswith(b"<?xml")
 
 
-def test_symbol_preview_keeps_the_stored_geometry(authed_client):
-    """The entry is embedded verbatim, so the unit sub-symbol carrying the
-    body rectangle has to survive into the preview — that drawing is the
-    whole point of rendering it."""
+def test_symbol_preview_sends_a_one_symbol_library_to_the_sidecar(
+    authed_client, sidecar, monkeypatch
+):
+    """The stored bare `(symbol …)` must reach the sidecar wrapped in a
+    one-symbol `(kicad_symbol_lib …)` — the format kicad-cli reads."""
+    _clear_preview_cache()
+    seen = {}
+
+    def capture(kind: str, payload: bytes) -> bytes:
+        seen["kind"] = kind
+        seen["payload"] = payload
+        return CANNED_SVG
+
+    monkeypatch.setattr(render, "_render_via_sidecar", capture)
+
     row = _upload_symbol(authed_client, "R")
-    doc = sexpr.parse(_symbol_preview(authed_client, row["id"]).text)
-
-    entry = _children(_children(doc, "lib_symbols")[0], "symbol")[0]
-    units = _children(entry, "symbol")
-    assert [sexpr.entry_name(u) for u in units] == ["R_0_1"]
-    assert _children(units[0], "rectangle"), "body rectangle was dropped"
+    assert _symbol_preview(authed_client, row["id"]).status_code == 200
+    assert seen["kind"] == "symbol"
+    assert seen["payload"].startswith(b"(kicad_symbol_lib")
+    assert b'(symbol "R"' in seen["payload"]
 
 
-def test_symbol_preview_lib_id_matches_the_name_inside_the_file(authed_client):
-    """Regression guard for the constraint that makes or breaks rendering.
-
-    Upload accepts a `name` form field that renames the row without
-    rewriting the stored blob, so `EdaSymbol.name` and the entry name in
-    the file diverge here on purpose. KiCanvas resolves a placement by
-    looking `lib_id` up in `lib_symbols` **by name**, with no fallback —
-    so binding `lib_id` to the row's name instead of the file's would
-    render a blank symbol, silently and only for renamed entries.
-    """
-    row = _upload_symbol(authed_client, "R", name="Resistor 10k")
-    assert row["name"] == "Resistor 10k"
-
-    doc = sexpr.parse(_symbol_preview(authed_client, row["id"]).text)
-    entry_name = sexpr.entry_name(_children(_children(doc, "lib_symbols")[0], "symbol")[0])
-    assert entry_name == "R", "stored entry should keep its in-file name"
-
-    placement = _placement(doc)
-    lib_id = next(
-        c[1]
-        for c in placement[1:]
-        if isinstance(c, list) and sexpr.head(c) == "lib_id"
-    )
-    assert lib_id == entry_name
-
-
-def test_symbol_preview_placement_carries_a_value_property(authed_client):
-    """KiCanvas dereferences `default_instance.value` unguarded when a
-    placement has no `Value` property, which throws during parse and
-    takes the whole document with it — not just the symbol."""
-    row = _upload_symbol(authed_client, "R")
-    doc = sexpr.parse(_symbol_preview(authed_client, row["id"]).text)
-    assert sexpr.get_property(_placement(doc), "Value") == "R"
-
-
-def test_symbol_preview_headers(authed_client):
-    """`nosniff` + `text/plain` keep attacker-supplied stored text from
-    being sniffed into a document on our own origin; `private` keeps a
-    shared cache from holding one workspace's geometry for another."""
+def test_symbol_preview_headers(authed_client, sidecar):
+    """`nosniff` + a private cache: the SVG is kicad-cli output derived from
+    stored geometry, served from our own origin and workspace-scoped. The
+    client renders it via <img>, so script inside it can never run."""
     row = _upload_symbol(authed_client, "R")
     r = _symbol_preview(authed_client, row["id"])
-    assert r.headers["content-type"].startswith("text/plain")
     assert r.headers["x-content-type-options"] == "nosniff"
     assert r.headers["cache-control"] == "private, max-age=300"
+    # Defence in depth if the SVG URL is navigated to directly (SEC2-009):
+    # `default-src 'none'` + `sandbox` leaves no way for embedded script to
+    # run, and framing is denied.
+    csp = r.headers["content-security-policy"]
+    assert "default-src 'none'" in csp
+    assert "sandbox" in csp
+    assert r.headers["x-frame-options"] == "DENY"
 
 
-def test_archived_symbol_still_previews(authed_client):
+def test_symbol_preview_is_cached_on_the_second_request(authed_client, sidecar):
+    """A repeat hit is served from disk without touching the sidecar again."""
+    _clear_preview_cache()
+    row = _upload_symbol(authed_client, "R")
+    assert _symbol_preview(authed_client, row["id"]).status_code == 200
+    assert _symbol_preview(authed_client, row["id"]).status_code == 200
+    assert sidecar["calls"] == 1, "second request should not re-render"
+
+
+def test_symbol_preview_503_when_sidecar_down(authed_client, sidecar):
+    _clear_preview_cache()
+    sidecar["raise"] = render.RenderUnavailable("down")
+    row = _upload_symbol(authed_client, "R")
+    r = _symbol_preview(authed_client, row["id"])
+    assert r.status_code == 503, r.text
+    assert r.json()["code"] == "eda.preview_unavailable"
+
+
+def test_archived_symbol_still_previews(authed_client, sidecar):
     """The restore flow depends on it: deciding whether to bring an
     archived symbol back means seeing what it is."""
     row = _upload_symbol(authed_client, "R")
     assert authed_client.post(f"/api/eda/symbols/{row['id']}/archive").status_code == 200
     r = _symbol_preview(authed_client, row["id"])
     assert r.status_code == 200, r.text
-    assert sexpr.head(sexpr.parse(r.text)) == "kicad_sch"
 
 
-def test_symbol_preview_unknown_id_404(authed_client):
+def test_symbol_preview_unknown_id_404(authed_client, sidecar):
     r = _symbol_preview(authed_client, uuid.uuid4())
     assert r.status_code == 404
     assert r.json()["code"] == "eda_symbol.not_found"
 
 
-def test_symbol_preview_is_workspace_isolated(authed_client, other_client):
+def test_symbol_preview_is_workspace_isolated(authed_client, other_client, sidecar):
     row = _upload_symbol(authed_client, "R")
     r = _symbol_preview(other_client, row["id"])
     assert r.status_code == 404, r.text
@@ -208,60 +231,68 @@ def test_symbol_preview_is_workspace_isolated(authed_client, other_client):
 # ---------------------------------------------------------------------
 
 
-def test_footprint_preview_is_a_board_wrapping_the_stored_footprint(authed_client):
+def test_footprint_preview_returns_svg(authed_client, sidecar):
     row = _upload_footprint(authed_client, "R_0402")
     r = _footprint_preview(authed_client, row["id"])
     assert r.status_code == 200, r.text
-
-    doc = sexpr.parse(r.text)
-    assert sexpr.head(doc) == "kicad_pcb"
-
-    footprints = _children(doc, "footprint")
-    assert len(footprints) == 1
-    assert sexpr.entry_name(footprints[0]) == "R_0402"
-    assert _children(footprints[0], "pad"), "pads were dropped"
+    assert r.headers["content-type"] == "image/svg+xml"
+    assert r.content.lstrip().startswith(b"<?xml")
 
 
-def test_footprint_preview_declares_the_layers_the_footprint_draws_on(authed_client):
-    """KiCanvas resolves every `(layer "…")` through the board's table and
-    silently skips what it cannot resolve, so a pad on a layer the wrapper
-    forgot to declare renders as nothing."""
+def test_footprint_preview_sends_the_raw_footprint_to_the_sidecar(
+    authed_client, sidecar, monkeypatch
+):
+    """A footprint is already a complete `(footprint …)` node — it goes to
+    the sidecar verbatim, no wrapper."""
+    _clear_preview_cache()
+    seen = {}
+
+    def capture(kind: str, payload: bytes) -> bytes:
+        seen["kind"] = kind
+        seen["payload"] = payload
+        return CANNED_SVG
+
+    monkeypatch.setattr(render, "_render_via_sidecar", capture)
+
     row = _upload_footprint(authed_client, "R_0402")
-    doc = sexpr.parse(_footprint_preview(authed_client, row["id"]).text)
-
-    layers = _children(doc, "layers")
-    assert len(layers) == 1
-    declared = {str(entry[1]) for entry in layers[0][1:] if isinstance(entry, list)}
-    # The fixture's pad sits on F.Cu + F.Mask; the table has to cover the
-    # rest of the front-side set a real footprint uses too.
-    assert {"F.Cu", "B.Cu", "F.Mask", "F.Paste", "F.SilkS", "F.CrtYd", "F.Fab"} <= declared
+    assert _footprint_preview(authed_client, row["id"]).status_code == 200
+    assert seen["kind"] == "footprint"
+    assert seen["payload"].startswith(b"(footprint")
 
 
-def test_footprint_preview_headers(authed_client):
+def test_footprint_preview_headers(authed_client, sidecar):
     row = _upload_footprint(authed_client, "R_0402")
     r = _footprint_preview(authed_client, row["id"])
-    assert r.headers["content-type"].startswith("text/plain")
+    assert r.headers["content-type"] == "image/svg+xml"
     assert r.headers["x-content-type-options"] == "nosniff"
     assert r.headers["cache-control"] == "private, max-age=300"
 
 
-def test_archived_footprint_still_previews(authed_client):
+def test_footprint_preview_503_when_sidecar_down(authed_client, sidecar):
+    _clear_preview_cache()
+    sidecar["raise"] = render.RenderFailed("kicad-cli error")
+    row = _upload_footprint(authed_client, "R_0402")
+    r = _footprint_preview(authed_client, row["id"])
+    assert r.status_code == 503, r.text
+    assert r.json()["code"] == "eda.preview_unavailable"
+
+
+def test_archived_footprint_still_previews(authed_client, sidecar):
     row = _upload_footprint(authed_client, "R_0402")
     assert (
         authed_client.post(f"/api/eda/footprints/{row['id']}/archive").status_code == 200
     )
     r = _footprint_preview(authed_client, row["id"])
     assert r.status_code == 200, r.text
-    assert sexpr.head(sexpr.parse(r.text)) == "kicad_pcb"
 
 
-def test_footprint_preview_unknown_id_404(authed_client):
+def test_footprint_preview_unknown_id_404(authed_client, sidecar):
     r = _footprint_preview(authed_client, uuid.uuid4())
     assert r.status_code == 404
     assert r.json()["code"] == "eda_footprint.not_found"
 
 
-def test_footprint_preview_is_workspace_isolated(authed_client, other_client):
+def test_footprint_preview_is_workspace_isolated(authed_client, other_client, sidecar):
     row = _upload_footprint(authed_client, "R_0402")
     r = _footprint_preview(other_client, row["id"])
     assert r.status_code == 404, r.text
@@ -269,11 +300,11 @@ def test_footprint_preview_is_workspace_isolated(authed_client, other_client):
 
 
 # ---------------------------------------------------------------------
-# Preview documents are not audited
+# Preview images are not audited
 # ---------------------------------------------------------------------
 
 
-def test_preview_is_a_read_and_writes_no_audit_row(authed_client, db):
+def test_preview_is_a_read_and_writes_no_audit_row(authed_client, db, sidecar):
     """Guards against someone "fixing" the audit-coverage test by adding a
     log call here: these are GETs, and the audit table is for mutations."""
     from sqlalchemy import func, select

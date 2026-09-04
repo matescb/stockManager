@@ -31,7 +31,13 @@ runs:
 
     - name: Start dev stack
       shell: bash
-      run: docker compose -f docker-compose.dev.yml up -d --build
+      # Only the services the e2e suite drives: backend (pulls db via
+      # depends_on) and web. The `kicad-render` sidecar — added for the CAD
+      # tab's 2D previews — is on a ~2 GB KiCad base image no Playwright spec
+      # exercises, so building it here would only add minutes and a fresh
+      # image-pull flake vector to the job that gates deploy. It still ships
+      # in the default compose for local dev and prod.
+      run: docker compose -f docker-compose.dev.yml up -d --build backend web
 
     - name: Wait for /api/health
       shell: bash
