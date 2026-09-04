@@ -115,15 +115,20 @@ export async function mountModelViewer(
     center.z + distance,
   );
 
-  // Neutral rig: an ambient term so nothing is pure black, a key light
-  // roughly over the camera's shoulder, and a hemisphere fill for the
-  // undersides. Colours are deliberately plain — this reads geometry, not
-  // materials.
-  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-  const key = new THREE.DirectionalLight(0xffffff, 0.8);
+  // Neutral rig, tuned bright: models tessellated from STEP often carry
+  // dark default materials, so a modest key alone left them murky. A strong
+  // ambient guarantees nothing reads near-black whatever the material, a key
+  // over the camera's shoulder gives form, a fill from the opposite side
+  // lifts the shadowed faces, and a hemisphere warms the undersides.
+  // (three r155+ uses physical light units, hence the larger values.)
+  scene.add(new THREE.AmbientLight(0xffffff, 1.4));
+  const key = new THREE.DirectionalLight(0xffffff, 2.2);
   key.position.set(1, 1, 1);
   scene.add(key);
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.4));
+  const fill = new THREE.DirectionalLight(0xffffff, 1.1);
+  fill.position.set(-1, 0.5, -1);
+  scene.add(fill);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x555555, 0.8));
 
   // A ground grid sized to the part gives orientation and scale, the way
   // KiCad's 3D viewer does.
