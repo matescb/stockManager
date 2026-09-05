@@ -33,6 +33,7 @@ Every public REST endpoint lives here, one file per logical area. This README is
 | `attachments.py` | `/api/attachments` | [attachments-tags-cf](../../../../docs/api/attachments-tags-cf.md) |
 | `tags.py` | `/api/tags` | [attachments-tags-cf](../../../../docs/api/attachments-tags-cf.md) |
 | `custom_fields.py` | `/api/custom-fields` | [attachments-tags-cf](../../../../docs/api/attachments-tags-cf.md) |
+| `codes.py` | `/api/codes` | [codes](../../../../docs/api/codes.md) |
 | `tokens.py` | `/api/tokens` | [tokens](../../../../docs/api/tokens.md) |
 | `audit.py` | `/api/audit` | [audit](../../../../docs/api/audit.md) |
 | `_activity.py` | (helpers, no routes) | — |

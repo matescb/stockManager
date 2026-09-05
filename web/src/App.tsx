@@ -119,6 +119,10 @@ const CategoriesSettings = lazy(() => import("@/routes/settings/Categories"));
 const ApiTokensSettings = lazy(() => import("@/routes/settings/ApiTokens"));
 const KicadSetupSettings = lazy(() => import("@/routes/settings/KicadSetup"));
 
+// Scan landing page (/c/:code). Lazy because it is only ever reached
+// from a QR scan, never from in-app navigation.
+const CodeResolve = lazy(() => import("@/routes/codes/CodeResolve"));
+
 /**
  * Auth gate + AppShell as a layout route. Mounting this once at the top
  * of the authed subtree means `<AppShell>` survives every navigation;
@@ -309,6 +313,12 @@ export default function App() {
             <Route path="/settings/categories" element={<LazyRoute><CategoriesSettings /></LazyRoute>} />
             <Route path="/settings/api-tokens" element={<LazyRoute><ApiTokensSettings /></LazyRoute>} />
             <Route path="/settings/kicad" element={<LazyRoute><KicadSetupSettings /></LazyRoute>} />
+
+            {/* Scan landing. A printed label's QR encodes /c/<code>; the
+                page resolves the code and redirects to the object's own
+                detail route. Deliberately short — it is a URL people
+                photograph, and every character costs QR density. */}
+            <Route path="/c/:code" element={<LazyRoute><CodeResolve /></LazyRoute>} />
 
             <Route path="*" element={<NotFound />} />
           </Route>

@@ -26,7 +26,16 @@ from sqlalchemy.orm import sessionmaker
 import app.domain.all_models  # noqa: F401,E402 — registers model metadata
 
 
-CHILD_TABLES = ("attachments", "custom_fields", "tag_links")
+# (table, discriminator column, parent-id column). `object_codes` names
+# its pair `entity_type` / `entity_id`; the other three use
+# `object_type` / `object_id`. Mirrors
+# `app/domain/_polymorphic_cleanup.py::_child_tables`.
+CHILD_TABLES = (
+    ("attachments", "object_type", "object_id"),
+    ("custom_fields", "object_type", "object_id"),
+    ("tag_links", "object_type", "object_id"),
+    ("object_codes", "entity_type", "entity_id"),
+)
 
 
 def _build_session():
@@ -38,28 +47,28 @@ def _build_session():
     return Session()
 
 
-def _orphan_count_sql(child_table: str, parent_table: str):
+def _orphan_count_sql(child_table: str, type_col: str, id_col: str, parent_table: str):
     return text(f"""
         SELECT count(*)
         FROM {child_table} c
-        WHERE c.object_type = :object_type
+        WHERE c.{type_col} = :object_type
           AND NOT EXISTS (
             SELECT 1
             FROM {parent_table} p
-            WHERE p.id = c.object_id
+            WHERE p.id = c.{id_col}
               AND p.workspace_id = c.workspace_id
           )
     """)
 
 
-def _orphan_delete_sql(child_table: str, parent_table: str):
+def _orphan_delete_sql(child_table: str, type_col: str, id_col: str, parent_table: str):
     return text(f"""
         DELETE FROM {child_table} c
-        WHERE c.object_type = :object_type
+        WHERE c.{type_col} = :object_type
           AND NOT EXISTS (
             SELECT 1
             FROM {parent_table} p
-            WHERE p.id = c.object_id
+            WHERE p.id = c.{id_col}
               AND p.workspace_id = c.workspace_id
           )
     """)
@@ -84,12 +93,12 @@ def main() -> None:
     db = _build_session()
     total = 0
     try:
-        for child_table in CHILD_TABLES:
+        for child_table, type_col, id_col in CHILD_TABLES:
             print(f"\n=== {child_table} ===")
             for object_type, parent_table in parents.items():
                 count = int(
                     db.execute(
-                        _orphan_count_sql(child_table, parent_table),
+                        _orphan_count_sql(child_table, type_col, id_col, parent_table),
                         {"object_type": object_type},
                     ).scalar_one()
                 )
@@ -102,7 +111,7 @@ def main() -> None:
                 )
                 if args.apply:
                     result = db.execute(
-                        _orphan_delete_sql(child_table, parent_table),
+                        _orphan_delete_sql(child_table, type_col, id_col, parent_table),
                         {"object_type": object_type},
                     )
                     print(f"    deleted={int(result.rowcount or 0)}")

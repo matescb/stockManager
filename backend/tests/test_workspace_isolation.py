@@ -2102,3 +2102,40 @@ def test_api_token_pins_a_dual_member_to_one_workspace():
     assert [
         w["id"] for w in anon.get("/api/workspaces", headers=auth).json()["data"]
     ] == [ws_a]
+
+
+def test_object_code_mint_and_resolve_are_workspace_scoped():
+    """`/api/codes` (Track A1) must not become a cross-tenant oracle.
+
+    Two halves, both load-bearing:
+    * minting against a foreign entity_id is a 404 — otherwise B ends up
+      holding a code that resolves to A's part;
+    * a code minted in A does not resolve in B, so scanning a label
+      photographed in another tenant reveals nothing.
+
+    Detailed coverage (format, cleanup, collisions) lives in
+    `tests/test_object_codes.py`.
+    """
+    a = TestClient(app)
+    b = TestClient(app)
+    _signup(a, f"a-{uuid.uuid4().hex[:6]}@x.com")
+    _signup(b, f"b-{uuid.uuid4().hex[:6]}@x.com")
+
+    part_a = _create_part(a, "A's coded part")
+
+    # B cannot mint against A's part id.
+    minted_by_b = b.post(
+        "/api/codes", json={"entity_type": "part", "entity_id": part_a}
+    )
+    assert minted_by_b.status_code == 404, minted_by_b.text
+
+    # A mints its own code…
+    minted_by_a = a.post(
+        "/api/codes", json={"entity_type": "part", "entity_id": part_a}
+    )
+    assert minted_by_a.status_code == 200, minted_by_a.text
+    code = minted_by_a.json()["data"]["code"]
+
+    # …which resolves for A and 404s for B.
+    assert a.get(f"/api/codes/{code}").status_code == 200
+    assert b.get(f"/api/codes/{code}").status_code == 404

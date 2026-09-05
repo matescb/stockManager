@@ -2,17 +2,24 @@
 
 Audience: engineer
 
-`attachments`, `custom_fields`, and `tag_links` are the three cross-cutting tables that reference their parent via a `(object_type, object_id)` pair. There is intentionally **no FK on `object_id`** — a single FK would bind the column to one parent table, defeating the polymorphic design. This page covers the contract, the orphan-cleanup helper, and the indexing strategy.
+`attachments`, `custom_fields`, `tag_links` and `object_codes` are the cross-cutting tables that reference their parent via a discriminator + id pair. There is intentionally **no FK on the id column** — a single FK would bind it to one parent table, defeating the polymorphic design. This page covers the contract, the orphan-cleanup helper, and the indexing strategy.
 
 For the architectural rationale see [`ARCHITECTURE.md` — "Polymorphic tables contract"](../ARCHITECTURE.md#polymorphic-tables-contract).
 
-## The three tables
+## The tables
 
-| Model | Table | Source |
-|---|---|---|
-| `Attachment` | `attachments` | `backend/app/domain/attachments/models.py:10` |
-| `CustomField` | `custom_fields` | `backend/app/domain/custom_fields/models.py:10` |
-| `TagLink` | `tag_links` | `backend/app/domain/tags/models.py:28` |
+| Model | Table | Discriminator / id columns | Source |
+|---|---|---|---|
+| `Attachment` | `attachments` | `object_type` / `object_id` | `backend/app/domain/attachments/models.py:10` |
+| `CustomField` | `custom_fields` | `object_type` / `object_id` | `backend/app/domain/custom_fields/models.py:10` |
+| `TagLink` | `tag_links` | `object_type` / `object_id` | `backend/app/domain/tags/models.py:28` |
+| `ObjectCode` | `object_codes` | `entity_type` / `entity_id` | `backend/app/domain/codes/models.py` |
+
+`object_codes` (migration `0073`) is the odd one out in three ways, all deliberate:
+
+- **Its discriminator is a closed set**, pinned by the CHECK constraint `ck_object_codes_entity_type`: `build`, `lot`, `order`, `part`, `storage_location`. A code is a physical-world handle, so `project` is not codeable. The other three tables take any registered `object_type`.
+- **It names its columns `entity_type` / `entity_id`** rather than `object_*`, reflecting that closed, entity-shaped set. `_polymorphic_cleanup.py` carries the column names per table so the purge stays one code path.
+- **It does not use the `WorkspaceOwned` mixin.** A code is immutable and is never archived, so it carries only `id`, `workspace_id`, the pair, `code` and `created_at`. See [api/codes](../api/codes.md) for the code format and the resolver.
 
 Common shape:
 
@@ -50,17 +57,20 @@ counts = purge_polymorphic(
     object_type="part",
     object_id=part.id,
 )
-# counts == {"attachments": N, "custom_fields": M, "tag_links": K}
+# counts == {"attachments": N, "custom_fields": M,
+#            "tag_links": K, "object_codes": J}
 ```
 
 Behaviour:
 
-- Bulk DELETE on each of the three tables, filtered by `(workspace_id, object_type, object_id)`. **Always filters by `workspace_id`** — required by the workspace-isolation invariant.
+- Bulk DELETE on each child table, filtered by `(workspace_id, <discriminator>, <id>)` using that table's own column names. **Always filters by `workspace_id`** — required by the workspace-isolation invariant.
 - Returns a dict of deleted-row counts so callers can log observability data.
 - Bulk DELETE rather than per-row ORM fetch — stays fast for objects with hundreds of attachments/fields/links.
-- Idempotent: a second call with the same parameters returns `{0, 0, 0}`.
+- Idempotent: a second call with the same parameters returns all zeroes.
 
 Source: `backend/app/domain/_polymorphic_cleanup.py`. The helper is used by the registered `before_delete` listeners for `Part`, `Order`, `Project`, `Build`, `Lot`, and `StorageLocation`; `backend/app/domain/all_models.py` and `backend/app/api/_helpers.py` register the listeners at import time. Soft-archive paths do not invoke it.
+
+A parent type that no child table accepts still runs the DELETEs and matches nothing — hard-deleting a `Project` sweeps `object_codes` for `entity_type='project'`, which is always empty. That is cheap and keeps the registry single-source.
 
 ## Indexing
 
@@ -102,16 +112,17 @@ There is no dedicated `polymorphic/service.py`. The helpers live at module level
 
 | Operation | Entry point | Notes |
 |---|---|---|
-| Bulk orphan cleanup | `domain/_polymorphic_cleanup.py::purge_polymorphic` | Workspace-filtered bulk DELETE on all three tables. Returns per-table counts. |
+| Bulk orphan cleanup | `domain/_polymorphic_cleanup.py::purge_polymorphic` | Workspace-filtered bulk DELETE on every child table. Returns per-table counts. |
 | Hard-delete listener registration | `domain/_polymorphic_cleanup.py::register_polymorphic_cleanup_listeners` | Idempotently attaches `before_delete` listeners for registered parent models. |
 | One-off orphan backfill | `scripts/purge_polymorphic_orphans.py` | Dry-run by default; pass `--apply` to delete orphan rows for registered object types. |
 | Attachment CRUD | `api/routes/attachments.py` | TODO(verify): list the create/list/delete operations. |
 | Custom-field CRUD | `api/routes/custom_fields.py` | TODO(verify): same. |
 | Tag CRUD + link/unlink | `api/routes/tags.py` | TODO(verify): same. |
+| Object-code mint + resolve | `domain/codes/service.py` | Get-or-create + the scan resolver. REST: `api/routes/codes.py`; see [api/codes](../api/codes.md). |
 
 ## Things to never do
 
-- **Never add a FK on `object_id`.** That collapses the polymorphism. If you need referential integrity for one specific object type, add a separate single-purpose table.
+- **Never add a FK on `object_id` / `entity_id`.** That collapses the polymorphism. If you need referential integrity for one specific object type, add a separate single-purpose table.
 - **Never write a polymorphic DELETE without the `workspace_id` filter.** `purge_polymorphic` is the model. Bypassing it (e.g. ad-hoc `DELETE FROM attachments WHERE object_id = …`) breaks the workspace-isolation invariant.
 - **Never trust `object_type` from a request.** Treat the discriminator as a string the route handler decides; never echo a client-supplied value.
 - **Never overwrite a `source='override'` row's `original_value`.** It's the only record that the row was originally provider-supplied.

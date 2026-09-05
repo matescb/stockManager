@@ -160,6 +160,14 @@ class ErrorCodes:
     RESOURCE_UNKNOWN_OBJECT_TYPE = "resource.unknown_object_type"
     RESOURCE_INSUFFICIENT_ROLE = "resource.insufficient_role"
 
+    # Object codes (`/api/codes`).
+    # CODE_NOT_FOUND covers unknown, malformed and foreign-workspace codes
+    # alike — one code for all three, so a scan cannot be used to tell
+    # "this code exists in someone else's workspace" from "this code
+    # does not exist".
+    CODE_NOT_FOUND = "code.not_found"
+    CODE_MINT_EXHAUSTED = "code.mint_exhausted"
+
     # Global framework errors.
     RATE_LIMITED = "rate_limited"
 

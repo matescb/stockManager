@@ -1,10 +1,17 @@
 """Polymorphic-table orphan cleanup helper.
 
-The three cross-cutting tables — attachments, custom_fields, tag_links —
-use a (object_type, object_id) pattern with no FK on object_id. When a
-parent row is hard-deleted (rare; most deletes are soft-archive) the child
-rows become orphans. This helper purges them cleanly while honouring the
-CLAUDE.md hard invariant: every DELETE must filter by workspace_id.
+The cross-cutting tables — attachments, custom_fields, tag_links,
+object_codes — point at their parent through a (type, id) pair with no FK
+on the id column. When a parent row is hard-deleted (rare; most deletes
+are soft-archive) the child rows become orphans. This helper purges them
+cleanly while honouring the CLAUDE.md hard invariant: every DELETE must
+filter by workspace_id.
+
+The first three name their columns `object_type` / `object_id`;
+`object_codes` names them `entity_type` / `entity_id` (its discriminator
+is a closed CHECK-constrained set, not a free-form string, so it reads as
+an entity rather than an object). `_CHILD_TABLES` carries the column
+names per table so the purge is one code path either way.
 
 Usage::
 
@@ -16,7 +23,8 @@ Usage::
         object_type="part",
         object_id=part.id,
     )
-    # counts == {"attachments": N, "custom_fields": M, "tag_links": K}
+    # counts == {"attachments": N, "custom_fields": M,
+    #            "tag_links": K, "object_codes": J}
 
 See docs/ARCHITECTURE.md — Polymorphic tables contract.
 """
@@ -31,20 +39,23 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Mapper, Session, object_session
 
 from app.domain.attachments.models import Attachment
+from app.domain.codes.models import ObjectCode
 from app.domain.custom_fields.models import CustomField
 from app.domain.tags.models import TagLink
 
 _log = logging.getLogger(__name__)
 
 _CleanupExecutor = Session | Connection
-_CleanupModel = tuple[object, str]
+# (Model, table name, discriminator column, parent-id column)
+_CleanupModel = tuple[object, str, str, str]
 
 
 def _child_tables() -> tuple[_CleanupModel, ...]:
     return (
-        (Attachment, "attachments"),
-        (CustomField, "custom_fields"),
-        (TagLink, "tag_links"),
+        (Attachment, "attachments", "object_type", "object_id"),
+        (CustomField, "custom_fields", "object_type", "object_id"),
+        (TagLink, "tag_links", "object_type", "object_id"),
+        (ObjectCode, "object_codes", "entity_type", "entity_id"),
     )
 
 
@@ -84,12 +95,12 @@ def _purge_polymorphic(
 ) -> dict[str, int]:
     counts: dict[str, int] = {}
 
-    for Model, table_name in _child_tables():
+    for Model, table_name, type_col, id_col in _child_tables():
         result = executor.execute(
             delete(Model).where(
                 Model.workspace_id == workspace_id,
-                Model.object_type == object_type,
-                Model.object_id == object_id,
+                getattr(Model, type_col) == object_type,
+                getattr(Model, id_col) == object_id,
             )
         )
         counts[table_name] = int(result.rowcount or 0)
@@ -151,13 +162,11 @@ def _purge_polymorphic_on_delete(
     )
     _log.info(
         "polymorphic_cleanup hard_delete object_type=%s object_id=%s "
-        "workspace_id=%s attachments=%d custom_fields=%d tag_links=%d",
+        "workspace_id=%s %s",
         object_type,
         object_id,
         workspace_id,
-        counts["attachments"],
-        counts["custom_fields"],
-        counts["tag_links"],
+        " ".join(f"{table}={count}" for table, count in counts.items()),
     )
 
 

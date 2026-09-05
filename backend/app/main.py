@@ -213,6 +213,7 @@ from app.api.routes import (
     builds,
     catalog,
     categories,
+    codes,
     custom_fields,
     eda,
     eda_import,
@@ -619,6 +620,7 @@ app.include_router(
     dependencies=_member_gate,
 )
 app.include_router(custom_fields.router, prefix="/api/custom-fields", tags=["custom_fields"], dependencies=_member_gate)
+app.include_router(codes.router, prefix="/api/codes", tags=["codes"], dependencies=_member_gate)
 app.include_router(tags.router, prefix="/api/tags", tags=["tags"], dependencies=_member_gate)
 # No `_member_gate`: a viewer may mint their own token, because the token
 # inherits the viewer role and so can't do anything the viewer couldn't.

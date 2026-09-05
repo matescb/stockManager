@@ -66,6 +66,14 @@ All under `<Gate>` (`App.tsx:183-276`). Grouped:
 - `/lots/:lotId/{info,move,adjust,history}` — eager (`App.tsx:228-234`)
 - `/orders/*`, `/builds/*`, `/projects/*`, `/reports/*`, `/settings/*` —
   **lazy** (see below)
+- `/c/:code` → `<CodeResolve />` — **lazy**. The scan landing page: a
+  printed label's QR encodes this path, the page resolves the code via
+  `GET /api/codes/{code}` and `replace`-navigates to the object's own
+  detail route. Deliberately short (`/c/`, not `/codes/`) because every
+  character costs QR density; lazy because it is only ever reached from a
+  scan, never from in-app navigation. Sits inside `<Gate>`, so an
+  unauthenticated scan round-trips through `/login` and lands back here.
+  See [api/codes](../api/codes.md).
 - `*` → `<NotFound />` (`App.tsx:275`)
 
 ## Lazy-chunk boundaries
