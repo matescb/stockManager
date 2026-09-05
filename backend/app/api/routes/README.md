@@ -31,6 +31,7 @@ Every public REST endpoint lives here, one file per logical area. This README is
 | `builds.py` | `/api/builds` | [builds](../../../../docs/api/builds.md) |
 | `build_stages.py` | `/api/builds/{id}/stages…` | [builds](../../../../docs/api/builds.md#multi-stage-builds) |
 | `build_kits.py` | `/api/builds/{id}/kit…` | [builds](../../../../docs/api/builds.md#kitting) |
+| `build_picklist.py` | `/api/builds/{id}/…/pick-list` | [builds](../../../../docs/api/builds.md#pick-lists) |
 | `reports.py` | `/api/reports` | [reports](../../../../docs/api/reports.md) |
 | `attachments.py` | `/api/attachments` | [attachments-tags-cf](../../../../docs/api/attachments-tags-cf.md) |
 | `tags.py` | `/api/tags` | [attachments-tags-cf](../../../../docs/api/attachments-tags-cf.md) |

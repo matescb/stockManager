@@ -77,6 +77,7 @@ const OrderDetail = lazy(() => import("@/routes/orders/OrderDetail"));
 const BuildsList = lazy(() => import("@/routes/builds/BuildsList"));
 const BuildCreate = lazy(() => import("@/routes/builds/BuildCreate"));
 const BuildDetail = lazy(() => import("@/routes/builds/BuildDetail"));
+const PickListView = lazy(() => import("@/routes/builds/picklist/PickListView"));
 
 // Reports module exports the layout + four sub-reports from one file —
 // lazy() requires a default export, so wrap each named export in a
@@ -283,6 +284,12 @@ export default function App() {
             <Route path="/builds/archived" element={<LazyRoute><BuildsList archived /></LazyRoute>} />
             <Route path="/builds/create" element={<LazyRoute><BuildCreate /></LazyRoute>} />
             <Route path="/builds/:buildId" element={<LazyRoute><BuildDetail /></LazyRoute>} />
+            {/* Printable pick lists (Track B4). Declared before the bare
+                `:buildId` route would ever match them anyway — react-router
+                v6 ranks by specificity, not order — but kept adjacent so the
+                whole-build and per-stage sheets read as one pair. */}
+            <Route path="/builds/:buildId/pick-list" element={<LazyRoute><PickListView /></LazyRoute>} />
+            <Route path="/builds/:buildId/stages/:stageId/pick-list" element={<LazyRoute><PickListView /></LazyRoute>} />
 
             <Route path="/reports" element={<LazyRoute><ReportsLayout /></LazyRoute>}>
               <Route index element={<LazyRoute><LowStockReport /></LazyRoute>} />

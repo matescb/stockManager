@@ -120,6 +120,39 @@ def test_kitting_quantity_names_are_covered(tmp_path: Path):
     ]
 
 
+def test_pick_list_quantity_names_are_covered(tmp_path: Path):
+    """Same non-vacuity pin for the pick list's (Track B4) names.
+
+    `take` and `remaining` are the sharper two: both were already carrying
+    real quantities in `kitting.py` and `builds/service.py` before the pick
+    list existed, so the set was silent over them too. `unclaimed` is the
+    per-bucket pool the sheet drains across BOM lines; `planned` and
+    `alternates_available` are line fields that go on the wire.
+    """
+    checker = _load_checker()
+    app_dir = _tree(
+        tmp_path,
+        "domain/builds/picklist.py",
+        """\
+        def allocate(line, bucket, remaining, planned):
+            a = int(remaining)
+            b = int(bucket["unclaimed"])
+            c = float(bucket["take"])
+            d = int(planned)
+            e = int(line["alternates_available"])
+            return a, b, c, d, e
+        """,
+    )
+
+    assert [(v[2], v[3]) for v in checker.check_app_tree(app_dir)] == [
+        ("int", "remaining"),
+        ("int", "unclaimed"),
+        ("float", "take"),
+        ("int", "planned"),
+        ("int", "alternates_available"),
+    ]
+
+
 def test_genuine_integers_are_not_flagged(tmp_path: Path):
     """`builds.quantity` stays an integer by design (you build 5 boards,
     not 5.5), money at a JSON boundary has to become a JSON number, and

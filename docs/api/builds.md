@@ -2,7 +2,7 @@
 
 Audience: engineer
 
-Builds (a planned/in-progress run that consumes BOM stock and produces an output lot), reservations, shortage analysis, multi-stage builds, and the consume actions that close a build.
+Builds (a planned/in-progress run that consumes BOM stock and produces an output lot), reservations, shortage analysis, multi-stage builds, kitting, printable pick lists, and the consume actions that close a build.
 
 ## Conventions
 
@@ -353,6 +353,72 @@ Combined timeline of `stock_entries` tagged with this `build_id` plus synthetic 
 **Notes**
 
 - Source: `backend/app/api/routes/builds.py:176-229`.
+
+## Pick lists
+
+Track B4. A printable sheet an operator carries to the shelves: every part the build needs, how many, in which unit, and which storage location(s) to take it from, ordered so the walk happens once. Where [kitting](#kitting) *moves* the components to one tray, a pick list leaves the stock where it is and tells the operator the route. Domain detail: [`builds-and-bom.md`](../domain/builds-and-bom.md#pick-lists).
+
+Both routes live in `backend/app/api/routes/build_picklist.py`, mounted under the same `/api/builds` prefix — split out for the same `line-count-budget` reason as `build_stages.py` and `build_kits.py`.
+
+Both are **read-only**: no ledger row, no reservation change, and therefore **no `audit_log` row**. The universal audit invariant covers workspace mutations; a GET that renders a sheet is not one.
+
+### `GET /api/builds/{build_id}/pick-list`
+
+Whole-build sheet: every consumable BOM line at its full `_required` quantity.
+
+**Response** — `200 OK`
+
+```json
+{ "build": { "id": "…", "name": "Rev C run", "quantity": 5, "status": "planned" },
+  "project": { "id": "…", "name": "Widget" },
+  "stage": null,
+  "generated_at": "2026-09-05T10:00:00+00:00",
+  "lines": [
+    { "project_entry_id": "…", "part_id": "…", "part_name": "R10k",
+      "mpn": "RC0603-10K", "manufacturer": "Yageo", "internal_part_number": null,
+      "designators": ["R1", "R2"], "unit": "pcs",
+      "attrition_pct": 25.0, "portion_pct": null,
+      "required": 138, "on_hand": 180, "alternates_available": 0,
+      "planned": 138, "short_by": 0, "is_short": false,
+      "location_count": 2 }
+  ],
+  "stops": [
+    { "storage_location_id": "…", "storage_location_name": "A1 shelf",
+      "picks": [
+        { "project_entry_id": "…", "part_id": "…", "part_name": "R10k",
+          "mpn": "RC0603-10K", "designators": ["R1", "R2"],
+          "lot_id": null, "lot_name": null,
+          "quantity": 100, "unit": "pcs", "available": 100 }
+      ] }
+  ],
+  "totals": { "lines": 1, "short_lines": 0, "stops": 2 } }
+```
+
+**Two views over one allocation**, so no client re-derives a quantity:
+
+- `lines` — one row per BOM line in `order_index` order. `required` is the attrition-adjusted, ceil-rounded integer from `_required` — the same number reservations, kitting and consumption use. `planned` is what the stops actually cover; `short_by`/`is_short` flag the difference. `location_count` counts **distinct locations**, not picks: stock is bucketed per `(storage, lot, unit)`, so two lots on one shelf are two picks but one stop.
+- `stops` — the walk. One entry per storage location, **sorted by location name with unassigned stock last** (`storage_location_id: null`, name `"Unassigned"`). Within a line the biggest bucket is taken first, so the fewest bins get opened.
+
+**One part gets one pool across BOM lines.** `project_entries` has no unique constraint on `(project_id, part_id)`, so the same part can sit on two lines; they are served in `order_index` order and the second sees what the first left. `on_hand` is therefore the part's own total and can exceed a line's `planned` while that line is still short — otherwise the sheet would print a plan the consume step rejects with `insufficient stock`. (Kitting solves the same problem by aggregating requirements per part before picking buckets.)
+
+`alternates_available` is stock in registered substitutes / meta-part members — reported (it is what `shortage_analysis` calls `substitute_available`) but never picked from.
+
+**Notes**
+
+- Per-location quantities come from `stock/service.py::bulk_stock_by_location`, a roll-up inside the one module allowed to aggregate `stock_entries`. Every quantity is an exact `Decimal` server-side (`as_quantity`) and reaches the wire through `_quantity.py::quantity_out`, so a whole value is an integer and a fractional one a float — never a truncated integer.
+- A line's `unit` is `parts.unit_of_measure` (the plan); a pick's `unit` is the ledger row's own stamp (written history), which is part of the roll-up's grouping key. Identical today — `DEFAULT_UNIT` is the only value 0074 ever writes.
+- **Substitutes and meta-part members are not picked from.** A short line is flagged, not silently re-planned onto a registered substitute — that stays an explicit per-line decision at consume time.
+- DNP, `non_part` and `unmatched` BOM rows are excluded, matching `_consumable_entries`.
+
+**Errors** — `404 build.not_found`; `404 project.not_found`.
+
+### `GET /api/builds/{build_id}/stages/{stage_id}/pick-list`
+
+Per-stage sheet. Same body shape, with `stage` populated and each line's `required` set to this stage's slice of `_required` (`stage_allocations`), plus the stage's `portion_pct` on the line.
+
+Only the BOM lines this stage covers appear — a staged build's picker wants this stage's parts, and the whole-build sheet would have them fetch the next stage's material and leave it on the bench. Lines whose allocation rounds to zero are dropped, the same filter `consume_stage` applies.
+
+**Errors** — `404 build.not_found`; `404 build_stage.not_found` — unknown stage, a stage of a *different* build, an archived stage, or a stage in another workspace (same gate the stage consume and stage kit routes use).
 
 ## TODOs
 

@@ -2330,3 +2330,66 @@ def test_build_kitting_is_workspace_scoped():
             ).scalar_one()
             == 0
         )
+
+
+def test_build_pick_lists_are_workspace_scoped():
+    """Printable pick lists (Track B4) are read-only, which makes them the
+    easy place to leak: a report that quietly answers for someone else's
+    build hands over part names, MPNs, storage-location names and exact
+    on-hand quantities. Both routes are gated the same way the mutating
+    build / stage routes are, and the sheet only ever reads stock from the
+    caller's own workspace.
+    """
+    a = TestClient(app)
+    b = TestClient(app)
+    _signup(a, f"picklist-a-{uuid.uuid4().hex[:6]}@x.com")
+    _signup(b, f"picklist-b-{uuid.uuid4().hex[:6]}@x.com")
+
+    part_a = _create_part(a, "A secret resistor")
+    storage_a = _create_storage(a, "A hidden shelf")
+    _factory_add_stock(a, part_a, 100, storage_a)
+    project_a = _create_project_with_bom(
+        a, "A project", [{"part_id": part_a, "quantity": 10}]
+    )
+    entry_a = a.get(f"/api/projects/{project_a}/entries").json()["data"][0]["id"]
+    build_a = a.post(
+        "/api/builds", json={"name": "A build", "project_id": project_a, "quantity": 1}
+    ).json()["data"]["id"]
+    stage_a = a.post(
+        f"/api/builds/{build_a}/stages",
+        json={"name": "A stage", "lines": [{"project_entry_id": entry_a}]},
+    ).json()["data"]["id"]
+
+    # B's own build, so A's stage id can also be probed through a build B owns.
+    part_b = _create_part(b, "B resistor")
+    project_b = _create_project_with_bom(
+        b, "B project", [{"part_id": part_b, "quantity": 1}]
+    )
+    build_b = b.post(
+        "/api/builds", json={"name": "B build", "project_id": project_b, "quantity": 1}
+    ).json()["data"]["id"]
+
+    # A's build / stage through A's ids -> 404 at the build gate.
+    r = b.get(f"/api/builds/{build_a}/pick-list")
+    assert r.status_code == 404, r.text
+    assert r.json()["code"] == ErrorCodes.BUILD_NOT_FOUND
+    assert b.get(f"/api/builds/{build_a}/stages/{stage_a}/pick-list").status_code == 404
+
+    # A's stage id under B's own build -> 404 at the stage gate, so a foreign
+    # stage can't ride in on a build the caller legitimately owns.
+    r = b.get(f"/api/builds/{build_b}/stages/{stage_a}/pick-list")
+    assert r.status_code == 404, r.text
+    assert r.json()["code"] == ErrorCodes.BUILD_STAGE_NOT_FOUND
+
+    # B's own sheet never sees A's part, shelf or stock — B has none, so the
+    # line is short and there is nothing to walk to.
+    own = b.get(f"/api/builds/{build_b}/pick-list").json()["data"]
+    assert own["stops"] == []
+    assert [line["part_id"] for line in own["lines"]] == [part_b]
+    assert own["lines"][0]["is_short"] is True
+
+    # A's own sheet is unaffected, and printing it moved nothing.
+    sheet_a = a.get(f"/api/builds/{build_a}/pick-list").json()["data"]
+    assert sheet_a["stops"][0]["storage_location_name"] == "A hidden shelf"
+    assert sheet_a["stops"][0]["picks"][0]["quantity"] == 10
+    assert a.get(f"/api/parts/{part_a}/stock").json()["data"]["total_on_hand"] == 100

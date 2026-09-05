@@ -16,6 +16,7 @@ Page tree for the app. Each top-level folder is a feature area; lazy chunks are 
 | `lots/` | Lot list + lot detail (split, history) |
 | `orders/` | Orders list + order detail + receive workflow |
 | `builds/` | Builds list + build detail (shortage analysis, reserve, consume) |
+| `builds/picklist/` | Printable pick sheet (`@media print`, browser print dialog — not the label printer) |
 | `projects/` | Projects (BOMs) list + project detail + BOM import wizard |
 | `storage/` | Storage location tree CRUD |
 | `reports/` | Aggregate reports (low-stock, value, BOM shortage, expiring) |
