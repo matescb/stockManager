@@ -818,7 +818,11 @@ def _low_stock_rows(
         cur = on_hand.get(part.id, 0)
         res = reserved.get(part.id, 0)
         avail = cur - res
-        threshold = quantity_out(part.low_stock_report_quantity) or 0
+        threshold = (
+            quantity_out(part.low_stock_report_quantity)
+            if part.low_stock_report_quantity is not None
+            else 0
+        )
         if avail < threshold:
             rows.append(
                 {

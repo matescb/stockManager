@@ -217,6 +217,40 @@ def test_0074_downgrade_refuses_for_every_widened_column(db):
     _assert_widened(db)
 
 
+def test_0074_downgrade_refuses_to_drop_a_non_default_unit_stamp(db):
+    """A whole number is only safe to narrow if it still means *pieces*.
+
+    `downgrade()` drops the unit columns, so a row stamped `'m'` would
+    come out of it as an ambiguous `12` with nothing left to say it was
+    metres — the exact loss the per-row stamp exists to prevent. The
+    fractional guard alone would not catch it, because 12 is whole.
+    """
+    cfg = _alembic_cfg()
+    parent = _parent_revision(cfg)
+
+    client = TestClient(app)
+    signup_user(client)
+    part_id = create_part(client, "Spool")
+    add_stock(client, part_id, 12)
+    db.commit()
+
+    db.execute(
+        text("UPDATE stock_entries SET unit = 'm' WHERE part_id = :p"),
+        {"p": part_id},
+    )
+    db.commit()
+
+    with pytest.raises(RuntimeError, match="stock_entries.unit"):
+        command.downgrade(cfg, parent)
+
+    _assert_widened(db)
+    assert db.execute(
+        text("SELECT unit FROM stock_entries WHERE part_id = :p"),
+        {"p": part_id},
+    ).scalar_one() == "m"
+    db.commit()
+
+
 def test_0074_downgrade_succeeds_once_the_fractional_row_is_resolved(db):
     """Reversibility is a property of the data, not a one-way door.
 

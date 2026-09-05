@@ -95,7 +95,11 @@ def serialize_part(
         "notes_markdown": p.notes_markdown,
         "low_stock_report_quantity": quantity_out(p.low_stock_report_quantity),
         "attrition_percentage": float(p.attrition_percentage or 0),
-        "attrition_min_quantity": quantity_out(p.attrition_min_quantity) or 0,
+        "attrition_min_quantity": (
+            quantity_out(p.attrition_min_quantity)
+            if p.attrition_min_quantity is not None
+            else 0
+        ),
         "category_id": str(p.category_id) if p.category_id else None,
         "default_storage_location_id": str(p.default_storage_location_id) if p.default_storage_location_id else None,
         "default_storage_mandatory": p.default_storage_mandatory,

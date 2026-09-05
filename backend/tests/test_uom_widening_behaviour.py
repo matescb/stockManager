@@ -139,6 +139,26 @@ def test_order_quantities_serialise_as_json_integers(authed_client):
     assert all(isinstance(e["quantity_received"], int) for e in order["entries"])
 
 
+def test_over_receive_error_message_still_reads_as_a_whole_number(authed_client):
+    """`outstanding` is now `Decimal - Decimal`, and `orders.py` re-raises
+    `OrderError` verbatim as the public 400 body — so an unguarded value
+    would turn "outstanding 6" into "outstanding 6.000000" on the wire."""
+    part_id = create_part(authed_client, "Connector")
+    order_id = authed_client.post("/api/orders", json={"name": "PO-2"}).json()["data"]["id"]
+    entry_id = authed_client.post(
+        f"/api/orders/{order_id}/entries",
+        json={"part_id": part_id, "quantity_ordered": 6},
+    ).json()["data"]["id"]
+
+    r = authed_client.post(
+        f"/api/orders/{order_id}/receive",
+        json={"lines": [{"order_entry_id": entry_id, "quantity": 10}]},
+    )
+    assert r.status_code == 400, r.text
+    message = r.json()["status"]["message"]
+    assert "outstanding 6," in message, message
+
+
 def test_stock_reads_stay_workspace_isolated(authed_client, client):
     """The widened columns and the new `unit` stamp change no query path,
     but the ledger reads they feed are the ones workspace isolation is

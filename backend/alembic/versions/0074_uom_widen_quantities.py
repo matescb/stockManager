@@ -46,19 +46,52 @@ price stays scale-consistent, and gives micrometre resolution on metres.
 5.5. `order_entries.order_index` / `project_entries.order_index` are
 positions, not quantities, and stay `Integer` too.
 
-**Deploy note — this rewrites `stock_entries`.** `integer -> numeric` is
-not binary-coercible in Postgres, so each `ALTER COLUMN ... TYPE` holds
-`ACCESS EXCLUSIVE` for a full heap rewrite. No index or constraint
-references any of these columns (only `ck_project_entries_quantity_nonneg`
-and the two `ck_order_entries_qty_*_nonneg` CHECKs, which Postgres
-revalidates in place), so the cost is the heap rewrite alone — but that
-is still O(table size), and a pending ACCESS EXCLUSIVE request blocks
-every *subsequent* reader even before it is granted. Hence the
-`lock_timeout` below: fail fast and let the container restart retry
-rather than queue up behind a long-running transaction and stall the
-whole application. Run it behind `a2enconf parts-maintenance`, after a
-`pg_dump`, with the three `backend-cron*` sidecars stopped — they hold
-their own connections and are not recreated by `docker compose up -d`.
+**Deploy note — this rewrites five tables.** `integer -> numeric` is not
+binary-coercible in Postgres, so each `ALTER TABLE ... ALTER COLUMN ...
+TYPE` holds `ACCESS EXCLUSIVE` while it rewrites the heap **and rebuilds
+every index on that table**, whether or not the index mentions the
+changed column. For `parts` that means the five `pg_trgm` GIN indexes get
+rebuilt too. Nothing *blocks* the change — no view, generated column, FK
+or index references any widened column, the two plpgsql triggers
+(`check_stock_nonneg` from 0013, `check_stock_entries_workspace_fks` from
+0050) are not dependency-tracked and neither needs editing, and the three
+`ck_*_nonneg` CHECKs from 0032 are revalidated in place — but the cost is
+real: budget roughly **2x the total relation size (heap + indexes) in
+free disk and a comparable volume of WAL**, since every old relfilenode
+is held until the single commit at the end of the run.
+
+Because the cost is per *table*, the widenings are grouped into one
+`ALTER TABLE` per table (`parts` and `order_entries` each take two
+columns), which is five rewrites rather than seven.
+
+A pending `ACCESS EXCLUSIVE` request blocks every *subsequent* reader
+even before it is granted, hence the `lock_timeout` below: fail fast
+rather than queue behind a long-running transaction and stall the whole
+application. Note the trade-off — a timeout aborts the entire
+`alembic upgrade head`, the container's `sh -c "alembic ... && exec
+uvicorn"` exits, and `restart: unless-stopped` retries. That is a
+crash-loop, not a graceful degradation, if something is *persistently*
+holding a conflicting lock.
+
+So, before approving the `production` environment gate:
+
+  1. confirm the `predeploy-dump.sh` artifact landed — it is the only
+     rollback for the two new columns (see `downgrade()`);
+  2. size it: `SELECT relname, pg_size_pretty(pg_total_relation_size(oid))
+     FROM pg_class WHERE relname IN ('stock_entries', 'parts', 'lots',
+     'order_entries', 'project_entries');` and check free disk is >= 2x
+     that sum;
+  3. `docker compose -f docker-compose.prod.yml stop backend-cron
+     backend-cron-alerts backend-cron-sessions`, and start them again
+     after the health gate passes. They declare `depends_on: backend:
+     condition: service_healthy`, so under `docker compose up -d --build`
+     the *old* cron containers keep their connections open while the new
+     backend runs the migration — a `sourcing-cache-sweep` transaction
+     touching `parts` is exactly what turns the `lock_timeout` above into
+     a crash-loop. The deploy job's own health gate is 30 x 5s, so a
+     rewrite longer than ~150s also fails the job (maintenance mode is
+     lifted by its `trap ... EXIT`, though the vhost still maps 502/503/504
+     to the maintenance page).
 
 Chain: 0071 (print_jobs) -> 0072 (attrition) -> 0073 (object codes) -> 0074 (this).
 """
@@ -73,26 +106,22 @@ branch_labels = None
 depends_on = None
 
 
-#: (table, column) pairs widened by this migration, in the order the
-#: rewrites run. `downgrade()` walks the same list in reverse.
-_WIDENED: tuple[tuple[str, str], ...] = (
-    ("stock_entries", "quantity_delta"),
-    ("project_entries", "quantity"),
-    ("order_entries", "quantity_ordered"),
-    ("order_entries", "quantity_received"),
-    ("lots", "purchase_quantity"),
-    ("parts", "low_stock_report_quantity"),
-    ("parts", "attrition_min_quantity"),
+#: Columns widened by this migration, grouped by table so each table is
+#: rewritten exactly once. A rewrite reindexes the whole table, so two
+#: separate ALTERs against `parts` would rebuild its five pg_trgm GIN
+#: indexes twice for no reason. `downgrade()` walks this list in reverse.
+_WIDENED_BY_TABLE: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("stock_entries", ("quantity_delta",)),
+    ("project_entries", ("quantity",)),
+    ("order_entries", ("quantity_ordered", "quantity_received")),
+    ("lots", ("purchase_quantity",)),
+    ("parts", ("low_stock_report_quantity", "attrition_min_quantity")),
 )
 
-#: Columns that are NOT NULL and so must round-trip as NOT NULL.
-_NOT_NULL = {
-    ("stock_entries", "quantity_delta"),
-    ("project_entries", "quantity"),
-    ("order_entries", "quantity_ordered"),
-    ("order_entries", "quantity_received"),
-    ("parts", "attrition_min_quantity"),
-}
+#: Flattened `(table, column)` view of the above, for the downgrade guards.
+_WIDENED: tuple[tuple[str, str], ...] = tuple(
+    (table, column) for table, columns in _WIDENED_BY_TABLE for column in columns
+)
 
 #: (table, column) pairs added by this migration.
 _UNIT_COLUMNS: tuple[tuple[str, str], ...] = (
@@ -107,6 +136,18 @@ _UNIT_LENGTH = 16
 # downgrade guard checks range as well as fractionality.
 _INT32_MIN = -2147483648
 _INT32_MAX = 2147483647
+
+
+def _alter_clauses(columns: tuple[str, ...], pg_type: str) -> str:
+    """`ALTER COLUMN a TYPE t USING a::t, ALTER COLUMN b TYPE t USING b::t`.
+
+    Column names come from the module-level literal tuples above, never
+    from input.
+    """
+    return ", ".join(
+        f"ALTER COLUMN {column} TYPE {pg_type} USING {column}::{pg_type}"
+        for column in columns
+    )
 
 
 def upgrade() -> None:
@@ -139,19 +180,18 @@ def upgrade() -> None:
         ),
     )
 
-    # 2. The rewrites.
-    for table, column in _WIDENED:
-        op.alter_column(
-            table,
-            column,
-            type_=sa.Numeric(18, 6),
-            postgresql_using=f"{column}::numeric(18,6)",
-            existing_nullable=(table, column) not in _NOT_NULL,
-        )
+    # 2. The rewrites — one ALTER TABLE per table (see _WIDENED_BY_TABLE).
+    #    Raw SQL rather than op.alter_column() because alembic emits one
+    #    statement per column, and each statement is a separate full-table
+    #    rewrite + reindex.
+    for table, columns in _WIDENED_BY_TABLE:
+        op.execute(f"ALTER TABLE {table} {_alter_clauses(columns, 'numeric(18,6)')}")
 
     # `alembic/env.py` wraps the whole `upgrade head` run in ONE
     # transaction, so a `SET LOCAL` here would otherwise stay in force for
-    # every migration that follows this one in the same run.
+    # every migration that follows this one in the same run. `= DEFAULT`
+    # resets to the role / postgresql.conf value (both `0` on the stock
+    # postgres image), not to whatever the session had set.
     op.execute("SET LOCAL lock_timeout = DEFAULT")
     op.execute("SET LOCAL statement_timeout = DEFAULT")
 
@@ -173,8 +213,41 @@ def downgrade() -> None:
     track opens fractional input) and refuses on data that is not. That
     is the honest semantic, and it is what makes shipping the table
     rewrite early a safe move rather than a one-way door.
+
+    The same argument applies to the unit columns, which this drops: a
+    whole-number row is only safe to narrow if it also still means
+    *pieces*. So the guard covers non-default unit stamps too — dropping
+    the stamp off a 12 m spool is the "500 pieces become 500 metres" loss
+    the column exists to prevent.
     """
     conn = op.get_bind()
+
+    op.execute("SET LOCAL lock_timeout = '5s'")
+    op.execute("SET LOCAL statement_timeout = 0")
+
+    # Take the exclusive lock BEFORE counting. A bare COUNT(*) holds only
+    # ACCESS SHARE, so without this a fractional row inserted between the
+    # guard and the ALTER would sail past the check and be rounded away.
+    # Deterministic order, so two concurrent runs cannot deadlock.
+    for table, _ in _WIDENED_BY_TABLE:
+        op.execute(f"LOCK TABLE {table} IN ACCESS EXCLUSIVE MODE")
+
+    for table, column in _UNIT_COLUMNS:
+        stamped = conn.execute(
+            sa.text(
+                # Names are module-level literals, never input.
+                f"SELECT COUNT(*) FROM {table} WHERE {column} <> :unit"  # noqa: E501
+            ),
+            {"unit": _DEFAULT_UNIT},
+        ).scalar()
+        if stamped:
+            raise RuntimeError(
+                f"Cannot downgrade 0074: {stamped} {table}.{column} row(s) carry a "
+                f"unit other than '{_DEFAULT_UNIT}'. Dropping the column would "
+                "erase what those quantities measure — a 12 m spool would become "
+                "an ambiguous '12' with nothing left to say it was metres. "
+                "Convert those rows back before downgrading."
+            )
 
     for table, column in _WIDENED:
         fractional = conn.execute(
@@ -211,14 +284,9 @@ def downgrade() -> None:
                 "Resolve those rows manually before downgrading."
             )
 
-    for table, column in reversed(_WIDENED):
-        op.alter_column(
-            table,
-            column,
-            type_=sa.Integer(),
-            postgresql_using=f"{column}::integer",
-            existing_nullable=(table, column) not in _NOT_NULL,
-        )
+    # One ALTER TABLE per table, same grouping as upgrade().
+    for table, columns in reversed(_WIDENED_BY_TABLE):
+        op.execute(f"ALTER TABLE {table} {_alter_clauses(columns, 'integer')}")
 
     for table, column in reversed(_UNIT_COLUMNS):
         op.drop_column(table, column)
