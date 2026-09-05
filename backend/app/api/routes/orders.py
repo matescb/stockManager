@@ -109,10 +109,9 @@ def _entries_for(db, ws_id, oid) -> list[OrderEntry]:
 
 
 def _totals(entries: list[OrderEntry]) -> tuple[int | float, int | float]:
-    return (
-        quantity_out(sum(e.quantity_ordered for e in entries)),
-        quantity_out(sum(e.quantity_received for e in entries)),
-    )
+    ordered = quantity_out(sum(e.quantity_ordered for e in entries))
+    received = quantity_out(sum(e.quantity_received for e in entries))
+    return ordered, received
 
 
 @router.get("")
