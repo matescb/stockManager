@@ -59,7 +59,7 @@ log = get_logger(__name__)
 _ACTIVE_STAGE_STATUSES = ("planned", "in_progress")
 
 
-def _allocate(total: int, portions: list[tuple[UUID, Decimal]]) -> dict[UUID, int]:
+def _allocate(total: int | Decimal, portions: list[tuple[UUID, Decimal]]) -> dict[UUID, int]:
     """Split `total` across stages by portion percentage.
 
     Allocation is **cumulative**, not per-stage independent: stage *n* gets
@@ -71,7 +71,15 @@ def _allocate(total: int, portions: list[tuple[UUID, Decimal]]) -> dict[UUID, in
     property that keeps a staged build consuming exactly what the equivalent
     single-pass build consumes. Stock is integer-only, so every boundary is
     rounded up (same direction, and for the same reason, as `_required`).
+
+    `total` is whatever `_required` returns — an `int` today. It is accepted
+    as `int | Decimal` and the cap is ceiled rather than compared raw, so a
+    later dimension-aware `_required` (see its docstring: measured parts
+    will quantize to their unit instead of ceiling) cannot make `min()`
+    hand back a `Decimal` and leak a fractional stage quantity into rows
+    the rest of this module treats as integers.
     """
+    cap = int(Decimal(total).to_integral_value(rounding=ROUND_CEILING))
     out: dict[UUID, int] = {}
     cumulative = Decimal(0)
     previous = 0
@@ -80,7 +88,7 @@ def _allocate(total: int, portions: list[tuple[UUID, Decimal]]) -> dict[UUID, in
         upto = int(
             (Decimal(total) * cumulative / 100).to_integral_value(rounding=ROUND_CEILING)
         )
-        upto = min(upto, total)
+        upto = min(upto, cap)
         out[stage_id] = max(0, upto - previous)
         previous = upto
     return out

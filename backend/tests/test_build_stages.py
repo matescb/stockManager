@@ -681,6 +681,61 @@ def test_archive_after_partial_stage_release_does_not_over_release(authed):
     assert _reserved_total(p1) == 0
 
 
+def test_partial_release_accounting_does_not_truncate_fractions(authed):
+    """`stock_entries.quantity_delta` is `Numeric(18,6)` since alembic 0074.
+
+    The partial-release accounting reads outstanding reserve quantities off
+    that column; an `int()` there would truncate a fraction the column can
+    now physically hold and silently under-release. No API path writes a
+    fractional quantity yet, so this test writes one straight to the ledger
+    and asserts the release counters it exactly rather than dropping the
+    0.5. Guards the same coercion 0074 had to remove from `_required`.
+    """
+    from decimal import Decimal
+
+    from app.domain.builds.models import Build
+    from app.domain.builds.service import _outstanding_reservations
+
+    c = authed
+    p1 = _create_part(c, "R1k-frac")
+    storage = _create_storage(c)
+    _add_stock(c, p1, 100, storage)
+    pid, entries = _project_with_entries(c, "PCB-frac", [{"part_id": p1, "quantity": 10}])
+    bid = c.post(
+        "/api/builds", json={"name": "B-frac", "project_id": pid, "quantity": 1}
+    ).json()["data"]["id"]
+
+    with SessionLocal() as s:
+        reserve = s.execute(
+            select(StockEntry)
+            .where(StockEntry.build_id == uuid.UUID(bid))
+            .where(StockEntry.operation_type == "reserve")
+        ).scalar_one()
+        # Reserve 10.5 and release 0.25 of it: 10.25 must remain outstanding.
+        reserve.quantity_delta = Decimal("10.5")
+        s.add(
+            StockEntry(
+                workspace_id=reserve.workspace_id,
+                part_id=reserve.part_id,
+                quantity_delta=Decimal("-0.25"),
+                status="reserved",
+                operation_type="release",
+                related_entry_id=reserve.id,
+                build_id=reserve.build_id,
+                project_id=reserve.project_id,
+            )
+        )
+        s.flush()
+
+        build = s.get(Build, uuid.UUID(bid))
+        _part_ids, outstanding = _outstanding_reservations(
+            s, workspace_id=build.workspace_id, build=build
+        )
+        assert len(outstanding) == 1
+        # int() truncation would give 10 (10 - 0) instead of 10.25.
+        assert outstanding[0][1] == Decimal("10.25")
+
+
 def test_quantity_change_refused_after_a_stage_consumed(authed):
     c = authed
     p1 = _create_part(c, "R1k")

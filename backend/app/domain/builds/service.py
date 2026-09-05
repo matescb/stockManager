@@ -239,10 +239,18 @@ def apply_reservations(
 
 def _outstanding_reservations(
     db: Session, *, workspace_id: UUID, build: Build
-) -> tuple[list[UUID], list[tuple[StockEntry, int]]]:
+) -> tuple[list[UUID], list[tuple[StockEntry, Decimal]]]:
     """Reserve rows for `build` and how much of each is still outstanding.
 
     Returns `(all_reserve_part_ids, [(reserve_row, remaining), …])`.
+
+    `remaining` stays a `Decimal`. `stock_entries.quantity_delta` is
+    `Numeric(18,6)` since alembic 0074, so an `int()` here would truncate
+    any fraction the column can now physically hold — the same coercion
+    0074 had to remove from `_required`. Nothing writes a fractional
+    quantity today (every quantity schema above the DB is still `int`), so
+    this changes no current behaviour; it just refuses to be the place that
+    silently loses 0.5 of a metre when the units-of-measure track lands.
 
     "Outstanding" is measured in **quantity**, not row existence: a reserve
     row of 100 that has already been released by 40 (via one or more
@@ -271,7 +279,7 @@ def _outstanding_reservations(
     )
     if not reserve_rows:
         return [], []
-    released_by_reserve: dict[UUID, int] = {}
+    released_by_reserve: dict[UUID, Decimal] = {}
     for related_id, released in db.execute(
         select(
             StockEntry.related_entry_id,
@@ -284,11 +292,11 @@ def _outstanding_reservations(
         .where(StockEntry.related_entry_id.is_not(None))
         .group_by(StockEntry.related_entry_id)
     ):
-        released_by_reserve[related_id] = int(released or 0)
+        released_by_reserve[related_id] = Decimal(released or 0)
 
-    outstanding = []
+    outstanding: list[tuple[StockEntry, Decimal]] = []
     for r in reserve_rows:
-        remaining = int(r.quantity_delta) - released_by_reserve.get(r.id, 0)
+        remaining = Decimal(r.quantity_delta) - released_by_reserve.get(r.id, Decimal(0))
         if remaining > 0:
             outstanding.append((r, remaining))
     return [r.part_id for r in reserve_rows], outstanding
@@ -301,7 +309,7 @@ def _write_release(
     user_id: UUID | None,
     build: Build,
     reserve: StockEntry,
-    quantity: int,
+    quantity: Decimal | int,
     build_stage_id: UUID | None,
     now: datetime,
 ) -> None:
@@ -366,7 +374,7 @@ def release_reservation_amounts(
     workspace_id: UUID,
     user_id: UUID | None,
     build: Build,
-    amounts: dict[UUID, int],
+    amounts: dict[UUID, Decimal | int],
     build_stage_id: UUID | None = None,
 ) -> int:
     """Release exactly `amounts[part_id]` units of this build's reservations.
