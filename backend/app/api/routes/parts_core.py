@@ -45,7 +45,6 @@ from app.core.responses import Envelope, ok
 from app.core.time import utcnow
 from app.domain._quantity import quantity_out
 from app.domain.audit.service import log as _audit_log
-from app.domain.categories import service as categories_service
 from app.domain.categories import tree as category_tree
 from app.domain.categories.models import PartCategory
 from app.domain.custom_fields.models import CustomField
@@ -111,12 +110,9 @@ def list_parts(
         400.
 
     ``category_id`` filters to one category and, by default
-    (``include_descendants=true``), everything nested beneath it. The
-    default is deliberate: with a category *tree*, clicking "Passives" and
-    seeing nothing because every part is filed under "Passives / Resistors"
-    is the failure mode that makes a tree feel broken. Pass
-    ``include_descendants=false`` for an exact match on the one category.
-    A ``category_id`` from another workspace is a 404, never an empty list.
+    (``include_descendants=true``), everything nested beneath it — clicking
+    a branch node and seeing nothing because every part is filed on a leaf
+    is what makes a tree feel broken. See ``docs/api/parts.md``.
 
     Every query is scoped to the current workspace (CLAUDE.md invariant).
     """
@@ -139,27 +135,15 @@ def list_parts(
             )
         )
 
-    # MUST be applied to `stmt` here, BEFORE paginate() runs. The cursor is
-    # an HMAC-signed (name, id) seek position over whatever `stmt` selects,
-    # so filtering the *returned page* instead would hand back short pages
-    # (and, once a whole page's worth of rows failed the filter, an empty
-    # page with a non-null next_cursor that a client reasonably reads as
-    # "done"). Rows would silently disappear from the middle of a paged
-    # listing. `tests/test_parts_category_filter.py::
-    # test_category_filter_survives_a_page_boundary` pins it.
+    # MUST go on `stmt`, BEFORE paginate(): the cursor is an HMAC-signed
+    # seek position over whatever `stmt` selects, so filtering the returned
+    # page instead yields short and empty pages. Full argument and the
+    # workspace 404 live in `category_filter_ids`.
     if category_id is not None:
-        # 404s a category from another workspace — the descendant set is
-        # resolved from this workspace's rows only, so an unchecked foreign
-        # id would otherwise quietly degrade to "no parts", which is an
-        # existence oracle by timing and a confusing empty list by UX.
-        categories_service.get_category(db, ws=ws, category_id=category_id)
-        if include_descendants:
-            wanted = category_tree.descendant_ids(
-                category_tree.load_parent_map(db, workspace_id=ws.id), category_id
-            )
-            stmt = stmt.where(Part.category_id.in_(wanted))
-        else:
-            stmt = stmt.where(Part.category_id == category_id)
+        stmt = stmt.where(Part.category_id.in_(category_tree.category_filter_ids(
+            db, ws=ws, category_id=category_id,
+            include_descendants=include_descendants,
+        )))
 
     if use_paged:
         parts, next_cursor = paginate(

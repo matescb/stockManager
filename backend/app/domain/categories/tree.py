@@ -72,6 +72,7 @@ __all__ = [
     "lock_workspace_tree",
     "load_parent_map",
     "ancestor_ids",
+    "category_filter_ids",
     "depth_of",
     "subtree_height",
     "descendant_ids",
@@ -165,6 +166,40 @@ def descendant_ids(parent_map: ParentMap, category_id: UUID) -> set[UUID]:
                 out.add(child)
                 queue.append(child)
     return out
+
+
+def category_filter_ids(
+    db: Session,
+    *,
+    ws: Any,
+    category_id: UUID,
+    include_descendants: bool,
+) -> set[UUID]:
+    """The `category_id` set a parts listing filtered to `category_id`
+    should match — the category alone, or it plus its whole subtree.
+
+    Lives here rather than in the parts route because "what does filtering
+    by this category mean" is a question about categories.
+
+    The 404 is load-bearing: the descendant set is resolved from this
+    workspace's rows only, so an unvalidated foreign id would quietly
+    degrade to "no parts" — an existence oracle by omission, and a
+    dead-end empty table for the user.
+
+    Callers must apply the result to the *statement*, before any
+    pagination: the parts cursor is an HMAC-signed seek position over
+    whatever the statement selects, so filtering the returned page instead
+    yields short pages and, once a whole page fails the filter, an empty
+    page carrying a non-null `next_cursor` — which clients read as
+    end-of-list. Pinned by `tests/test_parts_category_filter.py::
+    test_category_filter_survives_a_page_boundary`.
+    """
+    from app.domain.categories.service import get_category
+
+    get_category(db, ws=ws, category_id=category_id)
+    if not include_descendants:
+        return {category_id}
+    return descendant_ids(load_parent_map(db, workspace_id=ws.id), category_id)
 
 
 def subtree_height(parent_map: ParentMap, category_id: UUID) -> int:
