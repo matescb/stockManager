@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { AlertCircle, AlertTriangle, CheckCircle2, Circle, OctagonAlert } from "lucide-react";
-import { DataTable, type Column } from "@/components/DataTable";
+import { DataTable, quantityColumn, type Column } from "@/components/DataTable";
 import { RiskLegendPopover } from "@/components/RiskLegendPopover";
 import { SourcingSourceLabel } from "@/components/SourcingSourceLabel";
 import { LIFECYCLE_LEGEND, SUPPLY_CHAIN_LEGEND } from "@/lib/riskLegends";
@@ -79,9 +79,9 @@ export function BomRows({ rows, workspaceCurrency }: { rows: SourcingBomLine[]; 
   const columns: Column<SourcingBomLine>[] = [
     { key: "part", header: "Part", accessor: row => row.part_name },
     { key: "mpn", header: "MPN", accessor: row => row.mpn ?? "", render: row => row.mpn ?? "—" },
-    { key: "required", header: "Required", accessor: row => row.required, align: "right" },
-    { key: "available", header: "On hand", accessor: row => row.available + row.substitute_available, align: "right" },
-    { key: "short", header: "Short", accessor: row => row.short_by, align: "right" },
+    quantityColumn<SourcingBomLine>({ key: "required", header: "Required", value: row => row.required, align: "right" }),
+    quantityColumn<SourcingBomLine>({ key: "available", header: "On hand", value: row => row.available + row.substitute_available, align: "right" }),
+    quantityColumn<SourcingBomLine>({ key: "short", header: "Short", value: row => row.short_by, align: "right" }),
     { key: "stock", header: "Authorized stock", accessor: row => row.authorized_stock, align: "right" },
     {
       key: "offer",

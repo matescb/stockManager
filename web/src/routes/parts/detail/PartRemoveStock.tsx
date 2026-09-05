@@ -5,6 +5,7 @@ import { api, ApiError } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
 import { stockReportKeys, useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
+import { formatQuantity } from "@/lib/format";
 import { InlineQueryError } from "@/components/QueryStateBoundary";
 import type { StorageLocation } from "@/types";
 
@@ -82,7 +83,7 @@ export default function PartRemoveStock() {
     const lName = r.lot_id ? lotById.get(r.lot_id)?.name ?? null : null;
     const parts = [sName];
     if (lName) parts.push(`Lot ${lName}`);
-    parts.push(`qty=${r.quantity}`);
+    parts.push(`qty=${formatQuantity(r.quantity)}`);
     return parts.join(" · ");
   }
 
@@ -116,7 +117,7 @@ export default function PartRemoveStock() {
       return;
     }
     if (qty <= 0 || qty > maxQty) {
-      setErr(`Quantity must be between 1 and ${maxQty}.`);
+      setErr(`Quantity must be between 1 and ${formatQuantity(maxQty)}.`);
       return;
     }
     const payload: RemoveStockRequest = {
@@ -180,7 +181,7 @@ export default function PartRemoveStock() {
         />
         {selected && (
           <div className="text-xs text-muted mt-1">
-            Max {maxQty} available in this bag.
+            Max {formatQuantity(maxQty)} available in this bag.
           </div>
         )}
       </div>

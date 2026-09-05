@@ -11,6 +11,7 @@ import { api, ApiError } from "@/lib/api";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import { bagLotName, bagComments } from "@/lib/bagCode";
+import { formatQuantity } from "@/lib/format";
 import type { StorageLocation } from "@/types";
 import { useScanImportRows } from "./ScanImport/hooks";
 import { clearDraft, saveDraft } from "./ScanImport/storage";
@@ -114,7 +115,7 @@ export default function ScanImport() {
       );
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", st.part_id) });
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", st.part_id, "stock") });
-      toast.success(`Removed ${quantity} from this bag.`);
+      toast.success(`Removed ${formatQuantity(quantity)} from this bag.`);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : "Quick-remove failed");
     }

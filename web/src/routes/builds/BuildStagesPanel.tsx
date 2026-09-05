@@ -17,6 +17,7 @@ import { api, ApiError } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
 import { stockReportKeys, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
+import { formatQuantity } from "@/lib/format";
 import type { Build, BuildStage, Part, ProjectEntry, StorageLocation } from "@/types";
 
 type StageLineDraft = { project_entry_id: string; portion_pct: number };
@@ -235,10 +236,10 @@ export default function BuildStagesPanel({
                         <td>{row.part_name}</td>
                         <td className="tabular-nums text-muted">{row.portion_pct}%</td>
                         {/* Already attrition-adjusted: this is a slice of `_required`. */}
-                        <td className="tabular-nums">{row.required}</td>
-                        <td className="tabular-nums">{row.available}</td>
+                        <td className="tabular-nums">{formatQuantity(row.required)}</td>
+                        <td className="tabular-nums">{formatQuantity(row.available)}</td>
                         <td className={`tabular-nums ${row.short_by ? "text-danger" : ""}`}>
-                          {row.short_by || "—"}
+                          {row.short_by ? formatQuantity(row.short_by) : "—"}
                         </td>
                       </tr>
                     ))}

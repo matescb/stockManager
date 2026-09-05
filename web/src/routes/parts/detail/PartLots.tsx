@@ -4,7 +4,7 @@ import { api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
 import { formatDateTime } from "@/lib/format";
 import type { Lot } from "@/types";
-import { DataTable } from "@/components/DataTable";
+import { DataTable, quantityColumn } from "@/components/DataTable";
 import QueryStateBoundary from "@/components/QueryStateBoundary";
 
 export default function PartLots() {
@@ -23,7 +23,7 @@ export default function PartLots() {
       exportFilename="lots"
       columns={[
         { key: "name", header: "Name", accessor: r => r.name ?? r.id },
-        { key: "purchase_quantity", header: "Purchased", accessor: r => r.purchase_quantity ?? "" },
+        quantityColumn<Lot>({ key: "purchase_quantity", header: "Purchased", value: r => r.purchase_quantity }),
         { key: "purchase_unit_cost", header: "Unit cost", accessor: r => r.purchase_unit_cost ?? "" },
         { key: "purchase_currency", header: "Currency", accessor: r => r.purchase_currency ?? "" },
         { key: "expiration_date", header: "Expires", accessor: r => r.expiration_date ?? "" },

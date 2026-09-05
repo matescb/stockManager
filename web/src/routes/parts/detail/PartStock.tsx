@@ -2,6 +2,7 @@ import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
+import { formatQuantity } from "@/lib/format";
 import type { StorageLocation } from "@/types";
 
 type StockResp = {
@@ -24,7 +25,7 @@ export default function PartStock() {
     <div>
       <div className="card p-4 mb-4">
         <div className="text-sm text-muted">Total on hand</div>
-        <div data-testid="part-stock-on-hand" className="text-2xl font-semibold tabular-nums">{data.total_on_hand}</div>
+        <div data-testid="part-stock-on-hand" className="text-2xl font-semibold tabular-nums">{formatQuantity(data.total_on_hand)}</div>
       </div>
       <div className="card overflow-hidden">
         <table className="table">
@@ -43,7 +44,7 @@ export default function PartStock() {
               <tr key={i}>
                 <td>{r.storage_location_id ? (storageById.get(r.storage_location_id) || r.storage_location_id) : <span className="text-muted">—</span>}</td>
                 <td className="font-mono text-xs">{r.lot_id || <span className="text-muted">—</span>}</td>
-                <td className="tabular-nums">{r.quantity}</td>
+                <td className="tabular-nums">{formatQuantity(r.quantity)}</td>
               </tr>
             ))}
           </tbody>

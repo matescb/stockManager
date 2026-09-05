@@ -33,6 +33,15 @@ page while unmatched rows stay visually muted and inert.
 | Zebra striping + selected highlight | `DataTable.tsx:404-409` | — |
 | Empty / filtered footer counts (`X of Y rows`) | `DataTable.tsx:449-454` | — |
 | Clear-sort affordance | `DataTable.tsx:455-463` | — |
+| `quantityColumn` — unit-bearing render + numeric accessor | `DataTable.tsx:93-160` | `DataTable.quantity.dom.test.tsx` |
+
+### Quantity columns
+
+Use the exported `quantityColumn` factory for any column showing an
+inventory quantity. It sets a numeric `accessor` (sort, search, CSV) and a
+formatted `render` (the quantity plus its unit) together, because setting
+only one of them silently breaks the other — full rationale and the trap
+table in [quantities](quantities.md).
 
 ### CSV export hardening (FE2-008)
 

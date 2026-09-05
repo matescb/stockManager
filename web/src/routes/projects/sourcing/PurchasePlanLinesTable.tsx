@@ -1,4 +1,4 @@
-import { DataTable, type Column } from "@/components/DataTable";
+import { DataTable, quantityColumn, type Column } from "@/components/DataTable";
 import { SourcingSourceLabel } from "@/components/SourcingSourceLabel";
 import { isSafeHttpUrl } from "@/lib/url";
 import {
@@ -29,9 +29,9 @@ export default function PurchasePlanLinesTable({
   const columns: Column<PurchasePlanLine>[] = [
     { key: "mpn", header: "MPN", accessor: line => line.mpn_searched },
     { key: "distributor", header: "Distributor", accessor: line => line.selected_distributor ?? "" },
-    { key: "required", header: "Required", accessor: line => line.required_qty, align: "right" },
-    { key: "internal", header: "Internal", accessor: line => line.internal_available_qty, align: "right" },
-    { key: "shortage", header: "Shortage", accessor: line => line.shortage_qty, align: "right" },
+    quantityColumn<PurchasePlanLine>({ key: "required", header: "Required", value: line => line.required_qty, align: "right" }),
+    quantityColumn<PurchasePlanLine>({ key: "internal", header: "Internal", value: line => line.internal_available_qty, align: "right" }),
+    quantityColumn<PurchasePlanLine>({ key: "shortage", header: "Shortage", value: line => line.shortage_qty, align: "right" }),
     { key: "qty", header: "Selected qty", accessor: line => line.selected_qty ?? 0, align: "right" },
     {
       key: "unit",

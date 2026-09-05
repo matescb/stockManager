@@ -14,7 +14,7 @@ Shared frontend infra: HTTP client, auth context, theme, query keys, mutations h
 | `queryKeys.ts` | Canonical key factories — `["ws", wsId, …]` shape |
 | `mutations.ts` | `useApiMutation` wrapper + standard invalidation helpers |
 | `schemas.ts` | Zod schemas mirroring API responses |
-| `format.ts` | Number / date / quantity formatters (locale-aware) |
+| `format.ts` | Date / money / quantity formatters (locale-pinned). `formatQuantity` is the single seam for every quantity the UI shows — see [quantities](../../../docs/frontend/quantities.md) |
 | `bagCode.ts` | MIL-STD-130N parser + normaliser; produces the same signature the server computes |
 | `providerCatalog.ts` | Catalog vs spec custom-field key list (mirror of the server-side list) |
 | `cn.ts` | `cn(...)` className combiner |
@@ -49,3 +49,4 @@ Shared frontend infra: HTTP client, auth context, theme, query keys, mutations h
 - Don't `fetch` directly from a component — go through `api.ts` so the envelope, cookie, and 401 handling are uniform.
 - Don't change `bagCode.ts` normalisation without changing the server side at the same time. The signature changes silently and breaks re-scan.
 - Don't add a workspace-scoped query key that doesn't start with `["ws", wsId, …]` — workspace switch won't invalidate it.
+- Don't interpolate a quantity raw, and never `parseInt` / `| 0` / `Math.floor` one. Quantity columns are `Numeric(18, 6)`; go through `format.ts::formatQuantity` (and `DataTable::quantityColumn` inside a table). See [quantities](../../../docs/frontend/quantities.md).

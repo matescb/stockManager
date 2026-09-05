@@ -8,7 +8,7 @@ import { useAuth } from "@/lib/auth";
 import { useApiMutation } from "@/lib/mutations";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { formatDate, formatMoney } from "@/lib/format";
-import { DataTable, type Column } from "@/components/DataTable";
+import { DataTable, quantityColumn, type Column } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import { PoweredByTrustedParts } from "@/components/PoweredByTrustedParts";
 import { SourcingSourceLabel } from "@/components/SourcingSourceLabel";
@@ -326,13 +326,13 @@ export function LowStockReport() {
     { key: "name", header: "Part", accessor: r => r.name, render: r => <Link className="text-accent" to={`/parts/${r.part_id}/info`}>{r.name}</Link> },
     { key: "mpn", header: "MPN", accessor: r => r.mpn ?? "" },
     { key: "manufacturer", header: "Manufacturer", accessor: r => r.manufacturer ?? "" },
-    { key: "on_hand", header: "On hand", accessor: r => r.on_hand, width: "80px" },
-    { key: "reserved", header: "Reserved", accessor: r => r.reserved ?? 0, width: "90px",
-      render: r => <span className="tabular-nums text-muted">{r.reserved ?? 0}</span> },
-    { key: "available", header: "Available", accessor: r => r.available ?? r.on_hand, width: "90px" },
-    { key: "threshold", header: "Threshold", accessor: r => r.threshold, width: "100px" },
-    { key: "short_by", header: "Short by", accessor: r => r.short_by, width: "100px",
-      render: r => <span className="tabular-nums text-danger">{r.short_by}</span> },
+    quantityColumn<LowStockRow>({ key: "on_hand", header: "On hand", value: r => r.on_hand, width: "80px" }),
+    quantityColumn<LowStockRow>({ key: "reserved", header: "Reserved", value: r => r.reserved ?? 0, width: "90px",
+      render: text => <span className="tabular-nums text-muted">{text}</span> }),
+    quantityColumn<LowStockRow>({ key: "available", header: "Available", value: r => r.available ?? r.on_hand, width: "90px" }),
+    quantityColumn<LowStockRow>({ key: "threshold", header: "Threshold", value: r => r.threshold, width: "100px" }),
+    quantityColumn<LowStockRow>({ key: "short_by", header: "Short by", value: r => r.short_by, width: "100px",
+      render: text => <span className="tabular-nums text-danger">{text}</span> }),
     ...(includeSourcing ? [
       {
         key: "authorized_stock",
@@ -498,7 +498,7 @@ export function StockValueReport() {
         exportFilename="stock-value-by-part"
         columns={[
           { key: "name", header: "Part", accessor: r => r.name, render: r => <Link className="text-accent" to={`/parts/${r.part_id}/info`}>{r.name}</Link> },
-          { key: "on_hand", header: "On hand", accessor: r => r.on_hand, width: "80px" },
+          quantityColumn<StockValue["by_part"][number]>({ key: "on_hand", header: "On hand", value: r => r.on_hand, width: "80px" }),
           { key: "value", header: "Value", accessor: r => r.value, render: r => <span className="tabular-nums">{formatMoney(r.value, r.currency)}</span> },
           { key: "currency", header: "Currency", accessor: r => r.currency ?? "—", width: "100px" },
         ]}
@@ -585,10 +585,10 @@ export function BomShortageReport() {
           exportFilename="bom-shortage"
           columns={[
             { key: "name", header: "Part", accessor: r => r.part_name, render: r => <Link className="text-accent" to={`/parts/${r.part_id}/info`}>{r.part_name}</Link> },
-            { key: "required", header: "Required", accessor: r => r.required, width: "100px" },
-            { key: "available", header: "On hand", accessor: r => r.available, width: "100px" },
-            { key: "short_by", header: "Short by", accessor: r => r.short_by, width: "100px",
-              render: r => r.short_by ? <span className="tabular-nums text-danger">{r.short_by}</span> : <span className="text-muted">—</span> },
+            quantityColumn<Shortage["rows"][number]>({ key: "required", header: "Required", value: r => r.required, width: "100px" }),
+            quantityColumn<Shortage["rows"][number]>({ key: "available", header: "On hand", value: r => r.available, width: "100px" }),
+            quantityColumn<Shortage["rows"][number]>({ key: "short_by", header: "Short by", value: r => r.short_by, width: "100px",
+              render: (text, r) => r.short_by ? <span className="tabular-nums text-danger">{text}</span> : <span className="text-muted">—</span> }),
           ]}
         />
         </>
@@ -626,7 +626,7 @@ export function ExpiringLotsReport() {
         columns={[
           { key: "lot", header: "Lot", accessor: r => r.name ?? r.lot_id, render: r => <Link className="text-accent" to={`/lots/${r.lot_id}/info`}>{r.name ?? r.lot_id}</Link> },
           { key: "part", header: "Part", accessor: r => r.part_name ?? r.part_id, render: r => <Link to={`/parts/${r.part_id}/info`}>{r.part_name ?? r.part_id}</Link> },
-          { key: "qty", header: "On hand", accessor: r => r.on_hand, width: "80px" },
+          quantityColumn<Expiring[number]>({ key: "qty", header: "On hand", value: r => r.on_hand, width: "80px" }),
           { key: "exp", header: "Expires", accessor: r => r.expiration_date, render: r => formatDate(r.expiration_date) },
           { key: "left", header: "Days", accessor: r => r.days_until_expiry, width: "80px",
             render: r => r.expired ? <span className="text-danger">expired</span> : <span className={r.days_until_expiry < 30 ? "text-warning" : ""}>{r.days_until_expiry}</span> },

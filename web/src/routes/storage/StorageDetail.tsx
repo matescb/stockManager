@@ -11,8 +11,8 @@ import SubNav from "@/components/SubNav";
 import QueryStateBoundary from "@/components/QueryStateBoundary";
 import PrintLabelButton from "@/routes/labels/PrintLabelButton";
 import type { StorageLocation, Part, StockEntry } from "@/types";
-import { DataTable } from "@/components/DataTable";
-import { formatDateTime } from "@/lib/format";
+import { DataTable, quantityColumn } from "@/components/DataTable";
+import { formatDateTime, formatQuantity } from "@/lib/format";
 
 export function StorageDetailLayout() {
   const { storageId } = useParams<{ storageId: string }>();
@@ -97,7 +97,7 @@ export function StorageInfo() {
             <tr key={i}>
               <td>{partName.get(r.part_id) || r.part_id}</td>
               <td className="font-mono text-xs">{r.lot_id || "—"}</td>
-              <td className="tabular-nums">{r.quantity}</td>
+              <td className="tabular-nums">{formatQuantity(r.quantity)}</td>
             </tr>
           ))}
         </tbody>
@@ -126,7 +126,7 @@ export function StorageHistory() {
         { key: "occurred_at", header: "Date", accessor: r => r.occurred_at, render: r => formatDateTime(r.occurred_at) },
         { key: "operation_type", header: "Op", accessor: r => r.operation_type },
         { key: "part", header: "Part", accessor: r => partName.get(r.part_id) || r.part_id },
-        { key: "qty", header: "Δ", accessor: r => r.quantity_delta },
+        quantityColumn<StockEntry>({ key: "qty", header: "Δ", value: r => r.quantity_delta }),
         { key: "comments", header: "Comments", accessor: r => r.comments ?? "" },
       ]}
     />

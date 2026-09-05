@@ -43,9 +43,30 @@ export function useScanImportRows() {
     });
   }
 
+  /**
+   * Store a row's quantity as-is, clamped at zero.
+   *
+   * This used to be `Math.max(0, qty | 0)`. `| 0` is JavaScript's ToInt32,
+   * and it was wrong twice over:
+   *
+   *  - **It truncated.** A bag whose `Q` field says 12.5 became 12, and 12
+   *    is what the operator then posted to `bulk-import-from-scan` — a
+   *    wrong number, silently, on a write path. Quantity columns are
+   *    `Numeric(18, 6)` since alembic 0074 (units-of-measure track).
+   *  - **It wrapped at 2^31.** Typing 3000000000 gave -1294967296, which
+   *    the `Math.max(0, …)` then clamped to 0 — so an over-large quantity
+   *    silently became *no stock at all* instead of being rejected. That
+   *    one is a live bug today, with nothing fractional required.
+   *
+   * The truncation was also redundant: this is only ever called from the
+   * queue's integer-only number input, which already parses to an
+   * integer. Dropping `| 0` changes nothing about what that input can
+   * produce — it just stops mangling anything it doesn't.
+   */
   function setQuantity(rowId: string, qty: number) {
+    const clamped = Number.isFinite(qty) ? Math.max(0, qty) : 0;
     setRows(prev =>
-      prev.map(r => (r.rowId === rowId ? { ...r, quantity: Math.max(0, qty | 0) } : r))
+      prev.map(r => (r.rowId === rowId ? { ...r, quantity: clamped } : r))
     );
   }
 

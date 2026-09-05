@@ -17,7 +17,7 @@
  *    stock anywhere has no stop).
  */
 import type { ReactNode } from "react";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, formatQuantity } from "@/lib/format";
 import {
   NO_PRINT_CLASS,
   PICKLIST_ROOT_ATTR,
@@ -25,11 +25,17 @@ import {
 } from "./printStyles";
 import type { PickList, PickListLine, PickListStop } from "./types";
 
-/** Quantities arrive as `quantity_out` numbers — whole or fractional.
- *  Render them as-is; never truncate a measured quantity to an integer. */
-function qty(value: number, unit: string): string {
-  return `${value} ${unit}`;
-}
+/**
+ * Every quantity on this sheet goes through `formatQuantity` with
+ * `alwaysShowUnit`, and it is the only surface in the app that opts in.
+ *
+ * On screen the helper suppresses the default `pcs` — the operator has the
+ * page around them to infer from. This is paper, carried away from the
+ * screen to the shelves, so each number spells its unit out: "12 pcs", not
+ * a bare "12". Fractional quantities render exactly either way; nothing
+ * here may truncate a measured quantity to an integer.
+ */
+const PRINTED_QTY = { alwaysShowUnit: true } as const;
 
 function designators(list: string[]): string | null {
   return list.length ? list.join(", ") : null;
@@ -138,10 +144,10 @@ function PickRoute({ stops }: { stops: PickListStop[] }) {
                   </td>
                   <td className="text-xs text-muted">{pick.lot_name ?? "—"}</td>
                   <td className="tabular-nums font-semibold">
-                    {qty(pick.quantity, pick.unit)}
+                    {formatQuantity(pick.quantity, pick.unit, PRINTED_QTY)}
                   </td>
                   <td className="tabular-nums text-muted">
-                    {qty(pick.available, pick.unit)}
+                    {formatQuantity(pick.available, pick.unit, PRINTED_QTY)}
                   </td>
                 </tr>
               ))}
@@ -196,20 +202,20 @@ function BomSummary({
                 )}
                 {/* `required` is already attrition-adjusted and ceil-rounded
                     by the server's `_required` — never recompute it here. */}
-                <td className="tabular-nums">{qty(line.required, line.unit)}</td>
-                <td className="tabular-nums">{qty(line.on_hand, line.unit)}</td>
-                <td className="tabular-nums">{qty(line.planned, line.unit)}</td>
+                <td className="tabular-nums">{formatQuantity(line.required, line.unit, PRINTED_QTY)}</td>
+                <td className="tabular-nums">{formatQuantity(line.on_hand, line.unit, PRINTED_QTY)}</td>
+                <td className="tabular-nums">{formatQuantity(line.planned, line.unit, PRINTED_QTY)}</td>
                 <td
                   className={`tabular-nums ${line.is_short ? "picklist-short text-danger" : ""}`}
                 >
-                  {line.is_short ? qty(line.short_by, line.unit) : "—"}
+                  {line.is_short ? formatQuantity(line.short_by, line.unit, PRINTED_QTY) : "—"}
                   {/* Substitutes and meta-part members are never picked
                       from, but a short line should say they exist —
                       otherwise the sheet reads as a blocker for a build
                       the build screen calls covered. */}
                   {line.is_short && line.alternates_available > 0 && (
                     <div className="text-xs font-normal text-muted">
-                      {qty(line.alternates_available, line.unit)} in
+                      {formatQuantity(line.alternates_available, line.unit, PRINTED_QTY)} in
                       substitutes — decide at consume
                     </div>
                   )}
