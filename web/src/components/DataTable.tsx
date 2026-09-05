@@ -175,6 +175,15 @@ type Props<T> = {
   columns: Column<T>[];
   rowKey: (row: T) => string;
   onRowClick?: (row: T) => void;
+  /**
+   * Fired when Arrow Up / Down moves row focus. **Opt-in** — a table that
+   * doesn't pass it keeps exactly the arrow-key behaviour it always had
+   * (move focus, change nothing), which is what every list in the app
+   * except the parts list still wants. The parts list passes it so
+   * arrow-keying down the rows drives its preview pane without the user
+   * having to press Enter on each one.
+   */
+  onRowFocusChange?: (row: T) => void;
   rowCanClick?: (row: T) => boolean;
   rowClassName?: (row: T) => string | undefined;
   searchPlaceholder?: string;
@@ -253,6 +262,7 @@ export function DataTable<T>({
   columns,
   rowKey,
   onRowClick,
+  onRowFocusChange,
   rowCanClick,
   rowClassName,
   searchPlaceholder,
@@ -434,6 +444,10 @@ export function DataTable<T>({
 
   function focusRowAtIndex(index: number) {
     if (index < 0 || index >= sorted.length) return;
+    // Fired synchronously against the target row rather than from an
+    // `onFocus` handler: only *arrow* navigation should drive a preview,
+    // and Tab-ing into the table should not.
+    onRowFocusChange?.(sorted[index]);
     if (shouldVirtualize) {
       rowVirtualizer.scrollToIndex(index, { align: "auto" });
     }

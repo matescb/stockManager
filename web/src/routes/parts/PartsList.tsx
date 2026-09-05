@@ -1,5 +1,5 @@
 import { useRef, useCallback, useMemo, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Boxes, ImageOff, Loader2, Printer, Trash2 } from "lucide-react";
@@ -19,11 +19,12 @@ import { useConfirm } from "@/components/ConfirmDialog";
 import QueryStateBoundary from "@/components/QueryStateBoundary";
 import BatchPrintDialog, { type BatchPrintItem } from "@/routes/labels/BatchPrintDialog";
 import PartsCategoryRail, { PartsCategoryBar } from "./PartsCategoryRail";
+import PartsPreviewLayout from "@/routes/parts/preview/PartsPreviewLayout";
+import { usePartPreview } from "@/routes/parts/preview/usePartPreview";
 
 const PAGE_LIMIT = 50;
 
 export default function PartsList({ archived = false }: { archived?: boolean }) {
-  const nav = useNavigate();
   const qc = useQueryClient();
   const confirm = useConfirm();
   const { workspaceId } = useAuth();
@@ -140,6 +141,13 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
   const hasNextPage = query.hasNextPage;
   const isFetchingNextPage = query.isFetchingNextPage;
 
+  // Master-detail: a row click selects into the preview pane at `xl` and
+  // wider, and navigates to the full part page below it exactly as it
+  // always did. Selection lives in `?sel=<id>`, alongside the category
+  // filter's `?category=` — both writers use a functional `setSearchParams`
+  // updater over the previous params, so neither clobbers the other.
+  const preview = usePartPreview(allParts);
+
   // IntersectionObserver sentinel — auto-load next page when the user
   // scrolls to the bottom of the table.
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -227,7 +235,7 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
             {query.isLoading ? (
               <div className="text-muted">Loading…</div>
             ) : (
-              <>
+              <PartsPreviewLayout preview={preview}>
                 <DataTable
                   rows={allParts}
                   rowKey={(r) => r.id}
@@ -286,7 +294,9 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
                     )
                   }
                   exportFilename="parts"
-                  onRowClick={(r) => nav(`/parts/${r.id}/info`)}
+                  onRowClick={preview.openRow}
+                  onRowFocusChange={preview.previewRow}
+                  rowClassName={preview.rowClassName}
                   columns={[
                     {
                       key: "image",
@@ -370,7 +380,7 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
                     )}
                   </div>
                 )}
-              </>
+              </PartsPreviewLayout>
             )}
           </QueryStateBoundary>
         </div>
