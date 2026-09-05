@@ -473,6 +473,171 @@ def test_build_stages_round_trip(round_trip_url: str) -> None:
 
 
 @pytest.mark.slow
+def test_unit_triggers_round_trip(round_trip_url: str) -> None:
+    """0077 adds three trigger functions and their triggers, and no columns.
+
+    `_snapshot_schema` only inspects tables, columns, indexes and foreign
+    keys — it cannot see a trigger or a function at all, so the whole-chain
+    sweep would happily pass on a `downgrade()` that dropped the triggers
+    and orphaned the `check_*` functions (or vice versa). A leaked function
+    then wedges the next `upgrade`'s `CREATE OR REPLACE`... silently, by
+    keeping the *old* body. Assert both objects in both directions
+    explicitly, the way `test_build_stages_round_trip` does for 0076.
+    """
+    cfg = _alembic_config(round_trip_url)
+
+    expected_triggers = {
+        "stock_entries_unit_match_check",
+        "stock_entries_unit_immutable_check",
+        "parts_unit_of_measure_change_check",
+    }
+    expected_functions = {
+        "check_stock_entry_unit_matches_part",
+        "check_stock_entry_unit_immutable",
+        "check_part_unit_of_measure_change",
+    }
+
+    def triggers() -> set[str]:
+        eng = create_engine(round_trip_url, future=True)
+        try:
+            with eng.connect() as conn:
+                return {
+                    row.tgname
+                    for row in conn.execute(
+                        text(
+                            "SELECT tgname FROM pg_trigger "
+                            "WHERE NOT tgisinternal AND tgname = ANY(:names)"
+                        ),
+                        {"names": sorted(expected_triggers)},
+                    )
+                }
+        finally:
+            eng.dispose()
+
+    def functions() -> set[str]:
+        eng = create_engine(round_trip_url, future=True)
+        try:
+            with eng.connect() as conn:
+                return {
+                    row.proname
+                    for row in conn.execute(
+                        text("SELECT proname FROM pg_proc WHERE proname = ANY(:names)"),
+                        {"names": sorted(expected_functions)},
+                    )
+                }
+        finally:
+            eng.dispose()
+
+    _reset_schema(round_trip_url)
+    _upgrade(cfg, round_trip_url, "0076")
+    assert triggers() == set()
+    assert functions() == set()
+
+    _upgrade(cfg, round_trip_url, "0077")
+    after_upgrade = _snapshot_schema(round_trip_url)
+    assert triggers() == expected_triggers
+    assert functions() == expected_functions
+
+    _downgrade(cfg, round_trip_url, "0076")
+    assert triggers() == set()
+    assert functions() == set(), (
+        "0077 downgrade dropped the triggers but leaked their functions"
+    )
+
+    _upgrade(cfg, round_trip_url, "0077")
+    assert _snapshot_schema(round_trip_url) == after_upgrade
+    assert triggers() == expected_triggers
+    assert functions() == expected_functions
+
+
+@pytest.mark.slow
+def test_unit_match_trigger_is_live_after_upgrade_head(round_trip_url: str) -> None:
+    """The trigger has to actually fire on a freshly migrated database.
+
+    `test_unit_triggers_round_trip` proves the objects exist;  this proves
+    they are wired to `stock_entries` and reject a mismatch, on a schema
+    built by the migration chain rather than by the test fixtures.
+    """
+    cfg = _alembic_config(round_trip_url)
+    user_id = uuid.uuid4()
+    workspace_id = uuid.uuid4()
+    part_id = uuid.uuid4()
+
+    _reset_schema(round_trip_url)
+    _upgrade(cfg, round_trip_url, "head")
+
+    eng = create_engine(round_trip_url, future=True)
+    try:
+        with eng.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO users "
+                    "(id, email, name, password_hash, locale, timezone, created_at) "
+                    "VALUES (:id, :email, 'Unit Tester', 'x', 'en', 'UTC', now())"
+                ),
+                {"id": user_id, "email": f"unit-{user_id.hex}@example.com"},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO workspaces "
+                    "(id, name, kind, owner_user_id, currency_default, "
+                    "lot_control_enabled, serial_tracking_enabled, "
+                    "catalog_enabled, parts_provider, created_at) "
+                    "VALUES (:id, 'Unit Workspace', 'organization', :owner_user_id, "
+                    "'USD', true, false, false, 'none', now())"
+                ),
+                {"id": workspace_id, "owner_user_id": user_id},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO parts "
+                    "(id, workspace_id, name, part_type, attrition_percentage, "
+                    "attrition_min_quantity, default_storage_mandatory, "
+                    "serialized, published, description_locally_edited, "
+                    "created_at, updated_at) "
+                    "VALUES (:id, :workspace_id, 'Wire', 'local', 0, 0, "
+                    "false, false, false, false, now(), now())"
+                ),
+                {"id": part_id, "workspace_id": workspace_id},
+            )
+
+        def insert_entry(unit: str) -> None:
+            with eng.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO stock_entries "
+                        "(id, workspace_id, part_id, quantity_delta, unit, status, "
+                        "operation_type, occurred_at, created_at) "
+                        "VALUES (:id, :workspace_id, :part_id, 1, :unit, 'on_hand', "
+                        "'add', now(), now())"
+                    ),
+                    {
+                        "id": uuid.uuid4(),
+                        "workspace_id": workspace_id,
+                        "part_id": part_id,
+                        "unit": unit,
+                    },
+                )
+
+        # The part defaults to 'pcs', so this agrees and lands.
+        insert_entry("pcs")
+
+        with pytest.raises(IntegrityError) as excinfo:
+            insert_entry("m")
+        assert "does not match parts.unit_of_measure" in str(excinfo.value)
+
+        # ...and now that the part has a ledger row, its unit is frozen.
+        with pytest.raises(IntegrityError):
+            with eng.begin() as conn:
+                conn.execute(
+                    text("UPDATE parts SET unit_of_measure = 'm' WHERE id = :id"),
+                    {"id": part_id},
+                )
+    finally:
+        eng.dispose()
+
+
+@pytest.mark.slow
 def test_snapshot_schema_captures_server_default(round_trip_url: str) -> None:
     _reset_schema(round_trip_url)
     eng = create_engine(round_trip_url, future=True)

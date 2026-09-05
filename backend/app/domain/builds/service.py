@@ -28,6 +28,7 @@ from app.domain.stock.service import (
     current_quantity,
     enforce_storage_constraints,
     lock_parts_for_stock_write,
+    unit_for_part,
 )
 from app.domain.storage.models import StorageLocation
 
@@ -261,6 +262,7 @@ def apply_reservations(
             workspace_id=workspace_id,
             part_id=part.id,
             quantity_delta=qty,
+            unit=unit_for_part(part),
             status="reserved",
             operation_type="reserve",
             build_id=build.id,
@@ -351,11 +353,18 @@ def _write_release(
     build_stage_id: UUID | None,
     now: datetime,
 ) -> None:
+    # The release is a counter-row to `reserve`, so it inherits that row's
+    # unit stamp rather than re-resolving the part's current one: the two
+    # must cancel exactly, and `reserve.unit` is still the right answer
+    # after a hard delete has NULLed `reserve.part_id`. The part-unit
+    # immutability rule (alembic 0077) means the two can never disagree
+    # while the reservation is outstanding.
     db.add(
         StockEntry(
             workspace_id=workspace_id,
             part_id=reserve.part_id,
             quantity_delta=-quantity,
+            unit=reserve.unit,
             status="reserved",
             operation_type="release",
             related_entry_id=reserve.id,
@@ -636,12 +645,20 @@ def apply_consume_lines(
                 f"{line.part_id} (have {quantity_out(avail)}, want {line.quantity})"
             )
 
+        # `line.part_id` is already workspace-validated above — it is either
+        # the BOM entry's own part or one of its registered substitutes /
+        # meta members. Re-fetching it here is an identity-map hit for every
+        # repeat of the same part across lines, and gives the row its unit
+        # stamp (uom step 3).
+        consumed_part = db.get(Part, line.part_id)
+
         entry_row = StockEntry(
             workspace_id=workspace_id,
             part_id=line.part_id,
             lot_id=line.lot_id,
             storage_location_id=line.storage_location_id,
             quantity_delta=-line.quantity,
+            unit=unit_for_part(consumed_part),
             status="on_hand",
             operation_type="build_consume",
             build_id=build.id,
@@ -734,6 +751,7 @@ def produce_output(
             lot_id=output_lot.id,
             storage_location_id=storage.id if storage else None,
             quantity_delta=build.quantity,
+            unit=unit_for_part(sub_part),
             status="on_hand",
             operation_type="build_produce",
             build_id=build.id,

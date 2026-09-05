@@ -89,8 +89,13 @@ class Part(WorkspaceOwned, Base):
     attrition_percentage = Column(Numeric(8, 4), nullable=False, default=0)
     attrition_min_quantity = Column(Numeric(18, 6), nullable=False, default=0)
     # The part's canonical unit (alembic 0074). Not user-settable yet — no
-    # route reads or writes it in this step — but every ledger row stamps
-    # its own copy so history can never be reinterpreted by editing it.
+    # route reads or writes it — but every ledger row stamps its own copy
+    # (uom step 3) so history can never be reinterpreted by editing it.
+    # Frozen once the part has any ledger row: the
+    # `parts_unit_of_measure_change_check` trigger (alembic 0077) refuses
+    # the UPDATE, because an append-only ledger keeps its old stamps
+    # forever and a part whose ledger mixes units has no meaningful
+    # `SUM(quantity_delta)`. Zero the stock out, change the unit, re-add.
     unit_of_measure = Column(
         String(UNIT_CODE_MAX_LENGTH),
         nullable=False,

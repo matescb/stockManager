@@ -70,11 +70,16 @@ class StockEntry(Base):
     # order-independent, so "current stock = SUM(quantity_delta)" holds
     # with zero rounding at any intermediate step.
     quantity_delta = Column(Numeric(18, 6), nullable=False)
-    # Immutable per-row unit stamp (alembic 0074). Copied from the part at
-    # write time rather than resolved through `parts.unit_of_measure` on
-    # read, so editing a part can never retroactively reinterpret history.
-    # Only ever `DEFAULT_UNIT` today; the service-side stamp-from-part and
-    # the unit-match trigger land in a later step of the track.
+    # Immutable per-row unit stamp (column: alembic 0074; stamping +
+    # enforcement: alembic 0077). Copied from the part at write time by
+    # `stock/service.py::unit_for_part` rather than resolved through
+    # `parts.unit_of_measure` on read, so editing a part can never
+    # retroactively reinterpret history. Three triggers back it up:
+    # `stock_entries_unit_match_check` (INSERT must agree with the part),
+    # `stock_entries_unit_immutable_check` (append-only — never UPDATE it),
+    # and `parts_unit_of_measure_change_check` (a part's unit is frozen
+    # once it has any ledger row). Every part is `DEFAULT_UNIT` today, so
+    # the stamp writes exactly what the server default already produced.
     unit = Column(
         String(UNIT_CODE_MAX_LENGTH),
         nullable=False,

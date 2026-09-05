@@ -17,7 +17,11 @@ log = get_logger(__name__)
 from app.domain.orders.schemas import ReceiveIn
 from app.domain.parts.models import Part
 from app.domain.stock.models import StockEntry
-from app.domain.stock.service import enforce_storage_constraints, lock_parts_for_stock_write
+from app.domain.stock.service import (
+    enforce_storage_constraints,
+    lock_parts_for_stock_write,
+    unit_for_part,
+)
 from app.domain.storage.models import StorageLocation
 from app.domain.workspaces.models import Workspace
 
@@ -165,6 +169,7 @@ def receive(
             lot_id=lot.id,
             storage_location_id=storage.id if storage else None,
             quantity_delta=line.quantity,
+            unit=unit_for_part(part),
             status="on_hand",
             unit_price=unit_price,
             currency=currency,
