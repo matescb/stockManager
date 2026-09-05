@@ -12,7 +12,7 @@ Reusable presentational + behavioural components shared across pages. Page-speci
 | `DataTable.test.tsx` | Co-located unit test for DataTable |
 | `Modal.tsx` | Shared accessible dialog shell with focus trap, ESC close, backdrop dismiss, and focus restoration |
 | `EntityHeader.tsx` | Standard entity-page header (title / breadcrumbs / actions) |
-| `SubNav.tsx` | Tabbed sub-navigation used on entity pages |
+| `SubNav.tsx` | Tabbed sub-navigation used on entity pages; supports grouped (disclosure) entries |
 | `PartsTopNav.tsx` | Parts-area top nav |
 | `AttachmentsPanel.tsx` | Polymorphic attachments UI (upload + list + delete) |
 | `ActivityTimeline.tsx` | Activity / audit feed for an entity |

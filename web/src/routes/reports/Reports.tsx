@@ -376,6 +376,9 @@ export function LowStockReport() {
         header: "Source",
         accessor: () => "TrustedParts",
         render: () => <SourcingSourceLabel source="trustedparts" />,
+        // Constant for every row, and the header already names the provider.
+        // Available from the Columns menu when it matters.
+        hidden: true,
       },
       {
         key: "draft_po",
@@ -410,11 +413,9 @@ export function LowStockReport() {
           />
           Include sourcing data
         </label>
+        {/* One provenance pill, not two adjacent ones saying the same thing. */}
         {includeSourcing && (
-          <div className="flex flex-wrap items-center gap-2">
-            <PoweredByTrustedParts primaryUrl={sourcedData?.links?.primary} />
-            <SourcingSourceLabel source="trustedparts" />
-          </div>
+          <PoweredByTrustedParts primaryUrl={sourcedData?.links?.primary} />
         )}
         {rows.length > 0 && (
           <button

@@ -188,14 +188,16 @@ beforeEach(() => {
 });
 
 describe("ProjectBOM", () => {
-  it("renders three action buttons in the toolbar", async () => {
+  it("renders two action buttons in the toolbar and no second Source BOM", async () => {
     mockApi({ current: [] });
 
     renderPage();
 
-    expect(await screen.findByRole("link", { name: "Source BOM" })).toBeDefined();
-    expect(screen.getByRole("link", { name: "Import BOM" }).getAttribute("href")).toBe(`/projects/${projectId}/import`);
+    expect((await screen.findByRole("link", { name: "Import BOM" })).getAttribute("href")).toBe(`/projects/${projectId}/import`);
     expect(screen.getByRole("button", { name: "Add Part" })).toBeDefined();
+    // Source BOM is rendered once, by ProjectLayout's EntityHeader ~80px
+    // above this toolbar. This page used to draw a second copy of it.
+    expect(screen.queryByRole("link", { name: "Source BOM" })).toBeNull();
   });
 
   it("matched-row click navigates to part info", async () => {

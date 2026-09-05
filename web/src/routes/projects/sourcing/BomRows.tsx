@@ -30,6 +30,15 @@ const RISK_TONE_ICONS = {
   neutral: Circle,
 } satisfies Record<RiskTone, typeof CheckCircle2>;
 
+/**
+ * Columns carrying this default start collapsed behind DataTable's Columns
+ * menu. Nothing is removed: the data is still fetched, still exported, and one
+ * click restores the column — the choice then persists per workspace
+ * (`dataTableStorageKey`). This table defines 15 columns; showing all of them
+ * made the widest screen in the app.
+ */
+const DEFAULT_HIDDEN = { hidden: true } as const;
+
 function RiskToneIcon({ tone }: { tone: RiskTone }) {
   const Icon = RISK_TONE_ICONS[tone];
   return <Icon size={12} aria-hidden="true" />;
@@ -82,7 +91,13 @@ export function BomRows({ rows, workspaceCurrency }: { rows: SourcingBomLine[]; 
     quantityColumn<SourcingBomLine>({ key: "required", header: "Required", value: row => row.required, align: "right" }),
     quantityColumn<SourcingBomLine>({ key: "available", header: "On hand", value: row => row.available + row.substitute_available, align: "right" }),
     quantityColumn<SourcingBomLine>({ key: "short", header: "Short", value: row => row.short_by, align: "right" }),
-    { key: "stock", header: "Authorized stock", accessor: row => row.authorized_stock, align: "right" },
+    {
+      key: "stock",
+      header: "Authorized stock",
+      accessor: row => row.authorized_stock,
+      align: "right",
+      ...DEFAULT_HIDDEN,
+    },
     {
       key: "offer",
       header: "Best offer",
@@ -126,7 +141,7 @@ export function BomRows({ rows, workspaceCurrency }: { rows: SourcingBomLine[]; 
       render: row => formatLeadTime(row.lead_time_days),
       align: "right",
       // SX-1/TPS-9: keep lead-time response data, but hide this crowded BOM column by default.
-      hidden: true,
+      ...DEFAULT_HIDDEN,
     },
     {
       key: "lifecycle",
@@ -139,6 +154,7 @@ export function BomRows({ rows, workspaceCurrency }: { rows: SourcingBomLine[]; 
       headerLabel: "Lifecycle",
       accessor: row => row.best_offer?.lifecycle_risk?.trim() ?? "",
       render: row => <LifecycleRiskPill value={row.best_offer?.lifecycle_risk} />,
+      ...DEFAULT_HIDDEN,
     },
     {
       key: "supply_chain",
@@ -153,12 +169,14 @@ export function BomRows({ rows, workspaceCurrency }: { rows: SourcingBomLine[]; 
       render: row => (
         <LifecycleRiskPill label="Supply-chain risk" value={row.best_offer?.supply_chain_risk} />
       ),
+      ...DEFAULT_HIDDEN,
     },
     {
       key: "rohs",
       header: "RoHS",
       accessor: row => rohsTone(row),
       render: row => <RohsRiskPill tone={rohsTone(row)} />,
+      ...DEFAULT_HIDDEN,
     },
     {
       key: "risk",
@@ -189,6 +207,9 @@ export function BomRows({ rows, workspaceCurrency }: { rows: SourcingBomLine[]; 
       header: "Source",
       accessor: () => "TrustedParts",
       render: () => <SourcingSourceLabel source="trustedparts" />,
+      // Constant for every row — the provenance is already stated once by the
+      // "Powered by TrustedParts" link in the page header.
+      ...DEFAULT_HIDDEN,
     },
   ];
 

@@ -133,7 +133,7 @@ export default function PartInfo() {
         </div>
       )}
       <div className="card p-4">
-        <h3 className="text-sm uppercase tracking-wider text-muted mb-2">Identity</h3>
+        <h3 className="section-title mb-2">Identity</h3>
         <Field label="Name" value={part.name} />
         <Field
           label="Manufacturer"
@@ -149,8 +149,11 @@ export default function PartInfo() {
         <Field label="Footprint" value={part.footprint} />
       </div>
       <div className="card p-4">
-        <h3 className="text-sm uppercase tracking-wider text-muted mb-2">Stock</h3>
-        <Field label="On hand" value={formatQuantity(part.on_hand ?? 0)} />
+        {/* "On hand" is an unconditional stat tile in the layout header
+            (PartLayout), so restating it here was the same number twice on
+            one screen. The threshold stays: the header omits that tile when
+            no threshold is set. */}
+        <h3 className="section-title mb-2">Stock policy</h3>
         <Field label="Low-stock threshold" value={part.low_stock_report_quantity != null ? formatQuantity(part.low_stock_report_quantity) : null} />
         <Field label="Attrition" value={`${part.attrition_percentage}% (min ${formatQuantity(part.attrition_min_quantity)})`} />
       </div>
@@ -168,7 +171,7 @@ export default function PartInfo() {
       )}
       <div className="card p-4 col-span-2">
         <div className="flex items-center mb-2">
-          <h3 className="text-sm uppercase tracking-wider text-muted">Description</h3>
+          <h3 className="section-title">Description</h3>
           {linked && (
             part.description_locally_edited ? (
               <span className="pill ml-2 bg-warning/20 text-warning">Locally edited</span>

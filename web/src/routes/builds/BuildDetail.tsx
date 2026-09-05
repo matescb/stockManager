@@ -184,6 +184,9 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
 
   return (
     <div>
+      {/* Status is deliberately in `stats` only. It used to be printed twice
+          in this one header — a plain pill in the subtitle and a toned stat
+          tile below it. The tile wins: it colours by status. */}
       <EntityHeader
         title={build.name}
         breadcrumb={
@@ -195,10 +198,9 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
         }
         subtitle={
           <span>
-            <span className="pill">{build.status}</span>
-            {build.archived_at && <span className="pill ml-2 bg-danger/20 text-danger">archived</span>}
+            {build.archived_at && <span className="pill mr-2 bg-danger/20 text-danger">archived</span>}
             {reservationsActive && reservedLines > 0 && (
-              <span className="ml-2 text-xs text-muted">
+              <span className="text-xs text-muted">
                 {formatQuantity(totalReserved)} parts reserved across {reservedLines} line{reservedLines === 1 ? "" : "s"}
               </span>
             )}

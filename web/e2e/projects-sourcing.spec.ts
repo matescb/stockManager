@@ -75,7 +75,12 @@ async function seedTwoLineProject(request: APIRequestContext) {
 
 async function sourceBom(page: Page, projectId: string): Promise<void> {
   await page.goto(`/projects/${projectId}/sourcing`);
-  await expect(page.getByRole("heading", { name: "Source BOM" })).toBeVisible();
+  // The page no longer draws its own breadcrumb + <h1> on top of the
+  // ProjectLayout header; "Sourcing" is now a tab in the shared strip.
+  await expect(
+    page.getByRole("navigation", { name: "Section navigation" })
+      .getByRole("link", { name: "Sourcing" }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: /^Source$/ })).toBeEnabled();
   await page.getByRole("button", { name: /^Source$/ }).click();
   await expect(page.getByRole("heading", { name: "Coverage matrix" })).toBeVisible();

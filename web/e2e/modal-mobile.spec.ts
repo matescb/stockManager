@@ -68,7 +68,9 @@ test(
     });
 
     await page.goto(`/projects/${project.id}/sourcing`);
-    await expect(page.getByRole("heading", { name: "Source BOM" })).toBeVisible();
+    // "Sourcing" is a tab in the shared ProjectLayout strip now; the page
+    // no longer redraws a breadcrumb and an <h1> over that header.
+    await expect(page.getByRole("button", { name: /^Source$/ })).toBeEnabled();
     await page.getByRole("button", { name: /^Source$/ }).click();
     await expect(page.getByRole("heading", { name: "Coverage matrix" })).toBeVisible();
 

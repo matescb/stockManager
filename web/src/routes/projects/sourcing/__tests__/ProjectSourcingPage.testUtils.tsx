@@ -223,6 +223,25 @@ export async function sourceBom(user = userEvent.setup()) {
   expect(await screen.findByText("BOM rows")).toBeDefined();
 }
 
+/**
+ * Turns on BOM-table columns that ship hidden by default.
+ *
+ * The BOM table defines 15 columns and shows 9; the rest sit behind
+ * DataTable's Columns menu, which is what "hidden, not removed" means in
+ * practice. Tests that assert on a hidden column's rendering must first
+ * reach it the way a user would — which also pins that the route back is
+ * still there.
+ *
+ * `getAllByText("Columns")[1]` is the BOM-rows table; index 0 is the
+ * coverage matrix above it.
+ */
+export async function enableBomColumns(user: ReturnType<typeof userEvent.setup>, ...labels: string[]) {
+  await user.click(screen.getAllByText("Columns")[1]);
+  for (const label of labels) {
+    await user.click(screen.getByRole("checkbox", { name: label }));
+  }
+}
+
 export function resetProjectSourcingPageTest() {
   cleanup();
   localStorage.clear();

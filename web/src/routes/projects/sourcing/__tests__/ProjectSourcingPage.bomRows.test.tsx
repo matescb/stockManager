@@ -3,7 +3,7 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
-import { clickSource, mockReads, renderPage, resetProjectSourcingPageTest, sourceBom, sourcingResponse } from "./ProjectSourcingPage.testUtils";
+import { clickSource, enableBomColumns, mockReads, renderPage, resetProjectSourcingPageTest, sourceBom, sourcingResponse } from "./ProjectSourcingPage.testUtils";
 
 vi.mock("sonner", () => ({
   toast: {
@@ -20,15 +20,21 @@ beforeEach(resetProjectSourcingPageTest);
 
 describe("ProjectSourcingPage", () => {
   it("renders risk pills for each flag returned", async () => {
+    const user = userEvent.setup();
     mockReads();
     vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
 
     renderPage();
-    await clickSource();
+    await clickSource(user);
 
     expect(await screen.findByText("Single source")).toBeDefined();
     expect(screen.getByText("Long lead time")).toBeDefined();
     expect(screen.getByText("Preferred unmet")).toBeDefined();
+
+    // "Source" is TrustedParts on every row, and the page header already
+    // says so once, so the column is hidden by default — not removed.
+    expect(screen.queryAllByLabelText("Source: TrustedParts")).toHaveLength(0);
+    await enableBomColumns(user, "Source");
     expect(screen.getAllByLabelText("Source: TrustedParts").length).toBeGreaterThan(0);
   });
 
@@ -93,6 +99,7 @@ describe("ProjectSourcingPage", () => {
   });
 
   it("splits lifecycle, supply-chain, and RoHS out of the legacy risk column", async () => {
+    const user = userEvent.setup();
     mockReads();
     const base = sourcingResponse();
     vi.spyOn(api, "post").mockResolvedValue(sourcingResponse({
@@ -124,8 +131,9 @@ describe("ProjectSourcingPage", () => {
 
     renderPage();
 
-    await sourceBom();
+    await sourceBom(user);
     const bomRowsTable = screen.getAllByRole("table")[1];
+    await enableBomColumns(user, "Lifecycle", "Supply chain", "RoHS");
     expect(within(bomRowsTable).getByRole("columnheader", { name: /Lifecycle/ })).toBeDefined();
     expect(within(bomRowsTable).getByRole("columnheader", { name: /Supply chain/ })).toBeDefined();
     expect(within(bomRowsTable).getByRole("columnheader", { name: "RoHS" })).toBeDefined();
@@ -142,7 +150,11 @@ describe("ProjectSourcingPage", () => {
     expect(supplyChain.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
     expect(rohs.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
 
-    const riskCell = within(bomRowsTable).getByRole("row", { name: /STM32/ }).querySelectorAll("td")[12];
+    // Columns render in declaration order. With Lifecycle, Supply chain and
+    // RoHS enabled the visible set is part, MPN, Required, On hand, Short,
+    // Best offer, Distributor, Est. cost, Lifecycle, Supply chain, RoHS, Risk
+    // — so the legacy Risk column is index 11.
+    const riskCell = within(bomRowsTable).getByRole("row", { name: /STM32/ }).querySelectorAll("td")[11];
     expect(within(riskCell as HTMLElement).queryByText("lifecycle")).toBeNull();
     expect(within(riskCell as HTMLElement).queryByText("supply chain")).toBeNull();
     expect(within(riskCell as HTMLElement).queryByText("RoHS")).toBeNull();
@@ -158,6 +170,7 @@ describe("ProjectSourcingPage", () => {
 
     await sourceBom(user);
     const bomRowsTable = screen.getAllByRole("table")[1];
+    await enableBomColumns(user, "Lifecycle", "Supply chain");
     const lifecycleHeader = within(bomRowsTable).getByRole("columnheader", { name: /Lifecycle/ });
     const supplyChainHeader = within(bomRowsTable).getByRole("columnheader", { name: /Supply chain/ });
 

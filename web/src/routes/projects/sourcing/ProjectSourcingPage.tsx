@@ -95,14 +95,14 @@ export default function ProjectSourcingPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="text-sm text-muted">Projects · {project?.name ?? "Project"} · Sourcing</div>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <h1 className="page-title">Source BOM</h1>
-            {sourcingData?.partial && <span className="pill bg-warning/10 text-warning">Partial — some chunks served from cache</span>}
-          </div>
-        </div>
+      {/* No breadcrumb and no <h1> here: this route renders inside
+          ProjectLayout, which already prints the project name in its
+          EntityHeader and now marks "Sourcing" active in the tab strip.
+          Restating both was three titles competing for the same corner. */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {sourcingData?.partial
+          ? <span className="pill bg-warning/10 text-warning">Partial — some chunks served from cache</span>
+          : <span />}
         <PoweredByTrustedParts primaryUrl={primaryUrl} />
       </div>
 
@@ -167,8 +167,9 @@ export default function ProjectSourcingPage() {
           <CapacityBanner data={sourcingData} currency={requestBody.currency} />
           <CoverageMatrix data={sourcingData} currency={requestBody.currency} />
           <BomRows rows={sourcingData.rows} workspaceCurrency={requestBody.currency ?? workspace?.sourcing_currency_code ?? null} />
+          {/* The provider is already named once, in the header link above. */}
           <div className="text-xs text-muted">
-            {formatCount(sourcingData.rows.length)} line{sourcingData.rows.length === 1 ? "" : "s"} fetched from {sourcingData.powered_by}.
+            {formatCount(sourcingData.rows.length)} line{sourcingData.rows.length === 1 ? "" : "s"} fetched.
           </div>
         </>
       )}
