@@ -7,6 +7,7 @@ from app.api.routes._stock_integrity import raise_integrity_as_409
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.errors import ErrorCodes, raise_http
 from app.core.responses import Envelope, ok
+from app.domain._quantity import quantity_out
 from app.domain.parts.services.bag_signature import compute_bag_signature
 from app.domain.stock.schemas import (
     AddStockIn,
@@ -50,7 +51,7 @@ def _serialize_entry(e):
         "part_id": str(e.part_id) if e.part_id else None,
         "lot_id": str(e.lot_id) if e.lot_id else None,
         "storage_location_id": str(e.storage_location_id) if e.storage_location_id else None,
-        "quantity_delta": e.quantity_delta,
+        "quantity_delta": quantity_out(e.quantity_delta),
         "status": e.status,
         "unit_price": float(e.unit_price) if e.unit_price is not None else None,
         "currency": e.currency,

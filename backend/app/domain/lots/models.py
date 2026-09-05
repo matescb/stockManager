@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Column, Date, ForeignKey, Index, Integer, Numeric, String, Text
+from sqlalchemy import Column, Date, ForeignKey, Index, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.domain._mixins import WorkspaceOwned
@@ -51,6 +51,10 @@ class Lot(WorkspaceOwned, Base):
         ForeignKey("builds.id", ondelete="SET NULL", name="fk_lots_source_build_id"),
         nullable=True,
     )
-    purchase_quantity = Column(Integer, nullable=True)
+    # Snapshot of the originating add. Widened to Numeric(18,6) in alembic
+    # 0074 in lockstep with `stock_entries.quantity_delta` — if the two
+    # scales diverge, a lot's purchase quantity stops agreeing with the
+    # ledger sum that produced it.
+    purchase_quantity = Column(Numeric(18, 6), nullable=True)
     purchase_unit_cost = Column(Numeric(18, 6), nullable=True)
     purchase_currency = Column(String(3), nullable=True)

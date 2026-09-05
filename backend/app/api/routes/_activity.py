@@ -40,6 +40,7 @@ from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.core.errors import ErrorCodes, raise_http
+from app.domain._quantity import quantity_out
 from app.domain.stock.models import StockEntry
 from app.domain.users.models import User
 
@@ -154,7 +155,7 @@ def _stock_event(row: StockEntry, user: User | None) -> dict:
         "kind": "stock",
         "id": str(row.id),
         "operation_type": row.operation_type,
-        "quantity_delta": row.quantity_delta,
+        "quantity_delta": quantity_out(row.quantity_delta),
         "user": _user_dict(user),
         "occurred_at": row.occurred_at.isoformat(),
         "comments": row.comments,

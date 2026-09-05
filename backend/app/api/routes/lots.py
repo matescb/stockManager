@@ -13,6 +13,7 @@ from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.errors import ErrorCodes, raise_http
 from app.core.pagination import decode_cursor, paginate
 from app.core.responses import ok
+from app.domain._quantity import quantity_out
 from app.domain.audit.service import log as _audit_log
 from app.domain.lots.models import Lot
 from app.domain.lots.schemas import LotAdjustIn, LotPatch
@@ -40,7 +41,7 @@ def _serialize(l: Lot, quantity: int | None = None) -> dict:
         "comments": l.comments,
         "expiration_date": l.expiration_date.isoformat() if l.expiration_date else None,
         "source_type": l.source_type,
-        "purchase_quantity": l.purchase_quantity,
+        "purchase_quantity": quantity_out(l.purchase_quantity),
         "purchase_unit_cost": float(l.purchase_unit_cost) if l.purchase_unit_cost is not None else None,
         "purchase_currency": l.purchase_currency,
         "current_quantity": quantity,
@@ -143,13 +144,13 @@ def adjust_lot(lot_id: UUID, payload: LotAdjustIn, db: DbSession, ws: CurrentWor
         raise_http(400, code=ErrorCodes.LOT_ADJUST_STOCK_ERROR, message=str(exc))
     except DBAPIError as exc:
         raise_integrity_as_409(exc)
-    return ok({"id": str(e.id) if e else None, "delta": e.quantity_delta if e else 0})
+    return ok({"id": str(e.id) if e else None, "delta": quantity_out(e.quantity_delta) if e else 0})
 
 
 def _serialize_entry(e: StockEntry) -> dict:
     return {
         "id": str(e.id),
-        "quantity_delta": e.quantity_delta,
+        "quantity_delta": quantity_out(e.quantity_delta),
         "storage_location_id": str(e.storage_location_id) if e.storage_location_id else None,
         "operation_type": e.operation_type,
         "comments": e.comments,

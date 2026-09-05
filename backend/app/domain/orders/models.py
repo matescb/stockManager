@@ -55,8 +55,11 @@ class OrderEntry(WorkspaceOwned, Base):
     order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), nullable=False)
     part_id = Column(UUID(as_uuid=True), ForeignKey("parts.id", ondelete="SET NULL"), nullable=True)
     name = Column(String(300), nullable=True)  # free-text fallback when part_id is null
-    quantity_ordered = Column(Integer, nullable=False, default=0)
-    quantity_received = Column(Integer, nullable=False, default=0)
+    # Numeric(18,6) since alembic 0074 (units-of-measure step 1). The two
+    # ck_order_entries_qty_*_nonneg CHECK constraints above survive the type
+    # change — Postgres revalidates and they stay valid.
+    quantity_ordered = Column(Numeric(18, 6), nullable=False, default=0)
+    quantity_received = Column(Numeric(18, 6), nullable=False, default=0)
     unit_price = Column(Numeric(18, 6), nullable=True)
     currency = Column(String(3), nullable=True)
     comments = Column(Text, nullable=True)

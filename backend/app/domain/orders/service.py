@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.core.time import utcnow
+from app.domain._quantity import quantity_out
 from app.domain.lots.models import Lot
 from app.domain.orders.models import Order, OrderEntry
 
@@ -93,7 +94,11 @@ def receive(
             raise OrderError(f"order entry {line.order_entry_id} not in this order")
         if oe.part_id is None:
             raise OrderError("cannot receive an entry without a part — match it first")
-        outstanding = oe.quantity_ordered - oe.quantity_received
+        # `quantity_out` because this value is interpolated into an
+        # OrderError below, which `routes/orders.py` re-raises verbatim as
+        # the public 400 body — the raw Decimal would render the message as
+        # "outstanding 6.000000" instead of "outstanding 6".
+        outstanding = quantity_out(oe.quantity_ordered - oe.quantity_received)
         if line.quantity > outstanding:
             raise OrderError(
                 f"line over-receives entry {oe.id} (outstanding {outstanding}, want {line.quantity})"

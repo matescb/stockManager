@@ -11,6 +11,7 @@ from app.core.errors import ErrorCodes, raise_http
 from app.core.pagination import decode_cursor, paginate
 from app.core.responses import ok
 from app.core.time import utcnow
+from app.domain._quantity import quantity_out
 from app.domain.audit.service import log as _audit_log
 from app.domain.stock.models import StockEntry
 from app.domain.stock.service import (
@@ -230,7 +231,7 @@ def _serialize_storage_entry(e: StockEntry) -> dict:
         "id": str(e.id),
         "part_id": str(e.part_id) if e.part_id else None,
         "lot_id": str(e.lot_id) if e.lot_id else None,
-        "quantity_delta": e.quantity_delta,
+        "quantity_delta": quantity_out(e.quantity_delta),
         "operation_type": e.operation_type,
         "comments": e.comments,
         "occurred_at": e.occurred_at.isoformat(),

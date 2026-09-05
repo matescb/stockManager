@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.domain._quantity import quantity_out
 from app.domain.categories import service as categories_service
 from app.domain.categories.schemas import PartCategoryIn
 from app.domain.stock import service as stock_service
@@ -207,7 +208,7 @@ def _stock_out(caller: Caller, part, entry) -> dict[str, Any]:
             "part_id": sid(part.id),
             "part_url": part_url(part.id),
             "entry_id": sid(entry.id),
-            "quantity_delta": entry.quantity_delta,
+            "quantity_delta": quantity_out(entry.quantity_delta),
             "storage_location_id": sid(entry.storage_location_id),
             "on_hand": stock_service.current_quantity(
                 caller.db, workspace_id=caller.ws.id, part_id=part.id

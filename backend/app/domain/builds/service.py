@@ -47,13 +47,26 @@ def _required(entry: ProjectEntry, part: Part | None, build_qty: int) -> int:
     ``ceil(base * (1 + part_pct/100) * (1 + line_pct/100))`` but at least
     ``base + attrition_min_quantity``, where ``base = qty * builds``.
 
-    Stock is integer-only (no fractional ledger rows), so the
-    attrition-inflated requirement is rounded UP to an integer here — the
-    single place shortage analysis, reservations, and consumption all read —
-    so planning and actual consumption agree on the same integer. Decimal
-    math keeps e.g. ``100 * 2.5%`` at exactly ``102.5 -> 103`` rather than a
-    binary-float ``102.4999…``."""
-    base = Decimal(int(entry.quantity)) * build_qty
+    Quantities are integer-valued (nothing in the API can write a
+    fractional one yet, even though alembic 0074 widened the columns to
+    ``Numeric(18,6)``), so the attrition-inflated requirement is rounded UP
+    to an integer here — the single place shortage analysis, reservations,
+    and consumption all read — so planning and actual consumption agree on
+    the same integer. Decimal math keeps e.g. ``100 * 2.5%`` at exactly
+    ``102.5 -> 103`` rather than a binary-float ``102.4999…``.
+
+    Making the trailing ceil dimension-aware — a `count` part still ceils,
+    a measured one quantizes to its unit, because you cannot round 1.5 m of
+    wire up to 2 m — is a later step of the units-of-measure track, and a
+    product decision rather than a mechanical one."""
+    # `entry.quantity`, `part.attrition_min_quantity` and
+    # `part.attrition_percentage` are all Numeric columns and arrive as
+    # Decimals, which is what this function already wanted — 0074's
+    # widening drops straight in with no coercion. `Decimal(entry.quantity)`
+    # rather than `Decimal(int(entry.quantity))`: identical for every value
+    # reachable today, but it does not discard a fraction the column can now
+    # physically hold.
+    base = Decimal(entry.quantity) * build_qty
     part_pct = Decimal(part.attrition_percentage) if part else Decimal(0)
     line_pct = Decimal(entry.attrition_pct or 0)
     floor_extra = part.attrition_min_quantity if part else 0
