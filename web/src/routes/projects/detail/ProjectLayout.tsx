@@ -10,7 +10,7 @@ import { SourceBomButton } from "@/routes/projects/sourcing/SourceBomButton";
 export default function ProjectLayout() {
   const { projectId } = useParams<{ projectId: string }>();
   const { data, isError, error } = useQuery({ queryKey: useWsKey("project", projectId), queryFn: ({ signal }) => api.get<Project>(`/projects/${projectId}`, { signal }), enabled: !!projectId });
-  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load project. {error instanceof ApiError ? error.userMessage : ""}</div>;
+  if (isError) return <div className="text-danger text-sm p-4">Failed to load project. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (!data) return <div className="text-muted">Loading…</div>;
   const items = [
     { to: `/projects/${data.id}/data`, label: "Project info" },

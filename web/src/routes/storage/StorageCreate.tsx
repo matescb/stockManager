@@ -47,7 +47,7 @@ export default function StorageCreate() {
 
   return (
     <form onSubmit={submit} className="card p-4 max-w-xl space-y-3">
-      <h1 className="text-xl font-semibold">Create storage location</h1>
+      <h1 className="page-title">Create storage location</h1>
       {err && <div className="text-danger text-sm">{err}</div>}
       <div>
         <label className="label" htmlFor="storage-create-name">Name *</label>

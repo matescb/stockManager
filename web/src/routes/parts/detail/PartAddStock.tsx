@@ -103,7 +103,7 @@ export default function PartAddStock() {
 
   return (
     <form onSubmit={submit} className="card p-4 max-w-2xl space-y-3">
-      <h3 className="text-md font-semibold">Add stock</h3>
+      <h3 className="card-title">Add stock</h3>
       {err && <div className="text-danger text-sm">{err}</div>}
       <InlineQueryError query={storageQuery} label="storage locations" />
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

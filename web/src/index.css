@@ -70,6 +70,28 @@
   .card {
     @apply rounded-lg border border-border bg-panel;
   }
+  /* Heading scale. Tailwind's default fontSize steps are xs/sm/base/lg/xl/…
+     — there is no `md`, and this config never adds one, so the 64 headings
+     that used to say `text-md` silently rendered at inherited body size.
+     Preflight also flattens h1–h6 to `font-size: inherit`, so a heading only
+     looks like a heading if a class says so. These three utilities are that
+     class, and they are the whole scale:
+
+       .page-title    20px/28  one per route, the topmost title
+       .card-title    16px/20  section heading inside a card or panel
+       .section-title 12px     uppercase eyebrow over a label-ish group
+
+     Body copy is 14px (`text-sm`, 82% of all sized text), so the steps are
+     20 / 16 / 14 / 12 — modest and clearly separated, which is what a dense
+     operator tool wants. `.card-title` is deliberately `leading-tight`: at
+     16px that is a 20px line box, identical to the 14px/20px it replaces, so
+     section titles gain size and weight without costing a pixel of height. */
+  .page-title {
+    @apply text-xl font-semibold;
+  }
+  .card-title {
+    @apply text-base font-semibold leading-tight;
+  }
   .section-title {
     @apply text-xs uppercase tracking-wider text-muted;
   }

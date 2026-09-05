@@ -47,7 +47,7 @@ export default function PartOther() {
   return (
     <div className="card p-4 max-w-xl space-y-4">
       <div className="space-y-2">
-        <h3 className="text-md font-semibold">Replace across projects</h3>
+        <h3 className="card-title">Replace across projects</h3>
         <p className="text-sm text-muted">
           Swap this part for a replacement on every matching BOM line, across some or all projects.
         </p>
@@ -59,7 +59,7 @@ export default function PartOther() {
       <hr className="border-border" />
 
       <div className="space-y-2">
-        <h3 className="text-md font-semibold">Other operations</h3>
+        <h3 className="card-title">Other operations</h3>
         {part.archived_at ? (
           <button className="btn" onClick={restore} disabled={archiveMutation.isPending}>Restore from archive</button>
         ) : (

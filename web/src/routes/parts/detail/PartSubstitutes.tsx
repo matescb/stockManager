@@ -32,7 +32,7 @@ export default function PartSubstitutes() {
 
   return (
     <div className="card p-4 max-w-2xl">
-      <h3 className="text-md font-semibold mb-2">Substitutes</h3>
+      <h3 className="card-title mb-2">Substitutes</h3>
       <QueryStateBoundary query={subsQuery} resourceLabel="substitutes">
       <ul className="space-y-1 mb-3">
         {(subs ?? []).map(s => {
@@ -40,7 +40,7 @@ export default function PartSubstitutes() {
           return (
             <li key={s.part_id} className="text-sm flex items-center justify-between">
               <span>{p?.name ?? s.part_id}{p?.mpn && <span className="text-muted ml-2">{p.mpn}</span>}</span>
-              <button className="btn-danger text-xs" onClick={() => remove(s.part_id)}>Remove</button>
+              <button className="btn-danger btn-sm" onClick={() => remove(s.part_id)}>Remove</button>
             </li>
           );
         })}

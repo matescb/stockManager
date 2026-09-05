@@ -79,7 +79,7 @@ export default function PartSettings() {
 
   return (
     <div className="card p-4 max-w-2xl space-y-3">
-      <h3 className="text-md font-semibold">Part settings</h3>
+      <h3 className="card-title">Part settings</h3>
       {err && <div className="text-danger text-sm">{err}</div>}
       <div>
         <label className="label" htmlFor="ps-low-stock">Low-stock report quantity</label>

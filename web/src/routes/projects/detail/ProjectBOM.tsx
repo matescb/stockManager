@@ -337,7 +337,7 @@ export default function ProjectBOM() {
             accessor: () => "",
             render: r => (
               <button
-                className="btn-danger text-xs"
+                className="btn-danger btn-sm"
                 onClick={event => {
                   event.stopPropagation();
                   delEntry(r.id);

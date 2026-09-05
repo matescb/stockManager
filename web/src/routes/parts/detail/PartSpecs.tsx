@@ -148,7 +148,7 @@ export default function PartSpecs() {
   return (
     <div className="card p-4 max-w-3xl">
       <div className="flex items-center mb-3">
-        <h3 className="text-md font-semibold">Specifications</h3>
+        <h3 className="card-title">Specifications</h3>
         <span className="ml-2 text-xs text-muted">{rows.length} {rows.length === 1 ? "row" : "rows"}</span>
       </div>
 
@@ -175,7 +175,7 @@ export default function PartSpecs() {
       )}
 
       {isError ? (
-        <div className="text-red-600 text-sm">Failed to load specs. {error instanceof ApiError ? error.userMessage : ""}</div>
+        <div className="text-danger text-sm">Failed to load specs. {error instanceof ApiError ? error.userMessage : ""}</div>
       ) : isLoading ? (
         <div className="text-muted text-sm">Loading…</div>
       ) : rows.length === 0 ? (

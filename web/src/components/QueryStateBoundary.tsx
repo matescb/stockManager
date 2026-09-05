@@ -97,7 +97,7 @@ export function InlineQueryError({
       </span>
       <button
         type="button"
-        className="btn text-xs"
+        className="btn btn-sm"
         disabled={query.isFetching}
         onClick={() => query.refetch()}
       >

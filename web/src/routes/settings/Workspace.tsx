@@ -277,7 +277,7 @@ export default function WorkspaceSettings() {
 
   return (
     <div className="max-w-3xl">
-      <h1 className="text-xl font-semibold mb-4">Workspace</h1>
+      <h1 className="page-title mb-4">Workspace</h1>
       {err && <div className="card p-3 text-danger text-sm mb-3">{err}</div>}
       <div className="space-y-2 mb-3">
         <InlineQueryError query={curQuery} label="workspace settings" />
@@ -342,7 +342,7 @@ export default function WorkspaceSettings() {
       {cur && (
         <div className="card p-4 mb-4 space-y-3 text-sm">
           <div className="flex items-center justify-between">
-            <h2 className="text-md font-semibold">Public catalog</h2>
+            <h2 className="card-title">Public catalog</h2>
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -426,7 +426,7 @@ export default function WorkspaceSettings() {
 
       {/* Catalog tokens section (SEC2-019) */}
       <div className="card p-4 mb-4 space-y-3 text-sm">
-        <h2 className="text-md font-semibold">Catalog tokens</h2>
+        <h2 className="card-title">Catalog tokens</h2>
         <div className="text-xs text-muted">
           Create per-recipient tokens so individual recipients can be
           revoked without rotating all consumers. Each token provides
@@ -500,7 +500,7 @@ export default function WorkspaceSettings() {
                   <td>
                     {!t.revoked_at && (
                       <button
-                        className="btn-danger text-xs"
+                        className="btn-danger btn-sm"
                         type="button"
                         disabled={revokeCatalogToken.isPending}
                         onClick={async () => {
@@ -554,7 +554,7 @@ export default function WorkspaceSettings() {
       {cur && (
         <div className="card p-4 mb-4 space-y-3 text-sm">
           <div className="flex items-center justify-between">
-            <h2 className="text-md font-semibold">Parts data provider</h2>
+            <h2 className="card-title">Parts data provider</h2>
             <select
               className="input max-w-[160px]"
               value={cur.parts_provider}
@@ -666,7 +666,7 @@ export default function WorkspaceSettings() {
       )}
 
       <div className="card p-4 mb-4 space-y-2 text-sm">
-        <h2 className="text-md font-semibold">Categories</h2>
+        <h2 className="card-title">Categories</h2>
         <div className="text-xs text-muted">
           Buckets for the parts library, with the reference-designator prefix
           and default symbol / footprint references a KiCad library is built
@@ -678,7 +678,7 @@ export default function WorkspaceSettings() {
       </div>
 
       <div className="card p-4 mb-4 space-y-2 text-sm">
-        <h2 className="text-md font-semibold">API tokens</h2>
+        <h2 className="card-title">API tokens</h2>
         <div className="text-xs text-muted">
           Personal access tokens for KiCad, scripts and agents. Each one acts as
           the person who created it and can never exceed their role.
@@ -689,7 +689,7 @@ export default function WorkspaceSettings() {
       </div>
 
       <div className="card p-4 mb-4 space-y-2 text-sm">
-        <h2 className="text-md font-semibold">KiCad setup</h2>
+        <h2 className="card-title">KiCad setup</h2>
         <div className="text-xs text-muted">
           Connect KiCad to this workspace: the HTTP library file, the add-on
           repository that installs the symbol and footprint files, and the
@@ -701,7 +701,7 @@ export default function WorkspaceSettings() {
       </div>
 
       <div className="card p-4 mb-4 space-y-2 text-sm">
-        <h2 className="text-md font-semibold">Label templates</h2>
+        <h2 className="card-title">Label templates</h2>
         <div className="text-xs text-muted">
           Design the labels the cab SQUIX printer produces for parts, lots,
           bins, orders and builds. Each type has one default, which is what the
@@ -719,7 +719,7 @@ export default function WorkspaceSettings() {
       {cur && (
         <div className="card p-4 mb-4 space-y-3 text-sm">
           <div className="flex items-center justify-between">
-            <h2 className="text-md font-semibold">Scanner</h2>
+            <h2 className="card-title">Scanner</h2>
             <select
               className="input max-w-[220px]"
               value={cur.scanner}
@@ -766,7 +766,7 @@ export default function WorkspaceSettings() {
         </div>
       )}
 
-      <h2 className="text-md font-semibold mb-2">Members</h2>
+      <h2 className="card-title mb-2">Members</h2>
       <div className="card p-4 mb-4">
         <table className="table">
           <thead>
@@ -796,14 +796,14 @@ export default function WorkspaceSettings() {
                   </select>
                 </td>
                 <td>{m.status}</td>
-                <td><button className="btn-danger text-xs" onClick={() => removeMember(m.id)}>Remove</button></td>
+                <td><button className="btn-danger btn-sm" onClick={() => removeMember(m.id)}>Remove</button></td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      <h2 className="text-md font-semibold mb-2">Invitations</h2>
+      <h2 className="card-title mb-2">Invitations</h2>
       <div className="card p-4 mb-4 space-y-3">
         <div className="flex gap-2 items-end">
           <div className="flex-1">
@@ -836,7 +836,7 @@ export default function WorkspaceSettings() {
                       Send the invitee this token; they paste it on the Account page after signing up.
                     </div>
                   </td>
-                  <td><button className="btn-danger text-xs" onClick={() => revokeInvite(inv.id)}>Revoke</button></td>
+                  <td><button className="btn-danger btn-sm" onClick={() => revokeInvite(inv.id)}>Revoke</button></td>
                 </tr>
               ))}
             </tbody>
@@ -844,7 +844,7 @@ export default function WorkspaceSettings() {
         )}
       </div>
 
-      <h2 className="text-md font-semibold mb-2">All workspaces</h2>
+      <h2 className="card-title mb-2">All workspaces</h2>
       <ul className="space-y-1 mb-4">
         {me?.workspaces.map(w => (
           <li key={w.id} className="text-sm card p-3 flex items-center justify-between">
@@ -853,7 +853,7 @@ export default function WorkspaceSettings() {
           </li>
         ))}
       </ul>
-      <h2 className="text-md font-semibold mb-2">Create new workspace</h2>
+      <h2 className="card-title mb-2">Create new workspace</h2>
       <div className="flex gap-2">
         <input className="input max-w-xs" placeholder="Workspace name" value={newName} onChange={e => setNewName(e.target.value)} />
         <button className="btn-primary" onClick={createWs}>Create</button>

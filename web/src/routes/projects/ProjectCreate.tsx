@@ -29,7 +29,7 @@ export default function ProjectCreate() {
   }
   return (
     <form onSubmit={submit} className="card p-4 max-w-xl space-y-3">
-      <h1 className="text-xl font-semibold">Create project</h1>
+      <h1 className="page-title">Create project</h1>
       {err && <div className="text-danger text-sm">{err}</div>}
       <div>
         <label className="label" htmlFor="project-create-name">Name *</label>

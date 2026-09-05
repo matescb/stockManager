@@ -19,7 +19,7 @@ export default function PartStock() {
   const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: ({ signal }) => api.get<StorageLocation[]>("/storage", { signal }) });
   const storageById = new Map(storage?.map(s => [s.id, s.name]) ?? []);
 
-  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load stock. {error instanceof ApiError ? error.userMessage : ""}</div>;
+  if (isError) return <div className="text-danger text-sm p-4">Failed to load stock. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (!data) return <div className="text-muted">Loading…</div>;
   return (
     <div>

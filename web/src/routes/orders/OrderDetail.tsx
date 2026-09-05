@@ -142,7 +142,7 @@ export default function OrderDetail() {
     },
   });
 
-  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load order. {error instanceof ApiError ? error.userMessage : ""}</div>;
+  if (isError) return <div className="text-danger text-sm p-4">Failed to load order. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (!data) return <div className="text-muted">Loading…</div>;
   const { order, entries } = data;
   const isClosed = order.status === "received" || order.status === "cancelled" || !!order.archived_at;
@@ -234,7 +234,7 @@ export default function OrderDetail() {
 
       <div className="card p-4 mb-4">
         <div className="flex items-center mb-3">
-          <h3 className="text-md font-semibold">Lines</h3>
+          <h3 className="card-title">Lines</h3>
           {!isClosed && (
             <button className="btn ml-auto" onClick={() => setAdding(a => !a)}>
               {adding ? "Cancel" : "+ Line"}
@@ -292,7 +292,7 @@ export default function OrderDetail() {
               key: "actions", header: "", accessor: () => "",
               render: r => !isClosed && r.quantity_received === 0 ? (
                 <button
-                  className="btn-danger text-xs"
+                  className="btn-danger btn-sm"
                   onClick={() => removeEntry(r.id)}
                   disabled={removeEntryMutation.isPending && removeEntryMutation.variables === r.id}
                 >
@@ -306,7 +306,7 @@ export default function OrderDetail() {
 
       {!isClosed && entries.some(e => e.part_id && e.quantity_received < e.quantity_ordered) && (
         <div className="card p-4">
-          <h3 className="text-md font-semibold mb-3">Receive</h3>
+          <h3 className="card-title mb-2">Receive</h3>
           <div className="text-sm text-muted mb-2">
             Enter a quantity per line and (optionally) a storage location. Lines with no part are skipped — match them first by editing the line.
           </div>

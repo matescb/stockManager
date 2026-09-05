@@ -264,7 +264,7 @@ export default function ProjectImport() {
       <div className="space-y-4">
         <StepIndicator step={step} />
         <div className="card p-4 max-w-xl space-y-3">
-          <h3 className="text-md font-semibold">Import complete</h3>
+          <h3 className="card-title">Import complete</h3>
           <div className="text-sm">Inserted: <span className="tabular-nums">{result?.inserted}</span></div>
           <div className="text-sm">Matched: <span className="tabular-nums text-accent">{result?.matched}</span></div>
           <div className="text-sm">Unmatched: <span className="tabular-nums text-danger">{result?.unmatched}</span></div>
@@ -284,7 +284,7 @@ export default function ProjectImport() {
       <InlineQueryError query={presetsQuery} label="BOM presets" />
       {step === "upload" && (
         <div className="card p-4 space-y-3 max-w-xl">
-          <h3 className="text-md font-semibold">Step 1 — upload CSV/TSV</h3>
+          <h3 className="card-title">Step 1 — upload CSV/TSV</h3>
           <input
             type="file"
             accept=".csv,.tsv,.txt"
@@ -311,7 +311,7 @@ export default function ProjectImport() {
 
       {step === "mapping" && preview && (
         <div className="card p-4 space-y-3">
-          <h3 className="text-md font-semibold">Step 2 — column mapping & preview</h3>
+          <h3 className="card-title">Step 2 — column mapping & preview</h3>
           <div className="grid grid-cols-4 gap-3">
             <div>
               <label className="label" htmlFor="import-separator">Separator</label>
@@ -359,7 +359,7 @@ export default function ProjectImport() {
                   {presets.map(p => (
                     <div key={p.id} className="flex items-center text-sm">
                       <span className="flex-1">{p.name}</span>
-                      <button type="button" className="btn-danger text-xs" onClick={() => deletePreset(p.id)}>Delete</button>
+                      <button type="button" className="btn-danger btn-sm" onClick={() => deletePreset(p.id)}>Delete</button>
                     </div>
                   ))}
                 </div>

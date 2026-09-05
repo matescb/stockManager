@@ -151,7 +151,7 @@ export default function ApiTokensSettings() {
 
   return (
     <div className="max-w-4xl">
-      <h1 className="text-xl font-semibold mb-4">API tokens</h1>
+      <h1 className="page-title mb-4">API tokens</h1>
       <p className="text-sm text-muted mb-4">
         Personal access tokens let KiCad, scripts and agents reach this
         workspace without a browser session. A token acts as you, in this
@@ -161,7 +161,7 @@ export default function ApiTokensSettings() {
       <InlineQueryError query={tokensQuery} label="API tokens" className="mb-3" />
 
       <div className="card p-4 mb-4">
-        <h2 className="text-md font-semibold mb-1">Using this token in KiCad?</h2>
+        <h2 className="card-title mb-2">Using this token in KiCad?</h2>
         <p className="text-sm text-muted mb-2">
           The setup page walks through the library file, the add-on repository
           and the SPICE path variable, and builds the config for you.
@@ -173,7 +173,7 @@ export default function ApiTokensSettings() {
 
       {minted && (
         <div className="card p-4 mb-4 space-y-2 border-warning/50">
-          <h2 className="text-md font-semibold">Copy your new token now</h2>
+          <h2 className="card-title">Copy your new token now</h2>
           <p className="text-sm text-muted">
             This is the only time it will ever be shown. We store a one-way hash,
             so it cannot be recovered — if you lose it, revoke it and mint another.
@@ -246,7 +246,7 @@ export default function ApiTokensSettings() {
                     {!token.revoked_at && (
                       <button
                         type="button"
-                        className="btn-danger text-xs"
+                        className="btn-danger btn-sm"
                         disabled={revokeMutation.isPending}
                         onClick={() => revoke(token)}
                       >
@@ -267,7 +267,7 @@ export default function ApiTokensSettings() {
             swallow the submit and show a browser tooltip instead of our
             own message. `submit()` does the real checking. */}
         <form onSubmit={submit} className="p-4 space-y-3" noValidate>
-          <h2 className="text-md font-semibold">Create API token</h2>
+          <h2 className="card-title">Create API token</h2>
           {err && <div className="text-danger text-sm">{err}</div>}
           <div>
             <label className="label" htmlFor="token-label">Label</label>

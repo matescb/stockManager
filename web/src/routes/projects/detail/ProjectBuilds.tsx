@@ -21,7 +21,7 @@ export default function ProjectBuilds() {
   return (
     <div>
       <div className="flex items-center mb-3">
-        <h3 className="text-md font-semibold">Builds against this project</h3>
+        <h3 className="card-title">Builds against this project</h3>
         <Link to={`/builds/create?project_id=${projectId}`} className="btn-primary ml-auto">+ Build</Link>
       </div>
       <QueryStateBoundary query={buildsQuery} resourceLabel="builds">

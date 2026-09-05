@@ -207,7 +207,7 @@ export default function CategoriesSettings() {
 
   return (
     <div className="max-w-4xl">
-      <h1 className="text-xl font-semibold mb-4">Categories</h1>
+      <h1 className="page-title mb-4">Categories</h1>
       <p className="text-sm text-muted mb-4">
         Buckets for the parts library. The reference-designator prefix and the
         default symbol / footprint references are the metadata a KiCad library
@@ -268,7 +268,7 @@ export default function CategoriesSettings() {
                   <td className="whitespace-nowrap">
                     <button
                       type="button"
-                      className="btn text-xs"
+                      className="btn btn-sm"
                       onClick={() => openEdit(category)}
                     >
                       Edit
@@ -296,7 +296,7 @@ export default function CategoriesSettings() {
         size="sm"
       >
         <form onSubmit={submit} className="p-4 space-y-3">
-          <h2 className="text-md font-semibold">
+          <h2 className="card-title">
             {editing ? "Edit category" : "Create category"}
           </h2>
           {err && <div className="text-danger text-sm">{err}</div>}

@@ -209,7 +209,7 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
     <div className="card p-4">
       <div className="flex items-center mb-3">
         <Paperclip className="w-4 h-4 mr-2 text-muted" />
-        <h3 className="text-md font-semibold">Attachments</h3>
+        <h3 className="card-title">Attachments</h3>
       </div>
 
       {canWrite && (
@@ -299,7 +299,7 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
                 </div>
                 {safeDownloadUrl && (
                   <a
-                    className="btn text-xs"
+                    className="btn btn-sm"
                     href={safeDownloadUrl}
                     target="_blank"
                     rel="noopener noreferrer"
@@ -309,7 +309,7 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
                   </a>
                 )}
                 {canWrite && (
-                  <button className="btn-danger text-xs" onClick={() => doDelete(a)}>
+                  <button className="btn-danger btn-sm" onClick={() => doDelete(a)}>
                     <Trash2 className="inline w-3 h-3" />
                   </button>
                 )}

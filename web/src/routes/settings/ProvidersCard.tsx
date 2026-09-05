@@ -51,7 +51,7 @@ export function ProvidersCard({ workspace, workspaceId }: ProvidersCardProps) {
   return (
     <div className="card p-4 mb-4 space-y-4 text-sm">
       <div>
-        <h2 className="text-md font-semibold">Additional providers</h2>
+        <h2 className="card-title">Additional providers</h2>
         <div className="text-xs text-muted">
           A second catalog source for price and availability. Its data lands
           on a part&apos;s Sourcing tab under that provider&apos;s own name and
