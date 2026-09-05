@@ -113,7 +113,7 @@ and `code` sits at the **top level**, not inside `status`:
 Switch on `code`, never on `status.message` — the message is human-facing and
 may be reworded. Routes may spread extra top-level keys alongside it (a part
 `409` carries `existing_id` and `existing_name`). The full constant list is
-`ErrorCodes` in `backend/app/core/errors.py:87-303`; the ones an agent will
+`ErrorCodes` in `backend/app/core/errors.py:87-310`; the ones an agent will
 actually branch on:
 
 | Code | Status | Meaning |

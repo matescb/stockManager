@@ -1,8 +1,10 @@
 """Tests for domain/_polymorphic_cleanup.py.
 
 Covers:
-- purge_polymorphic deletes attachment, custom_field, and tag_link rows
-  belonging to the given (workspace_id, object_type, object_id).
+- purge_polymorphic deletes attachment, custom_field, tag_link and
+  object_code rows belonging to the given (workspace_id, object_type,
+  object_id). The object_code half is exercised in detail by
+  tests/test_object_codes.py, which owns that table.
 - Cross-workspace safety: purge with workspace_id=B deletes 0 rows from
   workspace A's data.
 - SQLAlchemy before_delete listeners purge rows when polymorphic parents
@@ -207,8 +209,15 @@ def test_purge_polymorphic_deletes_all_three_tables(db):
     assert _row_count(db, CustomField, ws_id, part_id) == 0
     assert _row_count(db, TagLink, ws_id, part_id) == 0
 
-    # Return dict has the expected keys
-    assert set(counts.keys()) == {"attachments", "custom_fields", "tag_links"}
+    # Return dict has one key per registered child table. `object_codes`
+    # joined the set in alembic 0073 — see tests/test_object_codes.py for
+    # the code-specific hard-delete coverage.
+    assert set(counts.keys()) == {
+        "attachments",
+        "custom_fields",
+        "tag_links",
+        "object_codes",
+    }
     # At least the custom_field and tag_link counts are non-zero
     assert counts["custom_fields"] >= 1
     assert counts["tag_links"] >= 1

@@ -12,7 +12,7 @@ For the one-line domain table (which router serves which tables), see [`ARCHITEC
 - Soft-archive is the universal delete pattern: `archived_at IS NOT NULL` rows are excluded from active queries via partial indexes (`postgresql_where=text("archived_at IS NULL")`). Hard-delete is rare.
 - Cross-table FKs use `ON DELETE SET NULL` so a hard-delete of a parent (e.g. an order) preserves audit trail in `stock_entries.order_id`. The exceptions are intra-domain FKs (`order_entries.order_id`, `part_meta_members.meta_part_id`, etc.) which use `CASCADE`.
 - Every model module is registered in `backend/app/domain/all_models.py`. The test `tests/test_migrations.py::test_all_models_covers_every_domain` walks `app/domain/*/models.py` and asserts each `__tablename__` is in `Base.metadata.tables`.
-- Polymorphic tables (`attachments`, `custom_fields`, `tag_links`) reference parents via `(object_type, object_id)` with **no FK on `object_id`**. See [polymorphic](polymorphic.md).
+- Polymorphic tables (`attachments`, `custom_fields`, `tag_links`, `object_codes`) reference parents via a discriminator + id pair with **no FK on the id column**. See [polymorphic](polymorphic.md).
 
 ## Entity catalogue (34 models)
 
@@ -121,6 +121,7 @@ Personal access tokens — the non-cookie credential for KiCad, scripts and agen
 | `CustomField` | `custom_fields` | `backend/app/domain/custom_fields/models.py:10` |
 | `Tag` | `tags` | `backend/app/domain/tags/models.py:10` |
 | `TagLink` | `tag_links` | `backend/app/domain/tags/models.py:28` |
+| `ObjectCode` | `object_codes` | `backend/app/domain/codes/models.py` |
 
 ### audit
 
@@ -161,6 +162,7 @@ erDiagram
   WORKSPACES ||--o{ CUSTOM_FIELDS : ""
   WORKSPACES ||--o{ TAGS : ""
   WORKSPACES ||--o{ TAG_LINKS : ""
+  WORKSPACES ||--o{ OBJECT_CODES : ""
   WORKSPACES ||--o{ BULK_IMPORT_IDEMPOTENCY : ""
   WORKSPACES ||--o{ PART_CATEGORIES : ""
   WORKSPACES ||--o{ API_TOKENS : ""
@@ -216,9 +218,12 @@ erDiagram
   ATTACHMENTS }..o{ PARTS : "object_id (no FK)"
   CUSTOM_FIELDS }..o{ PARTS : "object_id (no FK)"
   TAG_LINKS }..o{ PARTS : "object_id (no FK)"
+  OBJECT_CODES }..o{ PARTS : "entity_id (no FK)"
 ```
 
 The polymorphic dotted edges go to many parent types, not just `parts` — `object_type` discriminates among `part | order | project | build | lot | storage_location | …`. Mermaid can't draw "edge to N tables" cleanly; the diagram shows `parts` as the common case. Real `object_type` values are decided at the call site (e.g. `attachments` route handlers) and there is no enum on the column.
+
+`object_codes` is the exception: its `entity_type` **is** CHECK-constrained, to `build | lot | order | part | storage_location` (no `project`). See [polymorphic](polymorphic.md#the-tables).
 
 ## FK summary table
 
