@@ -43,6 +43,11 @@ The single most load-bearing file is `ARCHITECTURE.md`. Don't restate things fro
 
 ## I'm an end user of Stock Manager
 
+These pages also ship inside the app itself at **Help** in the sidebar
+(`/help`, one route per page) — they are copied into the frontend bundle
+at build time, so the app and this directory never drift. `/about` shows
+which build you are running.
+
 | Task | Help page |
 |---|---|
 | Sign up, verify email, set up first workspace | [`user/getting-started.md`](user/getting-started.md) |

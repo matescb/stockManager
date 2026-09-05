@@ -55,6 +55,12 @@ review-*/
 
 # Top-level docs / READMEs (not needed at runtime)
 *.md
+# …except CHANGELOG.md, which web/Dockerfile.prod COPYs into the build
+# stage: the About page renders its most recent entries and they are
+# inlined into the bundle by web/scripts/copy-docs.mjs. Only root-level
+# `*.md` is excluded by the pattern above, so `docs/user/*.md` (the
+# in-app manual, copied by the same script) is already in the context.
+!CHANGELOG.md
 !web/index.html
 
 # Old static-bundle graveyard — see PR #16 in the remediation plan

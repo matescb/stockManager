@@ -472,6 +472,7 @@ SWEEP_PATHS = [
     "/api/stock/history",
     "/api/storage",
     "/api/tags",
+    "/api/version",
     "/api/workspaces",
     "/api/workspaces/current",
     "/api/workspaces/current/catalog/tokens",

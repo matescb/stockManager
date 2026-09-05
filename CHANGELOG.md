@@ -55,6 +55,12 @@ Nine PRs, migrations `0067`–`0069`. Rationale in
   `.kicad_httplib` download, the PCM repository URL and the SPICE path
   variable from a token pasted in the browser. The plaintext never
   returns to the server.
+- **About page and in-app manual** (`/about`, `/help`) — the frontend and
+  backend build identifiers side by side (both the deploy's 12-char git
+  SHA, so a half-applied deploy shows up as a mismatch), the top of this
+  file as "Latest changes", and the `docs/user/` shelf rendered inside the
+  app. `GET /api/version` is the backend half; the manual is inlined into
+  the bundle at build time by `web/scripts/copy-docs.mjs`.
 - **Deploy gates** — the deploy job now fails loudly on a stale web
   image: a health gate polling `/api/health`, and a routing gate
   requiring `/kicad-api/v1/` to answer JSON rather than the SPA shell.

@@ -125,6 +125,16 @@ const LabelTemplatesSettings = lazy(() => import("@/routes/labels/LabelTemplates
 // from a QR scan, never from in-app navigation.
 const CodeResolve = lazy(() => import("@/routes/codes/CodeResolve"));
 
+// Help / About. Lazy for a reason beyond route weight: the manual pages
+// and the changelog are inlined as raw markdown strings at build time
+// (see lib/userDocs.ts), and react-markdown + remark-gfm come with them.
+// Keeping the whole lot out of the entry chunk means a user who never
+// opens Help never downloads it.
+const HelpLayout = lazy(() => import("@/routes/help/HelpLayout"));
+const HelpIndex = lazy(() => import("@/routes/help/HelpIndex"));
+const HelpPage = lazy(() => import("@/routes/help/HelpPage"));
+const About = lazy(() => import("@/routes/about/About"));
+
 /**
  * Auth gate + AppShell as a layout route. Mounting this once at the top
  * of the authed subtree means `<AppShell>` survives every navigation;
@@ -328,6 +338,15 @@ export default function App() {
                 detail route. Deliberately short — it is a URL people
                 photograph, and every character costs QR density. */}
             <Route path="/c/:code" element={<LazyRoute><CodeResolve /></LazyRoute>} />
+
+            {/* In-app manual. One route per `docs/user/` page so every
+                help page is deep-linkable and quotable in a support
+                reply. `/about` carries the build identifiers. */}
+            <Route path="/help" element={<LazyRoute><HelpLayout /></LazyRoute>}>
+              <Route index element={<LazyRoute><HelpIndex /></LazyRoute>} />
+              <Route path=":slug" element={<LazyRoute><HelpPage /></LazyRoute>} />
+            </Route>
+            <Route path="/about" element={<LazyRoute><About /></LazyRoute>} />
 
             <Route path="*" element={<NotFound />} />
           </Route>

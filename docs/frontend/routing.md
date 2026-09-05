@@ -74,6 +74,23 @@ All under `<Gate>` (`App.tsx:183-276`). Grouped:
   scan, never from in-app navigation. Sits inside `<Gate>`, so an
   unauthenticated scan round-trips through `/login` and lands back here.
   See [api/codes](../api/codes.md).
+- `/help` → `<HelpLayout />` with `<HelpIndex />` at the index and
+  `<HelpPage />` at `/help/:slug` — **lazy**. The in-app manual: one route
+  per page of the `docs/user/` shelf, which
+  `web/scripts/copy-docs.mjs` copies into `web/src/generated/user-docs/`
+  at predev / prebuild / pretest time so Vite can inline it
+  (`lib/userDocs.ts`). Lazy for weight as much as for traffic —
+  `react-markdown` + `remark-gfm` + the shelf itself ride in these chunks,
+  so a session that never opens Help never downloads them.
+  Links inside a page are rewritten by `resolveDocHref`; anything that
+  leaves the end-user shelf (engineer docs, ADRs, runbooks) renders as
+  plain text rather than a link.
+- `/about` → `<About />` — **lazy**. The frontend build
+  (`import.meta.env.VITE_APP_VERSION`) and the backend build
+  (`GET /api/version`) side by side, plus the top of `CHANGELOG.md`.
+  Both are the deploy's 12-char git short SHA; they disagree only when a
+  deploy half-applied, which the page calls out explicitly.
+  See [api/system](../api/system.md).
 - `*` → `<NotFound />` (`App.tsx:275`)
 
 ## Lazy-chunk boundaries
