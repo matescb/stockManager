@@ -130,6 +130,38 @@ one. 0074 also adds `parts.unit_of_measure` and a per-row
 reinterpreted by editing a part's unit. Opening fractional input is a
 separate, later, deliberately irreversible change.
 
+**Internal representation is exact `Decimal`.**
+`domain/stock/service.py::current_quantity` and every roll-up built on it
+return `Decimal`, not `int` — `SUM()` over `NUMERIC` is exact and
+order-independent, which is the property a ledger re-summed on every read
+depends on. Coercing that sum back to `int` (which the service did until
+the step-2 plumbing PR) would drop the fraction the column can now hold,
+in a way nothing would report. Three rules follow:
+
+- **Never `float`.** Binary floating point cannot represent `0.1`, so an
+  exact decimal that passes through a `float` comes back subtly wrong —
+  and multiplied by a price, the error lands in money.
+- **Round explicitly, at your own boundary.** A whole-board count
+  (`_can_build_now`) or a distributor package count
+  (`SourcingPriceBreak.quantity` is an external contract) is genuinely an
+  integer; `math.ceil` on the `Decimal` says so, `int()` merely truncates.
+- **The storage scale is padding, not part of the value.** Postgres
+  returns `Decimal("10.000000")` for a ten. `Decimal` multiplication adds
+  exponents, so a ten that kept those six decimal places would turn a
+  `0.500000` unit price into a
+  `5.000000000000` extended cost — which the money schemas render
+  verbatim as a string. `domain/_quantity.py::as_quantity` trims the
+  padding as the value leaves the database, so a quantity used as a
+  multiplier leaves money at money's own scale.
+
+`backend/scripts/check_quantity_coercions.py` is the CI gate: it rejects
+`float()` / `int()` applied to anything with a quantity name, and *any*
+coercion inside `domain/stock/service.py`. Deliberate exceptions carry
+`# noqa: quantity-decimal`. At the JSON boundary an untyped serialiser
+must go through `domain/_quantity.py::quantity_out`, which keeps a whole
+value a JSON integer (a scaled `Decimal` would render as `5.0`);
+Pydantic-typed responses coerce an integral `Decimal` on their own.
+
 ### Lot lifecycle
 
 A `Lot` is a *batch* of a part with a particular provenance:

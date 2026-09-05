@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.core.time import utcnow
+from app.domain._quantity import QUANTITY_ZERO
 from app.domain.builds.models import Build, BuildStage, BuildStageLine
 from app.domain.builds.schemas import BuildStageCreateIn, StageConsumeIn
 from app.domain.builds.service import (
@@ -49,6 +50,7 @@ from app.domain.builds.service import (
     project_entries_by_id,
     release_reservation_amounts,
     release_reservations,
+    shortage_rows_out,
 )
 from app.domain.parts.models import Part
 from app.domain.projects.models import Project, ProjectEntry
@@ -174,6 +176,11 @@ def stage_shortage(
     Same row shape, so the UI can render whole-build and per-stage shortage
     with one component; `required` is this stage's slice and `portion_pct`
     says how big that slice is.
+
+    Display-only, so the rows come back already through
+    `service.py::shortage_rows_out` — `current_quantity` returns an exact
+    `Decimal` and `serialize_stage` drops these straight into an untyped
+    response dict, where a scaled `Decimal` would render as `5.0`.
     """
     entries = project_entries_by_id(db, workspace_id=workspace_id, project=project)
 
@@ -193,7 +200,8 @@ def stage_shortage(
         available = current_quantity(db, workspace_id=workspace_id, part_id=part.id)
         sub_ids = _candidate_part_ids(db, part=part)
         sub_avail = sum(
-            current_quantity(db, workspace_id=workspace_id, part_id=sid) for sid in sub_ids
+            (current_quantity(db, workspace_id=workspace_id, part_id=sid) for sid in sub_ids),
+            QUANTITY_ZERO,
         )
         out.append(
             {
@@ -206,10 +214,10 @@ def stage_shortage(
                 "available": available,
                 "substitute_ids": [str(s) for s in sub_ids],
                 "substitute_available": sub_avail,
-                "short_by": max(0, required - (available + sub_avail)),
+                "short_by": max(QUANTITY_ZERO, required - (available + sub_avail)),
             }
         )
-    return out
+    return shortage_rows_out(out)
 
 
 def serialize_stage(

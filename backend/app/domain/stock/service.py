@@ -11,6 +11,7 @@ from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.core.time import utcnow
+from app.domain._quantity import QUANTITY_ZERO, as_quantity, quantity_out
 from app.domain.lots.models import Lot
 from app.domain.parts.models import Part
 from app.domain.stock.models import StockEntry
@@ -146,7 +147,7 @@ def current_quantity(
     lot_id: UUID | None = None,
     status: str = "on_hand",
     bucket_match: bool = False,
-) -> int:
+) -> Decimal:
     """On-hand sum of quantity_delta. Two interpretations of `None`:
 
     - `bucket_match=False` (default, used by global / report queries):
@@ -166,6 +167,17 @@ def current_quantity(
     validator says "you have N globally" → request passes → trigger
     fires on the NULL-bucket sum (= 0) → `check_violation` → API
     surfaces 500. This is BE-002 / DB-002 in the v2 teardown.
+
+    Returns an exact `Decimal`. `quantity_delta` is `Numeric(18,6)` since
+    migration 0074, and `SUM()` over `NUMERIC` is exact and
+    order-independent — the property the whole ledger model rests on,
+    since the balance is re-summed from scratch on every read. Truncating
+    the sum back to `int` here (which this did until uom step 2) would
+    make every roll-up in the app silently drop the fraction the column
+    can now hold. Callers that need an integer — a whole-board count, a
+    distributor package count — round explicitly at their own boundary,
+    and callers that put the value on the wire go through
+    `_quantity.quantity_out`.
     """
     q = (
         select(func.coalesce(func.sum(StockEntry.quantity_delta), 0))
@@ -187,7 +199,7 @@ def current_quantity(
             q = q.where(StockEntry.storage_location_id == storage_location_id)
         if lot_id is not None:
             q = q.where(StockEntry.lot_id == lot_id)
-    return int(db.execute(q).scalar_one() or 0)
+    return as_quantity(db.execute(q).scalar_one())
 
 
 def bulk_current_quantities(
@@ -196,7 +208,7 @@ def bulk_current_quantities(
     workspace_id: UUID,
     part_ids: list[UUID],
     status: str = "on_hand",
-) -> dict[UUID, int]:
+) -> dict[UUID, Decimal]:
     """Per-part SUM(quantity_delta) for many parts in one query.
 
     Used by report/listing routes that need current stock for a slice of
@@ -223,7 +235,7 @@ def bulk_current_quantities(
         .where(StockEntry.part_id.in_(part_ids))
         .group_by(StockEntry.part_id)
     ).all()
-    return {row[0]: int(row[1]) for row in rows}
+    return {row[0]: as_quantity(row[1]) for row in rows}
 
 
 def bulk_current_quantities_by_lot(
@@ -232,7 +244,7 @@ def bulk_current_quantities_by_lot(
     workspace_id: UUID,
     lot_ids: list[UUID] | None = None,
     status: str = "on_hand",
-) -> dict[UUID, int]:
+) -> dict[UUID, Decimal]:
     """Per-lot SUM(quantity_delta), keyed by lot_id.
 
     `lot_ids=None` aggregates every lot in the workspace (used by reports
@@ -256,13 +268,18 @@ def bulk_current_quantities_by_lot(
             return {}
         q = q.where(StockEntry.lot_id.in_(lot_ids))
     rows = db.execute(q).all()
-    return {row[0]: int(row[1]) for row in rows}
+    return {row[0]: as_quantity(row[1]) for row in rows}
 
 
 def stock_summary_for_part(
     db: Session, *, workspace_id: UUID, part_id: UUID, status: str = "on_hand"
 ) -> list[dict]:
-    """Per-(storage, lot) breakdown of current stock for a part."""
+    """Per-(storage, lot) breakdown of current stock for a part.
+
+    Each row's `quantity` is an exact `Decimal`; rows that net to zero are
+    dropped. Route serialisers put these on the wire through
+    `_quantity.quantity_out`.
+    """
     rows = db.execute(
         select(
             StockEntry.storage_location_id,
@@ -275,17 +292,19 @@ def stock_summary_for_part(
         .group_by(StockEntry.storage_location_id, StockEntry.lot_id)
     ).all()
     return [
-        {"storage_location_id": r[0], "lot_id": r[1], "quantity": int(r[2])}
-        for r in rows
-        if int(r[2]) != 0
+        {"storage_location_id": storage_id, "lot_id": lot_id, "quantity": qty}
+        for storage_id, lot_id, raw in rows
+        if (qty := as_quantity(raw)) != QUANTITY_ZERO
     ]
 
 
-def total_for_part(db: Session, *, workspace_id: UUID, part_id: UUID, status: str = "on_hand") -> int:
+def total_for_part(
+    db: Session, *, workspace_id: UUID, part_id: UUID, status: str = "on_hand"
+) -> Decimal:
     return current_quantity(db, workspace_id=workspace_id, part_id=part_id, status=status)
 
 
-def reserved_quantity(db: Session, *, workspace_id: UUID, part_id: UUID) -> int:
+def reserved_quantity(db: Session, *, workspace_id: UUID, part_id: UUID) -> Decimal:
     """Net quantity reserved (planned but not consumed) for a part. Reserve
     rows add positive deltas; release rows add negatives so an equivalent
     release brings the total back to zero."""
@@ -295,10 +314,10 @@ def reserved_quantity(db: Session, *, workspace_id: UUID, part_id: UUID) -> int:
         .where(StockEntry.part_id == part_id)
         .where(StockEntry.status == "reserved")
     )
-    return int(db.execute(q).scalar_one() or 0)
+    return as_quantity(db.execute(q).scalar_one())
 
 
-def available_quantity(db: Session, *, workspace_id: UUID, part_id: UUID) -> int:
+def available_quantity(db: Session, *, workspace_id: UUID, part_id: UUID) -> Decimal:
     """On-hand stock minus what is reserved for planned builds."""
     return (
         current_quantity(db, workspace_id=workspace_id, part_id=part_id)
@@ -321,9 +340,9 @@ def stock_for_storage(
         .group_by(StockEntry.part_id, StockEntry.lot_id)
     ).all()
     return [
-        {"part_id": r[0], "lot_id": r[1], "quantity": int(r[2])}
-        for r in rows
-        if int(r[2]) != 0
+        {"part_id": part_id, "lot_id": lot_id, "quantity": qty}
+        for part_id, lot_id, raw in rows
+        if (qty := as_quantity(raw)) != QUANTITY_ZERO
     ]
 
 
@@ -414,7 +433,7 @@ def validate_storage_constraint_flag_update(
         return
 
     current_rows = stock_for_storage(db, workspace_id=workspace_id, storage_location_id=storage.id)
-    current_part_ids = {row["part_id"] for row in current_rows if int(row["quantity"]) > 0}
+    current_part_ids = {row["part_id"] for row in current_rows if row["quantity"] > 0}
 
     if enable_single and len(current_part_ids) > 1:
         raise StockConflictError(
@@ -579,7 +598,9 @@ def remove_stock(
         bucket_match=True,
     )
     if payload.quantity > available:
-        raise StockError(f"insufficient stock (have {available}, want {payload.quantity})")
+        raise StockError(
+            f"insufficient stock (have {quantity_out(available)}, want {payload.quantity})"
+        )
     entry = StockEntry(
         workspace_id=workspace_id,
         part_id=part.id,
@@ -643,21 +664,24 @@ def _prepare_move(
         if not _belongs(src_lot, workspace_id):
             raise StockError("source lot not found")
 
-    # `current_quantity` still returns an int today; wrapping rather than
-    # re-coercing means this comparison keeps whatever precision the ledger
-    # hands back once the units-of-measure track widens that return type.
-    available = Decimal(
-        current_quantity(
-            db,
-            workspace_id=workspace_id,
-            part_id=part_id,
-            storage_location_id=source_storage_location_id,
-            lot_id=source_lot_id,
-            bucket_match=True,
-        )
+    # `current_quantity` returns an exact `Decimal` (uom step 2), so this
+    # comparison keeps whatever precision the ledger hands back — the
+    # `Decimal(...)` wrapper #900 put here in anticipation is no longer
+    # needed. `quantity_out` on the message because the raw value would
+    # otherwise read "have 6.000000" in a 4xx body the route re-raises.
+    available = current_quantity(
+        db,
+        workspace_id=workspace_id,
+        part_id=part_id,
+        storage_location_id=source_storage_location_id,
+        lot_id=source_lot_id,
+        bucket_match=True,
     )
     if quantity > available:
-        raise StockError(f"insufficient stock at source (have {available}, want {quantity})")
+        raise StockError(
+            "insufficient stock at source "
+            f"(have {quantity_out(available)}, want {quantity_out(quantity)})"
+        )
 
     enforce_storage_constraints(db, workspace_id=workspace_id, storage=dest, part_id=part_id)
     return dest

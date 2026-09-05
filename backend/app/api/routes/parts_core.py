@@ -428,7 +428,7 @@ def archive_part(
             status.HTTP_409_CONFLICT,
             code=ErrorCodes.PART_HAS_RESERVED_STOCK,
             message="part has reserved stock; release reservations first",
-            blocking=[{"part_id": str(p.id), "quantity": reserved}],
+            blocking=[{"part_id": str(p.id), "quantity": quantity_out(reserved)}],
         )
 
     p.archived_at = utcnow()
@@ -597,7 +597,7 @@ def find_by_bag_signature(signature: str, db: DbSession, ws: CurrentWorkspace):
         "storage_location_id": (
             str(prior.storage_location_id) if prior.storage_location_id else None
         ),
-        "quantity": int(prior.quantity_delta or 0),
+        "quantity": quantity_out(prior.quantity_delta or 0),
     })
 
 
@@ -607,7 +607,9 @@ def part_stock(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
     rows = stock_summary_for_part(db, workspace_id=ws.id, part_id=p.id)
     return ok(
         {
-            "total_on_hand": total_for_part(db, workspace_id=ws.id, part_id=p.id),
+            "total_on_hand": quantity_out(
+                total_for_part(db, workspace_id=ws.id, part_id=p.id)
+            ),
             "rows": [
                 {
                     "storage_location_id": (
@@ -616,7 +618,7 @@ def part_stock(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
                         else None
                     ),
                     "lot_id": str(r["lot_id"]) if r["lot_id"] else None,
-                    "quantity": r["quantity"],
+                    "quantity": quantity_out(r["quantity"]),
                 }
                 for r in rows
             ],

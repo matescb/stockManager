@@ -13,6 +13,8 @@ endpoint groups out of `parts.py` and import from this module.
 """
 from __future__ import annotations
 
+from decimal import Decimal
+
 from fastapi import HTTPException, status
 from sqlalchemy import select
 
@@ -65,9 +67,9 @@ def image_urls_for_parts(db, ws_id, part_ids: list) -> dict:
 def serialize_part(
     p: Part,
     *,
-    on_hand: int | None = None,
-    reserved: int | None = None,
-    available: int | None = None,
+    on_hand: Decimal | None = None,
+    reserved: Decimal | None = None,
+    available: Decimal | None = None,
     image_url: str | None = None,
     provider_links: list[dict] | None = None,
 ) -> dict:
@@ -110,9 +112,11 @@ def serialize_part(
         "last_refresh_at": p.last_refresh_at.isoformat() if p.last_refresh_at else None,
         "description_locally_edited": bool(p.description_locally_edited),
         "archived_at": p.archived_at.isoformat() if p.archived_at else None,
-        "on_hand": on_hand,
-        "reserved": reserved,
-        "available": available if available is not None else 0,
+        # `on_hand` / `reserved` / `available` arrive as exact Decimals
+        # from the stock service; `quantity_out` keeps them JSON integers.
+        "on_hand": quantity_out(on_hand),
+        "reserved": quantity_out(reserved),
+        "available": quantity_out(available) if available is not None else 0,
         # Sourced from the part's `image_url` custom_field — the post-
         # download local path or a fallback to the upstream URL when the
         # download failed. None when no image was ever attached.

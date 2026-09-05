@@ -329,7 +329,10 @@ def _record_from_product(p: dict[str, Any]) -> dict[str, Any]:
 
     qty = p.get("QuantityAvailable")
     if isinstance(qty, (int, float)) and qty > 0:
-        add_spec("In stock (qty)", str(int(qty)))
+        # DigiKey's own stock count, rendered as a display string on the
+        # part's catalog fields. It never touches our ledger, and the
+        # upstream value is already a whole number of packages.
+        add_spec("In stock (qty)", str(int(qty)))  # noqa: quantity-decimal
 
     lead = p.get("ManufacturerLeadWeeks")
     if isinstance(lead, str) and lead.strip():

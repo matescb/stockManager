@@ -12,6 +12,7 @@ from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import ok
 from app.core.time import utcnow
+from app.domain._quantity import quantity_out
 from app.domain.parts.models import Part
 from app.domain.projects import bom_import as bom
 from app.domain.projects import bom_import_provider
@@ -53,7 +54,7 @@ def _serialize_entry(e: ProjectEntry) -> dict:
         "part_id": str(e.part_id) if e.part_id else None,
         "meta_part_id": str(e.meta_part_id) if e.meta_part_id else None,
         "name": e.name,
-        "quantity": float(e.quantity) if e.quantity is not None else 0,
+        "quantity": quantity_out(e.quantity) if e.quantity is not None else 0,
         "attrition_pct": float(e.attrition_pct) if e.attrition_pct is not None else 0,
         "comments": e.comments,
         "designators": e.designators or [],

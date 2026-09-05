@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, timedelta
+from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -13,7 +14,8 @@ from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
 from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import ok
-from app.domain.builds.service import shortage_analysis
+from app.domain._quantity import QUANTITY_ZERO, quantity_out
+from app.domain.builds.service import shortage_analysis, shortage_rows_out
 from app.domain.lots.models import Lot
 from app.domain.parts.models import Part
 from app.domain.projects.models import Project
@@ -29,6 +31,19 @@ from app.domain.stock.service import (
 )
 
 router = APIRouter()
+
+_MONEY_ZERO = Decimal("0")
+
+
+def _money_out(value: Decimal) -> float:
+    """Money for an untyped response dict.
+
+    JSON has no decimal type, so a monetary total has to become a JSON
+    number here. The point of the exact accumulation upstream is that this
+    conversion happens **once**, on a value that is already correct, rather
+    than on every intermediate product.
+    """
+    return float(round(value, 6))
 
 
 @router.get("/low-stock")
@@ -76,8 +91,15 @@ def bom_shortage(
     except HTTPException:
         raise_http(404, code=ErrorCodes.REPORT_PROJECT_NOT_FOUND, message="project not found")
     rows = shortage_analysis(db, workspace_id=ws.id, project=project, build_quantity=quantity)
-    total_short = sum(r["short_by"] for r in rows)
-    return ok({"project_id": str(project_id), "quantity": quantity, "rows": rows, "total_short": total_short})
+    total_short = sum((r["short_by"] for r in rows), QUANTITY_ZERO)
+    return ok(
+        {
+            "project_id": str(project_id),
+            "quantity": quantity,
+            "rows": shortage_rows_out(rows),
+            "total_short": quantity_out(total_short),
+        }
+    )
 
 
 @router.get(
@@ -112,16 +134,22 @@ def stock_value(db: DbSession, ws: CurrentWorkspace):
     lots = {l.id: l for l in db.query(Lot).filter(Lot.workspace_id == ws.id).all()}
     parts = {p.id: p for p in db.query(Part).filter(Part.workspace_id == ws.id).all()}
 
-    by_currency: dict[str | None, float] = defaultdict(float)
+    # Quantity x price is accumulated in exact Decimal. This used to
+    # truncate the lot quantity with `int(qty)` and downcast the unit cost
+    # to a binary `float` before multiplying, so every extended value —
+    # and the per-currency total accumulated from them — carried float
+    # drift. `Numeric(18,6) x Numeric(18,6)` is exact; the single
+    # `float()` below is the JSON boundary, where money has to become a
+    # JSON number anyway.
+    by_currency: dict[str | None, Decimal] = defaultdict(lambda: _MONEY_ZERO)
     by_part: dict[UUID, dict] = {}
     for lot_id, qty in lot_qty.items():
-        qty = int(qty)
         if qty <= 0:
             continue
         lot = lots.get(lot_id)
         if lot is None:
             continue
-        unit_cost = float(lot.purchase_unit_cost) if lot.purchase_unit_cost is not None else 0.0
+        unit_cost = lot.purchase_unit_cost if lot.purchase_unit_cost is not None else _MONEY_ZERO
         currency = lot.purchase_currency
         value = unit_cost * qty
         by_currency[currency] += value
@@ -130,8 +158,8 @@ def stock_value(db: DbSession, ws: CurrentWorkspace):
             {
                 "part_id": str(lot.part_id),
                 "name": parts[lot.part_id].name if lot.part_id in parts else str(lot.part_id),
-                "on_hand": 0,
-                "value": 0.0,
+                "on_hand": QUANTITY_ZERO,
+                "value": _MONEY_ZERO,
                 "currency": currency,
             },
         )
@@ -141,12 +169,17 @@ def stock_value(db: DbSession, ws: CurrentWorkspace):
         if bp["currency"] and currency and bp["currency"] != currency:
             bp["currency"] = "MIXED"
 
+    by_part_rows = sorted(by_part.values(), key=lambda r: r["value"], reverse=True)
     return ok(
         {
             "by_currency": [
-                {"currency": cur, "value": round(v, 6)} for cur, v in sorted(by_currency.items(), key=lambda kv: (kv[0] or ""))
+                {"currency": cur, "value": _money_out(v)}
+                for cur, v in sorted(by_currency.items(), key=lambda kv: (kv[0] or ""))
             ],
-            "by_part": sorted(by_part.values(), key=lambda r: r["value"], reverse=True),
+            "by_part": [
+                {**row, "on_hand": quantity_out(row["on_hand"]), "value": _money_out(row["value"])}
+                for row in by_part_rows
+            ],
         }
     )
 
@@ -192,7 +225,7 @@ def expiring_lots(
     out = []
     today = date.today()
     for l in rows:
-        qty = lot_qty.get(l.id, 0)
+        qty = lot_qty.get(l.id, QUANTITY_ZERO)
         if qty <= 0:
             continue
         days_left = (l.expiration_date - today).days
@@ -202,7 +235,7 @@ def expiring_lots(
                 "name": l.name,
                 "part_id": str(l.part_id),
                 "part_name": parts[l.part_id].name if l.part_id in parts else None,
-                "on_hand": qty,
+                "on_hand": quantity_out(qty),
                 "expiration_date": l.expiration_date.isoformat(),
                 "days_until_expiry": days_left,
                 "expired": days_left < 0,

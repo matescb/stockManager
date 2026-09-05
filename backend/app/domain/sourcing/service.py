@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -1293,7 +1294,11 @@ def _source_bom_line(
     preferred_distributors: list[str] | None,
 ) -> SourcingBomLineOut:
     part_id, substitute_ids, candidate_mpns = _bom_line_candidates(row, parts_by_id)
-    short_by = int(row["short_by"])
+    # Distributor-facing quantities are integer counts of purchasable
+    # packages — an external contract (`SourcingPriceBreak.quantity: int`).
+    # Ceil rather than truncate: a 0.4-unit shortfall still needs buying.
+    # Identical for every whole value, which is all this step can produce.
+    short_by = math.ceil(row["short_by"])
     offers = _joined_offers(candidate_mpns, search_results, qty=max(short_by, 1))
     best_offer = _best_offer_at_qty(offers, short_by)
     authorized_stock = sum(offer.stock for offer in offers)
@@ -1305,10 +1310,14 @@ def _source_bom_line(
         part_id=part_id,
         part_name=str(row["part_name"]),
         mpn=parts_by_id[part_id].mpn if part_id in parts_by_id else None,
-        required=int(row["required"]),
-        available=int(row["available"]),
+        # These three stay exact all the way into the schema. The `int`
+        # fields on `SourcingBomLineOut` still coerce an integral Decimal,
+        # so today's wire output is unchanged; a fractional one would raise
+        # loudly instead of being silently truncated here.
+        required=row["required"],
+        available=row["available"],
         substitute_ids=substitute_ids,
-        substitute_available=int(row.get("substitute_available", 0)),
+        substitute_available=row.get("substitute_available", 0),
         short_by=short_by,
         authorized_stock=authorized_stock,
         offers=offers,

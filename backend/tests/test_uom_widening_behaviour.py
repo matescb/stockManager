@@ -159,6 +159,48 @@ def test_over_receive_error_message_still_reads_as_a_whole_number(authed_client)
     assert "outstanding 6," in message, message
 
 
+def test_shortage_rows_serialise_as_json_integers(authed_client):
+    """Whole-build and per-stage shortage rows both carry ledger sums, and
+    both go on the wire through an untyped dict. `5 == 5.0` in Python, so
+    these assert on the type."""
+    c = authed_client
+    part_id = create_part(c, "Transistor")
+    add_stock(c, part_id, 4)
+    project_id = c.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    entry_id = c.post(
+        f"/api/projects/{project_id}/entries", json={"part_id": part_id, "quantity": 10}
+    ).json()["data"]["id"]
+    build_id = c.post(
+        "/api/builds", json={"name": "B", "project_id": project_id, "quantity": 1}
+    ).json()["data"]["id"]
+
+    def _assert_int_row(row):
+        for key in ("required", "available", "substitute_available", "short_by"):
+            assert isinstance(row[key], int), (key, row[key])
+
+    detail = c.get(f"/api/builds/{build_id}").json()["data"]
+    assert detail["shortage"]
+    for row in detail["shortage"]:
+        _assert_int_row(row)
+
+    report = c.get(
+        "/api/reports/bom-shortage", params={"project_id": project_id, "quantity": 1}
+    ).json()["data"]
+    assert isinstance(report["total_short"], int)
+    for row in report["rows"]:
+        _assert_int_row(row)
+
+    r = c.post(
+        f"/api/builds/{build_id}/stages",
+        json={"name": "SMT", "lines": [{"project_entry_id": entry_id, "portion_pct": 100}]},
+    )
+    assert r.status_code == 201, r.text
+    stages = c.get(f"/api/builds/{build_id}/stages").json()["data"]
+    assert stages and stages[0]["shortage"]
+    for row in stages[0]["shortage"]:
+        _assert_int_row(row)
+
+
 def test_stock_reads_stay_workspace_isolated(authed_client, client):
     """The widened columns and the new `unit` stamp change no query path,
     but the ledger reads they feed are the ones workspace isolation is

@@ -22,6 +22,7 @@ from app.domain.builds.service import (
     consume,
     release_reservations,
     shortage_analysis,
+    shortage_rows_out,
 )
 
 # Track B2: the stage ROUTES live in `routes/build_stages.py` (this module
@@ -116,14 +117,8 @@ def create_build(payload: BuildCreateIn, db: DbSession, ws: CurrentWorkspace, us
 def get_build(build_id: UUID, db: DbSession, ws: CurrentWorkspace):
     b = _get_build(db, ws.id, build_id)
     project = _get_project(db, ws.id, b.project_id)
-    return ok(
-        {
-            "build": _serialize(b),
-            "shortage": shortage_analysis(
-                db, workspace_id=ws.id, project=project, build_quantity=b.quantity
-            ),
-        }
-    )
+    rows = shortage_analysis(db, workspace_id=ws.id, project=project, build_quantity=b.quantity)
+    return ok({"build": _serialize(b), "shortage": shortage_rows_out(rows)})
 
 
 @router.patch("/{build_id}")

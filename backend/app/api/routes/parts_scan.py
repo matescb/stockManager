@@ -28,6 +28,7 @@ from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import ok
 from app.core.secrets import decrypt
+from app.domain._quantity import quantity_out
 from app.domain.parts.models import BulkImportIdempotency
 from app.domain.parts.providers import make_provider
 from app.domain.parts.schemas import QuickRemoveBagIn, ScanImportIn, ScanImportRow
@@ -271,7 +272,7 @@ def bulk_import_from_scan(
                     "storage_location_id": (
                         str(prior.storage_location_id) if prior.storage_location_id else None
                     ),
-                    "quantity": int(prior.quantity_delta or 0),
+                    "quantity": quantity_out(prior.quantity_delta or 0),
                 })
                 continue
 

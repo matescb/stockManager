@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from sqlalchemy import or_, select
 
-from app.domain._quantity import quantity_out
+from app.domain._quantity import QUANTITY_ZERO, quantity_out
 from app.domain.builds import service as builds_service
 from app.domain.categories import service as categories_service
 from app.domain.eda.models import PartEda
@@ -153,14 +153,14 @@ def get_part(caller: Caller, id_or_mpn: str) -> dict[str, Any]:
             "specs": specs,
             "catalog_fields": catalog,
             "stock": {
-                "on_hand": on_hand,
-                "reserved": reserved,
-                "available": on_hand - reserved,
+                "on_hand": quantity_out(on_hand),
+                "reserved": quantity_out(reserved),
+                "available": quantity_out(on_hand - reserved),
                 "locations": [
                     {
                         "storage_location_id": sid(row["storage_location_id"]),
                         "storage_location_name": names.get(row["storage_location_id"]),
-                        "quantity": row["quantity"],
+                        "quantity": quantity_out(row["quantity"]),
                     }
                     for row in summary
                 ],
@@ -337,19 +337,19 @@ def stock_levels(
 
     rows = []
     for part in parts:
-        have = on_hand.get(part.id, 0)
-        reserved = reserved_by_part.get(part.id, 0)
-        threshold = quantity_out(part.low_stock_report_quantity)
+        have = on_hand.get(part.id, QUANTITY_ZERO)
+        reserved = reserved_by_part.get(part.id, QUANTITY_ZERO)
+        threshold = part.low_stock_report_quantity
         if low_stock_only and (threshold is None or have > threshold):
             continue
         rows.append(
             compact(
                 {
                     **part_summary(part),
-                    "on_hand": have,
-                    "reserved": reserved,
-                    "available": have - reserved,
-                    "low_stock_threshold": threshold,
+                    "on_hand": quantity_out(have),
+                    "reserved": quantity_out(reserved),
+                    "available": quantity_out(have - reserved),
+                    "low_stock_threshold": quantity_out(threshold),
                 }
             )
         )
@@ -537,10 +537,10 @@ def bom_shortages(caller: Caller, project_id: str, build_qty: int = 1) -> dict[s
                     "part_id": row["part_id"],
                     "part_name": row["part_name"],
                     "part_url": part_url(row["part_id"]),
-                    "required": row["required"],
-                    "available": row["available"],
-                    "short_by": row["short_by"],
-                    "substitute_available": row.get("substitute_available"),
+                    "required": quantity_out(row["required"]),
+                    "available": quantity_out(row["available"]),
+                    "short_by": quantity_out(row["short_by"]),
+                    "substitute_available": quantity_out(row.get("substitute_available")),
                 }
             )
             for row in short

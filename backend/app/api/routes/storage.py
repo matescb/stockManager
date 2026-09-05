@@ -169,10 +169,10 @@ def archive_storage(storage_id: UUID, db: DbSession, ws: CurrentWorkspace, user:
         {
             "part_id": str(r["part_id"]) if r["part_id"] else None,
             "lot_id": str(r["lot_id"]) if r["lot_id"] else None,
-            "quantity": int(r["quantity"]),
+            "quantity": quantity_out(r["quantity"]),
         }
         for r in [*on_hand, *reserved]
-        if int(r["quantity"]) > 0
+        if r["quantity"] > 0
     ]
     if blocking:
         raise_http(
@@ -219,7 +219,7 @@ def storage_parts(storage_id: UUID, db: DbSession, ws: CurrentWorkspace):
             {
                 "part_id": str(r["part_id"]) if r["part_id"] else None,
                 "lot_id": str(r["lot_id"]) if r["lot_id"] else None,
-                "quantity": r["quantity"],
+                "quantity": quantity_out(r["quantity"]),
             }
             for r in rows
         ]
