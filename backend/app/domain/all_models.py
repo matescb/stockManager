@@ -26,7 +26,7 @@ case where step (1) was forgotten.
 from app.domain._polymorphic_cleanup import register_polymorphic_cleanup_listeners
 from app.domain.attachments.models import Attachment  # noqa: F401
 from app.domain.audit.models import AuditLog  # noqa: F401
-from app.domain.builds.models import Build  # noqa: F401
+from app.domain.builds.models import Build, BuildStage, BuildStageLine  # noqa: F401
 from app.domain.categories.models import PartCategory  # noqa: F401
 from app.domain.codes.models import ObjectCode  # noqa: F401
 from app.domain.custom_fields.models import CustomField  # noqa: F401

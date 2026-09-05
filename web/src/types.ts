@@ -58,6 +58,36 @@ export type BuildShortageRow = {
   short_by: number;
 };
 
+// Multi-stage builds (Track B2). A build with no stages is a single-pass
+// build and these are simply absent.
+
+export type BuildStageShortageRow = BuildShortageRow & {
+  /** Percentage of the BOM line's whole-build requirement this stage takes. */
+  portion_pct: number;
+};
+
+export type BuildStageLine = {
+  id: string;
+  project_entry_id: string;
+  portion_pct: number;
+};
+
+export type BuildStage = {
+  id: string;
+  build_id: string;
+  name: string;
+  sequence: number;
+  status: "planned" | "in_progress" | "complete";
+  started_at: string | null;
+  completed_at: string | null;
+  comments: string | null;
+  lines: BuildStageLine[];
+  /** `required` here is this stage's slice, not the whole-build number. */
+  shortage: BuildStageShortageRow[];
+  created_at: string;
+  updated_at: string;
+};
+
 export type PartsProviderName = "none" | "mouser" | "digikey";
 
 export type ProviderSpec = { key: string; value: string };

@@ -182,3 +182,75 @@ def test_concurrent_consume_cannot_drain_below_zero(authed):
         assert total in (10, 60), (
             f"unexpected total {total} for {pid}; results={results}"
         )
+
+
+def test_concurrent_stage_consume_runs_once(authed):
+    """Multi-stage builds (Track B2): two parallel consumes of the SAME
+    stage must not both draw stock.
+
+    Stock is deliberately plentiful, so the availability check cannot be
+    what saves us — the guard under test is `consume_stage` taking the
+    per-part advisory lock *before* re-reading `stage.status`. Decide
+    outside the lock and both threads see `planned`, both consume, and the
+    stage's ledger shows double what the stage required.
+    """
+    c = authed
+    part_id = _create_part(c, "Part-stage")
+    storage_id = _create_storage(c, "Shelf-stage")
+    _add_stock(c, part_id, 1000, storage_id)
+
+    proj_id = _create_project_with_bom(
+        c, f"PRJ-{uuid.uuid4().hex[:6]}", [{"part_id": part_id, "quantity": 10}]
+    )
+    entry_id = c.get(f"/api/projects/{proj_id}/entries").json()["data"][0]["id"]
+    r = c.post("/api/builds", json={"name": "B-stage", "project_id": proj_id, "quantity": 1})
+    assert r.status_code == 201, r.text
+    build_id = r.json()["data"]["id"]
+
+    # Two stages so a single stage consume doesn't complete the build —
+    # that would make the second attempt fail on "build is complete"
+    # instead of on the stage guard we're pinning.
+    stage_ids = []
+    for name in ("A", "B"):
+        r = c.post(
+            f"/api/builds/{build_id}/stages",
+            json={"name": name, "lines": [{"project_entry_id": entry_id, "portion_pct": 50}]},
+        )
+        assert r.status_code == 201, r.text
+        stage_ids.append(r.json()["data"]["id"])
+
+    results: list[int] = []
+    barrier = threading.Barrier(2)
+
+    def do_stage_consume() -> None:
+        cli = TestClient(app)
+        _copy_cookies(authed, cli)
+        barrier.wait()
+        r = cli.post(
+            f"/api/builds/{build_id}/stages/{stage_ids[0]}/consume",
+            json={
+                "lines": [
+                    {
+                        "project_entry_id": entry_id,
+                        "part_id": part_id,
+                        "quantity": 5,
+                        "storage_location_id": storage_id,
+                    }
+                ]
+            },
+        )
+        results.append(r.status_code)
+
+    threads = [threading.Thread(target=do_stage_consume) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=20)
+
+    assert len(results) == 2
+    successes = sum(1 for s in results if s in (200, 201))
+    assert successes == 1, f"stage consumed twice: {results}"
+
+    # 1000 - 5, not 1000 - 10.
+    total = authed.get(f"/api/parts/{part_id}/stock").json()["data"]["total_on_hand"]
+    assert total == 995, f"unexpected total {total}; results={results}"

@@ -274,6 +274,10 @@ class ErrorCodes:
     BUILD_NOT_FOUND = "build.not_found"
     BUILD_READ_ONLY = "build.read_only"
     BUILD_CONSUME_ERROR = "build.consume_error"
+    # Multi-stage builds (Track B2).
+    BUILD_STAGE_NOT_FOUND = "build_stage.not_found"
+    BUILD_STAGE_ERROR = "build_stage.error"
+    BUILD_HAS_STAGES = "build.has_stages"
 
     # Projects router.
     PROJECT_NOT_FOUND = "project.not_found"

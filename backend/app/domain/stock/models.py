@@ -28,6 +28,14 @@ class StockEntry(Base):
         Index("ix_stock_ws_lot", "workspace_id", "lot_id"),
         Index("ix_stock_ws_storage", "workspace_id", "storage_location_id"),
         Index("ix_stock_ws_occurred", "workspace_id", "occurred_at"),
+        # Per-stage activity/trail lookups. Partial — only the rows a
+        # multi-stage consume writes carry a stage (alembic 0075).
+        Index(
+            "ix_stock_ws_build_stage",
+            "workspace_id",
+            "build_stage_id",
+            postgresql_where=text("build_stage_id IS NOT NULL"),
+        ),
         # Bag-rescan recognition: sha256 of the normalised raw bag code
         # captured when this entry was created via scan-import. Looking
         # the same bag up again should let the operator consume from
@@ -101,6 +109,18 @@ class StockEntry(Base):
     build_id = Column(
         UUID(as_uuid=True),
         ForeignKey("builds.id", ondelete="SET NULL", name="fk_stock_entries_build_id"),
+        nullable=True,
+    )
+    # Multi-stage builds (Track B2, alembic 0075). NULL for every row a
+    # single-pass build writes; set on the `build_consume` / `release` rows a
+    # per-stage consume emits so the ledger trail shows which stage took what.
+    # SET NULL mirrors `build_id`: deleting a build (which cascades its
+    # stages) must not delete independent stock history — ADR-0028.
+    build_stage_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "build_stages.id", ondelete="SET NULL", name="fk_stock_entries_build_stage_id"
+        ),
         nullable=True,
     )
     comments = Column(Text, nullable=True)

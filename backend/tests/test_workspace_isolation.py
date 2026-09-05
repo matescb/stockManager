@@ -2139,3 +2139,110 @@ def test_object_code_mint_and_resolve_are_workspace_scoped():
     # …which resolves for A and 404s for B.
     assert a.get(f"/api/codes/{code}").status_code == 200
     assert b.get(f"/api/codes/{code}").status_code == 404
+
+
+def test_build_stages_are_workspace_scoped():
+    """Multi-stage builds (Track B2) replicate the code-enforced isolation
+    contract: a stage is invisible, unreachable and un-consumable from another
+    workspace, and neither a foreign build nor a foreign BOM entry can be
+    smuggled into one."""
+    a = TestClient(app)
+    b = TestClient(app)
+    _signup(a, f"stage-a-{uuid.uuid4().hex[:6]}@x.com")
+    _signup(b, f"stage-b-{uuid.uuid4().hex[:6]}@x.com")
+
+    part_a = _create_part(a, "A resistor")
+    storage_a = _create_storage(a)
+    _factory_add_stock(a, part_a, 100, storage_a)
+    project_a = _create_project_with_bom(a, "A project", [{"part_id": part_a, "quantity": 10}])
+    entry_a = a.get(f"/api/projects/{project_a}/entries").json()["data"][0]["id"]
+    build_a = a.post(
+        "/api/builds", json={"name": "A build", "project_id": project_a, "quantity": 1}
+    ).json()["data"]["id"]
+    created = a.post(
+        f"/api/builds/{build_a}/stages",
+        json={"name": "A stage", "lines": [{"project_entry_id": entry_a}]},
+    )
+    assert created.status_code == 201, created.text
+    stage_a = created.json()["data"]["id"]
+
+    # B's own build, so A's stage id can also be probed through a build B owns.
+    part_b = _create_part(b, "B resistor")
+    project_b = _create_project_with_bom(b, "B project", [{"part_id": part_b, "quantity": 1}])
+    entry_b = b.get(f"/api/projects/{project_b}/entries").json()["data"][0]["id"]
+    build_b = b.post(
+        "/api/builds", json={"name": "B build", "project_id": project_b, "quantity": 1}
+    ).json()["data"]["id"]
+
+    # Listing / creating / consuming through A's build id -> 404 (build gate).
+    assert b.get(f"/api/builds/{build_a}/stages").status_code == 404
+    assert b.post(
+        f"/api/builds/{build_a}/stages",
+        json={"name": "sneaky", "lines": [{"project_entry_id": entry_a}]},
+    ).status_code == 404
+    assert b.post(
+        f"/api/builds/{build_a}/stages/{stage_a}/consume",
+        json={"lines": [{"project_entry_id": entry_a, "part_id": part_a, "quantity": 10}]},
+    ).status_code == 404
+
+    # A's stage id under B's own build -> 404 from the stage gate, so a
+    # foreign stage can't ride in on a build the caller legitimately owns.
+    r = b.post(
+        f"/api/builds/{build_b}/stages/{stage_a}/consume",
+        json={"lines": [{"project_entry_id": entry_b, "part_id": part_b, "quantity": 1}]},
+    )
+    assert r.status_code == 404, r.text
+    assert r.json().get("code") == "build_stage.not_found"
+
+    # A foreign BOM entry cannot be staged onto B's own build.
+    r = b.post(
+        f"/api/builds/{build_b}/stages",
+        json={"name": "cross-tenant line", "lines": [{"project_entry_id": entry_a}]},
+    )
+    assert r.status_code == 400, r.text
+    assert "not in this project" in r.json()["status"]["message"]
+
+    # A's own stage list is unaffected, and A's stock never moved.
+    assert [s["id"] for s in a.get(f"/api/builds/{build_a}/stages").json()["data"]] == [
+        stage_a
+    ]
+    assert a.get(f"/api/parts/{part_a}/stock").json()["data"]["total_on_hand"] == 100
+
+
+def test_build_stage_rows_reject_cross_workspace_ids_at_the_db():
+    """Defence in depth: bypassing the service layer entirely, the 0075
+    trigger refuses a stage pointing at another workspace's build.
+
+    The custom `WS001` SQLSTATE (0060/0064) is outside psycopg's integrity
+    class, so the raise surfaces as a plain `DBAPIError` — the same shape
+    the other workspace-trigger tests in this module assert on.
+    """
+    from sqlalchemy.exc import DBAPIError
+
+    from app.domain.builds.models import BuildStage
+    from app.infra.db import SessionLocal
+
+    a = TestClient(app)
+    b = TestClient(app)
+    _signup(a, f"stagedb-a-{uuid.uuid4().hex[:6]}@x.com")
+    ws_b = _signup(b, f"stagedb-b-{uuid.uuid4().hex[:6]}@x.com")
+
+    part_a = _create_part(a, "A part")
+    project_a = _create_project_with_bom(a, "A proj", [{"part_id": part_a, "quantity": 1}])
+    build_a = a.post(
+        "/api/builds", json={"name": "A build", "project_id": project_a, "quantity": 1}
+    ).json()["data"]["id"]
+
+    with SessionLocal() as s:
+        s.add(
+            BuildStage(
+                workspace_id=uuid.UUID(ws_b),
+                build_id=uuid.UUID(build_a),
+                name="smuggled",
+                sequence=0,
+            )
+        )
+        with pytest.raises(DBAPIError) as excinfo:
+            s.flush()
+        assert getattr(excinfo.value.orig, "sqlstate", None) == "WS001"
+        s.rollback()

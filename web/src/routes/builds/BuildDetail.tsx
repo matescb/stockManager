@@ -11,7 +11,8 @@ import EntityHeader from "@/components/EntityHeader";
 import AttachmentsPanel from "@/components/AttachmentsPanel";
 import ActivityTimeline from "@/components/ActivityTimeline";
 import { SourceBomButton } from "@/routes/projects/sourcing/SourceBomButton";
-import type { Build, BuildShortageRow, Part, Project, ProjectEntry, StorageLocation } from "@/types";
+import BuildStagesPanel from "./BuildStagesPanel";
+import type { Build, BuildShortageRow, BuildStage, Part, Project, ProjectEntry, StorageLocation } from "@/types";
 
 type DetailOut = { build: Build; shortage: BuildShortageRow[] };
 
@@ -56,6 +57,12 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
   });
   const { data: parts } = useQuery({ queryKey: useWsKey("parts"), queryFn: ({ signal }) => api.get<Part[]>("/parts?limit=200", { signal }) });
   const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: ({ signal }) => api.get<StorageLocation[]>("/storage", { signal }) });
+  // Multi-stage builds (Track B2). Empty for a single-pass build.
+  const { data: stagesData } = useQuery({
+    queryKey: useWsKey("build", buildId, "stages"),
+    queryFn: ({ signal }) => api.get<BuildStage[]>(`/builds/${buildId}/stages`, { signal }),
+  });
+  const stages = useMemo(() => stagesData ?? [], [stagesData]);
 
   // consumption plan: project_entry_id → list of consume rows
   const [plan, setPlan] = useState<Record<string, ConsumeRow[]>>({});
@@ -259,7 +266,20 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
         )}
       </div>
 
-      {isEditable && entries && (
+      <BuildStagesPanel
+        buildId={buildId}
+        build={build}
+        stages={stages}
+        entries={entries}
+        partsById={partsById}
+        storage={storage}
+        isEditable={isEditable}
+      />
+
+      {/* The whole-BOM plan is the single-pass path. Once the build has
+          stages the server refuses this endpoint, so the card goes away and
+          consumption happens stage by stage above. */}
+      {isEditable && entries && stages.length === 0 && (
         <div className="card p-4 mb-4">
           <h3 className="text-md font-semibold mb-3">Consumption plan</h3>
           <div className="text-sm text-muted mb-2">

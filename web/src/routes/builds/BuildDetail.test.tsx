@@ -322,3 +322,135 @@ describe("BuildDetail consumption plan", () => {
     });
   });
 });
+
+// --- Multi-stage builds (Track B2) ------------------------------------------
+
+const stagedEntry = {
+  id: "entry-1",
+  project_id: "project-1",
+  entry_type: "part",
+  part_id: "part-1",
+  meta_part_id: null,
+  name: null,
+  quantity: 10,
+  comments: null,
+  designators: [],
+  cad_footprint: null,
+  cad_key: null,
+  dnp: false,
+  order_index: 0,
+};
+
+function stage(id: string, sequence: number, status: string, required: number) {
+  return {
+    id,
+    build_id: "build-1",
+    name: `Stage ${sequence + 1}`,
+    sequence,
+    status,
+    started_at: null,
+    completed_at: null,
+    comments: null,
+    lines: [{ id: `line-${id}`, project_entry_id: "entry-1", portion_pct: 50 }],
+    shortage: [{
+      project_entry_id: "entry-1",
+      part_id: "part-1",
+      part_name: "Part 1",
+      attrition_pct: 0,
+      portion_pct: 50,
+      required,
+      available: 100,
+      substitute_ids: [],
+      substitute_available: 0,
+      short_by: 0,
+    }],
+    created_at: "2026-09-05T00:00:00Z",
+    updated_at: "2026-09-05T00:00:00Z",
+  };
+}
+
+function mockStagedReads(stages: unknown[]) {
+  vi.mocked(api.get).mockImplementation((path: string) => {
+    if (path === "/builds/build-1") return Promise.resolve(buildDetail);
+    if (path === "/builds/build-1/stages") return Promise.resolve(stages);
+    if (path === "/projects/project-1") return Promise.resolve({ id: "project-1", name: "Project 1" });
+    if (path === "/projects/project-1/entries") return Promise.resolve([stagedEntry]);
+    if (path === "/parts?limit=200") return Promise.resolve([{ id: "part-1", name: "Part 1" }]);
+    if (path === "/storage") return Promise.resolve([]);
+    return Promise.resolve(null);
+  });
+}
+
+describe("BuildDetail assembly stages", () => {
+  it("shows the single-pass consumption plan when the build has no stages", async () => {
+    mockStagedReads([]);
+
+    renderBuildDetail();
+
+    expect(await screen.findByText("Assembly stages")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Consume & complete build" })).toBeTruthy();
+  });
+
+  it("hides the whole-build plan and consumes per stage once stages exist", async () => {
+    mockStagedReads([stage("stage-1", 0, "planned", 50), stage("stage-2", 1, "planned", 50)]);
+    vi.mocked(api.post).mockResolvedValue(null);
+
+    renderBuildDetail();
+
+    // The whole-build endpoint refuses staged builds, so its card is gone.
+    expect(await screen.findByRole("button", { name: "Consume stage" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Consume & complete build" })).toBeNull();
+
+    // Only the next incomplete stage offers a consume action.
+    const consumeButtons = screen.getAllByRole("button", { name: "Consume stage" });
+    expect(consumeButtons).toHaveLength(1);
+
+    fireEvent.click(consumeButtons[0]);
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith("/builds/build-1/stages/stage-1/consume", {
+        lines: [{
+          project_entry_id: "entry-1",
+          part_id: "part-1",
+          quantity: 50,
+          storage_location_id: undefined,
+        }],
+      });
+    });
+  });
+
+  it("offers the next stage after an earlier one is complete", async () => {
+    mockStagedReads([stage("stage-1", 0, "complete", 50), stage("stage-2", 1, "planned", 50)]);
+    vi.mocked(api.post).mockResolvedValue(null);
+
+    renderBuildDetail();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Consume stage" }));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        "/builds/build-1/stages/stage-2/consume",
+        expect.any(Object),
+      );
+    });
+  });
+
+  it("creates a stage from the selected BOM lines", async () => {
+    mockStagedReads([]);
+    vi.mocked(api.post).mockResolvedValue(null);
+
+    renderBuildDetail();
+
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add stage" }));
+    fireEvent.change(screen.getByLabelText("Stage name"), { target: { value: "SMT" } });
+    fireEvent.click(await screen.findByLabelText("Include Part 1"));
+    fireEvent.click(screen.getByRole("button", { name: "Add stage" }));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith("/builds/build-1/stages", {
+        name: "SMT",
+        lines: [{ project_entry_id: "entry-1", portion_pct: 100 }],
+      });
+    });
+  });
+});

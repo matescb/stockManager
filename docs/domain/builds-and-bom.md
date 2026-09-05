@@ -2,7 +2,7 @@
 
 Audience: engineer
 
-A build runs against a project's bill-of-materials. This page covers the reservation lifecycle, the consume orchestration, shortage analysis, and sub-assembly output. The shape is "BOM lines (`project_entries`) ↔ `Build` ↔ ledger rows tagged with `build_id`".
+A build runs against a project's bill-of-materials. This page covers the reservation lifecycle, the consume orchestration, shortage analysis, multi-stage builds, and sub-assembly output. The shape is "BOM lines (`project_entries`) ↔ `Build` ↔ ledger rows tagged with `build_id`".
 
 For models see [`data-model.md`](data-model.md#projects) and [`data-model.md`](data-model.md#builds).
 
@@ -13,10 +13,14 @@ Project ─< ProjectEntry  (the BOM)
    │
    └─< Build  (one or more passes against the BOM)
            │
+           ├─< BuildStage ─< BuildStageLine → ProjectEntry   (optional; Track B2)
+           │
            └── emits StockEntry rows (operation_type ∈ {reserve, release, build_consume, build_produce})
            │
            └── may emit one Lot (source_type='build') as the sub-assembly output
 ```
+
+A build with **no stages** is a single-pass build and behaves exactly as it did before multi-stage builds existed. Stages are purely additive — see [Multi-stage builds](#multi-stage-builds).
 
 `ProjectEntry.entry_type` (`backend/app/domain/projects/models.py:69`):
 
@@ -54,23 +58,29 @@ Two attrition sources **compound multiplicatively**:
 | Operation | Entry point | Notes |
 |---|---|---|
 | Substitute candidate set | `domain/builds/service.py::_candidate_part_ids` | Meta-parts → registered members; regular parts → registered substitutes (one-way main→sub or bidirectional). |
-| Required quantity per BOM entry | `domain/builds/service.py::_required` | Folds in attrition. |
+| Required quantity per BOM entry | `domain/builds/service.py::_required` | Folds in attrition. The **only** quantity authority — staged requirements are slices of its output, never re-derived from `project_entries.quantity`. |
 | Shortage analysis | `domain/builds/service.py::shortage_analysis` | Per-entry: required vs available, plus substitute availability. Read-only — used by the BOM check page. |
 | List consumable BOM entries | `domain/builds/service.py::_consumable_entries` | Excludes DNP, `non_part`, `unmatched`, and rows with NULL `part_id`. |
 | Apply reservations | `domain/builds/service.py::apply_reservations` | Writes one `reserve` row per consumable entry, sized by `_required`. No lot/storage binding. |
-| Release reservations | `domain/builds/service.py::release_reservations` | Writes counter `release` rows for outstanding reserves. Idempotent. |
-| Consume the build | `domain/builds/service.py::consume` | All-or-nothing. Bundles every lock up front. Optionally produces sub-assembly output lot. |
+| Release reservations | `domain/builds/service.py::release_reservations` | Writes counter `release` rows for the quantity still outstanding on each reserve row. Idempotent. |
+| Release part of a reservation | `domain/builds/service.py::release_reservation_amounts` | Releases `{part_id: qty}` across the build's outstanding reserve rows. Per-stage consume only. |
+| Validate + write consume lines | `domain/builds/service.py::apply_consume_lines` | Demand-aggregation pre-pass, substitute/lot/storage validation, coverage check. Shared by whole-build and per-stage consume. |
+| Consume the build | `domain/builds/service.py::consume` | Single-pass. All-or-nothing. Bundles every lock up front. Optionally produces sub-assembly output lot. |
+| Stage requirement allocation | `domain/builds/stages.py::stage_allocations` | `{stage_id: {entry_id: qty}}` — slices `_required` by portion, cumulatively. |
+| Consume one stage | `domain/builds/stages.py::consume_stage` | All-or-nothing. Completes the build when the last stage lands. |
 
 ## Reservation lifecycle
 
-`apply_reservations` (`backend/app/domain/builds/service.py:147-196`) writes one `StockEntry`:
+`apply_reservations` (`backend/app/domain/builds/service.py:174`) writes one `StockEntry`:
 
 - `status='reserved'`, `operation_type='reserve'`.
 - `quantity_delta = _required(entry, part, build.quantity)`.
 - `build_id`, `project_id` populated.
 - **No** `lot_id` or `storage_location_id` — the consume step picks those.
 
-`release_reservations` (`backend/app/domain/builds/service.py:199-260`) is idempotent: it finds every `reserve` row tied to the build that has no matching `release` (matched via `release.related_entry_id == reserve.id`) and writes counter rows with negated `quantity_delta`.
+`release_reservations` (`backend/app/domain/builds/service.py:311`) is idempotent: for every `reserve` row tied to the build it writes a counter row for the quantity still outstanding.
+
+**"Outstanding" is measured in quantity, not row existence** (`_outstanding_reservations`, `backend/app/domain/builds/service.py:226`). A reserve row of 100 that has already been countered by 40 is outstanding for 60. Before multi-stage builds every release was all-or-nothing, so existence and quantity agreed and the old "skip any reserve row that has a `release` pointing at it" rule was equivalent. Per-stage consume releases only its own slice, so the accounting has to be quantity-based — the existence rule would let the next release write a *full* counter on a partly-released row and drive `reserved_quantity` negative.
 
 The sum `SUM(quantity_delta) WHERE status='reserved' AND part_id=…` is what `domain/stock/service.py::reserved_quantity` returns; subtracting it from `current_quantity` gives `available_quantity`.
 
@@ -78,16 +88,16 @@ Both flows take `lock_parts_for_stock_write` first — for `apply_reservations` 
 
 ## Consume orchestration
 
-`builds.consume` (`backend/app/domain/builds/service.py:263-496`) is the heaviest service in the codebase. The order of operations is load-bearing:
+`builds.consume` (`backend/app/domain/builds/service.py:708`) is the heaviest flow in the codebase. Steps 2 and 4–6 live in helpers that per-stage consume reuses verbatim, so both paths share one implementation. The order of operations is load-bearing:
 
-1. **Refuse** if `build.status not in ('planned', 'in_progress')`.
-2. **Lock everything up front** in deterministic UUID-string order. The lock set is `bom_part_ids ∪ line_part_ids ∪ output_part_ids` so every inner write — `release_reservations`, per-line consume, output-lot insert — re-acquires its lock as a re-entrant no-op (Postgres advisory locks are transaction-scoped). Without bundling, two concurrent consumes touching overlapping sets could acquire locks in different orders → AB/BA deadlock (`backend/app/domain/builds/service.py:286-301`).
+1. **Refuse** if `build.status not in ('planned', 'in_progress')`. The route additionally refuses this endpoint outright when the build has stages.
+2. **Lock everything up front** in deterministic UUID-string order (`lock_for_consume`, `backend/app/domain/builds/service.py:412`). The lock set is `bom_part_ids ∪ line_part_ids ∪ output_part_ids` so every inner write — the release pass, per-line consume, output-lot insert — re-acquires its lock as a re-entrant no-op (Postgres advisory locks are transaction-scoped). Without bundling, two concurrent consumes touching overlapping sets could acquire locks in different orders → AB/BA deadlock. Per-stage consume locks the **whole BOM**, not just its own slice, so a stage consume and a whole-build consume of the same project can never take the two lock sets in opposite orders.
 3. **Release outstanding reservations** so the consumption itself isn't double-counted against `on_hand + reserved`.
-4. **Aggregate demand per `(part_id, lot_id, storage_location_id)` tuple** before any per-line write. Without this, two BOM entries can each claim 60 of the same 100-piece reel and each pass `current_quantity >= line.quantity` independently — both lines write `-60` and the lot ends up at `-20` (BE CRIT-3, `backend/app/domain/builds/service.py:314-337`).
-5. **Per-line consume**: validate that `line.part_id` is the entry's part, a registered substitute, or (for meta entries) a meta member. Validate caller-supplied lot/storage against the workspace before the availability check. Write a `build_consume` row with `quantity_delta = -line.quantity` (`backend/app/domain/builds/service.py:344-411`).
-6. **Required-coverage check**: every non-DNP `part`/`meta_part` entry must be covered to at least its `_required(entry, part, build.quantity)` value. The aggregation key is `entry.id` so a single entry covered by multiple lines (different lots/storages) sums up (`backend/app/domain/builds/service.py:414-427`).
-7. **Optional sub-assembly output**: if `project.associated_subassembly_part_id` is set, create a `Lot(source_type='build', source_build_id=build.id)` and write a `build_produce` row with `quantity_delta = build.quantity`. The output lot is set on `Build.output_lot_id` (`backend/app/domain/builds/service.py:429-477`). The destination storage is checked against `enforce_storage_constraints` first; a violation of `single_part_only` or `existing_parts_only` raises `StockConflictError` (→ `409 stock.conflict_error`) and rolls back the entire consume (PR #299, issue #280).
-8. **Mark complete**: `build.status = 'complete'`, set `started_at` (if not set) and `completed_at` to `now`.
+4. **Aggregate demand per `(part_id, lot_id, storage_location_id)` tuple** before any per-line write. Without this, two BOM entries can each claim 60 of the same 100-piece reel and each pass `current_quantity >= line.quantity` independently — both lines write `-60` and the lot ends up at `-20` (BE CRIT-3, `apply_consume_lines`, `backend/app/domain/builds/service.py:462`).
+5. **Per-line consume**: validate that `line.part_id` is the entry's part, a registered substitute, or (for meta entries) a meta member. Validate caller-supplied lot/storage against the workspace before the availability check. Write a `build_consume` row with `quantity_delta = -line.quantity`.
+6. **Required-coverage check**: every entry the pass is responsible for must be covered to at least its required quantity. The aggregation key is `entry.id` so a single entry covered by multiple lines (different lots/storages) sums up. `required_by_entry` is what distinguishes the two paths: whole-build consume passes `_required(entry, part, build.quantity)` for every consumable entry, per-stage consume passes that same number sliced by portion.
+7. **Optional sub-assembly output** (`produce_output`, `backend/app/domain/builds/service.py:614`): if `project.associated_subassembly_part_id` is set, create a `Lot(source_type='build', source_build_id=build.id)` and write a `build_produce` row with `quantity_delta = build.quantity`. The output lot is set on `Build.output_lot_id`. The destination storage is checked against `enforce_storage_constraints` first; a violation of `single_part_only` or `existing_parts_only` raises `StockConflictError` (→ `409 stock.conflict_error`) and rolls back the entire consume (PR #299, issue #280).
+8. **Mark complete** (`complete_build`, `backend/app/domain/builds/service.py:688`): `build.status = 'complete'`, set `started_at` (if not set) and `completed_at` to `now`.
 
 The whole sequence runs in the route's transaction. Any raise rolls back the entire build.
 
@@ -106,9 +116,78 @@ short_by          = max(0, required - (available + substitute_avail))
 
 Substitute availability is summed across registered substitutes/members but is *informational* — the consume step still requires per-line opt-in to use a substitute.
 
+## Multi-stage builds
+
+Track B2, migration 0075. A build may be assembled across several stages instead of one all-at-once consume, mirroring PartsBox's multi-stage builds: each stage consumes a defined subset (and portion) of the BOM, so a partially-built device is tracked accurately and stock is drawn down progressively.
+
+### Schema shape
+
+Two tables hanging off the `Build` aggregate (`backend/app/domain/builds/models.py:39`, `:83`):
+
+| Table | Columns beyond the `WorkspaceOwned` mixin |
+|---|---|
+| `build_stages` | `build_id` (FK, CASCADE), `name`, `sequence`, `status` (`planned \| in_progress \| complete`), `started_at`, `completed_at`, `comments`. Unique `(build_id, sequence)` among active rows. |
+| `build_stage_lines` | `build_stage_id` (FK, CASCADE), `project_entry_id` (FK, CASCADE), `portion_pct` `NUMERIC(7,4)` with `CHECK (portion_pct > 0 AND portion_pct <= 100)`. Unique `(build_stage_id, project_entry_id)`. |
+
+Why stages belong to the **build**, not the project: two builds of the same project may be staged differently (a prototype run vs. a production run), and a stage's status describes *this* physical pass. Putting stages on the project would make status a shared mutable property of the BOM.
+
+Why `portion_pct` and not an absolute quantity: an absolute per-stage quantity is a second copy of the BOM number that silently drifts when `project_entries.quantity`, `parts.attrition_percentage`, `project_entries.attrition_pct` or `builds.quantity` changes. A percentage keeps `_required` the single quantity authority.
+
+`stock_entries.build_stage_id` (nullable, `ON DELETE SET NULL`, partial index `ix_stock_ws_build_stage`) tags the ledger rows a per-stage consume writes so the trail shows what each stage took. It is NULL for every row a single-pass build emits. `SET NULL` mirrors `build_id` — a hard-deleted build cascades its stages away but must not delete independent stock history ([ADR-0028](../adr/0028-hard-delete-policy-and-workspace-trigger-contract.md)).
+
+Three defence-in-depth workspace triggers ship with 0075 — `build_stages_workspace_fk_check`, `build_stage_lines_workspace_fk_check`, `stock_entries_build_stage_workspace_check` — following the 0064 contract: validate every parent ref on INSERT, only changed refs on UPDATE, raise SQLSTATE `WS001`. Isolation is still enforced in code first; the triggers only stop raw SQL.
+
+### Per-stage requirement allocation
+
+`stage_allocations` (`backend/app/domain/builds/stages.py:117`) returns `{stage_id: {project_entry_id: quantity}}`. For each BOM entry it takes `total = _required(entry, part, build.quantity)` — the same attrition-compounded, ceil-rounded integer the single-pass path uses — then splits it across the stages that reference it, in sequence order, **cumulatively**:
+
+```
+stage_n = ceil(total * Σportions[0..n] / 100) - ceil(total * Σportions[0..n-1] / 100)
+```
+
+Rounding each stage independently would either lose or invent units: `ceil(103 × 50%) × 2 = 104 ≠ 103`. Cumulative ceiling makes the parts sum to exactly `total` whenever the portions sum to 100 — the property that keeps a staged build consuming exactly what the equivalent single-pass build consumes. Every boundary rounds **up**, the same direction and for the same reason as `_required` (integer-only stock).
+
+Worked example — `quantity=100`, `part.attrition_percentage=10`, `entry.attrition_pct=25`, `build.quantity=1`, two 50% stages:
+
+```
+total = ceil(100 × 1.10 × 1.25) = ceil(137.5) = 138
+stage 1 = ceil(138 × 0.50) = 69
+stage 2 = 138 - 69          = 69
+```
+
+### Reservations are up-front, released slice by slice
+
+**Reservations are taken once, at build creation, for the whole build.** Creating a stage writes no ledger row. This is the explicit answer to "per-stage or up-front": per-stage reservation would double-count against `stock/service.py::reserved_quantity`, because the up-front `apply_reservations` has already reserved the full `_required` for every consumable entry.
+
+Each stage consume therefore releases only its own slice, via `release_reservation_amounts` (`backend/app/domain/builds/service.py:349`):
+
+- The amounts are grouped by the BOM entry's **own** `part_id` — the part the reservation was written against — even when the operator consumes a registered substitute.
+- Reserve rows carry no `project_entry_id`, so the release is applied per part across that part's outstanding reserve rows, oldest first, partial on the last. That is exactly the granularity `reserved_quantity` reads.
+- Over-asking is clamped to what is actually outstanding, so a stage cannot drive the reserved total negative.
+- When the last stage completes, `release_reservations` frees whatever remains — stages whose portions sum to less than 100% would otherwise leak a permanent reservation.
+
+`tests/test_build_stages.py::test_reservations_are_up_front_and_not_double_counted` pins both directions.
+
+### Stage consume flow
+
+`consume_stage` (`backend/app/domain/builds/stages.py:367`):
+
+1. **Refuse** if the build is not `planned`/`in_progress`, is archived, or the stage is already `complete`.
+2. **Refuse out-of-order consumption** — every earlier stage by `sequence` must be `complete`. Consuming stage 3 before stage 1 would report a physically impossible assembly state.
+3. **Lock** the whole BOM (see step 2 of the consume orchestration above).
+4. **Release this stage's reservation slice.**
+5. **Apply the consume lines** through the shared `apply_consume_lines`, with `required_by_entry` = this stage's allocation and `build_stage_id` = the stage. A line pointing at a BOM entry outside the stage is rejected (`"project entry … is not in this stage"`).
+6. **Mark the stage complete**; move the build `planned → in_progress`.
+7. **If no stage remains**, produce the sub-assembly output (once, with `quantity = build.quantity`), complete the build, and release any reservation remainder.
+
+Guards on the rest of the builds API:
+
+- `POST /api/builds/{id}/consume` returns `400 build.has_stages` once the build has stages — the whole-BOM endpoint would draw every stage's stock at once while leaving the stages reported as un-built.
+- `PATCH /api/builds/{id}` refuses a `quantity` change after any stage has been consumed (`400 build.read_only`): the change re-derives the up-front reservation and would re-reserve material a completed stage already consumed.
+
 ## `Build` row
 
-`Build` (`backend/app/domain/builds/models.py:18-33`):
+`Build` (`backend/app/domain/builds/models.py:21`):
 
 | Column | Notes |
 |---|---|
@@ -124,4 +203,7 @@ Substitute availability is summed across registered substitutes/members but is *
 - **Never call `release_reservations` outside the consume flow without taking the same per-part lock first.** A bare release racing with another build's release on the same part can write duplicate counter rows.
 - **Never validate per-line stock availability without the demand-aggregation pre-pass.** BE CRIT-3 covers exactly this — multiple BOM lines drawing from the same lot need the sum check, not per-line checks.
 - **Never look up substitute candidates outside `_candidate_part_ids`.** It encodes the asymmetric `direction='one_way'` semantics on `part_substitutes` — bypassing it can let a one-way sub be used in the wrong direction.
-- **Never set `output_lot_id` outside `consume`.** It's the only writer; tests assert that.
+- **Never set `output_lot_id` outside `complete_build`.** It's the only writer (called by `consume` and by the final stage of `consume_stage`); tests assert that.
+- **Never make reservation release existence-based again.** Partial releases are now real; "this reserve row already has a release row, skip it" would silently under-release, and "write a full counter regardless" would over-release. Both go through `_outstanding_reservations`.
+- **Never derive a stage quantity from `project_entries.quantity`.** Stage portions slice `_required`'s output. Re-deriving skips attrition and makes the stages disagree with the whole-build shortage the operator planned against.
+- **Never write reserve rows when a stage is created.** Reservations are up-front for the whole build; a per-stage reservation double-counts.
