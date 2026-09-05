@@ -33,15 +33,21 @@ BOM import match priority remains spec §16.3: internal ID, CAD key, internal pa
 
 ## Required-quantity formula
 
-`builds/service.py::_required(entry, part, build_qty)` (`backend/app/domain/builds/service.py:34-43`):
+`builds/service.py::_required(entry, part, build_qty)`:
 
 ```
-target = entry.quantity * build_qty * (1 + part.attrition_percentage / 100)
-target = max(target, entry.quantity * build_qty + part.attrition_min_quantity)
-required = ceil(target)
+base   = entry.quantity * build_qty
+target = base * (1 + part.attrition_percentage / 100) * (1 + entry.attrition_pct / 100)
+target = max(target, base + part.attrition_min_quantity)
+required = ceil(target)          # Decimal, ROUND_CEILING
 ```
 
-Spec §19.3. Both attrition factors live on the part, not the BOM line — they describe physical loss rates (taping pickup error, soldering rejects) that are part-intrinsic, not project-specific.
+Two attrition sources **compound multiplicatively**:
+
+- **Part-intrinsic** loss — `part.attrition_percentage` / `part.attrition_min_quantity` (spec §19.3). These describe physical loss rates (taping pickup error, soldering rejects) that are part-intrinsic, not project-specific.
+- **Per-BOM-line** process scrap — `project_entries.attrition_pct` (Track B1, migration 0072). Mirrors PartsBox's "attrition": a `0 <= pct < 100` waste percentage on the specific BOM line. Both default to `0`, so neither disturbs the other when unset.
+
+**Integer-only stock is the load-bearing rule here.** The ledger has no fractional rows (`stock_entries.quantity_delta` is Integer; `project_entries.quantity` is Integer, DB-005). The attrition-inflated requirement is therefore rounded **up** to an integer in `_required` — the single function shortage analysis, reservations, and consumption all read — so planning and actual consumption agree on the same number. Example: `100 base × 1 build × 2.5% = 102.5 → 103`, not `102`. `_required` uses `Decimal` so the ceiling is exact rather than a binary-float `102.4999…`.
 
 ## Service entry points
 
@@ -90,7 +96,8 @@ The whole sequence runs in the route's transaction. Any raise rolls back the ent
 `shortage_analysis` (`backend/app/domain/builds/service.py:77-125`) is the read-only counterpart to consume. Per BOM entry:
 
 ```
-required          = _required(entry, part, build_quantity)
+attrition_pct     = entry.attrition_pct                   # surfaced for the UI
+required          = _required(entry, part, build_quantity) # attrition-adjusted, ceil-rounded
 available         = current_quantity(part_id)             # part itself
 substitute_ids    = _candidate_part_ids(part)
 substitute_avail  = sum(current_quantity for each sub)

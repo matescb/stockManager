@@ -520,6 +520,9 @@ export const ProjectEntrySchema = z.object({
   meta_part_id: uuid.nullable(),
   name: nullableString,
   quantity: z.number(),
+  // Per-BOM-line waste rate (Track B1). 0 <= pct < 100; inflates the
+  // build's required + consumed quantity.
+  attrition_pct: z.number(),
   comments: nullableString,
   designators: z.array(z.string()),
   cad_footprint: nullableString,

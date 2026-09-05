@@ -67,6 +67,7 @@ function bomEntry(overrides: Partial<ProjectEntry>): ProjectEntry {
     meta_part_id: null,
     name: "STM32",
     quantity: 2,
+    attrition_pct: 0,
     comments: null,
     designators: ["U1"],
     cad_footprint: null,
@@ -337,6 +338,39 @@ describe("ProjectBOM", () => {
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith("Linked 1 existing part from Mouser.");
     });
+  });
+
+  it("attrition input shows the entry value and patches on blur", async () => {
+    mockApi({ current: [bomEntry({ attrition_pct: 2.5 })] });
+    const patchSpy = vi.spyOn(api, "patch").mockResolvedValue({} as never);
+    const user = userEvent.setup();
+
+    renderPage();
+
+    const input = (await screen.findByLabelText("Attrition % for STM32")) as HTMLInputElement;
+    expect(input.value).toBe("2.5");
+
+    await user.clear(input);
+    await user.type(input, "5");
+    await user.tab();
+
+    await waitFor(() => {
+      expect(patchSpy).toHaveBeenCalledWith(`/projects/${projectId}/entries/entry-1`, { attrition_pct: 5 });
+    });
+  });
+
+  it("attrition value unchanged on blur does not patch", async () => {
+    mockApi({ current: [bomEntry({ attrition_pct: 2.5 })] });
+    const patchSpy = vi.spyOn(api, "patch").mockResolvedValue({} as never);
+    const user = userEvent.setup();
+
+    renderPage();
+
+    const input = await screen.findByLabelText("Attrition % for STM32");
+    await user.click(input);
+    await user.tab();
+
+    expect(patchSpy).not.toHaveBeenCalled();
   });
 
   it("ambiguity modal opens with candidates and posts commit-choices on confirm", async () => {

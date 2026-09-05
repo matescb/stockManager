@@ -81,7 +81,15 @@ Fetch the build plus a fresh shortage analysis.
 }, "status": { … } }
 ```
 
-`shortage` is whatever `shortage_analysis(db, ws.id, project, build_quantity=b.quantity)` returns (`backend/app/domain/builds/service.py:77`). TODO(verify): exact shape (per-entry required vs available, candidate parts).
+`shortage` is a list of per-entry rows from `shortage_analysis(db, ws.id, project, build_quantity=b.quantity)` (`backend/app/domain/builds/service.py`). Each row:
+
+```json
+{ "project_entry_id": "…", "part_id": "…", "part_name": "…",
+  "attrition_pct": 2.5, "required": 103, "available": 100,
+  "substitute_ids": ["…"], "substitute_available": 0, "short_by": 3 }
+```
+
+`required` is the effective, attrition-adjusted, **ceil-rounded integer** demand (part-intrinsic attrition × per-BOM-line `attrition_pct`, then rounded up — see [`builds-and-bom.md`](../domain/builds-and-bom.md#required-quantity-formula)). `attrition_pct` is the line's waste rate, surfaced so the UI can show what inflated `required`.
 
 **Errors** — `404 build not found` (`builds.py:45-49`).
 

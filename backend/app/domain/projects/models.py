@@ -8,6 +8,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     text,
@@ -63,6 +64,14 @@ class ProjectEntry(WorkspaceOwned, Base):
         # DB-005 / migration 0032 — quantities are integer-only (electronics
         # domain; no fractional BOM quantities needed).
         CheckConstraint("quantity >= 0", name="ck_project_entries_quantity_nonneg"),
+        # Track B1 / migration 0072 — per-BOM-line attrition (waste rate).
+        # 0 <= pct < 100; 100% waste would demand infinite stock per placed
+        # part. Compounds with the part-intrinsic attrition in
+        # builds/service.py::_required.
+        CheckConstraint(
+            "attrition_pct >= 0 AND attrition_pct < 100",
+            name="ck_project_entries_attrition_pct_range",
+        ),
     )
 
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
@@ -71,6 +80,11 @@ class ProjectEntry(WorkspaceOwned, Base):
     meta_part_id = Column(UUID(as_uuid=True), ForeignKey("parts.id", ondelete="SET NULL"), nullable=True)
     name = Column(String(300), nullable=True)
     quantity = Column(Integer, nullable=False, default=1)
+    # Per-BOM-line waste rate (Track B1, migration 0072). Inflates the
+    # required + consumed quantity for a build; see
+    # builds/service.py::_required. server_default keeps the NOT NULL add
+    # safe on populated tables.
+    attrition_pct = Column(Numeric(6, 4), nullable=False, server_default="0", default=0)
     comments = Column(Text, nullable=True)
     designators = Column(ARRAY(String), nullable=False, default=list)
     cad_footprint = Column(String(120), nullable=True)
