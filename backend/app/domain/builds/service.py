@@ -6,8 +6,7 @@ an associated sub-assembly part, a 'build_produce' row + a Lot tagged
 source_type='build', source_build_id=build.id."""
 from __future__ import annotations
 
-from decimal import Decimal
-from math import ceil
+from decimal import ROUND_CEILING, Decimal
 from uuid import UUID
 
 from sqlalchemy import select
@@ -37,14 +36,30 @@ class BuildError(Exception):
 
 def _required(entry: ProjectEntry, part: Part | None, build_qty: int) -> int:
     """Required quantity for one entry across `build_qty` builds, including
-    attrition. Spec §19.3: ``ceil(qty * builds * (1 + attrition%))`` but at
-    least ``qty * builds + attrition_min_quantity``."""
-    base = float(entry.quantity) * build_qty
-    pct = float(part.attrition_percentage) if part else 0.0
+    attrition. Two attrition sources compound multiplicatively:
+
+    * part-intrinsic loss — ``parts.attrition_percentage`` /
+      ``attrition_min_quantity`` (taping pickup error, solder rejects), spec
+      §19.3;
+    * per-BOM-line process scrap — ``project_entries.attrition_pct``
+      (Track B1), inflating what this specific line wastes.
+
+    ``ceil(base * (1 + part_pct/100) * (1 + line_pct/100))`` but at least
+    ``base + attrition_min_quantity``, where ``base = qty * builds``.
+
+    Stock is integer-only (no fractional ledger rows), so the
+    attrition-inflated requirement is rounded UP to an integer here — the
+    single place shortage analysis, reservations, and consumption all read —
+    so planning and actual consumption agree on the same integer. Decimal
+    math keeps e.g. ``100 * 2.5%`` at exactly ``102.5 -> 103`` rather than a
+    binary-float ``102.4999…``."""
+    base = Decimal(int(entry.quantity)) * build_qty
+    part_pct = Decimal(part.attrition_percentage) if part else Decimal(0)
+    line_pct = Decimal(entry.attrition_pct or 0)
     floor_extra = part.attrition_min_quantity if part else 0
-    target = base * (1 + pct / 100.0)
+    target = base * (1 + part_pct / 100) * (1 + line_pct / 100)
     target = max(target, base + floor_extra)
-    return int(ceil(target))
+    return int(target.to_integral_value(rounding=ROUND_CEILING))
 
 
 def _candidate_part_ids(db: Session, *, part: Part) -> list[UUID]:
@@ -123,6 +138,10 @@ def shortage_analysis(
                 "project_entry_id": str(e.id),
                 "part_id": str(part.id),
                 "part_name": part.name,
+                # `required` is the effective, attrition-adjusted, ceil-rounded
+                # integer demand. `attrition_pct` is surfaced so the UI can show
+                # what inflated it.
+                "attrition_pct": float(e.attrition_pct or 0),
                 "required": required,
                 "available": available,
                 "substitute_ids": [str(s) for s in sub_ids],

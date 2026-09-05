@@ -235,6 +235,7 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
             <thead>
               <tr>
                 <th>Part</th>
+                <th>Attrition %</th>
                 <th>Required</th>
                 <th>On hand</th>
                 <th>Substitutes (Σ)</th>
@@ -245,6 +246,8 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
               {shortage.map(s => (
                 <tr key={s.project_entry_id}>
                   <td>{s.part_name}</td>
+                  <td className="tabular-nums text-muted">{s.attrition_pct ? `${s.attrition_pct}%` : "—"}</td>
+                  {/* `required` already includes the attrition-inflated, ceil-rounded qty. */}
                   <td className="tabular-nums">{s.required}</td>
                   <td className="tabular-nums">{s.available}</td>
                   <td className="tabular-nums text-muted">{s.substitute_available}</td>

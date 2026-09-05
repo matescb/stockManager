@@ -49,6 +49,8 @@ export type BuildShortageRow = {
   project_entry_id: string;
   part_id: string;
   part_name: string;
+  // Per-BOM-line waste rate that inflated `required` (Track B1).
+  attrition_pct: number;
   required: number;
   available: number;
   substitute_ids: string[];

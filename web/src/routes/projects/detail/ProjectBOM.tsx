@@ -67,6 +67,18 @@ export default function ProjectBOM() {
   const providerName = displayName(provider);
   const unmatchedEntries = (entries ?? []).filter(entry => entry.entry_type === "unmatched" && !entry.part_id);
 
+  const patchAttritionMutation = useApiMutation<ProjectEntry, { entryId: string; attrition_pct: number }>({
+    mutationKey: ["project", projectId, "patch-attrition"],
+    mutationFn: ({ entryId, attrition_pct }) =>
+      api.patch<ProjectEntry, { attrition_pct: number }>(`/projects/${projectId}/entries/${entryId}`, { attrition_pct }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "project", projectId, "entries") });
+    },
+    onError: error => {
+      toast.error(error instanceof ApiError ? error.userMessage : "Failed to update attrition");
+    },
+  });
+
   const bulkDeleteMutation = useApiMutation<null[], string[]>({
     mutationKey: ["project", projectId, "bulk-delete-entries"],
     mutationFn: async entryIds => {
@@ -141,6 +153,16 @@ export default function ProjectBOM() {
   async function delEntry(entryId: string) {
     await api.delete(`/projects/${projectId}/entries/${entryId}`);
     qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "project", projectId, "entries") });
+  }
+
+  // Clamp to the server's 0 <= pct < 100 range so a typo doesn't 422.
+  function commitAttrition(entry: ProjectEntry, raw: string) {
+    const parsed = raw.trim() === "" ? 0 : Number(raw);
+    if (Number.isNaN(parsed)) return;
+    const next = Math.min(99.9999, Math.max(0, parsed));
+    if (next !== entry.attrition_pct) {
+      patchAttritionMutation.mutate({ entryId: entry.id, attrition_pct: next });
+    }
   }
 
   return (
@@ -272,6 +294,31 @@ export default function ProjectBOM() {
           { key: "mpn", header: "MPN", accessor: r => r.part_id ? partsById.get(r.part_id)?.mpn ?? "" : "" },
           { key: "manufacturer", header: "Manufacturer", accessor: r => r.part_id ? partsById.get(r.part_id)?.manufacturer ?? "" : "" },
           { key: "qty", header: "Qty", accessor: r => r.quantity, width: "70px" },
+          {
+            key: "attrition",
+            header: "Attrition %",
+            width: "110px",
+            accessor: r => r.attrition_pct,
+            render: r =>
+              r.entry_type === "part" && r.part_id ? (
+                <input
+                  type="number"
+                  min={0}
+                  max={99.9999}
+                  step={0.1}
+                  // Uncontrolled + keyed on the server value so a successful
+                  // patch (query invalidation) re-seeds the field.
+                  key={`attr-${r.id}-${r.attrition_pct}`}
+                  defaultValue={r.attrition_pct}
+                  aria-label={`Attrition % for ${partsById.get(r.part_id)?.name ?? r.part_id}`}
+                  className="input w-20 text-right tabular-nums"
+                  onClick={event => event.stopPropagation()}
+                  onBlur={event => commitAttrition(r, event.target.value)}
+                />
+              ) : (
+                <span className="text-muted">—</span>
+              ),
+          },
           { key: "designators", header: "Designators", accessor: r => (r.designators ?? []).join(", ") },
           {
             key: "status",

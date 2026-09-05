@@ -96,10 +96,13 @@ List BOM entries for the project, sorted by `order_index`.
 ```json
 { "id": "…", "project_id": "…", "entry_type": "part" | "meta" | "placeholder",
   "part_id": "…" | null, "meta_part_id": "…" | null,
-  "name": "…", "quantity": 4.0, "comments": "…",
+  "name": "…", "quantity": 4.0, "attrition_pct": 2.5, "comments": "…",
   "designators": ["R1", "R2"], "cad_footprint": "…", "cad_key": "…",
   "dnp": false, "order_index": 12 }
 ```
+
+`attrition_pct` is the per-BOM-line waste rate (Track B1) — see
+[`builds-and-bom.md`](../domain/builds-and-bom.md#required-quantity-formula).
 
 **Notes**
 
@@ -110,6 +113,13 @@ List BOM entries for the project, sorted by `order_index`.
 Append a BOM entry. `order_index` is auto-set to `max(order_index)+1` (`projects.py:199-207`).
 
 **Request** — `BomEntryIn`. TODO(verify): full field list and `entry_type` allowed values.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `quantity` | int | no (default 1) | Integer-only (`ge=0`). |
+| `attrition_pct` | number | no (default 0) | Per-BOM-line waste rate, `0 <= pct < 100`. Inflates the build's required + consumed quantity. |
+
+Both are also accepted (partial) on `PATCH …/entries/{entry_id}` via `BomEntryPatch`.
 
 **Errors** — `404 part.not_found` if `part_id` or `meta_part_id` is missing or archived (`projects.py:195-198`).
 

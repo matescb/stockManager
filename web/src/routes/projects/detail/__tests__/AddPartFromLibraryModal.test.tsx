@@ -65,6 +65,7 @@ function entry(overrides: Partial<ProjectEntry>): ProjectEntry {
     meta_part_id: null,
     name: "STM32",
     quantity: 1,
+    attrition_pct: 0,
     comments: null,
     designators: [],
     cad_footprint: null,

@@ -44,6 +44,9 @@ class BomEntryIn(BaseModel):
     name: str | None = None
     # DB-005 / migration 0032 — integer quantities only (no fractional BOM rows).
     quantity: int = Field(default=1, ge=0)
+    # Track B1 / migration 0072 — per-BOM-line waste rate. 0 <= pct < 100;
+    # inflates required + consumed qty (builds/service.py::_required).
+    attrition_pct: float = Field(default=0, ge=0, lt=100)
     comments: str | None = None
     designators: list[str] = []
     cad_footprint: str | None = None
@@ -60,6 +63,8 @@ class BomEntryPatch(BaseModel):
     name: str | None = None
     # DB-005 / migration 0032 — integer quantities only.
     quantity: int | None = Field(default=None, ge=0)
+    # Track B1 / migration 0072 — per-BOM-line waste rate. 0 <= pct < 100.
+    attrition_pct: float | None = Field(default=None, ge=0, lt=100)
     comments: str | None = None
     designators: list[str] | None = None
     cad_footprint: str | None = None
