@@ -130,6 +130,17 @@ one. 0074 also adds `parts.unit_of_measure` and a per-row
 reinterpreted by editing a part's unit. Opening fractional input is a
 separate, later, deliberately irreversible change.
 
+**The unit is stamped from the part on every write, and frozen after.**
+`domain/stock/service.py::unit_for_part` supplies `unit` at every ledger
+write; alembic 0077 adds three backstop triggers — the row's unit must
+match its part's on INSERT, a row's unit can never be UPDATEd, and a
+part's `unit_of_measure` can only change while the part has *no* ledger
+rows. Net-zero stock is deliberately not enough: the ledger keeps its old
+rows forever, so a part whose history mixed `pcs` and `m` would have no
+meaningful `SUM(quantity_delta)`. Every part is `'pcs'` today, so the
+stamp writes exactly what the column default already produced. Full
+detail in [`docs/domain/ledger.md`](domain/ledger.md#unit-stamping).
+
 **Internal representation is exact `Decimal`.**
 `domain/stock/service.py::current_quantity` and every roll-up built on it
 return `Decimal`, not `int` — `SUM()` over `NUMERIC` is exact and

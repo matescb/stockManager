@@ -11,7 +11,7 @@ from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.core.time import utcnow
-from app.domain._quantity import QUANTITY_ZERO, as_quantity, quantity_out
+from app.domain._quantity import DEFAULT_UNIT, QUANTITY_ZERO, as_quantity, quantity_out
 from app.domain.lots.models import Lot
 from app.domain.parts.models import Part
 from app.domain.stock.models import StockEntry
@@ -46,6 +46,39 @@ class StockConflictError(StockError):
 
 def _belongs(obj, workspace_id: UUID) -> bool:
     return obj is not None and obj.workspace_id == workspace_id
+
+
+def unit_for_part(part: Part | None) -> str:
+    """The unit code to stamp on a ledger row written against ``part``.
+
+    Units-of-measure step 3. Every ``StockEntry`` the application writes
+    carries the part's unit *as it was at write time*, copied here rather
+    than resolved through ``parts.unit_of_measure`` on read. The stamp is
+    what makes a ledger row a self-describing historical fact: without it,
+    editing a part from ``pcs`` to ``m`` would retroactively reinterpret
+    500 pieces as 500 metres, with no audit trail and no way to recover
+    which reading was intended — precisely what an append-only ledger
+    exists to prevent.
+
+    This is the **primary** control. The ``stock_entries_unit_match_check``
+    trigger (alembic 0077) is the backstop for raw SQL that bypasses the
+    service layer, exactly as ``check_stock_entries_workspace_fks`` (0050)
+    backs the in-code workspace checks. Both are asserted by the same
+    rule, so a service-written row can never trip the trigger.
+
+    ``part`` is ``None`` only where the caller holds no part at all; the
+    ledger's ``part_id`` is nullable (``ON DELETE SET NULL`` on hard
+    delete), and the trigger skips a NULL ``part_id`` for the same reason.
+    ``or DEFAULT_UNIT`` covers a not-yet-flushed ``Part`` whose column
+    default has not been applied.
+
+    Today every part is ``'pcs'``, so this writes exactly the value the
+    column's server default already produced — the stamp changes no
+    behaviour until the unit becomes user-selectable in a later step.
+    """
+    if part is None:
+        return DEFAULT_UNIT
+    return part.unit_of_measure or DEFAULT_UNIT
 
 
 def _lock_for_stock_write(db: Session, *, workspace_id: UUID, part_id: UUID) -> None:
@@ -551,6 +584,7 @@ def add_stock(
         lot_id=(lot.id if lot else None),
         storage_location_id=(storage.id if storage else None),
         quantity_delta=payload.quantity,
+        unit=unit_for_part(part),
         status="on_hand",
         unit_price=unit_price,
         currency=currency,
@@ -607,6 +641,7 @@ def remove_stock(
         lot_id=payload.lot_id,
         storage_location_id=payload.storage_location_id,
         quantity_delta=-payload.quantity,
+        unit=unit_for_part(part),
         status="on_hand",
         operation_type="remove",
         comments=payload.comments,
@@ -627,14 +662,18 @@ def _prepare_move(
     source_storage_location_id: UUID | None,
     source_lot_id: UUID | None,
     destination_storage_location_id: UUID,
-) -> StorageLocation:
-    """Lock, validate and availability-check a move; return the destination.
+) -> tuple[Part, StorageLocation]:
+    """Lock, validate and availability-check a move; return part + destination.
 
     Every move — the schema-driven ``move_stock`` and the Decimal-typed
     ``move_quantity`` kitting uses — goes through here, so the per-part
     advisory lock, the workspace checks on both ends, the bucket-matched
     availability check and the destination-constraint enforcement have
     exactly one implementation.
+
+    The workspace-checked ``Part`` is returned alongside the destination so
+    ``_write_move_pair`` can stamp ``unit_for_part(part)`` on both halves of
+    the pair without re-resolving (and re-trusting) the part id.
     """
     _lock_for_stock_write(db, workspace_id=workspace_id, part_id=part_id)
     part = db.get(Part, part_id)
@@ -684,7 +723,7 @@ def _prepare_move(
         )
 
     enforce_storage_constraints(db, workspace_id=workspace_id, storage=dest, part_id=part_id)
-    return dest
+    return part, dest
 
 
 def _write_move_pair(
@@ -692,7 +731,7 @@ def _write_move_pair(
     *,
     workspace_id: UUID,
     user_id: UUID | None,
-    part_id: UUID,
+    part: Part,
     quantity: Decimal,
     source_storage_location_id: UUID | None,
     source_lot_id: UUID | None,
@@ -715,19 +754,25 @@ def _write_move_pair(
     `build_id` / `build_stage_id` are set only by kitting (Track B3), which
     is a build-driven move; they put the kit's relocation rows on
     `GET /api/builds/{id}/activity` next to the build's own consume rows.
+
+    Both halves carry the same unit stamp: a move relocates material, it
+    does not reinterpret it, so an OUT and its matching IN must always
+    agree or the two would not cancel.
     """
     # Pre-assign UUIDs so the two rows can reference each other.
     out_id = uuid.uuid4()
     in_id = uuid.uuid4()
     now = utcnow()
+    unit = unit_for_part(part)
     with db.begin_nested():
         out_entry = StockEntry(
             id=out_id,
             workspace_id=workspace_id,
-            part_id=part_id,
+            part_id=part.id,
             lot_id=source_lot_id,
             storage_location_id=source_storage_location_id,
             quantity_delta=-quantity,
+            unit=unit,
             status="on_hand",
             operation_type="move_out",
             related_entry_id=None,  # set after the IN row exists
@@ -742,10 +787,11 @@ def _write_move_pair(
         in_entry = StockEntry(
             id=in_id,
             workspace_id=workspace_id,
-            part_id=part_id,
+            part_id=part.id,
             lot_id=dest_lot_id,
             storage_location_id=dest_storage_location_id,
             quantity_delta=quantity,
+            unit=unit,
             status="on_hand",
             operation_type="move_in",
             related_entry_id=out_id,
@@ -788,7 +834,7 @@ def move_quantity(
     the moved rows keep the source lot id and the lot's cost basis stays
     with the physical material.
     """
-    _prepare_move(
+    part, _dest = _prepare_move(
         db,
         workspace_id=workspace_id,
         part_id=part_id,
@@ -801,7 +847,7 @@ def move_quantity(
         db,
         workspace_id=workspace_id,
         user_id=user_id,
-        part_id=part_id,
+        part=part,
         quantity=quantity,
         source_storage_location_id=source_storage_location_id,
         source_lot_id=source_lot_id,
@@ -821,7 +867,7 @@ def move_stock(
     payload: MoveStockIn,
 ) -> tuple[StockEntry, StockEntry]:
     quantity = Decimal(payload.quantity)
-    dest = _prepare_move(
+    part, dest = _prepare_move(
         db,
         workspace_id=workspace_id,
         part_id=payload.part_id,
@@ -861,7 +907,7 @@ def move_stock(
                 db,
                 workspace_id=workspace_id,
                 user_id=user_id,
-                part_id=payload.part_id,
+                part=part,
                 quantity=quantity,
                 source_storage_location_id=payload.source_storage_location_id,
                 source_lot_id=payload.source_lot_id,
@@ -875,7 +921,7 @@ def move_stock(
         db,
         workspace_id=workspace_id,
         user_id=user_id,
-        part_id=payload.part_id,
+        part=part,
         quantity=quantity,
         source_storage_location_id=payload.source_storage_location_id,
         source_lot_id=payload.source_lot_id,
@@ -927,6 +973,7 @@ def adjust_stock(
         lot_id=payload.lot_id,
         storage_location_id=payload.storage_location_id,
         quantity_delta=delta,
+        unit=unit_for_part(part),
         status="on_hand",
         operation_type="adjust",
         comments=payload.comments,

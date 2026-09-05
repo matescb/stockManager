@@ -15,7 +15,7 @@ The ledger row schema (`backend/app/domain/stock/models.py:22-87`):
 | Column | Notes |
 |---|---|
 | `quantity_delta` | `Numeric(18,6)` since alembic 0074. Negative for consume/release/move-out. The API still validates and returns whole numbers only — see [integer-only quantities](../ARCHITECTURE.md#integer-only-quantities-db-005--migration-0032). |
-| `unit` | Immutable unit stamp copied from the part at write time (`'pcs'` today). Stamped per row rather than resolved through `parts.unit_of_measure` on read, so editing a part can never retroactively reinterpret history. |
+| `unit` | Immutable unit stamp copied from the part at write time by `stock/service.py::unit_for_part` (`'pcs'` today). Stamped per row rather than resolved through `parts.unit_of_measure` on read, so editing a part can never retroactively reinterpret history. See [unit stamping](#unit-stamping) below. |
 | `status` | `on_hand` or `reserved`. The two statuses sum independently — a positive on-hand row never offsets a reserved row. |
 | `operation_type` | The verb. See vocabulary below. |
 | `lot_id`, `storage_location_id` | Bucket dimensions. NULL is a distinct bucket, not a wildcard — the `0013` trigger uses `IS NOT DISTINCT FROM` on these. |
@@ -110,6 +110,22 @@ Two callers share that pair-writer:
 | `move_quantity(..., quantity: Decimal, build_id=…, build_stage_id=…)` | `Decimal` | Kitting. In-process only — routing a kit through `MoveStockIn` would push every quantity through an `int` field, the truncating coercion alembic 0074 widened the columns to avoid. No `split_lot`: a kit relocates a bag, it does not subdivide a lot. |
 
 Both call `_prepare_move` first, so the per-part advisory lock, the workspace checks on both ends, the bucket-matched availability check and `enforce_storage_constraints` on the destination have one implementation.
+
+## Unit stamping
+
+Every ledger row records the unit its quantity is measured in, copied from the part **at write time** by `stock/service.py::unit_for_part` and never resolved through `parts.unit_of_measure` on read. Storing the unit only on the part would make an edit rewrite the past: flip a part from `pcs` to `m` and 500 pieces silently become 500 metres, with no audit trail and no way to tell which reading was intended. A ledger exists so a written row stays a permanent, self-describing fact, so the unit is part of the row.
+
+Every part is `'pcs'` today, so the stamp writes exactly what the column's server default already produced — nothing observable has changed yet. The stamp is applied by all eleven allow-listed `StockEntry(...)` constructions (add / remove / move / adjust / receive / reserve / release / build consume / build produce). A `move` pair and a `release` counter-row inherit the unit of the row they mirror, or the two would not cancel.
+
+Three triggers from alembic 0077 back that up. They are **backstops, not the control** — the same posture as the workspace FK triggers (see [ADR-0028](../adr/0028-hard-delete-policy-and-workspace-trigger-contract.md)) — and only ever fire for raw SQL that went around the service. All three raise SQLSTATE `23514`.
+
+| Trigger | Fires on | Rejects |
+|---|---|---|
+| `stock_entries_unit_match_check` | `BEFORE INSERT` | A row whose `unit` disagrees with its part's `unit_of_measure`. Passes a NULL `part_id` (a hard-deleted part leaves its history behind, and the stamp is all that remains of what it measured), and passes silently when the part is not in the row's workspace so it cannot become a cross-workspace existence oracle — `stock_entries_workspace_fk_check` owns that error. |
+| `stock_entries_unit_immutable_check` | `BEFORE UPDATE OF unit` | Any change to an existing row's `unit`. The ledger is append-only. |
+| `parts_unit_of_measure_change_check` | `BEFORE UPDATE OF unit_of_measure` | Changing a part's unit once it has **any** ledger row. |
+
+**Changing a part's unit is allowed only while the part has no ledger rows at all** — not merely while its balance is zero. Zeroing stock does not remove rows; nothing does. Under a net-zero rule a part's history would hold `pcs` rows and `m` rows together, and every roll-up built on `current_quantity` would go on summing them. "No rows at all" is the only rule that keeps a part's ledger single-unit by construction, which is what `SUM(quantity_delta)` silently depends on. The supported path for a part with history is to zero the stock out and re-add it, or to create a new part — both of which leave a correct trail.
 
 ## Reservations
 

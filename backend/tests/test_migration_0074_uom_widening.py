@@ -224,6 +224,19 @@ def test_0074_downgrade_refuses_to_drop_a_non_default_unit_stamp(db):
     come out of it as an ambiguous `12` with nothing left to say it was
     metres — the exact loss the per-row stamp exists to prevent. The
     fractional guard alone would not catch it, because 12 is whole.
+
+    The stamped row is arranged the way the application will produce one
+    once units are selectable: set the *part's* unit first, then add
+    stock, which copies it onto the ledger row. Rewriting `unit` after the
+    fact is no longer possible — alembic 0077 made the ledger's stamp
+    immutable, which is the same append-only property this test defends.
+
+    A consequence of 0077 worth naming: the part's unit and its rows'
+    stamps can no longer diverge, so a non-default ledger stamp always
+    implies a non-default `parts.unit_of_measure`. Both are in the guard's
+    `_UNIT_COLUMNS` loop and either alone is enough to refuse, so this
+    asserts on the guard's *reason* rather than on whichever column the
+    loop happens to reach first.
     """
     cfg = _alembic_cfg()
     parent = _parent_revision(cfg)
@@ -231,21 +244,35 @@ def test_0074_downgrade_refuses_to_drop_a_non_default_unit_stamp(db):
     client = TestClient(app)
     signup_user(client)
     part_id = create_part(client, "Spool")
-    add_stock(client, part_id, 12)
-    db.commit()
-
     db.execute(
-        text("UPDATE stock_entries SET unit = 'm' WHERE part_id = :p"),
+        text("UPDATE parts SET unit_of_measure = 'm' WHERE id = :p"),
         {"p": part_id},
     )
     db.commit()
 
-    with pytest.raises(RuntimeError, match="stock_entries.unit"):
+    add_stock(client, part_id, 12)
+    db.commit()
+    assert db.execute(
+        text("SELECT unit FROM stock_entries WHERE part_id = :p"),
+        {"p": part_id},
+    ).scalar_one() == "m", "uom step 3 should have stamped the part's unit"
+    # Release the ACCESS SHARE this read just took. `downgrade()` walks
+    # back through 0077, which needs ACCESS EXCLUSIVE on `stock_entries`
+    # to drop its triggers, and 0074's own guard LOCKs the table outright
+    # — either would queue behind an open read transaction held by this
+    # very test and hang it.
+    db.commit()
+
+    with pytest.raises(RuntimeError, match="carry a unit other than 'pcs'"):
         command.downgrade(cfg, parent)
 
     _assert_widened(db)
     assert db.execute(
         text("SELECT unit FROM stock_entries WHERE part_id = :p"),
+        {"p": part_id},
+    ).scalar_one() == "m"
+    assert db.execute(
+        text("SELECT unit_of_measure FROM parts WHERE id = :p"),
         {"p": part_id},
     ).scalar_one() == "m"
     db.commit()
