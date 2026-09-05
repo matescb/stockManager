@@ -12,7 +12,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import Select, select
+from sqlalchemy import Select, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,7 @@ from app.core.errors import ErrorCodes, raise_http
 from app.core.time import utcnow
 from app.domain.categories.models import PartCategory
 from app.domain.categories.schemas import PartCategoryIn, PartCategoryPatch
+from app.domain.categories.tree import lock_workspace_tree, validate_parent
 
 UQ_PART_CATEGORIES_WS_NAME = "uq_part_categories_ws_name"
 UQ_PART_CATEGORIES_WS_SLUG = "uq_part_categories_ws_slug"
@@ -172,6 +173,9 @@ def create_category(
 ) -> PartCategory:
     library_slug = payload.library_slug or slugify(payload.name)
     _assert_available(db, ws=ws, name=payload.name, library_slug=library_slug)
+    # A create lands a leaf, so only the parent's own depth is at stake —
+    # but the parent still has to exist, in this workspace, unarchived.
+    validate_parent(db, ws=ws, parent_id=payload.parent_id)
 
     category = PartCategory(
         workspace_id=ws.id,
@@ -183,6 +187,7 @@ def create_category(
         default_footprint_ref=payload.default_footprint_ref,
         footprint_filters=payload.footprint_filters,
         library_slug=library_slug,
+        parent_id=payload.parent_id,
         created_by=user_id,
         updated_by=user_id,
     )
@@ -227,6 +232,14 @@ def update_category(
             db, ws=ws, name=name, library_slug=library_slug, exclude_id=category.id
         )
 
+    # Reparenting: `parent_id` present-and-null is a real request ("move to
+    # the root"), which is why this reads `data` rather than
+    # `data.get(...) is not None`. `validate_parent` no-ops on None.
+    if "parent_id" in data:
+        validate_parent(
+            db, ws=ws, parent_id=data["parent_id"], category_id=category.id
+        )
+
     for key, value in data.items():
         setattr(category, key, value)
     category.updated_by = user_id
@@ -245,13 +258,50 @@ def archive_category(
     ws: Any,
     category_id: UUID,
     user_id: UUID | None,
-) -> PartCategory:
+) -> tuple[PartCategory, int]:
+    """Archive a category and promote its direct children to root.
+
+    Returns `(category, promoted_children)`.
+
+    **Why promote.** The FK is `ON DELETE SET NULL` (alembic 0078), so a
+    hard delete already promotes orphans to the root rather than cascading
+    the subtree away. Archive is the only delete the UI offers, and it does
+    not fire that FK action — so without this the two paths would disagree,
+    and the active tree would contain children whose parent is not in it.
+    Every renderer would then have to invent its own answer for "parent not
+    found" (the frontend's `buildCategoryTree` treats it as a root, which
+    is the same answer — but agreeing by coincidence is not a contract).
+    Doing it here makes the stored data match what is drawn, and makes the
+    confirm dialog's promise ("its subcategories move up to the top level")
+    literally true.
+
+    Children are promoted whether or not they are themselves archived: an
+    archived child that is later restored must not come back pointing at an
+    archived parent.
+    """
     category = get_category(db, ws=ws, category_id=category_id)
-    if category.archived_at is None:
-        category.archived_at = utcnow()
-        category.updated_by = user_id
-        db.flush()
-    return category
+    if category.archived_at is not None:
+        return category, 0
+
+    # Same lock the reparent path takes, for the same reason: this changes
+    # the tree's shape, and a concurrent reparent moving a child *onto* this
+    # category would otherwise slip in between the promoting UPDATE and the
+    # archive, leaving an active child under an archived parent.
+    lock_workspace_tree(db, workspace_id=ws.id)
+
+    promoted = db.execute(
+        update(PartCategory)
+        .where(PartCategory.workspace_id == ws.id)
+        .where(PartCategory.parent_id == category.id)
+        .values(parent_id=None, updated_by=user_id)
+    ).rowcount
+
+    category.archived_at = utcnow()
+    category.updated_by = user_id
+    db.flush()
+    # rowcount is -1 on drivers that don't report it; clamp so the audit
+    # comment never claims a negative promotion.
+    return category, max(promoted, 0)
 
 
 def restore_category(

@@ -128,6 +128,11 @@ export const PartCategorySchema = z.object({
   default_footprint_ref: nullableString,
   footprint_filters: z.array(z.string()).nullable(),
   library_slug: z.string(),
+  // Adjacency-list parent; null is a root of the tree. Cycles and depth
+  // are the server's problem (`domain/categories/tree.py`), but
+  // `lib/categoryTree.ts` still walks defensively — this data also
+  // arrives from restored backups and the MCP surface.
+  parent_id: uuid.nullable(),
   archived_at: nullableString,
 });
 export type PartCategory = z.infer<typeof PartCategorySchema>;

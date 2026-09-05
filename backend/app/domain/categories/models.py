@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from sqlalchemy import Column, Index, Integer, String, text
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy import Column, ForeignKey, Index, Integer, String, text
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 
 from app.domain._mixins import WorkspaceOwned
 from app.infra.db import Base
@@ -36,6 +36,11 @@ class PartCategory(WorkspaceOwned, Base):
             postgresql_where=text("archived_at IS NULL"),
         ),
         Index("ix_part_categories_ws_archived", "workspace_id", "archived_at"),
+        Index(
+            "ix_part_categories_parent_id",
+            "parent_id",
+            postgresql_where=text("parent_id IS NOT NULL"),
+        ),
     )
 
     name = Column(String(120), nullable=False)
@@ -50,4 +55,21 @@ class PartCategory(WorkspaceOwned, Base):
     footprint_filters = Column(ARRAY(String(100)), nullable=True)
     # URL- and library-safe identifier, derived from `name` when the caller
     # doesn't supply one. Unique per workspace among active rows.
+    #
+    # Deliberately still workspace-global, NOT sibling-scoped, now that the
+    # table has a parent: `library_slug` is what `kicad_refs.py` turns into
+    # the generated `SM_{slug}.kicad_sym` filename, so two same-named leaves
+    # under different branches would silently collide onto one KiCad
+    # library. Duplicate leaf names across branches are refused instead —
+    # an accepted cost, revisit only as an explicit product decision.
     library_slug = Column(String(60), nullable=False)
+
+    # Adjacency-list parent. NULL = a root of the tree. `ON DELETE SET NULL`
+    # (alembic 0078) means deleting a mid-tree category promotes its
+    # children to root rather than cascading the subtree away; cycles and
+    # depth are capped in `domain/categories/tree.py`, not in SQL.
+    parent_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("part_categories.id", ondelete="SET NULL"),
+        nullable=True,
+    )

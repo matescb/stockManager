@@ -49,6 +49,10 @@ class PartCategoryIn(BaseModel):
     footprint_filters: list[FootprintFilter] | None = Field(default=None, max_length=50)
     # Omit to have the server derive it from `name`.
     library_slug: LibrarySlug | None = None
+    # Omit or null to create a root category. Validated by
+    # `categories/tree.py::validate_parent` — 404 outside the workspace,
+    # 409 if archived, 422 past the depth cap.
+    parent_id: UUID | None = None
 
 
 class PartCategoryPatch(BaseModel):
@@ -62,6 +66,10 @@ class PartCategoryPatch(BaseModel):
     default_footprint_ref: str | None = Field(default=None, max_length=200)
     footprint_filters: list[FootprintFilter] | None = Field(default=None, max_length=50)
     library_slug: LibrarySlug | None = None
+    # Unlike the NOT NULL fields in `_NON_NULLABLE_PATCH_FIELDS`, an
+    # explicit `null` here is meaningful and honoured: it moves the
+    # category back up to the root of the tree.
+    parent_id: UUID | None = None
 
 
 class PartCategoryOut(BaseModel):
@@ -76,4 +84,5 @@ class PartCategoryOut(BaseModel):
     default_footprint_ref: str | None
     footprint_filters: list[str] | None
     library_slug: str
+    parent_id: UUID | None
     archived_at: datetime | None

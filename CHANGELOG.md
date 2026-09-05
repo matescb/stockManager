@@ -13,6 +13,21 @@ the canonical record.
   and `throttled:concurrent` for concurrent-request throttles. Downstream
   consumers filtering audit logs by the old value must update their filters.
 
+## Unreleased
+
+- **Hierarchical part categories** (`0078`) — `part_categories.parent_id`,
+  a self-referencing FK with `ON DELETE SET NULL` and a
+  `part_categories_parent_workspace_check` BEFORE trigger (SQLSTATE
+  `WS001`). Categories now form a KiCad-library-style tree: a rail on
+  `/parts` filters the list (`?category=<id>`, deep-linkable), and
+  `GET /api/parts` gains `category_id` + `include_descendants` (default
+  **true** — clicking a branch node includes everything filed beneath it).
+  Cycles, self-parents and a 6-level depth cap are enforced in Python
+  (`domain/categories/tree.py`) rather than by a recursive CTE, which this
+  repo still has none of. **Archiving or deleting a mid-tree category
+  promotes its direct children to the root; it does not cascade** — the
+  confirm dialog names them.
+
 ## 2026-09 — KiCad libraries and the agent API
 
 Nine PRs, migrations `0067`–`0069`. Rationale in

@@ -8,6 +8,7 @@ Reusable presentational + behavioural components shared across pages. Page-speci
 
 | File / dir | What |
 |---|---|
+| `CategoryTree.tsx` | The part-category tree control — expand/collapse, ARIA tree keyboard nav, one selected node |
 | `DataTable.tsx` | The shared table — search, sort, hidden columns, CSV export, multi-select |
 | `DataTable.test.tsx` | Co-located unit test for DataTable |
 | `Modal.tsx` | Shared accessible dialog shell with focus trap, ESC close, backdrop dismiss, and focus restoration |
@@ -37,6 +38,7 @@ Every component is its default / named export. The most commonly reused:
 
 | Component | Use for |
 |---|---|
+| `CategoryTree` | Browsing or filtering by part category |
 | `DataTable` | Any table — before rolling your own |
 | `Modal` | Dialogs that need `role="dialog"`, `aria-modal`, focus trapping, ESC close, backdrop dismiss, and trigger focus restoration |
 | `EntityHeader` + `SubNav` | Entity pages (Part, Order, Build, …) |

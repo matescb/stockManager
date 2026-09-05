@@ -24,6 +24,8 @@ List parts. Two response shapes selected by query (not by route):
 | `q` | string | ILIKE match against `name`, `mpn`, `manufacturer`, `internal_part_number`, `description` (`parts_core.py:91-101`). |
 | `archived` | bool | Default `false`. Toggles `archived_at IS NULL` vs `IS NOT NULL` (`parts_core.py:88`). |
 | `mpn` | string | Exact match. |
+| `category_id` | UUID | Filter to one category. **Includes the whole subtree by default** — see below. A category from another workspace (or one that does not exist) is `404 code=category.not_found`, never a silently empty list. |
+| `include_descendants` | bool | Default **`true`**. `false` restricts the filter to an exact `category_id` match. |
 | `limit` | int | Default `50`, max `200`. |
 | `cursor` | string | HMAC-signed; tampering returns 400 from `decode_cursor` (`parts_core.py:85`). |
 | `paged` | bool | Force the paged envelope without supplying a cursor. |
@@ -45,6 +47,8 @@ List parts. Two response shapes selected by query (not by route):
 **Notes**
 
 - Sort order: `name ASC, id ASC` (consistent across paged and bare paths) (`parts_core.py:107-118`).
+- **Descendants are included by default** because clicking a branch node (`Passives`) and getting nothing back because every part is filed on a leaf (`Passives / Resistors`) is what makes a category tree feel broken. The descendant id set is resolved in Python from this workspace's `(id, parent_id)` rows — see [Categories API — Hierarchy](./categories.md#hierarchy). Because it is resolved per request, a reparent is reflected immediately with no denormalised path to rebuild.
+- **The category predicate is applied to the statement *before* `paginate()`.** The cursor is an HMAC-signed `(name, id)` seek position over whatever statement produced the page, so filtering the returned rows instead would yield short pages and — once a page's worth of rows all failed the filter — an empty page carrying a non-null `next_cursor`, which clients read as end-of-list. Pinned by `backend/tests/test_parts_category_filter.py::test_category_filter_survives_a_page_boundary`, which asserts page *shape* (every page but the last is exactly `limit` rows) rather than mere completeness — a post-filter still reaches every row eventually.
 - `image_url` comes from each part's `custom_fields(key="image_url")` row, batched via `image_urls_for_parts` (`_parts_shared.py:28-41`).
 - `on_hand` / `reserved` are roll-ups via `bulk_current_quantities`; never compute outside `domain/stock/service.py` (CLAUDE.md, ledger invariant — see [ADR-0001](../adr/0001-append-only-stock-ledger.md)).
 - Source: `backend/app/api/routes/parts_core.py:55-135`.
