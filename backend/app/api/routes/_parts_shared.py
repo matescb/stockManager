@@ -18,6 +18,7 @@ from sqlalchemy import select
 
 from app.api._helpers import assert_in_workspace
 from app.core.errors import ErrorCodes, raise_http
+from app.domain._quantity import quantity_out
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part
 
@@ -92,9 +93,9 @@ def serialize_part(
         "description": p.description,
         "footprint": p.footprint,
         "notes_markdown": p.notes_markdown,
-        "low_stock_report_quantity": p.low_stock_report_quantity,
+        "low_stock_report_quantity": quantity_out(p.low_stock_report_quantity),
         "attrition_percentage": float(p.attrition_percentage or 0),
-        "attrition_min_quantity": p.attrition_min_quantity or 0,
+        "attrition_min_quantity": quantity_out(p.attrition_min_quantity) or 0,
         "category_id": str(p.category_id) if p.category_id else None,
         "default_storage_location_id": str(p.default_storage_location_id) if p.default_storage_location_id else None,
         "default_storage_mandatory": p.default_storage_mandatory,

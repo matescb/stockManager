@@ -117,6 +117,19 @@ precision-loss path that existed when `project_entries.quantity` was
 contain fractional quantity values are rejected at the API layer with a
 422 before any rows are written.
 
+**Storage type, since migration 0074.** Those columns are now
+`Numeric(18,6)` in Postgres — wide enough to hold a measured quantity
+one day — but *nothing above the database has changed*: the Pydantic
+schemas, the MCP tool annotations and the frontend still say `int`, and
+the API still accepts and returns whole numbers only. Widening
+`integer -> numeric` is lossless, so 0074 stays reversible right up
+until the first fractional value is written; its `downgrade()` refuses
+rather than letting Postgres' rounding `numeric -> integer` cast destroy
+one. 0074 also adds `parts.unit_of_measure` and a per-row
+`stock_entries.unit` stamp (both `'pcs'`), so history can never be
+reinterpreted by editing a part's unit. Opening fractional input is a
+separate, later, deliberately irreversible change.
+
 ### Lot lifecycle
 
 A `Lot` is a *batch* of a part with a particular provenance:

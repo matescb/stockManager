@@ -43,6 +43,7 @@ from app.core.pagination import decode_cursor, paginate
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import Envelope, ok
 from app.core.time import utcnow
+from app.domain._quantity import quantity_out
 from app.domain.audit.service import log as _audit_log
 from app.domain.categories.models import PartCategory
 from app.domain.custom_fields.models import CustomField
@@ -641,7 +642,7 @@ def part_lots(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
                 "id": str(lot.id),
                 "name": lot.name,
                 "serial_number": lot.serial_number,
-                "purchase_quantity": lot.purchase_quantity,
+                "purchase_quantity": quantity_out(lot.purchase_quantity),
                 "purchase_unit_cost": (
                     float(lot.purchase_unit_cost)
                     if lot.purchase_unit_cost is not None

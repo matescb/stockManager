@@ -18,6 +18,7 @@ from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.errors import ErrorCodes, raise_http
 from app.core.responses import ok
 from app.core.time import utcnow
+from app.domain._quantity import quantity_out
 from app.domain.orders.models import Order, OrderEntry
 from app.domain.orders.schemas import (
     OrderCreateIn,
@@ -50,7 +51,7 @@ def _assert_part_live(db, ws_id: UUID, part_id) -> None:
         )
 
 
-def _serialize(o: Order, *, totals: tuple[int, int] | None = None) -> dict:
+def _serialize(o: Order, *, totals: tuple[int | float, int | float] | None = None) -> dict:
     ordered, received = totals or (0, 0)
     return {
         "id": str(o.id),
@@ -76,8 +77,8 @@ def _serialize_entry(e: OrderEntry) -> dict:
         "order_id": str(e.order_id),
         "part_id": str(e.part_id) if e.part_id else None,
         "name": e.name,
-        "quantity_ordered": e.quantity_ordered,
-        "quantity_received": e.quantity_received,
+        "quantity_ordered": quantity_out(e.quantity_ordered),
+        "quantity_received": quantity_out(e.quantity_received),
         "unit_price": float(e.unit_price) if e.unit_price is not None else None,
         "currency": e.currency,
         "comments": e.comments,
@@ -107,10 +108,10 @@ def _entries_for(db, ws_id, oid) -> list[OrderEntry]:
     )
 
 
-def _totals(entries: list[OrderEntry]) -> tuple[int, int]:
+def _totals(entries: list[OrderEntry]) -> tuple[int | float, int | float]:
     return (
-        sum(e.quantity_ordered for e in entries),
-        sum(e.quantity_received for e in entries),
+        quantity_out(sum(e.quantity_ordered for e in entries)) or 0,
+        quantity_out(sum(e.quantity_received for e in entries)) or 0,
     )
 
 

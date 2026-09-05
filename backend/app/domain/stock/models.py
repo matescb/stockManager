@@ -7,7 +7,6 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
-    Integer,
     Numeric,
     String,
     Text,
@@ -16,6 +15,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.core.time import utcnow
+from app.domain._quantity import DEFAULT_UNIT, UNIT_CODE_MAX_LENGTH
 from app.infra.db import Base
 
 
@@ -56,7 +56,23 @@ class StockEntry(Base):
     storage_location_id = Column(
         UUID(as_uuid=True), ForeignKey("storage_locations.id", ondelete="SET NULL"), nullable=True
     )
-    quantity_delta = Column(Integer, nullable=False)
+    # Numeric(18,6) since alembic 0074 (units-of-measure step 1). The API
+    # still accepts and returns whole numbers only — this is a widening,
+    # not a behaviour change. SUM() over NUMERIC is exact and
+    # order-independent, so "current stock = SUM(quantity_delta)" holds
+    # with zero rounding at any intermediate step.
+    quantity_delta = Column(Numeric(18, 6), nullable=False)
+    # Immutable per-row unit stamp (alembic 0074). Copied from the part at
+    # write time rather than resolved through `parts.unit_of_measure` on
+    # read, so editing a part can never retroactively reinterpret history.
+    # Only ever `DEFAULT_UNIT` today; the service-side stamp-from-part and
+    # the unit-match trigger land in a later step of the track.
+    unit = Column(
+        String(UNIT_CODE_MAX_LENGTH),
+        nullable=False,
+        server_default=DEFAULT_UNIT,
+        default=DEFAULT_UNIT,
+    )
     status = Column(String(30), nullable=False, default="on_hand")
     unit_price = Column(Numeric(18, 6), nullable=True)
     currency = Column(String(3), nullable=True)

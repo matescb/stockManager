@@ -14,7 +14,8 @@ The ledger row schema (`backend/app/domain/stock/models.py:22-87`):
 
 | Column | Notes |
 |---|---|
-| `quantity_delta` | Integer. Negative for consume/release/move-out. |
+| `quantity_delta` | `Numeric(18,6)` since alembic 0074. Negative for consume/release/move-out. The API still validates and returns whole numbers only — see [integer-only quantities](../ARCHITECTURE.md#integer-only-quantities-db-005--migration-0032). |
+| `unit` | Immutable unit stamp copied from the part at write time (`'pcs'` today). Stamped per row rather than resolved through `parts.unit_of_measure` on read, so editing a part can never retroactively reinterpret history. |
 | `status` | `on_hand` or `reserved`. The two statuses sum independently — a positive on-hand row never offsets a reserved row. |
 | `operation_type` | The verb. See vocabulary below. |
 | `lot_id`, `storage_location_id` | Bucket dimensions. NULL is a distinct bucket, not a wildcard — the `0013` trigger uses `IS NOT DISTINCT FROM` on these. |

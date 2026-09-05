@@ -79,7 +79,11 @@ class ProjectEntry(WorkspaceOwned, Base):
     part_id = Column(UUID(as_uuid=True), ForeignKey("parts.id", ondelete="SET NULL"), nullable=True)
     meta_part_id = Column(UUID(as_uuid=True), ForeignKey("parts.id", ondelete="SET NULL"), nullable=True)
     name = Column(String(300), nullable=True)
-    quantity = Column(Integer, nullable=False, default=1)
+    # Numeric(18,6) since alembic 0074 (units-of-measure step 1) — this is
+    # the column migration 0032 narrowed to Integer for DB-005, widened back
+    # now that the ledger is Numeric too. BOM import still rejects fractional
+    # input; that inversion belongs to a later step of the track.
+    quantity = Column(Numeric(18, 6), nullable=False, default=1)
     # Per-BOM-line waste rate (Track B1, migration 0072). Inflates the
     # required + consumed quantity for a build; see
     # builds/service.py::_required. server_default keeps the NOT NULL add

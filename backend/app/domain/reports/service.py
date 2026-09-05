@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.time import utcnow
+from app.domain._quantity import quantity_out
 from app.domain.builds.service import shortage_analysis
 from app.domain.lots.models import Lot
 from app.domain.parts.models import Part
@@ -817,7 +818,7 @@ def _low_stock_rows(
         cur = on_hand.get(part.id, 0)
         res = reserved.get(part.id, 0)
         avail = cur - res
-        threshold = part.low_stock_report_quantity or 0
+        threshold = quantity_out(part.low_stock_report_quantity) or 0
         if avail < threshold:
             rows.append(
                 {

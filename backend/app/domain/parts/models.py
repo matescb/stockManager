@@ -8,7 +8,6 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
-    Integer,
     Numeric,
     String,
     Text,
@@ -19,6 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from app.domain._mixins import WorkspaceOwned
+from app.domain._quantity import DEFAULT_UNIT, UNIT_CODE_MAX_LENGTH
 from app.infra.db import Base
 
 
@@ -83,9 +83,20 @@ class Part(WorkspaceOwned, Base):
         ForeignKey("part_categories.id", ondelete="SET NULL"),
         nullable=True,
     )
-    low_stock_report_quantity = Column(Integer, nullable=True)
+    # Numeric(18,6) since alembic 0074 (units-of-measure step 1) so these
+    # stay comparable with the widened ledger. Integer-only on the wire.
+    low_stock_report_quantity = Column(Numeric(18, 6), nullable=True)
     attrition_percentage = Column(Numeric(8, 4), nullable=False, default=0)
-    attrition_min_quantity = Column(Integer, nullable=False, default=0)
+    attrition_min_quantity = Column(Numeric(18, 6), nullable=False, default=0)
+    # The part's canonical unit (alembic 0074). Not user-settable yet — no
+    # route reads or writes it in this step — but every ledger row stamps
+    # its own copy so history can never be reinterpreted by editing it.
+    unit_of_measure = Column(
+        String(UNIT_CODE_MAX_LENGTH),
+        nullable=False,
+        server_default=DEFAULT_UNIT,
+        default=DEFAULT_UNIT,
+    )
     default_storage_location_id = Column(
         UUID(as_uuid=True), ForeignKey("storage_locations.id", ondelete="SET NULL"), nullable=True
     )

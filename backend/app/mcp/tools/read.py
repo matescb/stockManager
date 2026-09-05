@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 from sqlalchemy import or_, select
 
+from app.domain._quantity import quantity_out
 from app.domain.builds import service as builds_service
 from app.domain.categories import service as categories_service
 from app.domain.eda.models import PartEda
@@ -165,7 +166,7 @@ def get_part(caller: Caller, id_or_mpn: str) -> dict[str, Any]:
                 ],
             },
             "eda": eda_status(caller, part),
-            "low_stock_report_quantity": part.low_stock_report_quantity,
+            "low_stock_report_quantity": quantity_out(part.low_stock_report_quantity),
         }
     )
 
@@ -338,7 +339,7 @@ def stock_levels(
     for part in parts:
         have = on_hand.get(part.id, 0)
         reserved = reserved_by_part.get(part.id, 0)
-        threshold = part.low_stock_report_quantity
+        threshold = quantity_out(part.low_stock_report_quantity)
         if low_stock_only and (threshold is None or have > threshold):
             continue
         rows.append(
@@ -490,7 +491,7 @@ def get_project_bom(caller: Caller, project_id: str) -> dict[str, Any]:
                     "name": row.name,
                     "part_id": sid(row.part_id),
                     "part_url": part_url(row.part_id) if row.part_id else None,
-                    "quantity": row.quantity,
+                    "quantity": quantity_out(row.quantity),
                     "designators": row.designators,
                     "cad_footprint": row.cad_footprint,
                     "dnp": row.dnp,
