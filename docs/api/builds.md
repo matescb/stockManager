@@ -255,6 +255,85 @@ The emitted `build_consume` ledger rows carry `build_stage_id`, so `GET /api/bui
 
 **Audit** — writes `build_stage.consumed` (`target_type="build_stage"`).
 
+## Kitting
+
+Track B3. Consolidate everything a build (or one of its stages) needs into a single staging location, so the components travel to the bench as a tray. **No schema change** — a kit is a `move_out`/`move_in` pair tagged with `build_id`. Domain detail: [`builds-and-bom.md`](../domain/builds-and-bom.md#kitting).
+
+These four routes live in `backend/app/api/routes/build_kits.py`, mounted under the same `/api/builds` prefix, split out of `builds.py` for the same line-count-budget reason as `build_stages.py`.
+
+Two contracts worth reading before you call them:
+
+- **The kit tops the staging location up to what this pass needs.** Moved quantity is `required − already_at_staging`, so re-issuing the same POST moves nothing. That is the whole idempotency story — there is no request key.
+- **Partial availability moves what exists and reports the shortfall** (`short_by` per line, `totals.short_by`). It does not refuse. A genuine *failure* still rolls the whole kit back.
+
+Reservations are untouched: a kit writes only `status='on_hand'` rows, and reserve rows carry no storage location.
+
+### `GET /api/builds/{build_id}/kit-plan`
+
+Read-only preview of the whole-build kit. Writes nothing — no ledger rows, no audit row.
+
+**Query**
+
+| Field | Type | Notes |
+|---|---|---|
+| `storage_location_id` | UUID | Required. The staging location. |
+
+**Response** — `200 OK`
+
+```json
+{ "build_id": "…", "build_stage_id": null,
+  "storage_location_id": "…", "storage_location_name": "Kitting tray",
+  "executed": false,
+  "lines": [
+    { "part_id": "…", "part_name": "R1k 0402",
+      "project_entry_ids": ["…"],
+      "required": 100, "at_staging": 0, "to_move": 100,
+      "moving": 100, "short_by": 0,
+      "sources": [
+        { "storage_location_id": "…", "storage_location_name": "Shelf B",
+          "lot_id": null, "quantity": 80 },
+        { "storage_location_id": "…", "storage_location_name": "Shelf A",
+          "lot_id": null, "quantity": 20 }
+      ] }
+  ],
+  "totals": { "lines": 1, "moving": 100, "short_by": 0, "short_lines": 0 } }
+```
+
+Lines are keyed by **part**, in BOM order — two BOM lines calling for the same part are one line here (`project_entry_ids` lists both), because they are one pile on the tray. `required` is the attrition-adjusted `_required` value, identical to the number in the whole-build `shortage` array. `sources` is ordered largest bucket first.
+
+**Errors**
+
+- `404 build.not_found`.
+- `400 build.has_stages` — the build has stages; kit each stage instead.
+- `400 build.kit_error` — `"staging location not found"` (unknown, or another workspace's), `"staging location is archived"`, `"staging location is marked full"`.
+
+### `POST /api/builds/{build_id}/kit`
+
+Execute the whole-build kit. Atomic: every move lands or none does.
+
+**Request** — `KitIn`:
+
+| Field | Type | Notes |
+|---|---|---|
+| `storage_location_id` | UUID | The staging location. Passed per call rather than stored on the build — see the domain page for why. |
+
+**Response** — `200 OK` — the same body as the preview with `"executed": true`, where `moving` / `sources` describe what actually moved.
+
+**Errors** — everything the preview can return, plus:
+
+- `400 build.kit_error` — `"build is complete"` / `"build is cancelled"` / `"build is archived"`.
+- `409 stock.constraint_violation` — the staging location violates `single_part_only` or `existing_parts_only`; body extras `{ constraint, storage_location_id }`, same shape as `/api/stock/move`. Rolls the whole kit back.
+
+**Audit** — writes `build.kitted` (`target_type="build"`, `target_ids=[build_id]`). The preview writes none.
+
+### `GET /api/builds/{build_id}/stages/{stage_id}/kit-plan`
+
+### `POST /api/builds/{build_id}/stages/{stage_id}/kit`
+
+Per-stage flavours of the two routes above. Identical request/response shapes; `build_stage_id` is set in the body and on the emitted ledger rows, and the requirement is the **stage's allocation** (a cumulative slice of `_required`) instead of the whole build's.
+
+**Errors** — as above, plus `404 build_stage.not_found` (unknown stage, a stage of a *different* build, an archived stage, or a stage in another workspace) and `400 build.kit_error` `"stage '<name>' is already complete"`.
+
 ### `GET /api/builds/{build_id}/activity`
 
 Combined timeline of `stock_entries` tagged with this `build_id` plus synthetic `build_created` / `build_updated` items.

@@ -2246,3 +2246,87 @@ def test_build_stage_rows_reject_cross_workspace_ids_at_the_db():
             s.flush()
         assert getattr(excinfo.value.orig, "sqlstate", None) == "WS001"
         s.rollback()
+
+
+def test_build_kitting_is_workspace_scoped():
+    """Kitting (Track B3) replicates the code-enforced isolation contract.
+
+    Three boundaries, all of which move stock if they leak: the build id in
+    the path, the stage id in the path, and the staging `storage_location_id`
+    the caller supplies in the body — the last is the interesting one,
+    because a foreign destination would relocate this workspace's material
+    into a bin the other tenant can see.
+    """
+    from sqlalchemy import func
+
+    from app.infra.db import SessionLocal
+
+    a = TestClient(app)
+    b = TestClient(app)
+    _signup(a, f"kit-a-{uuid.uuid4().hex[:6]}@x.com")
+    _signup(b, f"kit-b-{uuid.uuid4().hex[:6]}@x.com")
+
+    part_a = _create_part(a, "A resistor")
+    shelf_a = _create_storage(a, "A shelf")
+    tray_a = _create_storage(a, "A tray")
+    _factory_add_stock(a, part_a, 100, shelf_a)
+    project_a = _create_project_with_bom(a, "A project", [{"part_id": part_a, "quantity": 10}])
+    entry_a = a.get(f"/api/projects/{project_a}/entries").json()["data"][0]["id"]
+    build_a = a.post(
+        "/api/builds", json={"name": "A build", "project_id": project_a, "quantity": 1}
+    ).json()["data"]["id"]
+
+    part_b = _create_part(b, "B resistor")
+    tray_b = _create_storage(b, "B tray")
+    project_b = _create_project_with_bom(b, "B project", [{"part_id": part_b, "quantity": 1}])
+    build_b = b.post(
+        "/api/builds", json={"name": "B build", "project_id": project_b, "quantity": 1}
+    ).json()["data"]["id"]
+
+    # A's build id is invisible to B (build gate), for preview and execution.
+    assert (
+        b.get(
+            f"/api/builds/{build_a}/kit-plan", params={"storage_location_id": tray_b}
+        ).status_code
+        == 404
+    )
+    r = b.post(f"/api/builds/{build_a}/kit", json={"storage_location_id": tray_b})
+    assert r.status_code == 404, r.text
+    assert r.json().get("code") == "build.not_found"
+
+    # B's storage cannot be used as a staging destination for A's build.
+    r = a.post(f"/api/builds/{build_a}/kit", json={"storage_location_id": tray_b})
+    assert r.status_code == 400, r.text
+    assert r.json().get("code") == "build.kit_error"
+    assert "staging location not found" in r.json()["status"]["message"]
+
+    # …and the reverse: A's storage is not reachable from B's own build.
+    r = b.post(f"/api/builds/{build_b}/kit", json={"storage_location_id": tray_a})
+    assert r.status_code == 400, r.text
+    assert r.json().get("code") == "build.kit_error"
+
+    # A foreign stage id cannot ride in on a build the caller legitimately owns.
+    stage_a = a.post(
+        f"/api/builds/{build_a}/stages",
+        json={"name": "A stage", "lines": [{"project_entry_id": entry_a}]},
+    ).json()["data"]["id"]
+    r = b.post(
+        f"/api/builds/{build_b}/stages/{stage_a}/kit",
+        json={"storage_location_id": tray_b},
+    )
+    assert r.status_code == 404, r.text
+    assert r.json().get("code") == "build_stage.not_found"
+
+    # Nothing moved anywhere: A's stock is untouched and still on A's shelf.
+    stock_a = a.get(f"/api/parts/{part_a}/stock").json()["data"]
+    assert stock_a["total_on_hand"] == 100
+    assert [row["storage_location_id"] for row in stock_a["rows"]] == [shelf_a]
+    with SessionLocal() as s:
+        assert (
+            s.execute(
+                select(func.count())
+                .select_from(StockEntry)
+                .where(StockEntry.operation_type.in_(("move_out", "move_in")))
+            ).scalar_one()
+            == 0
+        )

@@ -71,6 +71,20 @@ class BuildStageCreateIn(BaseModel):
     lines: list[BuildStageLineIn] = Field(min_length=1)
 
 
+class KitIn(BaseModel):
+    """Kitting (Track B3) — consolidate a build's components onto one tray.
+
+    The staging location is a request parameter rather than a column on
+    `builds`: which tray is free is a property of today's shop floor, not
+    of the build, and the same build may legitimately be kitted onto a
+    different location on a re-kit. See `domain/builds/kitting.py`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    storage_location_id: UUID
+
+
 class StageConsumeIn(BaseModel):
     """Per-stage consume payload.
 

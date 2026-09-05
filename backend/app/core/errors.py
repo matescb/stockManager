@@ -278,6 +278,8 @@ class ErrorCodes:
     BUILD_STAGE_NOT_FOUND = "build_stage.not_found"
     BUILD_STAGE_ERROR = "build_stage.error"
     BUILD_HAS_STAGES = "build.has_stages"
+    # Kitting (Track B3).
+    BUILD_KIT_ERROR = "build.kit_error"
 
     # Projects router.
     PROJECT_NOT_FOUND = "project.not_found"

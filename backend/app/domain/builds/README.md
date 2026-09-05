@@ -12,6 +12,7 @@ Owns the `Build` aggregate: shortage analysis against a project BOM, reservation
 | `schemas.py` | Pydantic shapes for shortage / reserve / consume / stage payloads |
 | `service.py` | `shortage_analysis`, `apply_reservations`, `release_reservations`, `consume` + the helpers both consume paths share |
 | `stages.py` | Multi-stage builds (Track B2): stage CRUD, per-stage allocation and shortage, `consume_stage` |
+| `kitting.py` | Kitting (Track B3): plan / execute a consolidation of the build's components into one staging location |
 
 ## Public surface
 
@@ -25,10 +26,14 @@ Owns the `Build` aggregate: shortage analysis against a project BOM, reservation
 | List stages with per-stage shortage | `stages.py::stages_payload` |
 | Create a stage | `stages.py::create_stage` |
 | Consume one stage | `stages.py::consume_stage` |
+| Preview a kit | `kitting.py::plan_kit` |
+| Kit to a staging location | `kitting.py::execute_kit` |
 
 Internal helpers: `_required` (per-entry qty), `_candidate_part_ids` (substitutes resolution), `_consumable_entries`, `_outstanding_reservations` (quantity-based release accounting), `stages.py::_allocate` (cumulative portion split).
 
 Shared by both consume paths: `lock_for_consume`, `apply_consume_lines`, `produce_output`, `complete_build`.
+
+Kitting never writes a ledger row itself — it moves stock through `stock/service.py::move_quantity`, so total on-hand is invariant and reservations are untouched. See `docs/domain/builds-and-bom.md#kitting`.
 
 ## Hard rules (this module)
 

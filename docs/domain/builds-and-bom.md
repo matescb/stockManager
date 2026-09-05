@@ -17,6 +17,8 @@ Project ─< ProjectEntry  (the BOM)
            │
            └── emits StockEntry rows (operation_type ∈ {reserve, release, build_consume, build_produce})
            │
+           ├── may emit move_out/move_in pairs tagged build_id (kitting; Track B3)
+           │
            └── may emit one Lot (source_type='build') as the sub-assembly output
 ```
 
@@ -68,6 +70,8 @@ Two attrition sources **compound multiplicatively**:
 | Consume the build | `domain/builds/service.py::consume` | Single-pass. All-or-nothing. Bundles every lock up front. Optionally produces sub-assembly output lot. |
 | Stage requirement allocation | `domain/builds/stages.py::stage_allocations` | `{stage_id: {entry_id: qty}}` — slices `_required` by portion, cumulatively. |
 | Consume one stage | `domain/builds/stages.py::consume_stage` | All-or-nothing. Completes the build when the last stage lands. |
+| Plan a kit | `domain/builds/kitting.py::plan_kit` | Read-only: what would move to the staging location, from which bin, and the shortfall. |
+| Kit to a staging location | `domain/builds/kitting.py::execute_kit` | Writes `move_out`/`move_in` pairs through `stock/service.py::move_quantity`. Tops the location up to the pass's requirement. |
 
 ## Reservation lifecycle
 
@@ -185,6 +189,71 @@ Guards on the rest of the builds API:
 - `POST /api/builds/{id}/consume` returns `400 build.has_stages` once the build has stages — the whole-BOM endpoint would draw every stage's stock at once while leaving the stages reported as un-built.
 - `PATCH /api/builds/{id}` refuses a `quantity` change after any stage has been consumed (`400 build.read_only`): the change re-derives the up-front reservation and would re-reserve material a completed stage already consumed.
 
+## Kitting
+
+Track B3. **No migration** — kitting needed no schema change (see [Why no schema](#why-no-schema)).
+
+In one operation, consolidate everything a build needs from the bins it is scattered across into a single staging location, so the operator carries a tray to the bench instead of walking the shelves. Mirrors PartsBox's kitting.
+
+### A kit is a move, not a mutation
+
+Every unit relocated is a matched `move_out` / `move_in` pair written through `stock/service.py::move_quantity` (`backend/app/domain/builds/kitting.py::execute_kit`). Nothing in `kitting.py` constructs a ledger row. The consequences that matter:
+
+- **Total on-hand per part is invariant across a kit.** Only its distribution across `storage_location_id` changes. `tests/test_build_kitting.py::test_kit_consolidates_from_every_bin_into_the_staging_location` asserts exactly that.
+- **Reservations are untouched.** Reserve rows carry no `storage_location_id` and a kit writes only `status='on_hand'` rows, so `stock/service.py::reserved_quantity` is invariant. Kitting is a physical relocation, not an allocation: it neither consumes a reservation (that is consume's job, per stage) nor strands one (a reservation is not bound to a location, so the material under it can move freely).
+- **The rows carry `build_id`** (and `build_stage_id` for a per-stage kit), so `GET /api/builds/{id}/activity` shows the kit beside the build's own consume rows. `build_id` is otherwise NULL on a move, so it is also what distinguishes a kit from an operator's manual `/api/stock/move`.
+
+### The staging location is a request parameter
+
+`storage_location_id` is passed per call, not stored on `builds`. Which tray/cart/shelf is free is a property of today's shop floor, not of the build; the same build is legitimately kitted onto a different location on a re-kit, and a per-build column would need a default, an edit surface, **and** a request-level override anyway. The override is the whole feature, so it is the only thing that exists. `kitting.py::resolve_staging` validates it against the workspace and refuses an archived or `is_full` location.
+
+### `_required` is still the only quantity authority
+
+A kit never re-derives demand from `project_entries.quantity`:
+
+| Flavour | Requirement source |
+|---|---|
+| Whole build (`POST /api/builds/{id}/kit`) | `service.py::_required(entry, part, build.quantity)` for every consumable BOM entry — the same dict `consume` builds. |
+| One stage (`POST /api/builds/{id}/stages/{stage_id}/kit`) | `stages.py::stage_allocations`, which is that same `_required` sliced by portion. |
+
+Both attrition sources therefore compound into the kit exactly once, and the tray is stocked with precisely what the shortage table the operator planned against said it would need.
+
+Requirements are **aggregated per part** before any bucket is picked (`kitting.py::required_by_part`). Two BOM lines calling for the same part are one pile on the tray; planning them separately would let each line claim the same reel and over-draw it. Substitutes are deliberately *not* kitted: choosing a substitute is a consume-time operator decision that `apply_consume_lines` validates, and pre-staging one would silently commit it. The main part's shortfall is reported instead.
+
+### Whole build vs. one stage
+
+Both exist, sharing one service. **A build with stages refuses the whole-build endpoint** (`400 build.has_stages`) — the same guard, and the same reasoning, as `POST /{build_id}/consume`: the whole-BOM quantity is the sum of every stage's slice, so a whole-build kit of a partly-consumed staged build would haul material for stages that already drew their stock. A single-pass build has no stages and uses the whole-build route.
+
+### The kit tops the location up; it does not add to it
+
+The quantity moved for a part is `required − already_at_staging`, where `already_at_staging` is that part's on-hand at the staging location across every lot sitting there. Three things follow:
+
+- **Re-running a kit is a no-op** — a retried request, a double-clicked button, or a second kit after a delivery lands moves only the new difference. This is the whole of the idempotency story; there is no request key or dedup table.
+- **A partially stocked tray is topped up**, which is what an operator finishing an earlier partial kit actually wants.
+- **Sequential stage kits work naturally**: kit stage 1, consume stage 1 off the tray (which drains it), kit stage 2 → the full slice moves again. Kitting stage 2 while stage 1's material is still on the tray moves only the difference, because the tray already holds material the operator can see.
+
+Source buckets come from the ledger's own roll-up (`stock/service.py::stock_summary_for_part`), exclude the staging location itself, and are taken **largest first**, tie-broken on the ids so two runs of the same plan pick the same bins. Largest-first minimises both the number of bins the operator visits and the number of ledger rows the kit writes.
+
+### Partial availability moves what exists
+
+**Policy: move what exists, report the shortfall.** An operator who is 10 short of 100 resistors still wants the 90 on the tray; refusing hands back nothing and forces the shelf-walk the feature exists to remove. The response carries `short_by` per part and a `totals.short_by` / `totals.short_lines` roll-up, and the UI surfaces it in the same red column the shortage table uses.
+
+This is not a licence to half-write: a *failure* (destination constraint violation, archived location, a bucket that vanished under a concurrent consume) raises and rolls the whole kit back. Availability is partial; the transaction is not.
+
+### Concurrency
+
+`execute_kit` takes `lock_parts_for_stock_write` over every part it will touch, in the deterministic UUID-string order that helper imposes, **before** the plan is read — so the availability the plan saw is the availability `move_quantity` re-checks, and a concurrent consume of the same parts queues behind the kit rather than emptying a bucket mid-plan. `move_quantity` re-acquires the same per-part lock as a re-entrant no-op, then takes the per-storage lock inside `enforce_storage_constraints`; the lock order (part, then storage) is the same one every other stock writer uses, so there is no AB/BA pair with consume.
+
+### Why no schema
+
+Migration `0077` was scoped for this feature and turned out to be unnecessary:
+
+- the movement is already expressible in `stock_entries` — `move_out` / `move_in` with `build_id` / `build_stage_id`, all of which exist (0076 added the last one);
+- the staging location is an existing `storage_locations` row and is chosen per call, so it needs no column;
+- idempotency is derived from the ledger (`required − already_at_staging`), so there is no kit record to persist.
+
+Inventing a `kits` table, or a `builds.staging_storage_location_id` column, would have added a second source of truth for something the append-only ledger already answers.
+
 ## `Build` row
 
 `Build` (`backend/app/domain/builds/models.py:21`):
@@ -207,3 +276,6 @@ Guards on the rest of the builds API:
 - **Never make reservation release existence-based again.** Partial releases are now real; "this reserve row already has a release row, skip it" would silently under-release, and "write a full counter regardless" would over-release. Both go through `_outstanding_reservations`.
 - **Never derive a stage quantity from `project_entries.quantity`.** Stage portions slice `_required`'s output. Re-deriving skips attrition and makes the stages disagree with the whole-build shortage the operator planned against.
 - **Never write reserve rows when a stage is created.** Reservations are up-front for the whole build; a per-stage reservation double-counts.
+- **Never let kitting write its own ledger rows.** A kit is a move; it goes through `stock/service.py::move_quantity` so the advisory locks, the workspace checks and `enforce_storage_constraints` on the destination all apply. A bespoke `StockEntry` in `kitting.py` would bypass all three (and `scripts/check_stockentry_constructors.py` would fail the build).
+- **Never release or re-apply reservations from a kit.** Moving material does not consume it. Touching `status='reserved'` rows here would double-count against `reserved_quantity` the moment the stage that owns the slice consumes it.
+- **Never make a kit additive.** The moved quantity is `required − already_at_staging`. An additive kit is not idempotent, and a retried request builds a second trayful out of stock other builds were counting on.
