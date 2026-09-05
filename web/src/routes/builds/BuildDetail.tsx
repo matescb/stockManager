@@ -12,6 +12,7 @@ import AttachmentsPanel from "@/components/AttachmentsPanel";
 import ActivityTimeline from "@/components/ActivityTimeline";
 import { SourceBomButton } from "@/routes/projects/sourcing/SourceBomButton";
 import BuildStagesPanel from "./BuildStagesPanel";
+import BuildKitPanel from "./BuildKitPanel";
 import type { Build, BuildShortageRow, BuildStage, Part, Project, ProjectEntry, StorageLocation } from "@/types";
 
 type DetailOut = { build: Build; shortage: BuildShortageRow[] };
@@ -272,6 +273,17 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
         stages={stages}
         entries={entries}
         partsById={partsById}
+        storage={storage}
+        isEditable={isEditable}
+      />
+
+      {/* Kitting (Track B3) — moves stock to a staging location; writes no
+          consume rows, so it sits between the stage list and the
+          consumption plan the operator uses once the tray is at the bench. */}
+      <BuildKitPanel
+        buildId={buildId}
+        build={build}
+        stages={stages}
         storage={storage}
         isEditable={isEditable}
       />

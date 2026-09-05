@@ -597,18 +597,29 @@ def remove_stock(
     return entry
 
 
-def move_stock(
+def _prepare_move(
     db: Session,
     *,
     workspace_id: UUID,
-    user_id: UUID | None,
-    payload: MoveStockIn,
-) -> tuple[StockEntry, StockEntry]:
-    _lock_for_stock_write(db, workspace_id=workspace_id, part_id=payload.part_id)
-    part = db.get(Part, payload.part_id)
+    part_id: UUID,
+    quantity: Decimal,
+    source_storage_location_id: UUID | None,
+    source_lot_id: UUID | None,
+    destination_storage_location_id: UUID,
+) -> StorageLocation:
+    """Lock, validate and availability-check a move; return the destination.
+
+    Every move — the schema-driven ``move_stock`` and the Decimal-typed
+    ``move_quantity`` kitting uses — goes through here, so the per-part
+    advisory lock, the workspace checks on both ends, the bucket-matched
+    availability check and the destination-constraint enforcement have
+    exactly one implementation.
+    """
+    _lock_for_stock_write(db, workspace_id=workspace_id, part_id=part_id)
+    part = db.get(Part, part_id)
     if not _belongs(part, workspace_id):
         raise StockError("part not found")
-    dest = db.get(StorageLocation, payload.destination_storage_location_id)
+    dest = db.get(StorageLocation, destination_storage_location_id)
     if not _belongs(dest, workspace_id):
         raise StockError("destination not found")
     if dest.archived_at is not None:
@@ -620,56 +631,194 @@ def move_stock(
     # defense-in-depth rationale as remove_stock — current_quantity ws-filter
     # would mask a foreign source as "0 available" but the failure should
     # name the real cause.
-    if payload.source_storage_location_id is not None:
-        src_storage = db.get(StorageLocation, payload.source_storage_location_id)
+    if source_storage_location_id is not None:
+        src_storage = db.get(StorageLocation, source_storage_location_id)
         if not _belongs(src_storage, workspace_id):
             raise StockError("source storage not found")
-    if payload.source_lot_id is not None:
-        # If split_lot is true the same id is re-fetched + checked below for
+    if source_lot_id is not None:
+        # For a split-lot move the same id is re-fetched by the caller for
         # the new-lot copy; this still validates the workspace boundary up
         # front so a foreign source-lot fails with a clear message.
-        src_lot = db.get(Lot, payload.source_lot_id)
+        src_lot = db.get(Lot, source_lot_id)
         if not _belongs(src_lot, workspace_id):
             raise StockError("source lot not found")
 
-    available = current_quantity(
-        db,
-        workspace_id=workspace_id,
-        part_id=part.id,
-        storage_location_id=payload.source_storage_location_id,
-        lot_id=payload.source_lot_id,
-        bucket_match=True,
+    # `current_quantity` still returns an int today; wrapping rather than
+    # re-coercing means this comparison keeps whatever precision the ledger
+    # hands back once the units-of-measure track widens that return type.
+    available = Decimal(
+        current_quantity(
+            db,
+            workspace_id=workspace_id,
+            part_id=part_id,
+            storage_location_id=source_storage_location_id,
+            lot_id=source_lot_id,
+            bucket_match=True,
+        )
     )
-    if payload.quantity > available:
-        raise StockError(f"insufficient stock at source (have {available}, want {payload.quantity})")
+    if quantity > available:
+        raise StockError(f"insufficient stock at source (have {available}, want {quantity})")
 
-    enforce_storage_constraints(db, workspace_id=workspace_id, storage=dest, part_id=part.id)
+    enforce_storage_constraints(db, workspace_id=workspace_id, storage=dest, part_id=part_id)
+    return dest
 
-    # Pre-assign UUIDs so the two StockEntry rows can reference each
-    # other via `related_entry_id`. The actual write strategy is a
-    # three-step write under a savepoint (per-block comments below
-    # spell out the ordering) — `related_entry_id` has a non-deferrable
-    # FK to `stock_entries.id`, so a single `add_all` flush would
-    # violate the constraint on whichever row insert went second.
-    # The savepoint contains the partial state so an outside transaction
-    # never observes a dangling back-pointer (BE2-007).
+
+def _write_move_pair(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    user_id: UUID | None,
+    part_id: UUID,
+    quantity: Decimal,
+    source_storage_location_id: UUID | None,
+    source_lot_id: UUID | None,
+    dest_storage_location_id: UUID,
+    dest_lot_id: UUID | None,
+    comments: str | None,
+    build_id: UUID | None = None,
+    build_stage_id: UUID | None = None,
+) -> tuple[StockEntry, StockEntry]:
+    """Write the matched ``move_out`` / ``move_in`` pair for one move.
+
+    Circular FK on `related_entry_id`: each row's FK points at the other.
+    PG enforces FK on INSERT (constraints aren't DEFERRABLE in the schema),
+    and SA's topological sort can't break the cycle, so `add_all([out, in])`
+    always violates one direction. Fix is the classic three-step write under
+    a savepoint so the back-pointer update commits atomically with the
+    inserts and an outside transaction never observes a dangling
+    back-pointer (BE2-007).
+
+    `build_id` / `build_stage_id` are set only by kitting (Track B3), which
+    is a build-driven move; they put the kit's relocation rows on
+    `GET /api/builds/{id}/activity` next to the build's own consume rows.
+    """
+    # Pre-assign UUIDs so the two rows can reference each other.
     out_id = uuid.uuid4()
     in_id = uuid.uuid4()
+    now = utcnow()
+    with db.begin_nested():
+        out_entry = StockEntry(
+            id=out_id,
+            workspace_id=workspace_id,
+            part_id=part_id,
+            lot_id=source_lot_id,
+            storage_location_id=source_storage_location_id,
+            quantity_delta=-quantity,
+            status="on_hand",
+            operation_type="move_out",
+            related_entry_id=None,  # set after the IN row exists
+            build_id=build_id,
+            build_stage_id=build_stage_id,
+            comments=comments,
+            occurred_at=now,
+            created_by=user_id,
+        )
+        db.add(out_entry)
+        db.flush()
+        in_entry = StockEntry(
+            id=in_id,
+            workspace_id=workspace_id,
+            part_id=part_id,
+            lot_id=dest_lot_id,
+            storage_location_id=dest_storage_location_id,
+            quantity_delta=quantity,
+            status="on_hand",
+            operation_type="move_in",
+            related_entry_id=out_id,
+            build_id=build_id,
+            build_stage_id=build_stage_id,
+            comments=comments,
+            occurred_at=now,
+            created_by=user_id,
+        )
+        db.add(in_entry)
+        db.flush()
+        out_entry.related_entry_id = in_id
+        db.flush()
+    return out_entry, in_entry
 
-    # lot for the moved-in side
-    dest_lot_id = payload.source_lot_id
+
+def move_quantity(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    user_id: UUID | None,
+    part_id: UUID,
+    quantity: Decimal,
+    source_storage_location_id: UUID | None,
+    source_lot_id: UUID | None,
+    destination_storage_location_id: UUID,
+    comments: str | None = None,
+    build_id: UUID | None = None,
+    build_stage_id: UUID | None = None,
+) -> tuple[StockEntry, StockEntry]:
+    """Move `quantity` of one part between locations, Decimal end-to-end.
+
+    The schema-free sibling of `move_stock`, for in-process callers that
+    already hold `Decimal` quantities — kitting (Track B3) is the first.
+    Routing through `MoveStockIn` instead would push every quantity through
+    an `int` pydantic field, which is precisely the truncating coercion
+    alembic 0074 widened the columns to avoid.
+
+    No `split_lot`: a kit relocates a bag, it does not subdivide a lot, so
+    the moved rows keep the source lot id and the lot's cost basis stays
+    with the physical material.
+    """
+    _prepare_move(
+        db,
+        workspace_id=workspace_id,
+        part_id=part_id,
+        quantity=quantity,
+        source_storage_location_id=source_storage_location_id,
+        source_lot_id=source_lot_id,
+        destination_storage_location_id=destination_storage_location_id,
+    )
+    return _write_move_pair(
+        db,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        part_id=part_id,
+        quantity=quantity,
+        source_storage_location_id=source_storage_location_id,
+        source_lot_id=source_lot_id,
+        dest_storage_location_id=destination_storage_location_id,
+        dest_lot_id=source_lot_id,
+        comments=comments,
+        build_id=build_id,
+        build_stage_id=build_stage_id,
+    )
+
+
+def move_stock(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    user_id: UUID | None,
+    payload: MoveStockIn,
+) -> tuple[StockEntry, StockEntry]:
+    quantity = Decimal(payload.quantity)
+    dest = _prepare_move(
+        db,
+        workspace_id=workspace_id,
+        part_id=payload.part_id,
+        quantity=quantity,
+        source_storage_location_id=payload.source_storage_location_id,
+        source_lot_id=payload.source_lot_id,
+        destination_storage_location_id=payload.destination_storage_location_id,
+    )
+
     if payload.split_lot and payload.source_lot_id is not None:
-        src_lot = db.get(Lot, payload.source_lot_id)
-        if not _belongs(src_lot, workspace_id):
-            raise StockError("source lot not found")
         # Wrap the lot creation + the matched stock writes in a savepoint
         # so a downstream raise (e.g. the trigger noticing inconsistency
         # on the IN row) cleans up the dangling lot rather than leaving
         # an orphan parented at `src_lot.id`.
+        src_lot = db.get(Lot, payload.source_lot_id)
+        if not _belongs(src_lot, workspace_id):
+            raise StockError("source lot not found")
         with db.begin_nested():
             new_lot = Lot(
                 workspace_id=workspace_id,
-                part_id=part.id,
+                part_id=payload.part_id,
                 name=f"{src_lot.name or 'lot'}-split",
                 parent_lot_id=src_lot.id,
                 description=src_lot.description,
@@ -684,88 +833,32 @@ def move_stock(
             )
             db.add(new_lot)
             db.flush()
-            dest_lot_id = new_lot.id
-
-            # Same circular-FK three-step write as the non-split path
-            # below; FK on `related_entry_id` is enforced at INSERT time.
-            out_entry = StockEntry(
-                id=out_id,
+            pair = _write_move_pair(
+                db,
                 workspace_id=workspace_id,
-                part_id=part.id,
-                lot_id=payload.source_lot_id,
-                storage_location_id=payload.source_storage_location_id,
-                quantity_delta=-payload.quantity,
-                status="on_hand",
-                operation_type="move_out",
-                related_entry_id=None,
+                user_id=user_id,
+                part_id=payload.part_id,
+                quantity=quantity,
+                source_storage_location_id=payload.source_storage_location_id,
+                source_lot_id=payload.source_lot_id,
+                dest_storage_location_id=dest.id,
+                dest_lot_id=new_lot.id,
                 comments=payload.comments,
-                occurred_at=utcnow(),
-                created_by=user_id,
             )
-            db.add(out_entry)
-            db.flush()
-            in_entry = StockEntry(
-                id=in_id,
-                workspace_id=workspace_id,
-                part_id=part.id,
-                lot_id=dest_lot_id,
-                storage_location_id=dest.id,
-                quantity_delta=payload.quantity,
-                status="on_hand",
-                operation_type="move_in",
-                related_entry_id=out_id,
-                comments=payload.comments,
-                occurred_at=utcnow(),
-                created_by=user_id,
-            )
-            db.add(in_entry)
-            db.flush()
-            out_entry.related_entry_id = in_id
-            db.flush()
-        return out_entry, in_entry
+        return pair
 
-    # Circular FK on `related_entry_id`: each row's FK points at the
-    # other. PG enforces FK on INSERT (constraints aren't DEFERRABLE in
-    # the schema), and SA's topological sort can't break the cycle, so
-    # `add_all([out, in])` always violates one direction. Fix is the
-    # classic three-step write under a savepoint so the back-pointer
-    # update commits atomically with the inserts.
-    with db.begin_nested():
-        out_entry = StockEntry(
-            id=out_id,
-            workspace_id=workspace_id,
-            part_id=part.id,
-            lot_id=payload.source_lot_id,
-            storage_location_id=payload.source_storage_location_id,
-            quantity_delta=-payload.quantity,
-            status="on_hand",
-            operation_type="move_out",
-            related_entry_id=None,  # set after the IN row exists
-            comments=payload.comments,
-            occurred_at=utcnow(),
-            created_by=user_id,
-        )
-        db.add(out_entry)
-        db.flush()
-        in_entry = StockEntry(
-            id=in_id,
-            workspace_id=workspace_id,
-            part_id=part.id,
-            lot_id=dest_lot_id,
-            storage_location_id=dest.id,
-            quantity_delta=payload.quantity,
-            status="on_hand",
-            operation_type="move_in",
-            related_entry_id=out_id,
-            comments=payload.comments,
-            occurred_at=utcnow(),
-            created_by=user_id,
-        )
-        db.add(in_entry)
-        db.flush()
-        out_entry.related_entry_id = in_id
-        db.flush()
-    return out_entry, in_entry
+    return _write_move_pair(
+        db,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        part_id=payload.part_id,
+        quantity=quantity,
+        source_storage_location_id=payload.source_storage_location_id,
+        source_lot_id=payload.source_lot_id,
+        dest_storage_location_id=dest.id,
+        dest_lot_id=payload.source_lot_id,
+        comments=payload.comments,
+    )
 
 
 def adjust_stock(

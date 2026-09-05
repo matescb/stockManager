@@ -210,6 +210,7 @@ from app.api.routes import (
     audit,
     auth,
     bom_presets,
+    build_kits,
     build_stages,
     builds,
     catalog,
@@ -579,6 +580,11 @@ app.include_router(builds.router, prefix="/api/builds", tags=["builds"], depende
 # has a `/stages` segment.
 app.include_router(
     build_stages.router, prefix="/api/builds", tags=["builds"], dependencies=_member_gate
+)
+# Kitting (Track B3) — same prefix, same split rationale. Every path here
+# ends in `/kit` or `/kit-plan`, so there is no overlap with the two above.
+app.include_router(
+    build_kits.router, prefix="/api/builds", tags=["builds"], dependencies=_member_gate
 )
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"], dependencies=_member_gate)
 app.include_router(bom_presets.router, prefix="/api/bom-presets", tags=["bom_presets"], dependencies=_member_gate)

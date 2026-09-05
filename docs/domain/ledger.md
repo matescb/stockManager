@@ -33,8 +33,8 @@ The full vocabulary, where it's emitted, and what it means for the bucket sum.
 |---|---|---|---|
 | `add` | `stock/service.py::add_stock` (`backend/app/domain/stock/service.py:481`) | + | Manual stock-in. Optionally creates a Lot. |
 | `remove` | `stock/service.py::remove_stock` (`backend/app/domain/stock/service.py:533`) | − | Manual consume. Validates `payload.quantity <= bucket sum`. |
-| `move_out` | `stock/service.py::move_stock` (`backend/app/domain/stock/service.py:642,685`) | − | Source side of a move. |
-| `move_in` | `stock/service.py::move_stock` (`backend/app/domain/stock/service.py:658,701`) | + | Destination side. `related_entry_id` ↔ matching `move_out`. |
+| `move_out` | `stock/service.py::_write_move_pair`, via `move_stock` / `move_quantity` | − | Source side of a move. |
+| `move_in` | `stock/service.py::_write_move_pair`, via `move_stock` / `move_quantity` | + | Destination side. `related_entry_id` ↔ matching `move_out`. |
 | `adjust` | `stock/service.py::adjust_stock` (`backend/app/domain/stock/service.py:757`) | + or − | Cycle-count correction; writes `actual_quantity − current_bucket_sum` (`backend/app/domain/stock/service.py:747`). Skips writing when delta is 0. |
 | `receive` | `orders/service.py::receive` (`backend/app/domain/orders/service.py:156`) | + | Order-receive. Always creates a new Lot. See [orders-and-receive](orders-and-receive.md). |
 | `reserve` | `builds/service.py::apply_reservations` (`backend/app/domain/builds/service.py:186`) | + | `status='reserved'`. Ties up stock for a planned build. |
@@ -43,6 +43,8 @@ The full vocabulary, where it's emitted, and what it means for the bucket sum.
 | `build_produce` | `builds/service.py::consume` (`backend/app/domain/builds/service.py:465`) | + | Sub-assembly output, when `project.associated_subassembly_part_id` is set. Always creates an output Lot. |
 
 There is no enum on the column — the values are strings written by the services above. New values must be added at the call site **and** documented here.
+
+Kitting (Track B3) writes **no new verb**: a kit is a move, so it emits ordinary `move_out` / `move_in` pairs. The only thing that marks them as a kit is `build_id` (and `build_stage_id` for a per-stage kit), which is otherwise NULL on a move — that is what puts a kit on `GET /api/builds/{id}/activity` beside the build's own consume rows. See [builds-and-bom](builds-and-bom.md#kitting).
 
 ## Service entry points
 
@@ -86,7 +88,7 @@ The DB-side fall-back is the `0013` trigger (`backend/alembic/versions/0013_stoc
 
 ## Move semantics — circular FK
 
-`move_stock` writes two rows where each row's `related_entry_id` references the other (`backend/app/domain/stock/service.py:599-711`). PostgreSQL enforces FKs at INSERT (constraints aren't `DEFERRABLE`) so a single `add_all` flush always violates one direction. The implementation:
+`_write_move_pair` writes two rows where each row's `related_entry_id` references the other. PostgreSQL enforces FKs at INSERT (constraints aren't `DEFERRABLE`) so a single `add_all` flush always violates one direction. The implementation:
 
 1. Open a `db.begin_nested()` savepoint.
 2. INSERT `move_out` with `related_entry_id=None`.
@@ -96,7 +98,16 @@ The DB-side fall-back is the `0013` trigger (`backend/alembic/versions/0013_stoc
 
 The savepoint isolates the partial state so an outside transaction never observes a dangling back-pointer (BE2-007).
 
-When `split_lot=True` and a `source_lot_id` is given, the same savepoint also creates a child `Lot` (`source_type='split'`, `parent_lot_id=src_lot.id`); the destination row points at the new lot id (`backend/app/domain/stock/service.py:604-668`).
+When `split_lot=True` and a `source_lot_id` is given, the same savepoint also creates a child `Lot` (`source_type='split'`, `parent_lot_id=src_lot.id`); the destination row points at the new lot id.
+
+Two callers share that pair-writer:
+
+| Entry point | Quantity type | Used by |
+|---|---|---|
+| `move_stock(payload: MoveStockIn)` | `int` (pydantic) | `POST /api/stock/move`, `POST /api/lots/{id}/move`, the MCP move tool. |
+| `move_quantity(..., quantity: Decimal, build_id=…, build_stage_id=…)` | `Decimal` | Kitting. In-process only — routing a kit through `MoveStockIn` would push every quantity through an `int` field, the truncating coercion alembic 0074 widened the columns to avoid. No `split_lot`: a kit relocates a bag, it does not subdivide a lot. |
+
+Both call `_prepare_move` first, so the per-part advisory lock, the workspace checks on both ends, the bucket-matched availability check and `enforce_storage_constraints` on the destination have one implementation.
 
 ## Reservations
 
