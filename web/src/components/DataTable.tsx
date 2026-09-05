@@ -3,6 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { Rows3, Rows4 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useOptionalAuth } from "@/lib/authContext";
+import { formatQuantity, type FormatQuantityOptions } from "@/lib/format";
 
 // ---------------------------------------------------------------------
 // CSV-export helpers — extracted so they can be unit-tested without
@@ -87,6 +88,78 @@ export type Column<T> = {
   hidden?: boolean;
   align?: Align;
 };
+
+/**
+ * A column that shows a quantity with its unit while keeping sort,
+ * search and CSV export on the raw number.
+ *
+ * This exists because the obvious way to add a unit to a quantity column
+ * is to make the `accessor` return `"12.5 m"`, and that quietly breaks
+ * three things at once: `sorted` compares accessor values with `<` / `>`
+ * so `"10 m"` sorts before `"9 m"`; `defaultAlignFor` right-aligns only
+ * when the accessor is a `number`; and `cellText` puts the accessor
+ * straight into the CSV, where a spreadsheet wants a number. Splitting
+ * the two — numeric `accessor`, formatted `render` — keeps all three
+ * correct.
+ *
+ * The other trap is the opposite one: a `render` with **no** `accessor`
+ * exports an *empty* CSV cell (see `cellText`). Going through this
+ * factory makes both halves impossible to forget.
+ *
+ * ```ts
+ * quantityColumn<Part>({ key: "on_hand", header: "Stock", value: r => r.on_hand })
+ * quantityColumn<Row>({ key: "qty", header: "Qty", value: r => r.qty, unit: r => r.unit })
+ * // Styled: `render` receives the already-formatted text.
+ * quantityColumn<Row>({
+ *   key: "short_by", header: "Short by", value: r => r.short_by,
+ *   render: (text) => <span className="text-danger">{text}</span>,
+ * })
+ * ```
+ *
+ * Quantities are right-aligned by default: `defaultAlignFor` samples the
+ * first row, so a column whose first value happens to be null would
+ * otherwise left-align while the rest of the table right-aligns.
+ */
+export function quantityColumn<T>({
+  key,
+  header,
+  headerLabel,
+  value,
+  unit,
+  options,
+  render,
+  width,
+  hidden,
+  align = "right",
+}: {
+  key: string;
+  header: ReactNode;
+  headerLabel?: string;
+  /** The raw quantity. Drives sort, search and CSV — never format it here. */
+  value: (row: T) => number | null | undefined;
+  /** The row's unit code, when the wire carries one. */
+  unit?: (row: T) => string | null | undefined;
+  options?: FormatQuantityOptions;
+  /** Wrap the formatted text, e.g. to colour a shortfall red. */
+  render?: (formatted: string, row: T) => ReactNode;
+  width?: string;
+  hidden?: boolean;
+  align?: Align;
+}): Column<T> {
+  return {
+    key,
+    header,
+    headerLabel,
+    width,
+    hidden,
+    align,
+    accessor: value,
+    render: row => {
+      const formatted = formatQuantity(value(row), unit?.(row), options);
+      return render ? render(formatted, row) : formatted;
+    },
+  };
+}
 
 type Density = "comfortable" | "compact";
 

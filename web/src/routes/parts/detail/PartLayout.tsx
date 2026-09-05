@@ -2,6 +2,7 @@ import { Outlet, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
+import { formatQuantity } from "@/lib/format";
 import EntityHeader from "@/components/EntityHeader";
 import SubNav from "@/components/SubNav";
 import PrintLabelButton from "@/routes/labels/PrintLabelButton";
@@ -54,10 +55,10 @@ function PartLayoutQuery({ partId }: { partId: string }) {
   const onHand = part.on_hand ?? 0;
   const reserved = part.reserved ?? 0;
   const available = part.available ?? onHand - reserved;
-  const stats: { label: string; value: number; tone?: "danger" | "warning" | "success" | "default" }[] = [
+  const stats: { label: string; value: string; tone?: "danger" | "warning" | "success" | "default" }[] = [
     {
       label: "On hand",
-      value: onHand,
+      value: formatQuantity(onHand),
       tone:
         lowThreshold != null
           ? onHand < lowThreshold
@@ -69,10 +70,10 @@ function PartLayoutQuery({ partId }: { partId: string }) {
     },
   ];
   if (reserved > 0) {
-    stats.push({ label: "Reserved", value: reserved, tone: "warning" });
+    stats.push({ label: "Reserved", value: formatQuantity(reserved), tone: "warning" });
     stats.push({
       label: "Available",
-      value: available,
+      value: formatQuantity(available),
       tone:
         lowThreshold != null
           ? available < lowThreshold
@@ -81,7 +82,7 @@ function PartLayoutQuery({ partId }: { partId: string }) {
           : "default",
     });
   }
-  if (lowThreshold != null) stats.push({ label: "Threshold", value: lowThreshold });
+  if (lowThreshold != null) stats.push({ label: "Threshold", value: formatQuantity(lowThreshold) });
 
   return (
     <div>

@@ -9,7 +9,8 @@ import { stockReportKeys, useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import { OrderReceiveResultSchema, OrderReceiveSchema } from "@/lib/schemas";
 import EntityHeader from "@/components/EntityHeader";
-import { DataTable } from "@/components/DataTable";
+import { DataTable, quantityColumn } from "@/components/DataTable";
+import { formatQuantity, formatQuantityPhrase } from "@/lib/format";
 import AttachmentsPanel from "@/components/AttachmentsPanel";
 import ActivityTimeline from "@/components/ActivityTimeline";
 import { useConfirm } from "@/components/ConfirmDialog";
@@ -120,7 +121,7 @@ export default function OrderDetail() {
       for (const queryKey of stockReportKeys(workspaceId)) {
         qc.invalidateQueries({ queryKey });
       }
-      toast.success(`Received ${totalQty} unit${totalQty === 1 ? "" : "s"}.`);
+      toast.success(`Received ${formatQuantityPhrase(totalQty)}.`);
     },
     onError: (e) => {
       const msg = receiveErrorMessage(e);
@@ -206,11 +207,11 @@ export default function OrderDetail() {
           </span>
         }
         stats={[
-          { label: "Ordered",     value: order.totals.ordered },
-          { label: "Received",    value: order.totals.received, tone: order.status === "received" ? "success" : "default" },
+          { label: "Ordered",     value: formatQuantity(order.totals.ordered) },
+          { label: "Received",    value: formatQuantity(order.totals.received), tone: order.status === "received" ? "success" : "default" },
           {
             label: "Outstanding",
-            value: order.totals.ordered - order.totals.received,
+            value: formatQuantity(order.totals.ordered - order.totals.received),
             tone: order.totals.received < order.totals.ordered ? "warning" : "default",
           },
           ...(order.currency ? [{ label: "Currency", value: order.currency } as const] : []),
@@ -280,8 +281,8 @@ export default function OrderDetail() {
           empty="No lines yet."
           columns={[
             { key: "part", header: "Part", accessor: r => r.part_id ? (partsById.get(r.part_id)?.name ?? "") : (r.name ?? "") },
-            { key: "qty", header: "Ordered", accessor: r => r.quantity_ordered, width: "90px" },
-            { key: "got", header: "Received", accessor: r => r.quantity_received, width: "90px" },
+            quantityColumn<OrderEntry>({ key: "qty", header: "Ordered", value: r => r.quantity_ordered, width: "90px" }),
+            quantityColumn<OrderEntry>({ key: "got", header: "Received", value: r => r.quantity_received, width: "90px" }),
             {
               key: "price", header: "Unit price",
               accessor: r => r.unit_price ?? "",
@@ -331,7 +332,7 @@ export default function OrderDetail() {
                       {part?.name ?? e.part_id}
                       {part?.serialized && <span className="pill ml-2 bg-warning/20 text-warning">serialized</span>}
                     </td>
-                    <td className="tabular-nums">{outstanding}</td>
+                    <td className="tabular-nums">{formatQuantity(outstanding)}</td>
                     <td>
                       <input
                         className="input"

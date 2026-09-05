@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
 import { formatDate } from "@/lib/format";
 import type { Lot, Part } from "@/types";
-import { DataTable } from "@/components/DataTable";
+import { DataTable, quantityColumn } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import PartsTopNav from "@/components/PartsTopNav";
 import QueryStateBoundary from "@/components/QueryStateBoundary";
@@ -37,7 +37,7 @@ export default function LotsList() {
         columns={[
           { key: "name", header: "Lot", accessor: r => r.name ?? r.id },
           { key: "part", header: "Part", accessor: r => partName.get(r.part_id) || r.part_id },
-          { key: "quantity", header: "On hand", accessor: r => r.current_quantity ?? 0 },
+          quantityColumn<Lot>({ key: "quantity", header: "On hand", value: r => r.current_quantity ?? 0 }),
           { key: "unit_cost", header: "Unit cost", accessor: r => r.purchase_unit_cost ?? "" },
           { key: "currency", header: "Cur", accessor: r => r.purchase_currency ?? "" },
           { key: "created_at", header: "Created", accessor: r => r.created_at, render: r => formatDate(r.created_at) },

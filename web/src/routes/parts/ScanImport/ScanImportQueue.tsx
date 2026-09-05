@@ -26,6 +26,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { bagLotName, bagComments, type BagCode } from "@/lib/bagCode";
+import { formatQuantity, formatQuantityPhrase } from "@/lib/format";
 import { isSafeHttpOrSameOriginUrl, isSafeHttpUrl } from "@/lib/url";
 import { providerDisplayName, manufacturerMatches, type LookupState, type Row } from "./types";
 
@@ -52,7 +53,7 @@ function BagRescanCard({
         <div>
           Recognised — this bag was imported earlier
           {quantity > 0 && (
-            <> (bag had qty <span className="font-mono">{quantity}</span>)</>
+            <> (bag had qty <span className="font-mono">{formatQuantity(quantity)}</span>)</>
           )}
           .
         </div>
@@ -99,9 +100,9 @@ function BagRescanCard({
             className="btn-primary btn-sm inline-flex items-center gap-1"
             onClick={() => onQuickRemove(qty)}
             disabled={cap <= 0 || qty <= 0 || qty > cap}
-            title={`Remove ${qty} unit${qty === 1 ? "" : "s"} from this lot`}
+            title={`Remove ${formatQuantityPhrase(qty)} from this lot`}
           >
-            <Minus size={12} /> Remove {qty}
+            <Minus size={12} /> Remove {formatQuantity(qty)}
           </button>
         </div>
       </div>
@@ -235,7 +236,7 @@ function FoundDetails({
           onChange={e => onQuantity(parseInt(e.target.value, 10) || 0)}
         />
         <span className="text-xs text-muted">
-          {qty === 0 ? "no initial stock entry" : `lands ${qty} on-hand at import`}
+          {qty === 0 ? "no initial stock entry" : `lands ${formatQuantity(qty)} on-hand at import`}
         </span>
       </div>
     </div>
@@ -305,7 +306,7 @@ function ScanCard({
           <div className="flex items-start gap-2 text-sm text-success">
             <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
             <div>
-              Removed {row.state.quantity} from this bag.{" "}
+              Removed {formatQuantity(row.state.quantity)} from this bag.{" "}
               <button
                 type="button"
                 className="text-accent hover:underline text-xs ml-1"

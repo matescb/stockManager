@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { BarChart3 } from "lucide-react";
 import { PoweredByTrustedParts } from "@/components/PoweredByTrustedParts";
 import { SourcingSourceLabel } from "@/components/SourcingSourceLabel";
-import { DataTable } from "@/components/DataTable";
+import { DataTable, quantityColumn } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import { api, ApiError } from "@/lib/api";
 import { formatDateTime, formatMoney } from "@/lib/format";
@@ -170,7 +170,7 @@ export default function ReplenishmentCostReport() {
             render: row => <Link className="text-accent" to={`/parts/${row.part_id}/info`}>{row.name}</Link>,
           },
           { key: "mpn", header: "MPN", accessor: row => row.mpn },
-          { key: "on_hand", header: "On hand", accessor: row => row.on_hand, width: "90px" },
+          quantityColumn<ReplenishmentCostRow>({ key: "on_hand", header: "On hand", value: row => row.on_hand, width: "90px" }),
           { key: "currency", header: "Currency", accessor: row => row.currency ?? "-", width: "100px" },
           {
             key: "historical_cost",

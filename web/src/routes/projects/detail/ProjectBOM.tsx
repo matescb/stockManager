@@ -9,7 +9,7 @@ import { useAuth } from "@/lib/auth";
 import { isSafeHttpOrSameOriginUrl } from "@/lib/url";
 import type { Part, ProjectEntry } from "@/types";
 import { useState } from "react";
-import { DataTable } from "@/components/DataTable";
+import { DataTable, quantityColumn } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import QueryStateBoundary from "@/components/QueryStateBoundary";
 import AddPartFromLibraryModal from "./AddPartFromLibraryModal";
@@ -293,7 +293,7 @@ export default function ProjectBOM() {
           },
           { key: "mpn", header: "MPN", accessor: r => r.part_id ? partsById.get(r.part_id)?.mpn ?? "" : "" },
           { key: "manufacturer", header: "Manufacturer", accessor: r => r.part_id ? partsById.get(r.part_id)?.manufacturer ?? "" : "" },
-          { key: "qty", header: "Qty", accessor: r => r.quantity, width: "70px" },
+          quantityColumn<ProjectEntry>({ key: "qty", header: "Qty", value: r => r.quantity, width: "70px" }),
           {
             key: "attrition",
             header: "Attrition %",

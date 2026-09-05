@@ -21,6 +21,7 @@ What you need to navigate `web/src/`. Conventions are sketched in [`CLAUDE.md`](
 | [api-layer](api-layer.md) | `lib/api.ts` (envelope unwrap, ApiError), Zod schemas, `categoryToUserMessage` |
 | [tanstack-patterns](tanstack-patterns.md) | `["ws", wsId, …]` keys, invalidation helpers, `useApiMutation` |
 | [components](components.md) | DataTable + reusable component catalog |
+| [quantities](quantities.md) | `formatQuantity`, unit display, the DataTable render/accessor split |
 | [parts](parts.md) | Part-detail flows that span tabs and modals |
 | [projects](projects.md) | Project-detail flows, including Source BOM |
 | [reports](reports.md) | Report routes, including BOM buyability and replenishment cost |

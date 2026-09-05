@@ -221,3 +221,37 @@ def test_stock_reads_stay_workspace_isolated(authed_client, client):
 
     # ...and A still sees its own.
     assert _on_hand(authed_client, part_a) == 42
+
+
+def test_activity_events_carry_the_ledger_row_unit_stamp(authed_client):
+    """The activity feed serialises `stock_entries.unit`, not the part's
+    current `unit_of_measure`.
+
+    Step 4 of the units-of-measure track needs a unit next to every
+    quantity it renders, and the timeline is the one surface where taking
+    it from the part would be actively wrong: a timeline is a list of
+    historical facts, so re-resolving the unit at read time would relabel
+    every past entry the moment a part's unit changed. That is exactly
+    what the per-row stamp exists to prevent (`domain/_quantity.py`).
+
+    `DEFAULT_UNIT` is still the only value ever written, so this asserts
+    the field is present and correct rather than that it varies.
+    """
+    part_id = create_part(authed_client, "Hookup wire")
+    add_stock(authed_client, part_id, 10)
+    r = authed_client.post(
+        "/api/stock/remove", json={"part_id": part_id, "quantity": 4}
+    )
+    assert r.status_code == 200, r.text
+
+    events = authed_client.get(f"/api/parts/{part_id}/activity").json()["data"]["events"]
+
+    stock_events = [e for e in events if e["kind"] == "stock"]
+    assert stock_events
+    assert all(e["unit"] == "pcs" for e in stock_events)
+
+    # Entity events (part_created, order_updated, …) have no ledger row and
+    # so no unit. The key is still present so the client can rely on it.
+    entity_events = [e for e in events if e["kind"] != "stock"]
+    assert entity_events
+    assert all(e["unit"] is None for e in entity_events)

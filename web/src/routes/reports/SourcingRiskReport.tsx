@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, BarChart3 } from "lucide-react";
-import { DataTable } from "@/components/DataTable";
+import { DataTable, quantityColumn } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import { PoweredByTrustedParts } from "@/components/PoweredByTrustedParts";
 import { SourcingSourceLabel } from "@/components/SourcingSourceLabel";
@@ -232,7 +232,7 @@ export default function SourcingRiskReport() {
               render: r => <Link className="text-accent" to={`/parts/${r.part_id}/info`}>{r.name}</Link>,
             },
             { key: "mpn", header: "MPN", accessor: r => r.mpn },
-            { key: "on_hand", header: "On hand", accessor: r => r.on_hand, width: "90px" },
+            quantityColumn<SourcingRiskRow>({ key: "on_hand", header: "On hand", value: r => r.on_hand, width: "90px" }),
             {
               key: "distributors",
               header: "Stocked distributors",

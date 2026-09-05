@@ -8,6 +8,7 @@ import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import { InlineQueryError } from "@/components/QueryStateBoundary";
 import { isSafeHttpOrSameOriginUrl } from "@/lib/url";
+import { formatQuantity } from "@/lib/format";
 import type { CustomFieldRow, Part } from "@/types";
 import { providerLabel } from "@/lib/providers";
 
@@ -149,9 +150,9 @@ export default function PartInfo() {
       </div>
       <div className="card p-4">
         <h3 className="text-sm uppercase tracking-wider text-muted mb-2">Stock</h3>
-        <Field label="On hand" value={String(part.on_hand ?? 0)} />
-        <Field label="Low-stock threshold" value={part.low_stock_report_quantity != null ? String(part.low_stock_report_quantity) : null} />
-        <Field label="Attrition" value={`${part.attrition_percentage}% (min ${part.attrition_min_quantity})`} />
+        <Field label="On hand" value={formatQuantity(part.on_hand ?? 0)} />
+        <Field label="Low-stock threshold" value={part.low_stock_report_quantity != null ? formatQuantity(part.low_stock_report_quantity) : null} />
+        <Field label="Attrition" value={`${part.attrition_percentage}% (min ${formatQuantity(part.attrition_min_quantity)})`} />
       </div>
       {safeDatasheetUrl && (
         <div className="card p-4 col-span-2">

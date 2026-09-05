@@ -40,7 +40,7 @@ from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.core.errors import ErrorCodes, raise_http
-from app.domain._quantity import quantity_out
+from app.domain._quantity import DEFAULT_UNIT, quantity_out
 from app.domain.stock.models import StockEntry
 from app.domain.users.models import User
 
@@ -156,6 +156,12 @@ def _stock_event(row: StockEntry, user: User | None) -> dict:
         "id": str(row.id),
         "operation_type": row.operation_type,
         "quantity_delta": quantity_out(row.quantity_delta),
+        # The ledger row's own immutable unit stamp, not the part's current
+        # `unit_of_measure` (alembic 0074, `domain/_quantity.py`). A timeline
+        # is a list of historical facts, so it is the one surface where
+        # resolving the unit at read time would be actively wrong: flipping a
+        # part from `pcs` to `m` would retroactively relabel every past entry.
+        "unit": row.unit or DEFAULT_UNIT,
         "user": _user_dict(user),
         "occurred_at": row.occurred_at.isoformat(),
         "comments": row.comments,
@@ -179,6 +185,7 @@ def _entity_event(
         "id": None,
         "operation_type": None,
         "quantity_delta": None,
+        "unit": None,
         "user": _user_dict(user),
         "occurred_at": occurred_at.isoformat(),
         "comments": None,

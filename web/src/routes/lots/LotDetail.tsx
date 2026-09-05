@@ -4,7 +4,7 @@ import { useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useWsKey, lotMutationKeys } from "@/lib/queryKeys";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, formatQuantity } from "@/lib/format";
 import EntityHeader from "@/components/EntityHeader";
 import SubNav from "@/components/SubNav";
 import PrintLabelButton from "@/routes/labels/PrintLabelButton";
@@ -49,9 +49,9 @@ export function LotInfo() {
   if (!data) return null;
   return (
     <div className="card p-4 max-w-2xl space-y-2 text-sm">
-      <div><span className="text-muted">Current quantity:</span> <span className="tabular-nums">{data.current_quantity ?? 0}</span></div>
+      <div><span className="text-muted">Current quantity:</span> <span className="tabular-nums">{formatQuantity(data.current_quantity ?? 0)}</span></div>
       <div><span className="text-muted">Source:</span> {data.source_type}</div>
-      <div><span className="text-muted">Purchase qty:</span> {data.purchase_quantity ?? "—"}</div>
+      <div><span className="text-muted">Purchase qty:</span> {formatQuantity(data.purchase_quantity, undefined, { fallback: "—" })}</div>
       <div><span className="text-muted">Unit cost:</span> {data.purchase_unit_cost ?? "—"} {data.purchase_currency ?? ""}</div>
       <div><span className="text-muted">Expires:</span> {data.expiration_date ?? "—"}</div>
       <div><span className="text-muted">Parent lot:</span> {data.parent_lot_id ?? "—"}</div>
@@ -163,7 +163,7 @@ export function LotHistory() {
             <tr key={e.id}>
               <td>{formatDateTime(e.occurred_at)}</td>
               <td>{e.operation_type}</td>
-              <td className={e.quantity_delta < 0 ? "text-danger" : "text-accent"}>{e.quantity_delta > 0 ? "+" : ""}{e.quantity_delta}</td>
+              <td className={e.quantity_delta < 0 ? "text-danger" : "text-accent"}>{e.quantity_delta > 0 ? "+" : ""}{formatQuantity(e.quantity_delta)}</td>
               <td className="font-mono text-xs">{e.storage_location_id ?? "—"}</td>
               <td>{e.comments ?? ""}</td>
             </tr>

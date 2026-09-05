@@ -15,7 +15,12 @@ import {
 import type { ReactNode } from "react";
 import { api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
-import { formatDate, formatDateTime } from "@/lib/format";
+import {
+  formatDate,
+  formatDateTime,
+  formatQuantity,
+  formatQuantityPhrase,
+} from "@/lib/format";
 
 type ActivityKind =
   | "stock"
@@ -43,6 +48,13 @@ export type ActivityEntry = {
   kind: ActivityKind;
   operation_type: OperationType;
   quantity_delta: number | null;
+  /**
+   * The ledger row's own unit stamp — not the part's current
+   * `unit_of_measure`. A timeline is a list of historical facts, so
+   * re-resolving the unit at read time would relabel history the moment
+   * a part's unit changed. `null` on non-stock entries.
+   */
+  unit: string | null;
   user: { id: string; name: string } | null;
   occurred_at: string;
   comments: string | null;
@@ -105,7 +117,14 @@ function iconFor(e: ActivityEntry): ReactNode {
   }
 }
 
-function summary(e: ActivityEntry): string {
+/**
+ * One-line description of an activity entry.
+ *
+ * Exported so it can be unit-tested without mounting the timeline (the
+ * component brings a QueryClient and an infinite-scroll fetch with it) —
+ * same rationale as `DataTable`'s extracted CSV helpers.
+ */
+export function activitySummary(e: ActivityEntry): string {
   if (e.kind === "part_created") return "Part created";
   if (e.kind === "part_updated") return "Part updated";
   if (e.kind === "order_created") return "Order created";
@@ -114,29 +133,32 @@ function summary(e: ActivityEntry): string {
   if (e.kind === "build_updated") return "Build updated";
 
   const q = e.quantity_delta;
-  const abs = q != null ? Math.abs(q) : null;
-  const unit = abs === 1 ? "unit" : "units";
+  // `formatQuantityPhrase` keeps the English noun ("12 units") while the
+  // part is counted in the default `pcs`, and swaps it for the unit code
+  // ("12.5 m") once the part is measured — "12.5 metres units" is not a
+  // sentence. Both render the number exactly; neither truncates.
+  const amount = q != null ? formatQuantityPhrase(Math.abs(q), e.unit) : "";
   switch (e.operation_type) {
     case "add":
-      return `Added ${abs} ${unit}`;
+      return `Added ${amount}`;
     case "remove":
-      return `Removed ${abs} ${unit}`;
+      return `Removed ${amount}`;
     case "move_out":
-      return `Moved out ${abs} ${unit}`;
+      return `Moved out ${amount}`;
     case "move_in":
-      return `Moved in ${abs} ${unit}`;
+      return `Moved in ${amount}`;
     case "adjust":
-      return `Adjusted by ${q != null && q > 0 ? "+" : ""}${q ?? 0}`;
+      return `Adjusted by ${q != null && q > 0 ? "+" : ""}${formatQuantity(q ?? 0, e.unit)}`;
     case "receive":
-      return `Received ${abs} ${unit}`;
+      return `Received ${amount}`;
     case "build_consume":
-      return `Consumed ${abs} ${unit} for build`;
+      return `Consumed ${amount} for build`;
     case "build_produce":
-      return `Build produced ${abs} ${unit}`;
+      return `Build produced ${amount}`;
     case "reserve":
-      return `Reserved ${abs} ${unit}`;
+      return `Reserved ${amount}`;
     case "release":
-      return `Released ${abs} ${unit}`;
+      return `Released ${amount}`;
     default:
       return e.operation_type ?? "Stock event";
   }
@@ -202,7 +224,7 @@ export default function ActivityTimeline({ endpoint }: Props) {
                   {iconFor(e)}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate">{summary(e)}</div>
+                  <div className="truncate">{activitySummary(e)}</div>
                   {e.comments && (
                     <div className="text-xs text-muted truncate">{e.comments}</div>
                   )}

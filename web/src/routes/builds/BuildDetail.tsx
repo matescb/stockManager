@@ -6,7 +6,7 @@ import { api, ApiError } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
 import { stockReportKeys, useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, formatQuantity } from "@/lib/format";
 import EntityHeader from "@/components/EntityHeader";
 import AttachmentsPanel from "@/components/AttachmentsPanel";
 import ActivityTimeline from "@/components/ActivityTimeline";
@@ -199,7 +199,7 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
             {build.archived_at && <span className="pill ml-2 bg-danger/20 text-danger">archived</span>}
             {reservationsActive && reservedLines > 0 && (
               <span className="ml-2 text-xs text-muted">
-                {totalReserved} parts reserved across {reservedLines} line{reservedLines === 1 ? "" : "s"}
+                {formatQuantity(totalReserved)} parts reserved across {reservedLines} line{reservedLines === 1 ? "" : "s"}
               </span>
             )}
           </span>
@@ -208,7 +208,7 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
           { label: "Quantity", value: build.quantity },
           {
             label: "Total short",
-            value: shortage.reduce((s, r) => s + r.short_by, 0),
+            value: formatQuantity(shortage.reduce((s, r) => s + r.short_by, 0)),
             tone: shortage.some(r => r.short_by > 0) ? "danger" : "success",
           },
           {
@@ -264,10 +264,10 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
                   <td>{s.part_name}</td>
                   <td className="tabular-nums text-muted">{s.attrition_pct ? `${s.attrition_pct}%` : "—"}</td>
                   {/* `required` already includes the attrition-inflated, ceil-rounded qty. */}
-                  <td className="tabular-nums">{s.required}</td>
-                  <td className="tabular-nums">{s.available}</td>
-                  <td className="tabular-nums text-muted">{s.substitute_available}</td>
-                  <td className={`tabular-nums ${s.short_by ? "text-danger" : ""}`}>{s.short_by || "—"}</td>
+                  <td className="tabular-nums">{formatQuantity(s.required)}</td>
+                  <td className="tabular-nums">{formatQuantity(s.available)}</td>
+                  <td className="tabular-nums text-muted">{formatQuantity(s.substitute_available)}</td>
+                  <td className={`tabular-nums ${s.short_by ? "text-danger" : ""}`}>{s.short_by ? formatQuantity(s.short_by) : "—"}</td>
                 </tr>
               ))}
             </tbody>
@@ -352,7 +352,7 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
                     <tr key={e.id}>
                       <td>
                         <div className="font-medium">{partsById.get(e.part_id!)?.name ?? e.part_id}</div>
-                        <div className="text-xs text-muted">need {s?.required ?? "—"}</div>
+                        <div className="text-xs text-muted">need {formatQuantity(s?.required, undefined, { fallback: "—" })}</div>
                       </td>
                       <td colSpan={4}>
                         <button className="btn text-xs" onClick={() => addRow(e.id, e.part_id!)}>+ Add line</button>
@@ -365,7 +365,7 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
                     {idx === 0 ? (
                       <td rowSpan={rows.length}>
                         <div className="font-medium">{partsById.get(e.part_id!)?.name ?? e.part_id}</div>
-                        <div className="text-xs text-muted">need {s?.required ?? "—"}</div>
+                        <div className="text-xs text-muted">need {formatQuantity(s?.required, undefined, { fallback: "—" })}</div>
                       </td>
                     ) : null}
                     <td>

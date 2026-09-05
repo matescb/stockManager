@@ -22,6 +22,7 @@ import { api, ApiError } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
 import { stockReportKeys, useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
+import { formatQuantity, formatQuantityPhrase } from "@/lib/format";
 import type { Build, BuildStage, StorageLocation } from "@/types";
 
 type KitSource = {
@@ -105,11 +106,13 @@ export default function BuildKitPanel({ buildId, build, stages, storage, isEdita
       setErr(null);
       if (result.totals.short_lines > 0) {
         toast.warning(
-          `Kitted ${result.totals.moving} to ${result.storage_location_name} — ` +
-            `${result.totals.short_lines} line(s) short by ${result.totals.short_by}.`,
+          `Kitted ${formatQuantity(result.totals.moving)} to ${result.storage_location_name} — ` +
+            `${result.totals.short_lines} line(s) short by ${formatQuantity(result.totals.short_by)}.`,
         );
       } else {
-        toast.success(`Kitted ${result.totals.moving} to ${result.storage_location_name}.`);
+        toast.success(
+          `Kitted ${formatQuantity(result.totals.moving)} to ${result.storage_location_name}.`,
+        );
       }
     },
     onError: e => {
@@ -198,18 +201,18 @@ export default function BuildKitPanel({ buildId, build, stages, storage, isEdita
                   <td>{line.part_name}</td>
                   {/* Attrition-adjusted: this is `_required`, the same number
                       the shortage table above shows. */}
-                  <td className="tabular-nums">{line.required}</td>
-                  <td className="tabular-nums text-muted">{line.at_staging || "—"}</td>
-                  <td className="tabular-nums">{line.moving || "—"}</td>
+                  <td className="tabular-nums">{formatQuantity(line.required)}</td>
+                  <td className="tabular-nums text-muted">{line.at_staging ? formatQuantity(line.at_staging) : "—"}</td>
+                  <td className="tabular-nums">{line.moving ? formatQuantity(line.moving) : "—"}</td>
                   <td className="text-xs text-muted">
                     {line.sources.length === 0
                       ? "—"
                       : line.sources
-                          .map(s => `${s.storage_location_name ?? "unassigned"} (${s.quantity})`)
+                          .map(s => `${s.storage_location_name ?? "unassigned"} (${formatQuantity(s.quantity)})`)
                           .join(", ")}
                   </td>
                   <td className={`tabular-nums ${line.short_by ? "text-danger" : ""}`}>
-                    {line.short_by || "—"}
+                    {line.short_by ? formatQuantity(line.short_by) : "—"}
                   </td>
                 </tr>
               ))}
@@ -219,12 +222,12 @@ export default function BuildKitPanel({ buildId, build, stages, storage, isEdita
           <div className="mt-3 flex items-center justify-between">
             <div className="text-sm text-muted">
               {plan.totals.moving > 0
-                ? `${plan.totals.moving} unit(s) will move to ${plan.storage_location_name}.`
+                ? `${formatQuantityPhrase(plan.totals.moving)} will move to ${plan.storage_location_name}.`
                 : `Nothing left to move — ${plan.storage_location_name} is already stocked.`}
               {plan.totals.short_lines > 0 && (
                 <span className="text-danger">
                   {" "}
-                  {plan.totals.short_lines} line(s) short by {plan.totals.short_by}; the
+                  {plan.totals.short_lines} line(s) short by {formatQuantity(plan.totals.short_by)}; the
                   available stock still moves.
                 </span>
               )}

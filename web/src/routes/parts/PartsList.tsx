@@ -10,7 +10,7 @@ import type { Part } from "@/lib/schemas";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import { isSafeHttpOrSameOriginUrl } from "@/lib/url";
-import { DataTable } from "@/components/DataTable";
+import { DataTable, quantityColumn } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import PartsTopNav from "@/components/PartsTopNav";
 import { useConfirm } from "@/components/ConfirmDialog";
@@ -246,14 +246,19 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
                   accessor: (r) => (r.category_id ? categoryNames.get(r.category_id) ?? "" : ""),
                   hidden: true,
                 },
-                { key: "on_hand", header: "Stock", accessor: (r) => r.on_hand ?? 0, width: "80px" },
-                {
+                quantityColumn<Part>({
+                  key: "on_hand",
+                  header: "Stock",
+                  value: (r) => r.on_hand ?? 0,
+                  width: "80px",
+                }),
+                quantityColumn<Part>({
                   key: "reserved",
                   header: "Reserved",
-                  accessor: (r) => r.reserved ?? 0,
+                  value: (r) => r.reserved ?? 0,
                   width: "100px",
                   hidden: true,
-                },
+                }),
               ]}
             />
 
