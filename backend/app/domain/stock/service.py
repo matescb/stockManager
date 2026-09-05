@@ -298,6 +298,82 @@ def stock_summary_for_part(
     ]
 
 
+def bulk_stock_by_location(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    part_ids: list[UUID],
+    status: str = "on_hand",
+) -> dict[UUID, list[dict]]:
+    """Per-``(storage, lot, unit)`` on-hand breakdown for many parts, one query.
+
+    The many-parts sibling of :func:`stock_summary_for_part`, and the
+    roll-up the printable pick list is built on: an operator needs to know
+    *which shelf* to take a part from, which means the ledger has to be
+    grouped by ``(part_id, storage_location_id, lot_id, unit)`` rather than
+    summed per part. Doing that inside this module is the whole point —
+    "current stock is SUM(quantity_delta)" has exactly one home (ADR-0001,
+    CLAUDE.md's first hard invariant), so no caller ever grows its own
+    ``GROUP BY`` over ``stock_entries``.
+
+    Returns ``{part_id: [{storage_location_id, lot_id, unit, quantity}, …]}``.
+    Parts with no rows aren't keyed; buckets that net to zero (or below)
+    are dropped, because a shelf you'd take nothing from is not a stop on
+    the walk.
+
+    ``unit`` is part of the grouping key, not decoration. ``stock_entries``
+    carries its own immutable unit stamp precisely so a later edit to
+    ``parts.unit_of_measure`` cannot retroactively reinterpret history
+    (see ``domain/_quantity.py``); summing rows of different units into one
+    bucket and labelling the total with whatever the part says today would
+    be that same reinterpretation by another route. ``DEFAULT_UNIT`` is the
+    only value written today, so this splits nothing yet.
+
+    Each bucket's ``quantity`` is an exact ``Decimal`` via ``as_quantity``,
+    like every other roll-up in this module since step 2 of the
+    units-of-measure track. Route serialisers put it on the wire through
+    ``_quantity.quantity_out``.
+
+    Unlike :func:`stock_summary_for_part`, buckets at **or below** zero are
+    dropped rather than only the exact zeros: this feeds a pick list, and a
+    shelf you would take nothing from is not a stop on the walk.
+    """
+    if not part_ids:
+        return {}
+    rows = db.execute(
+        select(
+            StockEntry.part_id,
+            StockEntry.storage_location_id,
+            StockEntry.lot_id,
+            StockEntry.unit,
+            func.coalesce(func.sum(StockEntry.quantity_delta), 0).label("qty"),
+        )
+        .where(StockEntry.workspace_id == workspace_id)
+        .where(StockEntry.status == status)
+        .where(StockEntry.part_id.in_(part_ids))
+        .group_by(
+            StockEntry.part_id,
+            StockEntry.storage_location_id,
+            StockEntry.lot_id,
+            StockEntry.unit,
+        )
+    ).all()
+    out: dict[UUID, list[dict]] = {}
+    for part_id, storage_location_id, lot_id, unit, raw in rows:
+        quantity = as_quantity(raw)
+        if quantity <= QUANTITY_ZERO:
+            continue
+        out.setdefault(part_id, []).append(
+            {
+                "storage_location_id": storage_location_id,
+                "lot_id": lot_id,
+                "unit": unit,
+                "quantity": quantity,
+            }
+        )
+    return out
+
+
 def total_for_part(
     db: Session, *, workspace_id: UUID, part_id: UUID, status: str = "on_hand"
 ) -> Decimal:

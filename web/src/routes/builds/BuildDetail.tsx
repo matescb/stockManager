@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
@@ -224,6 +224,12 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
           <div className="flex gap-2">
             <PrintLabelButton entityType="build" entityId={build.id} entityName={build.name} />
             <SourceBomButton projectId={projectId} />
+            {/* Track B4: the printable pick sheet. The per-stage sheets are
+                reachable from the stage picker on that page, so this stays
+                a single button. */}
+            <Link className="btn" to={`/builds/${buildId}/pick-list`}>
+              Pick list
+            </Link>
             {isEditable && (
               <button className="btn" onClick={fillSuggested}>Auto-fill</button>
             )}

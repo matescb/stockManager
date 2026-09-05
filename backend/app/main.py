@@ -211,6 +211,7 @@ from app.api.routes import (
     auth,
     bom_presets,
     build_kits,
+    build_picklist,
     build_stages,
     builds,
     catalog,
@@ -585,6 +586,11 @@ app.include_router(
 # ends in `/kit` or `/kit-plan`, so there is no overlap with the two above.
 app.include_router(
     build_kits.router, prefix="/api/builds", tags=["builds"], dependencies=_member_gate
+)
+# Printable pick lists (Track B4) — same prefix, read-only, split out for the
+# same line-count reason. No route overlap: every path here ends `/pick-list`.
+app.include_router(
+    build_picklist.router, prefix="/api/builds", tags=["builds"], dependencies=_member_gate
 )
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"], dependencies=_member_gate)
 app.include_router(bom_presets.router, prefix="/api/bom-presets", tags=["bom_presets"], dependencies=_member_gate)

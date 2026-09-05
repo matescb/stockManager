@@ -70,9 +70,16 @@ _NOQA = "# noqa: quantity-decimal"
 #: of those names — so a future ``int(to_move)`` would have slipped
 #: through. A vacuously-passing guard is the failure mode to watch for
 #: here, not a noisy one.
+#:
+#: ``take`` / ``remaining`` / ``unclaimed`` / ``planned`` /
+#: ``alternates_available`` are the pick list's (Track B4) names, added for
+#: the same reason. ``take`` and ``remaining`` were already carrying real
+#: quantities in ``kitting.py`` and ``builds/service.py`` before the pick
+#: list existed, so the set was silent over those two as well.
 _QUANTITY_NAMES = frozenset(
     {
         "actual_quantity",
+        "alternates_available",
         "at_staging",
         "attrition_min_quantity",
         "available",
@@ -81,18 +88,22 @@ _QUANTITY_NAMES = frozenset(
         "low_stock_report_quantity",
         "moving",
         "on_hand",
+        "planned",
         "purchase_quantity",
         "qty",
         "quantity",
         "quantity_delta",
         "quantity_ordered",
         "quantity_received",
+        "remaining",
         "required",
         "reserved",
         "short_by",
         "sub_avail",
+        "take",
         "to_move",
         "total_on_hand",
+        "unclaimed",
         "wanted",
     }
 )

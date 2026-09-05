@@ -2,7 +2,7 @@
 
 Audience: engineer
 
-A build runs against a project's bill-of-materials. This page covers the reservation lifecycle, the consume orchestration, shortage analysis, multi-stage builds, and sub-assembly output. The shape is "BOM lines (`project_entries`) ↔ `Build` ↔ ledger rows tagged with `build_id`".
+A build runs against a project's bill-of-materials. This page covers the reservation lifecycle, the consume orchestration, shortage analysis, multi-stage builds, kitting, printable pick lists, and sub-assembly output. The shape is "BOM lines (`project_entries`) ↔ `Build` ↔ ledger rows tagged with `build_id`".
 
 For models see [`data-model.md`](data-model.md#projects) and [`data-model.md`](data-model.md#builds).
 
@@ -72,6 +72,7 @@ Two attrition sources **compound multiplicatively**:
 | Consume one stage | `domain/builds/stages.py::consume_stage` | All-or-nothing. Completes the build when the last stage lands. |
 | Plan a kit | `domain/builds/kitting.py::plan_kit` | Read-only: what would move to the staging location, from which bin, and the shortfall. |
 | Kit to a staging location | `domain/builds/kitting.py::execute_kit` | Writes `move_out`/`move_in` pairs through `stock/service.py::move_quantity`. Tops the location up to the pass's requirement. |
+| Printable pick list | `domain/builds/picklist.py::pick_list` | Read-only. Per-line demand plus the ordered shelf walk. Whole build or one stage. |
 
 ## Reservation lifecycle
 
@@ -254,6 +255,48 @@ Migration `0077` was scoped for this feature and turned out to be unnecessary:
 
 Inventing a `kits` table, or a `builds.staging_storage_location_id` column, would have added a second source of truth for something the append-only ledger already answers.
 
+## Pick lists
+
+Track B4. A pick list is the paper sheet an operator carries to the shelves: every part a build needs, how many, in which unit, and **which storage location to take each one from**, ordered so the walk happens once. `domain/builds/picklist.py::pick_list` builds it; `api/routes/build_picklist.py` serves it as [`GET /api/builds/{id}/pick-list`](../api/builds.md#get-apibuildsbuild_idpick-list) and [`GET /api/builds/{id}/stages/{stage_id}/pick-list`](../api/builds.md#get-apibuildsbuild_idstagesstage_idpick-list).
+
+Read-only. It writes no ledger row, touches no reservation, and therefore writes **no `audit_log` row** — the universal audit invariant covers workspace *mutations*, and logging every print would bury the mutation trail the invariant exists to protect.
+
+**Pick list or kit?** They answer the same question with opposite ergonomics. [Kitting](#kitting) *moves* the components into one staging location so the operator carries a tray; a pick list leaves the stock where it is and hands the operator the route. Kitting mutates the ledger and is not idempotent by accident (it tops up); a pick list mutates nothing and can be reprinted freely. Both read `_required`, so the two never disagree about how much.
+
+### Where the numbers come from
+
+| Number | Source | Why not something else |
+|---|---|---|
+| Required per line | `_required` (whole build) or `stage_allocations` (one stage) | The single quantity authority. Re-deriving from `project_entries.quantity` would drop attrition and send the operator to fetch fewer parts than the consume step will demand. |
+| On-hand per `(storage, lot, unit)` | `stock/service.py::bulk_stock_by_location` | "Current stock is `SUM(quantity_delta)`" has exactly one home ([ADR-0001](../adr/0001-append-only-stock-ledger.md)). The pick list needed a per-location grouping, so the grouping went **into** the stock service rather than into a report growing its own `GROUP BY`. |
+| Unit on a `required` (a plan) | `parts.unit_of_measure` | Alembic 0074. Printed next to every quantity so "138" is never ambiguous between pieces and metres. |
+| Unit on a pick (written history) | `stock_entries.unit` | The ledger's own stamp is part of the bucket key. Labelling written rows with whatever the part says *today* is exactly the retroactive reinterpretation `_quantity.py` explains 0074's unit stamp exists to prevent. Identical values today — `DEFAULT_UNIT` is all anything writes. |
+
+Quantities are exact `Decimal` the whole way — `as_quantity` on the way out of the ledger, `quantity_out` at the JSON boundary. Since step 2 of the units-of-measure track that is the module-wide rule rather than this report's own care, and `backend/scripts/check_quantity_coercions.py` is the CI guard that keeps it so.
+
+### Walk order and allocation
+
+The payload carries two views over one allocation, so the frontend never re-derives a quantity:
+
+- **`lines`** — one row per BOM line in `order_index` order: identity, unit, `required`, `on_hand`, `alternates_available`, `planned`, `short_by`, `is_short`, `location_count`, plus `portion_pct` on a per-stage sheet. `location_count` counts **distinct locations**, not picks — stock is bucketed per `(storage, lot, unit)`, so two lots on one shelf are two picks but one stop on the walk.
+- **`stops`** — one entry per storage location, **sorted by location name with unassigned stock last**, listing what to take there. This is the walk: one part split across two bins and one bin serving three parts both come out right.
+
+Within a line, buckets are taken **largest first** (fewest bins opened, fewest partial reels), tie-broken on location name then lot id so two identical requests print an identical sheet.
+
+**One part gets one pool, shared across every BOM line that references it.** `project_entries` has no unique constraint on `(project_id, part_id)` — neither `POST /entries` nor BOM import dedupes — so the same part can legitimately sit on two lines. Allocating each line against a fresh copy of the buckets would hand both the same reel: two lines of 10 against a bin holding 12 would each print "take 10, short 0", and the consume step would then refuse the build with `insufficient stock (have 12, want 20)`. Lines are served in `order_index` order (the order they print in), and the second sees what the first left. This is the same hazard kitting solves by aggregating requirements per part before picking buckets; a pick list keeps the lines separate on paper, so it drains a shared pool instead. A consequence worth knowing when reading a sheet: `on_hand` is the part's own total and can exceed a line's `planned` while that line is still short.
+
+Sorting by name is the closest thing to a physical order the schema knows: `storage_locations` has no coordinate or ordinal column, and operators already name bins positionally ("A1", "A2"). Giving storage a real ordinal is a product decision, not something a read-only report should invent.
+
+### Deliberate omissions
+
+- **Substitutes and meta-part members are reported, never picked from.** A short line is flagged (`is_short`, `short_by`) rather than quietly re-planned onto a registered substitute. Substitute use is an explicit per-line decision at consume time — the same reason `shortage_analysis` calls substitute availability "informational" — and a sheet that sent the operator after a part the consume screen was never told about would be worse than one that says "short 12". Each line does carry `alternates_available`, the same number `shortage_analysis` reports as `substitute_available`, and the sheet prints it under a shortfall. Without it a `meta_part` line — whose stock lives entirely in its members — would print as an unexplained blocker against a build the build screen calls covered.
+- **A short line still gets its partial pick.** The stock that *does* exist stays on the sheet; a shortfall is a partial pick, not a skipped one. Same posture as a partial kit.
+- **Zero-quantity stage lines are dropped**, the same filter `consume_stage` applies — a portion too small to allocate a unit is nothing to fetch.
+
+### Printing
+
+`web/src/routes/builds/picklist/` — `PickListView` (route + stage picker), `PickListSheet` (the document), `printStyles.ts` (the `@media print` rules). The sheet is A4 paper printed by the browser's own dialog: **not** a label, so it does not go through the cab SQUIX / JScript pipeline that `docs/domain/labels.md` covers, and no PDF library is involved. The print CSS is injected by the component instead of living in `src/index.css`, so it can only ever affect this page.
+
 ## `Build` row
 
 `Build` (`backend/app/domain/builds/models.py:21`):
@@ -279,3 +322,5 @@ Inventing a `kits` table, or a `builds.staging_storage_location_id` column, woul
 - **Never let kitting write its own ledger rows.** A kit is a move; it goes through `stock/service.py::move_quantity` so the advisory locks, the workspace checks and `enforce_storage_constraints` on the destination all apply. A bespoke `StockEntry` in `kitting.py` would bypass all three (and `scripts/check_stockentry_constructors.py` would fail the build).
 - **Never release or re-apply reservations from a kit.** Moving material does not consume it. Touching `status='reserved'` rows here would double-count against `reserved_quantity` the moment the stage that owns the slice consumes it.
 - **Never make a kit additive.** The moved quantity is `required − already_at_staging`. An additive kit is not idempotent, and a retried request builds a second trayful out of stock other builds were counting on.
+- **Never group `stock_entries` by storage or lot outside `domain/stock/service.py`.** The pick list needed a per-location breakdown and got one *inside* the stock service (`bulk_stock_by_location`). A report that grows its own `GROUP BY` over the ledger is the exact shape ADR-0001 forbids.
+- **Never give each BOM line its own copy of a part's stock buckets.** Two lines for the same part share one pool; independent copies print a plan that double-spends the same reel and that consume then rejects.
