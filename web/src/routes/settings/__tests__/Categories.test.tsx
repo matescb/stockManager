@@ -27,6 +27,7 @@ const categories: PartCategory[] = [
     default_footprint_ref: "Resistor_SMD:R_0402_1005Metric",
     footprint_filters: ["R_*"],
     library_slug: "resistors",
+    parent_id: null,
     archived_at: null,
   },
   {
@@ -39,6 +40,7 @@ const categories: PartCategory[] = [
     default_footprint_ref: null,
     footprint_filters: null,
     library_slug: "capacitors",
+    parent_id: "11111111-1111-4111-8111-111111111111",
     archived_at: "2026-08-01T10:00:00+00:00",
   },
 ];
@@ -110,6 +112,7 @@ describe("CategoriesSettings", () => {
       default_symbol_ref: "Device:Q_NMOS_GDS",
       default_footprint_ref: null,
       footprint_filters: ["SOT-23*", "TO-220*"],
+      parent_id: null,
     });
   });
 
@@ -148,5 +151,145 @@ describe("CategoriesSettings", () => {
       `/categories/${categories[0].id}`,
       expect.objectContaining({ name: "Resistors (SMD)", library_slug: "resistors" }),
     );
+  });
+});
+
+describe("CategoriesSettings — hierarchy", () => {
+  const tree: PartCategory[] = [
+    { ...categories[0], id: "cat-passives", name: "Passives", parent_id: null },
+    {
+      ...categories[0],
+      id: "cat-resistors",
+      name: "Resistors",
+      parent_id: "cat-passives",
+    },
+    {
+      ...categories[0],
+      id: "cat-thin-film",
+      name: "Thin film",
+      parent_id: "cat-resistors",
+    },
+    { ...categories[0], id: "cat-actives", name: "Actives", parent_id: null },
+  ];
+
+  function rowFor(name: string): HTMLElement {
+    const table = screen.getByRole("table");
+    return within(table).getByText(name).closest("tr") as HTMLElement;
+  }
+
+  it("renders children under their parent, depth-first", async () => {
+    vi.spyOn(api.parsed, "get").mockResolvedValue(tree);
+    renderCategories();
+
+    const table = await screen.findByRole("table");
+    const order = within(table)
+      .getAllByRole("row")
+      .slice(1) // header
+      .map((tr) => (tr.textContent ?? "").trim());
+    expect(order[0]).toMatch(/^Actives/);
+    expect(order[1]).toMatch(/Passives/);
+    expect(order[2]).toMatch(/Resistors/);
+    expect(order[3]).toMatch(/Thin film/);
+  });
+
+  it("offers a parent picker with full paths, and posts the chosen parent", async () => {
+    vi.spyOn(api.parsed, "get").mockResolvedValue(tree);
+    const post = vi.spyOn(api, "post").mockResolvedValue(tree[0]);
+
+    renderCategories();
+    fireEvent.click(await screen.findByRole("button", { name: "+ Category" }));
+
+    const picker = (await screen.findByLabelText(
+      "Parent category",
+    )) as HTMLSelectElement;
+    const labels = [...picker.options].map((o) => o.textContent);
+    expect(labels).toContain("Passives / Resistors");
+    expect(labels).toContain("Passives / Resistors / Thin film");
+
+    fireEvent.change(await screen.findByLabelText("Name"), {
+      target: { value: "Thick film" },
+    });
+    fireEvent.change(picker, { target: { value: "cat-resistors" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(post).toHaveBeenCalledWith(
+      "/categories",
+      expect.objectContaining({ name: "Thick film", parent_id: "cat-resistors" }),
+    );
+  });
+
+  it("excludes the category and its descendants from its own parent picker", async () => {
+    // Offering them would just earn a `category.parent_cycle` 422 — the
+    // server refuses either move.
+    vi.spyOn(api.parsed, "get").mockResolvedValue(tree);
+    renderCategories();
+
+    await screen.findByRole("table");
+    fireEvent.click(within(rowFor("Passives")).getByRole("button", { name: "Edit" }));
+
+    const picker = (await screen.findByLabelText(
+      "Parent category",
+    )) as HTMLSelectElement;
+    const values = [...picker.options].map((o) => o.value);
+    expect(values).not.toContain("cat-passives");
+    expect(values).not.toContain("cat-resistors");
+    expect(values).not.toContain("cat-thin-film");
+    expect(values).toContain("cat-actives");
+  });
+
+  it("prefills the picker with the stored parent and can clear it to root", async () => {
+    vi.spyOn(api.parsed, "get").mockResolvedValue(tree);
+    const patch = vi.spyOn(api, "patch").mockResolvedValue(tree[1]);
+
+    renderCategories();
+    await screen.findByRole("table");
+    fireEvent.click(within(rowFor("Resistors")).getByRole("button", { name: "Edit" }));
+
+    const picker = (await screen.findByLabelText(
+      "Parent category",
+    )) as HTMLSelectElement;
+    expect(picker.value).toBe("cat-passives");
+
+    fireEvent.change(picker, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch).toHaveBeenCalledWith(
+      "/categories/cat-resistors",
+      expect.objectContaining({ parent_id: null }),
+    );
+  });
+
+  it("warns that archiving promotes subcategories to the top level, and names them", async () => {
+    // `ON DELETE SET NULL` does not cascade. The subtree survives and moves
+    // up — safe, but not what "archive" suggests, so the dialog says it.
+    vi.spyOn(api.parsed, "get").mockResolvedValue(tree);
+    const post = vi.spyOn(api, "post").mockResolvedValue({});
+
+    renderCategories();
+    await screen.findByRole("table");
+    fireEvent.click(
+      within(rowFor("Passives")).getByRole("button", { name: "Archive" }),
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/move.* up to the top level/i)).toBeDefined();
+    expect(within(dialog).getByText(/Resistors/)).toBeDefined();
+    // The grandchild is NOT promoted — only direct children are.
+    expect(within(dialog).queryByText(/Thin film/)).toBeNull();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("says nothing about promotion when the category has no children", async () => {
+    vi.spyOn(api.parsed, "get").mockResolvedValue(tree);
+    renderCategories();
+    await screen.findByRole("table");
+    fireEvent.click(
+      within(rowFor("Actives")).getByRole("button", { name: "Archive" }),
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByText(/top level/i)).toBeNull();
   });
 });

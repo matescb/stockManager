@@ -244,6 +244,7 @@ The non-trivial cross-domain FKs and their delete behaviour. Within-domain CASCA
 |---|---|---|---|
 | `parts.default_storage_location_id` | `storage_locations.id` | `SET NULL` (+ BEFORE trigger checks workspace) | `backend/app/domain/parts/models.py:72-74`, `backend/alembic/versions/0036_parts_default_storage_ws_trigger.py` |
 | `parts.category_id` | `part_categories.id` | `SET NULL` (+ BEFORE trigger checks workspace, SQLSTATE `WS001`) | `backend/app/domain/parts/models.py`, `backend/alembic/versions/0067_part_categories.py` |
+| `part_categories.parent_id` | `part_categories.id` | `SET NULL` (self-reference; + BEFORE trigger checks workspace, SQLSTATE `WS001`) — a delete **promotes children to root**, it does not cascade the subtree | `backend/app/domain/categories/models.py`, `backend/alembic/versions/0078_category_parent.py` |
 | `parts.project_id` | `projects.id` | `SET NULL` | `backend/app/domain/parts/models.py:68` |
 | `projects.associated_subassembly_part_id` | `parts.id` | `SET NULL` (`use_alter`) | `backend/app/domain/projects/models.py:38-47` |
 | `stock_entries.lot_id` | `lots.id` | `SET NULL` | `backend/app/domain/stock/models.py:51` |
@@ -283,7 +284,10 @@ These are the only behaviours not enforceable purely in application code.
 
 - **`ck_stock_nonneg` (alembic 0013).** AFTER INSERT trigger on `stock_entries`. Re-aggregates `SUM(quantity_delta)` for the matching `(workspace_id, part_id, lot_id, storage_location_id, status)` tuple — uses `IS NOT DISTINCT FROM` so NULL buckets are distinct, not wildcards (`backend/alembic/versions/0013_stock_nonneg_trigger.py:44-69`). Defence-in-depth for the per-part advisory lock — see [ledger](ledger.md) and [ADR-0001](../adr/0001-append-only-stock-ledger.md).
 - **`parts_default_storage_workspace_check` (alembic 0036).** BEFORE trigger on `parts`. Rejects an insert/update where `default_storage_location_id` points at a `storage_locations` row in a different workspace. Raises with `ERRCODE = '23514'` so SQLAlchemy surfaces it as `IntegrityError` (`backend/alembic/versions/0036_parts_default_storage_ws_trigger.py:27-50`). See [workspace-isolation](workspace-isolation.md) and [ADR-0002](../adr/0002-code-enforced-workspace-isolation.md).
-- **`parts_category_workspace_check` (alembic 0067).** BEFORE trigger on `parts`, same shape as the one above but raising the modern `WS001` SQLSTATE, which `_stock_integrity.py::raise_integrity_as_409` maps to a 409 (`backend/alembic/versions/0067_part_categories.py:141-162`). Together with `0036` these are the **only two** DB-enforced workspace-isolation rules — every other check is in code.
+- **`parts_category_workspace_check` (alembic 0067).** BEFORE trigger on `parts`, same shape as the one above but raising the modern `WS001` SQLSTATE, which `_stock_integrity.py::raise_integrity_as_409` maps to a 409 (`backend/alembic/versions/0067_part_categories.py:141-162`).
+- **`part_categories_parent_workspace_check` (alembic 0078).** BEFORE trigger on `part_categories`. Rejects a `parent_id` pointing at a category in another workspace, `WS001`. Uses the `TG_OP` short-circuit (validate every INSERT; on UPDATE only when `parent_id` or `workspace_id` changed) that `0076` established — the ADR-0028 contract. It deliberately does **not** check for cycles: a BEFORE ROW trigger sees one row and cannot see the rest of a multi-statement reparent, so that guard lives in `domain/categories/tree.py`.
+
+  These `WS001` triggers are defence-in-depth only; the enforcing check is always the service layer's (`assert_in_workspace`). See [workspace-isolation](workspace-isolation.md) and [ADR-0002](../adr/0002-code-enforced-workspace-isolation.md).
 - **CHECK constraints on `order_entries` and `project_entries`** (alembic 0032): `quantity_ordered >= 0`, `quantity_received >= 0`, `quantity >= 0` (`backend/app/domain/orders/models.py:51-52`, `backend/app/domain/projects/models.py:65`).
 
 ## Partial-unique indexes
@@ -312,6 +316,6 @@ Schema evolves forward-only. The chain runs `0001_initial.py` → the current he
 - `0013_stock_nonneg_trigger.py` — ledger non-negative trigger.
 - `0036_parts_default_storage_ws_trigger.py` — workspace-isolation trigger on `parts.default_storage_location_id`.
 
-Other notable ones cross-referenced from this doc set: `0011` (MPN unique index), `0012` + `0020` (`bag_signature` column + partial index), `0018` (cross-domain SET NULL FKs + partial unique on storage/tag names + pg_trgm GIN), `0030` (`audit_log`), `0031` (poly-orphan-cleanup indexes), `0032` (integer-quantity CHECKs), `0034` (`bulk_import_idempotency`), `0035` (`workspace_catalog_tokens`), `0042` (`workspaces.active_*` JSONB lists), `0067` (`part_categories` + the `parts.category_id` workspace trigger), `0068` (all five `eda_*` / `part_eda` tables), `0069` (`api_tokens`).
+Other notable ones cross-referenced from this doc set: `0011` (MPN unique index), `0012` + `0020` (`bag_signature` column + partial index), `0018` (cross-domain SET NULL FKs + partial unique on storage/tag names + pg_trgm GIN), `0030` (`audit_log`), `0031` (poly-orphan-cleanup indexes), `0032` (integer-quantity CHECKs), `0034` (`bulk_import_idempotency`), `0035` (`workspace_catalog_tokens`), `0042` (`workspaces.active_*` JSONB lists), `0067` (`part_categories` + the `parts.category_id` workspace trigger), `0068` (all five `eda_*` / `part_eda` tables), `0069` (`api_tokens`), `0078` (`part_categories.parent_id` + its workspace trigger).
 
 Don't edit a merged migration — add a new one. (`CLAUDE.md` Migrations section.)

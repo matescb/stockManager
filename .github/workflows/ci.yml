@@ -139,7 +139,24 @@ jobs:
           }
 
           # CQ-002: backend parts route split
-          check backend/app/api/routes/parts_core.py    700
+          #
+          # 700 -> 720 (category-tree PR). `list_parts` gained two query
+          # parameters (`category_id`, `include_descendants`) and the file
+          # was already sitting at 694/700, so there was no room for a
+          # parameter of any size. The *logic* did not land here — resolving
+          # a category to its subtree lives in
+          # `domain/categories/tree.py::category_filter_ids`, because "what
+          # does filtering by this category mean" is a question about
+          # categories; this file only calls it. What is left is the
+          # signature, four lines of comment about ordering vs `paginate()`,
+          # and the call.
+          #
+          # This file is now at its practical ceiling: it holds CRUD,
+          # archive/restore, bulk-delete, the bag-signature lookup, the
+          # stock/lots roll-ups and activity. The next feature that needs
+          # room here should split it (the roll-up and activity endpoints
+          # are the natural seam), not raise this number again.
+          check backend/app/api/routes/parts_core.py    720
           check backend/app/api/routes/parts_scan.py    700
           check backend/app/api/routes/parts_assets.py  400
           # parts_refresh.py was split back out of parts_assets.py when the

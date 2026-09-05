@@ -2,7 +2,7 @@
 
 Audience: engineer
 
-Owns `StorageLocation` — the place a part / lot lives. Hierarchical (`parent_id`), workspace-scoped, optionally constrained (capacity / part-type allow-list).
+Owns `StorageLocation` — the place a part / lot lives. Flat (there is no `parent_id` column; see `alembic/versions/0001_initial.py`), workspace-scoped, optionally constrained (capacity / part-type allow-list).
 
 ## Files
 
@@ -33,4 +33,4 @@ This module's surface is its model + schemas; reads/writes are done by callers v
 
 - Don't reimplement capacity / part-type checks in routes — keep them inside `domain/stock/service.py` so add / move / receive and PATCH rechecks share one path.
 - Don't follow `parts.default_storage_location_id` without re-checking workspace; the trigger only catches *writes*, not joins.
-- Don't allow a storage location to become its own ancestor via `parent_id` — guard at the schema level.
+- Don't assume storage locations nest — they do not. If a hierarchy is ever added here, copy the shape `part_categories` uses (`parent_id` + `ON DELETE SET NULL` + a workspace trigger, alembic 0078) and put the cycle/depth guard in the service layer, as `domain/categories/tree.py` does.

@@ -1,11 +1,17 @@
-import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useApiMutation } from "@/lib/mutations";
-import { PartCategoriesListSchema } from "@/lib/schemas";
-import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
+import { wsKeyOf } from "@/lib/queryKeys";
+import { useCategories } from "@/lib/useCategories";
+import {
+  buildCategoryTree,
+  categoryPath,
+  descendantIds,
+  flattenTree,
+} from "@/lib/categoryTree";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { Modal } from "@/components/Modal";
 import { InlineQueryError } from "@/components/QueryStateBoundary";
@@ -23,6 +29,9 @@ type CategoryBody = {
   default_footprint_ref: string | null;
   footprint_filters: string[] | null;
   library_slug?: string;
+  /** Null is meaningful on PATCH: it moves the category back to the root
+   * of the tree. Unlike the NOT NULL fields, the server honours it. */
+  parent_id: string | null;
 };
 
 type FormState = {
@@ -34,6 +43,8 @@ type FormState = {
   default_footprint_ref: string;
   footprint_filters: string;
   library_slug: string;
+  /** "" means root. */
+  parent_id: string;
 };
 
 const EMPTY_FORM: FormState = {
@@ -45,10 +56,12 @@ const EMPTY_FORM: FormState = {
   default_footprint_ref: "",
   footprint_filters: "",
   library_slug: "",
+  parent_id: "",
 };
 
 function formFor(category: PartCategory): FormState {
   return {
+    parent_id: category.parent_id ?? "",
     name: category.name,
     description: category.description ?? "",
     sort_order: String(category.sort_order),
@@ -78,6 +91,7 @@ function bodyFrom(form: FormState, { includeSlug }: { includeSlug: boolean }): C
     default_symbol_ref: trimmedOrNull(form.default_symbol_ref),
     default_footprint_ref: trimmedOrNull(form.default_footprint_ref),
     footprint_filters: filters.length > 0 ? filters : null,
+    parent_id: form.parent_id || null,
   };
   // Blank means "derive from the name" on create. On edit the field is
   // pre-filled, so a blank slug can only be a user clearing it — also a
@@ -97,16 +111,36 @@ export default function CategoriesSettings() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [err, setErr] = useState<string | null>(null);
 
-  const categoriesQuery = useQuery({
-    queryKey: useWsKey("categories", { archived: showArchived }),
-    queryFn: ({ signal }) =>
-      api.parsed.get(
-        `/categories${showArchived ? "?include_archived=true" : ""}`,
-        PartCategoriesListSchema,
-        { signal },
-      ),
-  });
-  const categories = categoriesQuery.data ?? [];
+  const categoriesQuery = useCategories({ includeArchived: showArchived });
+  // Memoised because `?? []` is a fresh array every render, which would
+  // re-run every tree walk below on every keystroke in the modal.
+  const categories = useMemo(
+    () => categoriesQuery.data ?? [],
+    [categoriesQuery.data],
+  );
+
+  // The table renders depth-first so a child always sits directly under
+  // its parent, indented — the flat alphabetical list it replaced made a
+  // tree impossible to read.
+  const ordered = useMemo(
+    () => flattenTree(buildCategoryTree(categories)),
+    [categories],
+  );
+
+  // A category may not be moved under itself or under one of its own
+  // descendants (the server refuses it with `category.parent_cycle`);
+  // excluding them from the picker means the user never gets that far.
+  // Archived categories are excluded too — the server refuses those with
+  // `category.archived`.
+  const parentOptions = useMemo(() => {
+    const forbidden = editing
+      ? descendantIds(categories, editing.id)
+      : new Set<string>();
+    return categories
+      .filter((c) => c.archived_at === null && !forbidden.has(c.id))
+      .map((c) => ({ id: c.id, label: categoryPath(categories, c.id) }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [categories, editing]);
 
   function invalidate() {
     qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "categories") });
@@ -190,11 +224,38 @@ export default function CategoriesSettings() {
 
   async function toggleArchive(category: PartCategory) {
     const restore = category.archived_at !== null;
+    // Active children only. The server promotes archived ones too, but
+    // they are invisible here and counting them would make this number
+    // change with the "Show archived" toggle — a confirm dialog that says
+    // "2 subcategories" or "3" for the same action depending on an
+    // unrelated checkbox is worse than one that describes what is on
+    // screen.
+    const children = categories.filter(
+      (c) => c.parent_id === category.id && c.archived_at === null,
+    );
+    // The surprising half of `ON DELETE SET NULL`: removing a mid-tree
+    // category does NOT take its subtree with it. Children are promoted to
+    // the top level. Nothing is lost, but the tree changes shape in a way
+    // the user did not ask for, so it has to be said before they confirm —
+    // and named, because "2 subcategories" is not enough to picture.
+    const promotionWarning =
+      children.length === 0
+        ? ""
+        : `\n\nIts ${children.length} subcategor${children.length === 1 ? "y" : "ies"} ` +
+          `will NOT be archived — ${children.length === 1 ? "it moves" : "they move"} ` +
+          "up to the top level of the tree:\n" +
+          children
+            .slice(0, 8)
+            .map((c) => `• ${c.name}`)
+            .join("\n") +
+          (children.length > 8 ? `\n…and ${children.length - 8} more` : "");
+
     const ok = await confirm({
       title: restore ? `Restore "${category.name}"?` : `Archive "${category.name}"?`,
       message: restore
-        ? "The category becomes selectable again. If another category has taken its name or library slug in the meantime, the restore is refused."
-        : "Parts keep their link to it, but the category stops appearing in pickers. Its name and library slug are freed for re-use.",
+        ? "The category becomes selectable again, at the top level of the tree. If another category has taken its name or library slug in the meantime, the restore is refused."
+        : "Parts keep their link to it, but the category stops appearing in pickers. Its name and library slug are freed for re-use." +
+          promotionWarning,
       severity: restore ? "warning" : "danger",
       confirmLabel: restore ? "Restore" : "Archive",
     });
@@ -209,9 +270,10 @@ export default function CategoriesSettings() {
     <div className="max-w-4xl">
       <h1 className="page-title mb-4">Categories</h1>
       <p className="text-sm text-muted mb-4">
-        Buckets for the parts library. The reference-designator prefix and the
-        default symbol / footprint references are the metadata a KiCad library
-        is generated from; everything else is optional.
+        Buckets for the parts library, arranged as a tree the way a KiCad
+        library is. The reference-designator prefix and the default symbol /
+        footprint references are the metadata a KiCad library is generated
+        from; everything else is optional.
       </p>
 
       <InlineQueryError query={categoriesQuery} label="categories" className="mb-3" />
@@ -251,10 +313,22 @@ export default function CategoriesSettings() {
               </tr>
             </thead>
             <tbody>
-              {categories.map(category => (
+              {ordered.map(({ node: category, depth }) => (
                 <tr key={category.id} className={category.archived_at ? "opacity-50" : ""}>
                   <td>
-                    <span className="font-medium">{category.name}</span>
+                    {/* Indent rather than nest: `.table` is a flat grid and
+                        a nested table would lose column alignment. */}
+                    <span
+                      className="inline-flex items-baseline"
+                      style={{ paddingLeft: `${depth * 18}px` }}
+                    >
+                      {depth > 0 && (
+                        <span className="text-muted mr-1.5" aria-hidden="true">
+                          └
+                        </span>
+                      )}
+                      <span className="font-medium">{category.name}</span>
+                    </span>
                     {category.archived_at && <span className="pill ml-2 text-xs">Archived</span>}
                     {category.description && (
                       <div className="text-xs text-muted">{category.description}</div>
@@ -308,6 +382,28 @@ export default function CategoriesSettings() {
               value={form.name}
               onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
             />
+          </div>
+          <div>
+            <label className="label" htmlFor="category-parent">Parent category</label>
+            <select
+              id="category-parent"
+              className="input"
+              value={form.parent_id}
+              onChange={e => setForm(f => ({ ...f, parent_id: e.target.value }))}
+            >
+              <option value="">— none (top level) —</option>
+              {parentOptions.map(o => (
+                <option key={o.id} value={o.id}>{o.label}</option>
+              ))}
+            </select>
+            <div className="text-xs text-muted mt-1">
+              Nesting is for browsing only — a part still belongs to exactly
+              one category. Filtering the parts list by a parent includes
+              everything beneath it. Up to 6 levels deep;
+              {editing
+                ? " this category and everything under it are left out of the list."
+                : " archived categories can't be parents."}
+            </div>
           </div>
           <div>
             <label className="label" htmlFor="category-slug">Library slug</label>

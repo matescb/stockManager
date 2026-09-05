@@ -293,6 +293,8 @@ class ErrorCodes:
     CATEGORY_SLUG_CONFLICT = "category.slug_conflict"
     CATEGORY_ARCHIVED = "category.archived"
     CATEGORY_FIELD_NOT_NULLABLE = "category.field_not_nullable"
+    CATEGORY_PARENT_CYCLE = "category.parent_cycle"
+    CATEGORY_TOO_DEEP = "category.too_deep"
 
     # EDA router (symbols / footprints / 3D + SPICE data files / part_eda).
     EDA_SYMBOL_NOT_FOUND = "eda_symbol.not_found"

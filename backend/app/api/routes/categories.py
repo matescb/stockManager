@@ -95,7 +95,10 @@ def archive_category(
     ws: CurrentWorkspace,
     user: CurrentUser,
 ) -> Envelope[None]:
-    category = categories_service.archive_category(
+    """Archive. Any direct subcategories are promoted to the root of the
+    tree — the same thing the `ON DELETE SET NULL` FK does on a hard
+    delete. See `service.archive_category`."""
+    category, promoted = categories_service.archive_category(
         db, ws=ws, category_id=category_id, user_id=user.id
     )
     _audit_log(
@@ -105,6 +108,7 @@ def archive_category(
         action="category.archived",
         target_type="part_category",
         target_ids=[category.id],
+        comment=f"promoted_children={promoted}" if promoted else None,
         request_id=getattr(request.state, "request_id", None),
     )
     return ok(None, "archived")

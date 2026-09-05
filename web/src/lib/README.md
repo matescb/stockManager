@@ -11,6 +11,8 @@ Shared frontend infra: HTTP client, auth context, theme, query keys, mutations h
 | `api.ts` | `get` / `post` / `patch` / `delete` / `upload`; envelope unwrap; `ApiError(status, body, msg)`; 401 redirect bus; `categoryToUserMessage` |
 | `auth.tsx` | `AuthProvider`, `useAuth`, workspace switch, 401 listener |
 | `theme.tsx` | `ThemeProvider`, `useTheme` (light / dark / system) |
+| `categoryTree.ts` | Pure adjacency-list walks for the part-category tree (build / flatten / descendants / path) |
+| `useCategories.ts` | The one `/categories` query — four screens used to fetch it independently |
 | `queryKeys.ts` | Canonical key factories — `["ws", wsId, …]` shape |
 | `mutations.ts` | `useApiMutation` wrapper + standard invalidation helpers |
 | `schemas.ts` | Zod schemas mirroring API responses |
@@ -28,6 +30,7 @@ Shared frontend infra: HTTP client, auth context, theme, query keys, mutations h
 |---|---|
 | HTTP call | `api.ts::get` / `post` / `patch` / `delete` / `upload` |
 | Build a query key | `queryKeys.ts::*` factories |
+| Fetch the workspace's categories | `useCategories.ts::useCategories` — one query, don't add a fifth `/categories` fetch |
 | Wire a mutation + invalidations | `mutations.ts::useApiMutation` |
 | Parse a scanned bag code | `bagCode.ts` (default export / named parser) |
 | Classify a key as catalog vs spec | `providerCatalog.ts` |

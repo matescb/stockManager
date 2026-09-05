@@ -42,7 +42,7 @@ import pytest
 from alembic.config import Config as AlembicConfig
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from alembic import command
 
@@ -633,6 +633,178 @@ def test_unit_match_trigger_is_live_after_upgrade_head(round_trip_url: str) -> N
                     text("UPDATE parts SET unit_of_measure = 'm' WHERE id = :id"),
                     {"id": part_id},
                 )
+    finally:
+        eng.dispose()
+
+
+@pytest.mark.slow
+def test_category_parent_round_trip(round_trip_url: str) -> None:
+    """0078 adds `part_categories.parent_id` plus a self-referencing FK, a
+    partial index, and one trigger + function.
+
+    The self-reference is the risky half. `_snapshot_schema` sees the
+    column, the index and the FK, so the whole-chain sweep would catch a
+    leaked *column* — but not a leaked trigger or function, and a leaked
+    function silently keeps its old body through the next `CREATE OR
+    REPLACE`. Assert both, both ways, the way 0076 and 0077 do.
+    """
+    cfg = _alembic_config(round_trip_url)
+
+    def category_columns() -> set[str]:
+        eng = create_engine(round_trip_url, future=True)
+        try:
+            return {c["name"] for c in inspect(eng).get_columns("part_categories")}
+        finally:
+            eng.dispose()
+
+    def self_fk_present() -> bool:
+        eng = create_engine(round_trip_url, future=True)
+        try:
+            return any(
+                fk.get("name") == "fk_part_categories_parent_id"
+                and fk.get("referred_table") == "part_categories"
+                for fk in inspect(eng).get_foreign_keys("part_categories")
+            )
+        finally:
+            eng.dispose()
+
+    def indexes() -> set[str]:
+        eng = create_engine(round_trip_url, future=True)
+        try:
+            return {i["name"] for i in inspect(eng).get_indexes("part_categories")}
+        finally:
+            eng.dispose()
+
+    def triggers_and_functions() -> tuple[set[str], set[str]]:
+        eng = create_engine(round_trip_url, future=True)
+        try:
+            with eng.connect() as conn:
+                trg = {
+                    row.tgname
+                    for row in conn.execute(
+                        text(
+                            "SELECT tgname FROM pg_trigger WHERE NOT tgisinternal "
+                            "AND tgname = 'part_categories_parent_workspace_check'"
+                        )
+                    )
+                }
+                fns = {
+                    row.proname
+                    for row in conn.execute(
+                        text(
+                            "SELECT proname FROM pg_proc WHERE proname = "
+                            "'check_part_categories_parent_workspace'"
+                        )
+                    )
+                }
+            return trg, fns
+        finally:
+            eng.dispose()
+
+    _reset_schema(round_trip_url)
+    _upgrade(cfg, round_trip_url, "0077")
+    assert "parent_id" not in category_columns()
+    assert not self_fk_present()
+    assert triggers_and_functions() == (set(), set())
+
+    _upgrade(cfg, round_trip_url, "0078")
+    after_upgrade = _snapshot_schema(round_trip_url)
+    assert "parent_id" in category_columns()
+    assert self_fk_present()
+    assert "ix_part_categories_parent_id" in indexes()
+    assert triggers_and_functions() == (
+        {"part_categories_parent_workspace_check"},
+        {"check_part_categories_parent_workspace"},
+    )
+
+    _downgrade(cfg, round_trip_url, "0077")
+    assert "parent_id" not in category_columns()
+    assert not self_fk_present()
+    assert "ix_part_categories_parent_id" not in indexes()
+    assert triggers_and_functions() == (set(), set()), (
+        "0078 downgrade left the trigger or its function behind"
+    )
+
+    _upgrade(cfg, round_trip_url, "0078")
+    assert _snapshot_schema(round_trip_url) == after_upgrade
+
+
+@pytest.mark.slow
+def test_category_parent_trigger_is_live_after_upgrade_head(
+    round_trip_url: str,
+) -> None:
+    """The 0078 trigger must actually fire on a schema built by the chain.
+
+    Two halves, both load-bearing: a cross-workspace parent raises WS001,
+    and a same-workspace parent is accepted (a trigger that refuses
+    everything would also pass the first half).
+    """
+    cfg = _alembic_config(round_trip_url)
+    user_id = uuid.uuid4()
+    ws_a, ws_b = uuid.uuid4(), uuid.uuid4()
+    cat_a, cat_a2, cat_b = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+
+    _reset_schema(round_trip_url)
+    _upgrade(cfg, round_trip_url, "head")
+
+    eng = create_engine(round_trip_url, future=True)
+    try:
+        with eng.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO users "
+                    "(id, email, name, password_hash, locale, timezone, created_at) "
+                    "VALUES (:id, :email, 'Tree Tester', 'x', 'en', 'UTC', now())"
+                ),
+                {"id": user_id, "email": f"tree-{user_id.hex}@example.com"},
+            )
+            for ws_id, label in ((ws_a, "A"), (ws_b, "B")):
+                conn.execute(
+                    text(
+                        "INSERT INTO workspaces "
+                        "(id, name, kind, owner_user_id, currency_default, "
+                        "lot_control_enabled, serial_tracking_enabled, "
+                        "catalog_enabled, parts_provider, created_at) "
+                        "VALUES (:id, :name, 'organization', :owner, 'USD', "
+                        "true, false, false, 'none', now())"
+                    ),
+                    {"id": ws_id, "name": f"Tree WS {label}", "owner": user_id},
+                )
+            for cid, ws_id, slug in (
+                (cat_a, ws_a, "passives"),
+                (cat_a2, ws_a, "resistors"),
+                (cat_b, ws_b, "theirs"),
+            ):
+                conn.execute(
+                    text(
+                        "INSERT INTO part_categories "
+                        "(id, workspace_id, name, sort_order, library_slug, "
+                        "created_at, updated_at) "
+                        "VALUES (:id, :ws, :name, 0, :slug, now(), now())"
+                    ),
+                    {"id": cid, "ws": ws_id, "name": slug, "slug": slug},
+                )
+
+        # Same workspace: allowed.
+        with eng.begin() as conn:
+            conn.execute(
+                text("UPDATE part_categories SET parent_id = :p WHERE id = :c"),
+                {"p": cat_a, "c": cat_a2},
+            )
+
+        # Across workspaces: WS001. Caught as `DBAPIError`, not
+        # `IntegrityError` — `WS001` is a custom SQLSTATE with no entry in
+        # psycopg's error map, so it surfaces as a plain `DatabaseError`.
+        # (0077's triggers raise `23514`, which *does* map to
+        # `IntegrityError`; the difference is the SQLSTATE, not the
+        # mechanism.) `tests/test_categories.py` catches the same pair.
+        with pytest.raises(DBAPIError) as excinfo:
+            with eng.begin() as conn:
+                conn.execute(
+                    text("UPDATE part_categories SET parent_id = :p WHERE id = :c"),
+                    {"p": cat_b, "c": cat_a2},
+                )
+        assert getattr(excinfo.value.orig, "sqlstate", None) == "WS001"
     finally:
         eng.dispose()
 
