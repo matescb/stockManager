@@ -109,6 +109,15 @@ def test_0070_backfills_links_from_legacy_state(db, monkeypatch):
     # source_url has no legacy column to come from; the next refresh fills it.
     assert link.source_url is None
 
+    # Everything above is raw SQL, so it reads the schema as 0070 left it —
+    # which is the point. Everything BELOW goes through the ORM, and the ORM
+    # models describe `head`, not 0070: any later migration that adds a
+    # column (0074 adds `parts.unit_of_measure`) makes an ORM SELECT at 0070
+    # fail with UndefinedColumn. So finish the chain before using the API.
+    # Nothing between 0070 and head touches `part_provider_links`, so the
+    # rows asserted below are still purely 0070's backfill.
+    command.upgrade(_alembic_cfg(), "head")
+
     # The backfilled state is live, not just present: the API reads it.
     detail = client.get(f"/api/parts/{part_id}").json()["data"]
     assert [link["provider"] for link in detail["provider_links"]] == ["digikey"]
@@ -143,6 +152,12 @@ def test_0070_backfills_no_credentials_for_the_primary(db, monkeypatch):
         text("SELECT count(*) FROM workspace_provider_credentials"),
     ).scalar_one()
     assert count == 0
+
+    # Raw SQL above reads 0070's schema; the ORM below describes `head`.
+    # See the note in the first test — finish the chain before using the
+    # API, or a later migration's new column breaks every ORM SELECT here.
+    command.upgrade(_alembic_cfg(), "head")
+
     assert (
         client.get("/api/workspaces/current").json()["data"]["provider_credentials"] == []
     )
