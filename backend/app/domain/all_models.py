@@ -49,7 +49,7 @@ from app.domain.parts.models import (  # noqa: F401
     PartSubstitute,
     WorkspaceProviderCredential,
 )
-from app.domain.printing.models import PrintJob  # noqa: F401
+from app.domain.printing.models import LabelTemplate, PrintJob  # noqa: F401
 from app.domain.projects.models import (  # noqa: F401
     BomImportPreset,
     Project,

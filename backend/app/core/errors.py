@@ -168,6 +168,15 @@ class ErrorCodes:
     CODE_NOT_FOUND = "code.not_found"
     CODE_MINT_EXHAUSTED = "code.mint_exhausted"
 
+    # Label templates (`/api/label-templates`).
+    LABEL_TEMPLATE_NOT_FOUND = "label_template.not_found"
+    LABEL_TEMPLATE_INVALID = "label_template.invalid"
+    # The label printer could not be reached, or rejected the job. A 409,
+    # not a 5xx: the `print_jobs` row survives in state `failed` for the
+    # operator to inspect and retry, so this is a conflict with the state of
+    # the world rather than a server fault.
+    PRINTER_UNREACHABLE = "printer.unreachable"
+
     # Global framework errors.
     RATE_LIMITED = "rate_limited"
 

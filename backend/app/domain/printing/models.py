@@ -1,4 +1,12 @@
-"""SQLAlchemy model for ``print_jobs`` — the label-print ledger.
+"""SQLAlchemy models for the label-printing domain.
+
+Two tables live here:
+
+* ``print_jobs`` — the print ledger (below).
+* ``label_templates`` — the reusable label layouts the renderer turns into
+  JScript (:class:`LabelTemplate`, at the bottom of this module).
+
+``print_jobs`` — the label-print ledger.
 
 Adapted from the sibling skladVA project's ``print_job`` model
 (/mnt/data/WORK/sklad, ``backend/app/domain/print_job/models.py``). A physical
@@ -29,20 +37,41 @@ from __future__ import annotations
 import datetime
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
+    Column,
     DateTime,
     ForeignKey,
     Index,
+    Integer,
+    Numeric,
     String,
     Text,
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.time import utcnow
+from app.domain._mixins import WorkspaceOwned
+from app.domain.codes.models import CODE_ENTITY_TYPES
 from app.infra.db import Base
+
+# Element kinds a template may place. The single source of truth shared by
+# the renderer (``label_render``) and the API validation layer — a kind the
+# renderer cannot draw must not be storable.
+ELEMENT_KINDS: tuple[str, ...] = ("qr", "text", "barcode1d", "handwriting")
+
+# A label targets one of the five CODEABLE entity types, deliberately the same
+# closed set as ``object_codes`` (#892) rather than a second list: every label
+# carries that object's code, so a type you cannot mint a code for is a type
+# you cannot label. Imported, not re-declared, so the two cannot drift.
+LABEL_ENTITY_TYPES: tuple[str, ...] = CODE_ENTITY_TYPES
+
+_LABEL_ENTITY_TYPE_CHECK = "entity_type IN (" + ", ".join(
+    f"'{value}'" for value in LABEL_ENTITY_TYPES
+) + ")"
 
 
 class PrintJob(Base):
@@ -107,3 +136,67 @@ class PrintJob(Base):
         server_default=func.now(),
         onupdate=utcnow,
     )
+
+
+class LabelTemplate(WorkspaceOwned, Base):
+    """A reusable label layout: stock geometry + a list of placed elements.
+
+    Adapted from the sibling skladVA project's ``label_template`` model
+    (/mnt/data/WORK/sklad, ``backend/app/domain/label_template/models.py``),
+    made workspace-scoped — skladVA is single-tenant, so its "one default per
+    entity type" was a global rule; here it is per workspace.
+
+    Stock geometry (``width_mm`` / ``height_mm`` / ``gap_mm`` / ``heat`` /
+    ``speed`` / ``method`` / ``dpi``) lives in dedicated columns so
+    :mod:`app.domain.printing.label_render` can build the JScript ``H`` / ``S``
+    job header without parsing the element blob. The variable part — the placed
+    elements — is a single ``elements`` JSONB list: it is read and written
+    whole by the renderer and (later) the designer and never queried
+    element-by-element, so a document column is the right shape rather than a
+    child table.
+
+    One default per (workspace, entity type)
+    ----------------------------------------
+    ``is_default`` marks the template the print flows pick when no explicit
+    template is named. At most one row per ``(workspace_id, entity_type)`` may
+    be default, enforced by the PARTIAL unique index
+    ``uq_label_templates_ws_default ... WHERE is_default``. Partial, so any
+    number of NON-default templates per type coexist. Promoting a template
+    demotes the incumbent inside the same transaction (see
+    ``template_service.clear_existing_default``) — a bare flip would hit the
+    index.
+    """
+
+    __tablename__ = "label_templates"
+    __table_args__ = (
+        CheckConstraint(
+            _LABEL_ENTITY_TYPE_CHECK, name="ck_label_templates_entity_type"
+        ),
+        CheckConstraint("method IN ('T', 'D')", name="ck_label_templates_method"),
+        # At most one default per (workspace, entity_type). PARTIAL: the
+        # uniqueness only binds rows where is_default is true.
+        Index(
+            "uq_label_templates_ws_default",
+            "workspace_id",
+            "entity_type",
+            unique=True,
+            postgresql_where=text("is_default"),
+        ),
+        # The list endpoint's access path: templates of one type in one
+        # workspace, ordered by name.
+        Index("ix_label_templates_ws_entity", "workspace_id", "entity_type"),
+    )
+
+    name = Column(String(200), nullable=False)
+    entity_type = Column(String(40), nullable=False)
+
+    width_mm = Column(Numeric(6, 2), nullable=False)
+    height_mm = Column(Numeric(6, 2), nullable=False)
+    gap_mm = Column(Numeric(6, 2), nullable=False, server_default=text("3"))
+    heat = Column(Integer, nullable=False, server_default=text("100"))
+    speed = Column(Integer, nullable=False, server_default=text("0"))
+    # 'T' = thermal transfer (ribbon), 'D' = direct thermal.
+    method = Column(String(1), nullable=False, server_default=text("'T'"))
+    dpi = Column(Integer, nullable=False, server_default=text("300"))
+    is_default = Column(Boolean, nullable=False, server_default=text("false"))
+    elements = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))

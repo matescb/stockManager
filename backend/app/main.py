@@ -221,6 +221,7 @@ from app.api.routes import (
     invitations,
     kicad,
     kicad_pcm,
+    label_templates,
     lots,
     orders,
     parts_assets,
@@ -621,6 +622,15 @@ app.include_router(
 )
 app.include_router(custom_fields.router, prefix="/api/custom-fields", tags=["custom_fields"], dependencies=_member_gate)
 app.include_router(codes.router, prefix="/api/codes", tags=["codes"], dependencies=_member_gate)
+# Reads are member-gated here; every MUTATION additionally carries
+# `require_role("admin")` on the route itself — see the module docstring in
+# routes/label_templates.py.
+app.include_router(
+    label_templates.router,
+    prefix="/api/label-templates",
+    tags=["label_templates"],
+    dependencies=_member_gate,
+)
 app.include_router(tags.router, prefix="/api/tags", tags=["tags"], dependencies=_member_gate)
 # No `_member_gate`: a viewer may mint their own token, because the token
 # inherits the viewer role and so can't do anything the viewer couldn't.

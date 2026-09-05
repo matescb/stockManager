@@ -21,6 +21,7 @@ Start with [`data-model.md`](data-model.md) for the ER diagram and the full tabl
 | [providers](providers.md) | Mouser + DigiKey, OAuth, catalog vs spec key split, per-workspace credentials |
 | [scan-import](scan-import.md) | `bag_signature`, MIL-STD-130N parser, idempotency table |
 | [polymorphic](polymorphic.md) | Attachments, tags, custom_fields — the no-FK surface and how cleanup works |
+| [labels](labels.md) | Label templates, the cab JScript render engine + injection guard, the print-job ledger |
 
 ## Hard invariants — index
 
