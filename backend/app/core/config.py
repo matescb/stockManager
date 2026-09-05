@@ -134,6 +134,15 @@ class Settings(BaseSettings):
     # files point this at the internal service name.
     EDA_RENDER_URL: str = "http://kicad-render:8080"
 
+    # cab SQUIX label printer (JScript over raw TCP:9100). PRINT_HOST empty is
+    # the safe default for dev / CI / test: it means *no print sink*, so the
+    # print service fails closed (raises PrinterUnreachable) instead of silently
+    # "succeeding" — the reconciliation path is exercised deterministically. Set
+    # PRINT_HOST to the printer's LAN/VPN address to enable real printing. See
+    # app/domain/printing/print_service.py.
+    PRINT_HOST: str = ""
+    PRINT_PORT: int = 9100
+
     @field_validator("SENTRY_TRACES_SAMPLE_RATE", mode="before")
     @classmethod
     def _blank_sentry_traces_rate_to_none(cls, value):
