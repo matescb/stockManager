@@ -11,7 +11,8 @@ from app.core.errors import ErrorCodes, raise_http
 from app.core.responses import ok
 from app.domain.audit.service import log as _audit_log
 from app.domain.parts.models import PartMetaMember, PartSubstitute
-from app.domain.parts.schemas import MetaMemberIn, SubstituteIn
+from app.domain.parts.schemas import MetaMemberIn, ReplaceInProjectsIn, SubstituteIn
+from app.domain.projects.replace_part import replace_part_in_projects
 
 router = APIRouter()
 
@@ -86,6 +87,45 @@ def del_substitute(
             request_id=getattr(request.state, "request_id", None),
         )
     return ok(None)
+
+
+@router.post("/{part_id}/replace-in-projects")
+def replace_in_projects(
+    request: Request,
+    part_id: UUID,
+    payload: ReplaceInProjectsIn,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
+    """Repoint every matching BOM line from this part to a replacement.
+
+    The source part may be archived (you often replace *because* it was
+    retired), so it's resolved with `include_archived=True`; the target
+    must be live, since binding an archived part into a BOM is the BE2-016
+    vector the add/patch/match entry routes already guard against.
+    """
+    source = _get_part(db, ws.id, part_id, include_archived=True)
+    # Compare ids before resolving the target so "replace X with X" always
+    # 400s — even when X is archived (where the live-only target lookup
+    # would otherwise 404 and hide the real mistake).
+    if payload.target_part_id == source.id:
+        raise_http(
+            status.HTTP_400_BAD_REQUEST,
+            code=ErrorCodes.PART_REPLACE_SAME_TARGET,
+            message="replacement part must differ from the source part",
+        )
+    target = _get_part(db, ws.id, payload.target_part_id)
+    result = replace_part_in_projects(
+        db,
+        workspace=ws,
+        user=user,
+        source_part=source,
+        target_part=target,
+        project_ids=payload.project_ids,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    return ok(result.as_dict())
 
 
 @router.get("/{meta_id}/members")

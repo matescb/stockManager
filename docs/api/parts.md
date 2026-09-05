@@ -287,6 +287,60 @@ Remove a member binding (allowed on archived meta).
 
 - Source: `backend/app/api/routes/parts_core.py:602-609`.
 
+## Replace part across projects
+
+### `POST /api/parts/{part_id}/replace-in-projects`
+
+Repoint every matching BOM line from `{part_id}` to a replacement part
+across some or all of the workspace's projects, in one transaction
+(mirrors PartsBox's replace-across-projects action).
+
+**Request** — `ReplaceInProjectsIn`
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `target_part_id` | UUID | yes | The replacement part. Must be a live (non-archived) part in the workspace. |
+| `project_ids` | UUID[] | no | Limit the replacement to these projects. Omitted or empty ⇒ every **active** project in the workspace. Max 1000. |
+
+Every `project_entries` row with `part_id == {part_id}` inside the
+selected projects is updated to `target_part_id`. The path part (source)
+may be archived — you commonly replace *because* a part was retired — so
+it is resolved with `include_archived=True`; the target must be live
+(binding an archived part into a BOM is the BE2-016 vector guarded on the
+add/patch/match-entry routes).
+
+`project_entries` has no `(project_id, part_id)` uniqueness constraint, so
+no BOM line is skipped or merged — every matching line is repointed.
+
+**Response** — `200 OK`
+
+```json
+{ "data": { "updated_entries": 3, "affected_projects": 2 }, "status": {"category": "ok", "message": "OK"} }
+```
+
+`updated_entries` is the total number of BOM lines repointed;
+`affected_projects` counts the distinct projects that had at least one
+line changed.
+
+**Errors**
+
+- `400` (`part.replace_same_target`) — `target_part_id == {part_id}`.
+- `404` — source part, target part, or any named `project_ids` entry is
+  not in the caller's workspace (or the target is archived). The whole
+  operation rolls back — no partial writes.
+
+**Audit**
+
+- One `project.part_replaced` row per affected project
+  (`target_ids=[project_id, source_id, target_id]`, `comment="entries=N"`).
+- One `part.replaced_in_projects` summary row on the source part
+  (`comment="projects=N entries=M"`).
+
+**Notes**
+
+- Route: `backend/app/api/routes/parts_relations.py`.
+- Service: `backend/app/domain/projects/replace_part.py::replace_part_in_projects`.
+
 ## Part activity feed
 
 ### `GET /api/parts/{part_id}/activity`

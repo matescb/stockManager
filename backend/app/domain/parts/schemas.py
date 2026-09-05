@@ -27,6 +27,7 @@ __all__ = [
     "BulkDeleteIn",
     "SubstituteIn",
     "MetaMemberIn",
+    "ReplaceInProjectsIn",
     "ScanImportRow",
     "ScanImportIn",
     "QuickRemoveBagIn",
@@ -103,6 +104,24 @@ class MetaMemberIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     member_part_id: UUID
+
+
+class ReplaceInProjectsIn(BaseModel):
+    """Repoint every matching BOM line from the path part to `target_part_id`.
+
+    `project_ids` scopes the operation: omit it (or send an empty list) to
+    replace across every active project in the workspace; send an explicit
+    list to limit it to the named projects. Each id in the list must belong
+    to the current workspace (validated in the service) — a foreign-workspace
+    project id 404s, never silently no-ops.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_part_id: UUID
+    # Cap mirrors the multi-select the frontend offers; unbounded lists would
+    # let one request fan out across an arbitrary number of projects.
+    project_ids: list[UUID] | None = Field(default=None, max_length=1000)
 
 
 class ScanImportRow(BaseModel):
