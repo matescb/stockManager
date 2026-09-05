@@ -14,8 +14,10 @@
  *
  * Styling uses the utilities already in `src/index.css` (`card`, `table`,
  * `kbd`, `pill`) plus real Tailwind type steps, so a rendered page reads
- * as part of the app rather than a dumped README. Note there is no `md`
- * step in this repo's Tailwind scale — `text-md` is not a class here.
+ * as part of the app rather than a dumped README. Note this repo's Tailwind
+ * scale has no `md` step, so that size name compiles to nothing here; see
+ * `src/__tests__/typographyScale.test.ts`, which enforces it by scanning
+ * source text — including comments, so name the step bare, never prefixed.
  */
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
