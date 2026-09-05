@@ -35,7 +35,12 @@ test(
 
     // -------------------- add stock --------------------
     // The "Add stock" SubNav tab (role=link) routes to /parts/{id}/add,
-    // which is where the form lives — the "Stock" tab is read-only.
+    // which is where the form lives — the "Stock" tab is read-only. The tab
+    // sits inside the strip's "Stock actions" disclosure, so open that first.
+    await page
+      .getByRole("navigation", { name: "Section navigation" })
+      .getByText("Stock actions")
+      .click();
     await page.getByRole("link", { name: "Add stock", exact: true }).click();
     await page.getByLabel(/quantity/i).fill("42");
     await page.getByRole("button", { name: /^add$/i }).click();

@@ -4,9 +4,57 @@ import { api, ApiError } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
 import { formatQuantity } from "@/lib/format";
 import EntityHeader from "@/components/EntityHeader";
-import SubNav from "@/components/SubNav";
+import SubNav, { type SubNavEntry } from "@/components/SubNav";
 import PrintLabelButton from "@/routes/labels/PrintLabelButton";
 import type { Part } from "@/types";
+
+/**
+ * The part-detail tab strip.
+ *
+ * A part has up to 17 sub-routes. Rendered flat they overflowed the strip and
+ * the last six were only reachable by horizontal scrolling — effectively
+ * invisible. Nothing here is new or removed: every route below is the same URL
+ * it always was, just reached through a grouped slot when it isn't a
+ * first-class destination. Exported so a test can assert the full target set.
+ */
+export function partSubNavEntries(part: Part): SubNavEntry[] {
+  const base = `/parts/${part.id}`;
+  return [
+    { to: `${base}/info`, label: "Part info" },
+    { to: `${base}/specs`, label: "Specs" },
+    // Sourcing only makes sense for parts some provider actually knows —
+    // it surfaces stock/price/lead-time/etc. `linked_provider` is the
+    // primary; `provider_links` also covers a part linked to a secondary
+    // provider only, which has no primary link to show.
+    ...(part.linked_provider || (part.provider_links?.length ?? 0) > 0
+      ? [{ to: `${base}/sourcing`, label: "Sourcing" }]
+      : []),
+    { to: `${base}/cad`, label: "CAD" },
+    { to: `${base}/stock`, label: "Stock" },
+    {
+      label: "Stock actions",
+      items: [
+        { to: `${base}/add`, label: "Add stock" },
+        { to: `${base}/remove`, label: "Remove stock" },
+        { to: `${base}/move`, label: "Move stock" },
+      ],
+    },
+    { to: `${base}/history`, label: "History" },
+    {
+      label: "More",
+      items: [
+        { to: `${base}/authorized-supply`, label: "Authorized supply" },
+        { to: `${base}/lots`, label: "Lots" },
+        { to: `${base}/substitutes`, label: "Substitutes" },
+        ...(part.part_type === "meta" ? [{ to: `${base}/members`, label: "Members" }] : []),
+        { to: `${base}/attachments`, label: "Attachments" },
+        { to: `${base}/activity`, label: "Activity" },
+        { to: `${base}/settings`, label: "Settings" },
+        { to: `${base}/other`, label: "Other" },
+      ],
+    },
+  ];
+}
 
 export default function PartLayout() {
   const { partId } = useParams<{ partId: string }>();
@@ -26,31 +74,7 @@ function PartLayoutQuery({ partId }: { partId: string }) {
 
   if (isError) return <div className="text-danger text-sm p-4">Failed to load part. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (!part) return <div className="text-muted">Loading…</div>;
-  const items = [
-    { to: `/parts/${part.id}/info`, label: "Part info" },
-    { to: `/parts/${part.id}/specs`, label: "Specs" },
-    // Sourcing only makes sense for parts some provider actually knows —
-    // it surfaces stock/price/lead-time/etc. `linked_provider` is the
-    // primary; `provider_links` also covers a part linked to a secondary
-    // provider only, which has no primary link to show.
-    ...(part.linked_provider || (part.provider_links?.length ?? 0) > 0
-      ? [{ to: `/parts/${part.id}/sourcing`, label: "Sourcing" }]
-      : []),
-    { to: `/parts/${part.id}/cad`, label: "CAD" },
-    { to: `/parts/${part.id}/authorized-supply`, label: "Authorized supply" },
-    { to: `/parts/${part.id}/stock`, label: "Stock" },
-    { to: `/parts/${part.id}/add`, label: "Add stock" },
-    { to: `/parts/${part.id}/remove`, label: "Remove stock" },
-    { to: `/parts/${part.id}/move`, label: "Move stock" },
-    { to: `/parts/${part.id}/history`, label: "History" },
-    { to: `/parts/${part.id}/lots`, label: "Lots" },
-    { to: `/parts/${part.id}/substitutes`, label: "Substitutes" },
-    ...(part.part_type === "meta" ? [{ to: `/parts/${part.id}/members`, label: "Members" }] : []),
-    { to: `/parts/${part.id}/attachments`, label: "Attachments" },
-    { to: `/parts/${part.id}/activity`, label: "Activity" },
-    { to: `/parts/${part.id}/settings`, label: "Settings" },
-    { to: `/parts/${part.id}/other`, label: "Other" },
-  ];
+  const items = partSubNavEntries(part);
   const lowThreshold = part.low_stock_report_quantity;
   const onHand = part.on_hand ?? 0;
   const reserved = part.reserved ?? 0;

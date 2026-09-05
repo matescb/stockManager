@@ -30,7 +30,28 @@ export class PartDetailPage {
     await this.page.goto(`/parts/${this.partId}/${tab}`);
   }
 
+  /**
+   * The part strip has 17 destinations, so the less-used ones live inside
+   * `<details>` disclosures ("Stock actions", "More") to keep it one row.
+   * Playwright will not click a link inside a closed disclosure, so expand
+   * them all before reaching for a tab.
+   */
+  async expandSubNavGroups(): Promise<void> {
+    const nav = this.page.getByRole("navigation", { name: "Section navigation" });
+    // `count()` does not auto-wait, so settle the strip first — otherwise a
+    // call made while the layout query is still in flight sees zero groups.
+    await nav.waitFor({ state: "visible" });
+    const groups = nav.locator("details");
+    const count = await groups.count();
+    for (let i = 0; i < count; i++) {
+      const group = groups.nth(i);
+      const isOpen = await group.evaluate((el) => (el as HTMLDetailsElement).open);
+      if (!isOpen) await group.locator("summary").click();
+    }
+  }
+
   async openTab(label: PartTabLabel): Promise<void> {
+    await this.expandSubNavGroups();
     await this.page.getByRole("link", { name: label, exact: true }).click();
   }
 

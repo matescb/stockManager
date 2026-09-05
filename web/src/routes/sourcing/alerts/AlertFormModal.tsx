@@ -1,6 +1,7 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Bell, Loader2, X } from "lucide-react";
+import { Modal } from "@/components/Modal";
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useApiMutation } from "@/lib/mutations";
@@ -201,6 +202,12 @@ export default function AlertFormModal({
     },
   });
 
+  // A dismiss must not strand an in-flight save, so the focus-trap's own exits
+  // (Escape, backdrop) obey the same guard the Cancel button does.
+  const closeUnlessBusy = useCallback(() => {
+    if (!mutation.isPending) onClose();
+  }, [mutation.isPending, onClose]);
+
   if (!open) return null;
 
   function buildPayload(): SourcingAlertInput | null {
@@ -277,21 +284,18 @@ export default function AlertFormModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="alert-form-title"
-      onMouseDown={event => {
-        if (event.target === event.currentTarget && !mutation.isPending) onClose();
-      }}
+    <Modal
+      open={open}
+      onClose={closeUnlessBusy}
+      title={title ?? (isEdit ? "Edit alert" : "Create alert")}
+      className="card w-full max-w-3xl shadow-lg"
     >
-      <form className="card max-h-[92vh] w-full max-w-3xl overflow-auto p-4 shadow-lg" noValidate onSubmit={submit}>
+      <form className="p-4" noValidate onSubmit={submit}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <Bell size={18} aria-hidden="true" />
-              <h2 id="alert-form-title" className="text-base font-semibold text-text">
+              <h2 className="card-title text-text">
                 {title ?? (isEdit ? "Edit alert" : "Create alert")}
               </h2>
             </div>
@@ -563,6 +567,6 @@ export default function AlertFormModal({
           </button>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }

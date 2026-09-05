@@ -1,7 +1,8 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ImageOff, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { Modal } from "@/components/Modal";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useApiMutation } from "@/lib/mutations";
@@ -41,6 +42,7 @@ export default function ReplaceInProjectsModal({ open, part, onClose }: Props) {
   const [allProjects, setAllProjects] = useState(true);
   const [selectedProjects, setSelectedProjects] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   // Reset transient state each time the modal opens so a re-open never
   // shows a stale selection from a previous run.
@@ -113,6 +115,12 @@ export default function ReplaceInProjectsModal({ open, part, onClose }: Props) {
     },
   });
 
+  // A dismiss must not strand an in-flight replace, so the focus-trap's own
+  // exits (Escape, backdrop) obey the same guard the Cancel button does.
+  const closeUnlessBusy = useCallback(() => {
+    if (!replaceMutation.isPending) onClose();
+  }, [replaceMutation.isPending, onClose]);
+
   if (!open) return null;
 
   function toggleProject(projectId: string) {
@@ -143,19 +151,17 @@ export default function ReplaceInProjectsModal({ open, part, onClose }: Props) {
   const busy = replaceMutation.isPending;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="replace-in-projects-title"
-      onMouseDown={event => {
-        if (event.target === event.currentTarget && !busy) onClose();
-      }}
+    <Modal
+      open={open}
+      onClose={closeUnlessBusy}
+      title="Replace in projects"
+      className="card w-full max-w-2xl shadow-lg"
+      initialFocusRef={searchRef}
     >
-      <form className="card w-full max-w-2xl p-4 shadow-lg" onSubmit={submit}>
+      <form className="p-4" onSubmit={submit}>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 id="replace-in-projects-title" className="text-base font-semibold text-text">
+            <h2 className="card-title text-text">
               Replace in projects
             </h2>
             <p className="mt-1 text-sm text-muted">
@@ -181,12 +187,12 @@ export default function ReplaceInProjectsModal({ open, part, onClose }: Props) {
               Replacement part
               <input
                 id="replace-part-search"
+                ref={searchRef}
                 className="input"
                 placeholder="Search MPN or name..."
                 value={search}
                 onChange={event => setSearch(event.currentTarget.value)}
                 disabled={busy}
-                autoFocus
               />
             </label>
 
@@ -303,6 +309,6 @@ export default function ReplaceInProjectsModal({ open, part, onClose }: Props) {
           </button>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }

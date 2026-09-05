@@ -372,7 +372,7 @@ wiring — the right URL and format reach it, and the WebGL context is released
 | `Brand` | `Brand.tsx` | App logotype |
 | `EmptyState` | `EmptyState.tsx` | Centred icon + headline + CTA for empty list pages |
 | `PartsTopNav` | `PartsTopNav.tsx` | Header tab strip for the parts area (Parts / Lots / Stock history) |
-| `SubNav` | `SubNav.tsx` | Tab strip for entity detail pages |
+| `SubNav` | `SubNav.tsx` | Tab strip for entity detail pages; an entry may be a `{ label, items }` group, rendered as a `<details>` disclosure so a long strip (Part detail has 17 routes) stays one row |
 | `ThemedToaster` | `ThemedToaster.tsx` | Sonner toaster wired to the active theme |
 | `ThemeToggle` | `ThemeToggle.tsx` | system / light / dark switch |
 | `ActivityTimeline` | `ActivityTimeline.tsx` | Timeline view for entity activity feeds |

@@ -15,6 +15,10 @@ export default function ProjectLayout() {
   const items = [
     { to: `/projects/${data.id}/data`, label: "Project info" },
     { to: `/projects/${data.id}/bom`, label: "BOM" },
+    // /sourcing is a child of this layout, so without an entry here the
+    // segmented control rendered with no active tab on that route and the
+    // page drew a breadcrumb + its own <h1> to compensate.
+    { to: `/projects/${data.id}/sourcing`, label: "Sourcing" },
     { to: `/projects/${data.id}/import`, label: "Import BOM" },
     { to: `/projects/${data.id}/builds`, label: "Builds" },
     { to: `/projects/${data.id}/other`, label: "Other" },

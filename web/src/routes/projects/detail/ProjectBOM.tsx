@@ -15,7 +15,6 @@ import QueryStateBoundary from "@/components/QueryStateBoundary";
 import AddPartFromLibraryModal from "./AddPartFromLibraryModal";
 import BomProviderAmbiguityModal, { type BomProviderPendingChoice } from "./BomProviderAmbiguityModal";
 import BomProviderFailuresPanel, { type BomProviderFailure } from "./BomProviderFailuresPanel";
-import { SourceBomButton } from "@/routes/projects/sourcing/SourceBomButton";
 import { providerLabel } from "@/lib/providers";
 
 type WorkspaceProviderSettings = {
@@ -167,8 +166,10 @@ export default function ProjectBOM() {
 
   return (
     <div className="space-y-3">
+      {/* Source BOM lives in the ProjectLayout header, ~80px above this row —
+          a second copy of the same button was the app's closest-together
+          duplicate action. */}
       <div className="flex flex-wrap items-center justify-end gap-2">
-        <SourceBomButton projectId={projectId} className="btn" />
         {projectId && provider !== "none" && unmatchedEntries.length > 0 && (
           <button
             type="button"
@@ -330,6 +331,10 @@ export default function ProjectBOM() {
               <span className="pill bg-danger/20 text-danger">unmatched</span>
             ),
             width: "110px",
+            // The `part` column already renders an "unmatched" pill on the
+            // same row, so by default this was two identical pills per row.
+            // Still sortable / exportable once re-enabled from Columns.
+            hidden: true,
           },
           {
             key: "actions",

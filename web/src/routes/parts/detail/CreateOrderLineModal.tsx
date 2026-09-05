@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { ExternalLink } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { Modal } from "@/components/Modal";
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useApiMutation } from "@/lib/mutations";
@@ -160,6 +161,12 @@ export function CreateOrderLineModal({
     },
   });
 
+  // A dismiss must not strand an in-flight create, so the focus-trap's own
+  // exits (Escape, backdrop) obey the same guard the Cancel button does.
+  const closeUnlessBusy = useCallback(() => {
+    if (!submitMutation.isPending) onClose();
+  }, [submitMutation.isPending, onClose]);
+
   if (!open || !source) return null;
   const safeProductUrl = isSafeHttpUrl(source.productUrl) ? source.productUrl : null;
 
@@ -174,19 +181,16 @@ export function CreateOrderLineModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="create-order-line-title"
-      onMouseDown={event => {
-        if (event.target === event.currentTarget && !submitMutation.isPending) onClose();
-      }}
+    <Modal
+      open={open}
+      onClose={closeUnlessBusy}
+      title="Create order line"
+      className="card w-full max-w-2xl shadow-lg"
     >
-      <form className="card w-full max-w-2xl p-4 shadow-lg" onSubmit={submit}>
+      <form className="p-4" onSubmit={submit}>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 id="create-order-line-title" className="text-base font-semibold text-text">
+            <h2 className="card-title text-text">
               Create order line
             </h2>
             <p className="mt-1 text-sm text-muted">{source.distributor}</p>
@@ -337,7 +341,7 @@ export function CreateOrderLineModal({
           </button>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }
 
