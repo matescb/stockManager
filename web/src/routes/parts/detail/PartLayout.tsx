@@ -4,6 +4,7 @@ import { api, ApiError } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
 import EntityHeader from "@/components/EntityHeader";
 import SubNav from "@/components/SubNav";
+import PrintLabelButton from "@/routes/labels/PrintLabelButton";
 import type { Part } from "@/types";
 
 export default function PartLayout() {
@@ -96,6 +97,9 @@ function PartLayoutQuery({ partId }: { partId: string }) {
         idCode={part.id}
         stats={stats}
         imageUrl={part.image_url}
+        actions={
+          <PrintLabelButton entityType="part" entityId={part.id} entityName={part.name} />
+        }
       />
       <SubNav items={items} />
       <Outlet key={part.id} context={{ part }} />

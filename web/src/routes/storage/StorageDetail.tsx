@@ -9,6 +9,7 @@ import { useWsKey, wsKeyOf, archiveStorageKeys } from "@/lib/queryKeys";
 import EntityHeader from "@/components/EntityHeader";
 import SubNav from "@/components/SubNav";
 import QueryStateBoundary from "@/components/QueryStateBoundary";
+import PrintLabelButton from "@/routes/labels/PrintLabelButton";
 import type { StorageLocation, Part, StockEntry } from "@/types";
 import { DataTable } from "@/components/DataTable";
 import { formatDateTime } from "@/lib/format";
@@ -41,18 +42,25 @@ export function StorageDetailLayout() {
         }
         idCode={data.id}
         actions={
-          !data.archived_at && (
-            // "Scan into here": jumps to the bulk-import flow with this
-            // bin pre-selected as the destination, so a fresh bag of
-            // parts lands directly without picking storage in the form.
-            <Link
-              to={`/parts/scan-import?storage_id=${data.id}`}
-              className="btn-primary inline-flex items-center gap-1.5"
-            >
-              <ScanLine size={14} />
-              Scan into here
-            </Link>
-          )
+          <div className="flex gap-2">
+            <PrintLabelButton
+              entityType="storage_location"
+              entityId={data.id}
+              entityName={data.name}
+            />
+            {!data.archived_at && (
+              // "Scan into here": jumps to the bulk-import flow with this
+              // bin pre-selected as the destination, so a fresh bag of
+              // parts lands directly without picking storage in the form.
+              <Link
+                to={`/parts/scan-import?storage_id=${data.id}`}
+                className="btn-primary inline-flex items-center gap-1.5"
+              >
+                <ScanLine size={14} />
+                Scan into here
+              </Link>
+            )}
+          </div>
         }
       />
       <SubNav items={items} />

@@ -24,6 +24,7 @@ What you need to navigate `web/src/`. Conventions are sketched in [`CLAUDE.md`](
 | [parts](parts.md) | Part-detail flows that span tabs and modals |
 | [projects](projects.md) | Project-detail flows, including Source BOM |
 | [reports](reports.md) | Report routes, including BOM buyability and replenishment cost |
+| [label-designer](label-designer.md) | Label template designer (mm canvas, bindings) and the Print label actions |
 | [tailwind-utilities](tailwind-utilities.md) | The `index.css` utility set (`btn`, `card`, `pill`, …) |
 | [auth-flow](auth-flow.md) | `AuthProvider`, workspace switch, 401 redirect bus |
 | [scanner](scanner.md) | ZXing / Scandit dual-mode + `bagCode.ts` parser |

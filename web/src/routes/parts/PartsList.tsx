@@ -1,8 +1,8 @@
-import { useRef, useCallback } from "react";
+import { useRef, useCallback, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Boxes, ImageOff, Loader2, Trash2 } from "lucide-react";
+import { Boxes, ImageOff, Loader2, Printer, Trash2 } from "lucide-react";
 import { api, ApiError, getPaged } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
 import { PagedPartsSchema, PartCategoriesListSchema } from "@/lib/schemas";
@@ -15,6 +15,7 @@ import EmptyState from "@/components/EmptyState";
 import PartsTopNav from "@/components/PartsTopNav";
 import { useConfirm } from "@/components/ConfirmDialog";
 import QueryStateBoundary from "@/components/QueryStateBoundary";
+import BatchPrintDialog, { type BatchPrintItem } from "@/routes/labels/BatchPrintDialog";
 
 const PAGE_LIMIT = 50;
 
@@ -111,6 +112,22 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
     [hasNextPage, isFetchingNextPage, query],
   );
 
+  // Batch label printing for the current selection. The dialog owns the
+  // template choice, the per-object loop and the printer-failure message;
+  // this list only supplies which objects were picked.
+  const [batchPrint, setBatchPrint] = useState<{
+    items: BatchPrintItem[];
+    clear: () => void;
+  } | null>(null);
+
+  function openBatchPrint(ids: string[], clear: () => void) {
+    const partsById = new Map(allParts.map((p) => [p.id, p]));
+    setBatchPrint({
+      items: ids.map((id) => ({ id, label: partsById.get(id)?.name ?? id })),
+      clear,
+    });
+  }
+
   async function doDelete(ids: string[], clear: () => void) {
     const partsById = new Map(allParts.map((p) => [p.id, p]));
     const previewLines = ids
@@ -154,15 +171,25 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
               searchPlaceholder="Search parts…"
               selectable
               selectionAccessory={(ids, clear) => (
-                <button
-                  type="button"
-                  className="btn-danger inline-flex items-center gap-1.5"
-                  disabled={busy}
-                  onClick={() => doDelete(ids, clear)}
-                >
-                  <Trash2 size={14} />
-                  Delete ({ids.length})
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="btn inline-flex items-center gap-1.5"
+                    onClick={() => openBatchPrint(ids, clear)}
+                  >
+                    <Printer size={14} />
+                    Print labels ({ids.length})
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-danger inline-flex items-center gap-1.5"
+                    disabled={busy}
+                    onClick={() => doDelete(ids, clear)}
+                  >
+                    <Trash2 size={14} />
+                    Delete ({ids.length})
+                  </button>
+                </>
               )}
               empty={
                 archived ? (
@@ -255,6 +282,17 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
           </>
         )}
       </QueryStateBoundary>
+
+      <BatchPrintDialog
+        open={batchPrint !== null}
+        entityType="part"
+        items={batchPrint?.items ?? []}
+        onClose={() => setBatchPrint(null)}
+        onDone={() => {
+          batchPrint?.clear();
+          setBatchPrint(null);
+        }}
+      />
     </div>
   );
 }

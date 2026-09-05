@@ -13,6 +13,7 @@ import { DataTable } from "@/components/DataTable";
 import AttachmentsPanel from "@/components/AttachmentsPanel";
 import ActivityTimeline from "@/components/ActivityTimeline";
 import { useConfirm } from "@/components/ConfirmDialog";
+import PrintLabelButton from "@/routes/labels/PrintLabelButton";
 import type { Order, OrderEntry, Part, StorageLocation } from "@/types";
 
 type DetailOut = { order: Order; entries: OrderEntry[] };
@@ -215,9 +216,16 @@ export default function OrderDetail() {
           ...(order.currency ? [{ label: "Currency", value: order.currency } as const] : []),
         ]}
         actions={
-          <button className="btn" onClick={doArchive} disabled={archiveMutation.isPending}>
-            {order.archived_at ? "Restore" : "Archive"}
-          </button>
+          <div className="flex gap-2">
+            <PrintLabelButton
+              entityType="order"
+              entityId={order.id}
+              entityName={order.name}
+            />
+            <button className="btn" onClick={doArchive} disabled={archiveMutation.isPending}>
+              {order.archived_at ? "Restore" : "Archive"}
+            </button>
+          </div>
         }
       />
 

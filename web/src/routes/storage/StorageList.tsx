@@ -1,11 +1,13 @@
+import { useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Warehouse } from "lucide-react";
+import { Printer, Warehouse } from "lucide-react";
 import { api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
 import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import QueryStateBoundary from "@/components/QueryStateBoundary";
+import BatchPrintDialog, { type BatchPrintItem } from "@/routes/labels/BatchPrintDialog";
 import type { StorageLocation } from "@/types";
 
 export default function StorageList({ archived = false }: { archived?: boolean }) {
@@ -15,6 +17,22 @@ export default function StorageList({ archived = false }: { archived?: boolean }
     queryFn: ({ signal }) => api.get<StorageLocation[]>(`/storage${archived ? "?archived=true" : ""}`, { signal }),
   });
   const { data } = storageQuery;
+
+  // Batch bin labels: the classic "re-label a whole shelf" job. The dialog
+  // owns the template choice, the per-bin loop and the failure message.
+  const [batchPrint, setBatchPrint] = useState<{
+    items: BatchPrintItem[];
+    clear: () => void;
+  } | null>(null);
+
+  function openBatchPrint(ids: string[], clear: () => void) {
+    const byId = new Map((data ?? []).map(row => [row.id, row] as const));
+    setBatchPrint({
+      items: ids.map(id => ({ id, label: byId.get(id)?.name ?? id })),
+      clear,
+    });
+  }
+
   return (
     <div>
       <div className="flex items-center gap-1 mb-3">
@@ -27,6 +45,17 @@ export default function StorageList({ archived = false }: { archived?: boolean }
         rows={data ?? []}
         rowKey={r => r.id}
         tableId="storage"
+        selectable
+        selectionAccessory={(ids, clear) => (
+          <button
+            type="button"
+            className="btn inline-flex items-center gap-1.5"
+            onClick={() => openBatchPrint(ids, clear)}
+          >
+            <Printer size={14} />
+            Print labels ({ids.length})
+          </button>
+        )}
         empty={
           archived ? (
             <EmptyState
@@ -53,6 +82,17 @@ export default function StorageList({ archived = false }: { archived?: boolean }
         ]}
       />
       </QueryStateBoundary>
+
+      <BatchPrintDialog
+        open={batchPrint !== null}
+        entityType="storage_location"
+        items={batchPrint?.items ?? []}
+        onClose={() => setBatchPrint(null)}
+        onDone={() => {
+          batchPrint?.clear();
+          setBatchPrint(null);
+        }}
+      />
     </div>
   );
 }

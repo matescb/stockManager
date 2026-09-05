@@ -219,4 +219,5 @@ and fails closed with the same `409`.
 
 - [codes](codes.md) — the code system labels print and scanners resolve
 - [domain/labels](../domain/labels.md) — the printing domain, the driver, the job ledger
+- [frontend/label-designer](../frontend/label-designer.md) — the designer UI and the Print label actions that consume this router
 - `backend/app/domain/printing/README.md` — module orientation
