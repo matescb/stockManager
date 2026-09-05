@@ -29,6 +29,7 @@ Every public REST endpoint lives here, one file per logical area. This README is
 | `bom_presets.py` | `/api/bom-presets` | [projects](../../../../docs/api/projects.md) |
 | `orders.py` | `/api/orders` | [orders](../../../../docs/api/orders.md) |
 | `builds.py` | `/api/builds` | [builds](../../../../docs/api/builds.md) |
+| `build_stages.py` | `/api/builds/{id}/stages…` | [builds](../../../../docs/api/builds.md#multi-stage-builds) |
 | `reports.py` | `/api/reports` | [reports](../../../../docs/api/reports.md) |
 | `attachments.py` | `/api/attachments` | [attachments-tags-cf](../../../../docs/api/attachments-tags-cf.md) |
 | `tags.py` | `/api/tags` | [attachments-tags-cf](../../../../docs/api/attachments-tags-cf.md) |

@@ -2,7 +2,7 @@
 
 Audience: engineer
 
-Builds (a planned/in-progress run that consumes BOM stock and produces an output lot), reservations, shortage analysis, and the consume action that closes a build.
+Builds (a planned/in-progress run that consumes BOM stock and produces an output lot), reservations, shortage analysis, multi-stage builds, and the consume actions that close a build.
 
 ## Conventions
 
@@ -23,6 +23,9 @@ Reservation-rebalancing rules on PATCH (`builds.py:117-132`):
 
 - `quantity` change while `status in ("planned", "in_progress")` → `release_reservations` then `apply_reservations` against the new quantity.
 - Transition into `cancelled` → `release_reservations`.
+- A `quantity` change is **refused** (`400 build.read_only`) once any stage of the build has been consumed — the rebalance would re-reserve material a completed stage already drew. See [Multi-stage builds](#multi-stage-builds).
+
+A multi-stage build also walks `planned → in_progress` on its first stage consume and `→ complete` when its last stage lands.
 
 ## Routes
 
@@ -136,6 +139,8 @@ Apply consumption: release reservations, write negative ledger entries against t
 
 **Response** — `200 OK` — service result dict (TODO(verify): shape — likely `{ build_id, status, stock_entries, output_lot_id }`).
 
+**Errors** — `400 build.has_stages` when the build has one or more stages: consume each stage through `POST /api/builds/{build_id}/stages/{stage_id}/consume` instead. Allowing both would draw every stage's stock at once while leaving the stages reported as un-built.
+
 **Errors** — `400` (`BuildError` mapped, `builds.py:169-172`):
 
 - `"build is <status>"` — non-resumable state (`service.py:274`).
@@ -157,6 +162,99 @@ Apply consumption: release reservations, write negative ledger entries against t
 - Source: `backend/app/api/routes/builds.py:159-173`.
 - Service: `backend/app/domain/builds/service.py:263-` (extends past `:474`).
 
+## Multi-stage builds
+
+Track B2. A build may be assembled across several stages, each consuming a defined subset (and portion) of the BOM. A build with **no** stages is a single-pass build and every endpoint above behaves exactly as it did before this feature.
+
+**Reservations are taken once, up front, by `POST /api/builds`.** Creating a stage writes no ledger row; each stage consume releases only the slice it consumes, so nothing is double-counted across stages. Domain detail: [`builds-and-bom.md`](../domain/builds-and-bom.md#multi-stage-builds).
+
+These three routes live in `backend/app/api/routes/build_stages.py`, mounted under the same `/api/builds` prefix. They were split out of `builds.py` to stay inside that module's 300-line `line-count-budget` cap — the same reason `parts_core` / `parts_scan` / `parts_assets` are separate modules.
+
+### `GET /api/builds/{build_id}/stages`
+
+List the build's active stages, in consumption order, each with its lines and a per-stage shortage analysis.
+
+**Response** — `200 OK` — array of:
+
+```json
+{ "id": "…", "build_id": "…", "name": "SMT reflow", "sequence": 0,
+  "status": "planned",
+  "started_at": null, "completed_at": null, "comments": null,
+  "lines": [{ "id": "…", "project_entry_id": "…", "portion_pct": 50.0 }],
+  "shortage": [
+    { "project_entry_id": "…", "part_id": "…", "part_name": "R1k",
+      "attrition_pct": 25.0, "portion_pct": 50.0,
+      "required": 69, "available": 400,
+      "substitute_ids": [], "substitute_available": 0, "short_by": 0 }
+  ],
+  "created_at": "…", "updated_at": "…" }
+```
+
+`shortage` mirrors the whole-build shape (so one UI component renders both) with `portion_pct` added. `required` is **this stage's slice** of the whole-build, attrition-adjusted `_required` value — see the allocation formula in [`builds-and-bom.md`](../domain/builds-and-bom.md#per-stage-requirement-allocation). Empty array for a single-pass build.
+
+**Errors** — `404 build.not_found`.
+
+### `POST /api/builds/{build_id}/stages`
+
+Create a stage. Writes **no** ledger rows.
+
+**Request** — `BuildStageCreateIn`:
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | str | 1–200 chars. |
+| `sequence` | int? | Consumption order. Defaults to "append after the current last stage". |
+| `comments` | str? | |
+| `lines` | list | ≥ 1 of `{ project_entry_id, portion_pct? }`. `portion_pct` defaults to `100`, must be `> 0` and `<= 100`. |
+
+**Response** — `201 Created` — the created stage, in the same shape as the list route.
+
+**Errors**
+
+- `404 build.not_found` / `404 project.not_found`.
+- `400 build_stage.error`:
+  - `"build is complete"` / `"build is cancelled"` / `"build is archived"`.
+  - `"project entry <id> not in this project"` — including a BOM entry from another workspace.
+  - `"project entry <id> has no part to consume"` (`non_part` / `unmatched` / NULL `part_id`).
+  - `"project entry <id> is DNP"`.
+  - `"project entry <id> listed twice in this stage"`.
+  - `"project entry <id> is over-committed (<n>% across stages; max 100%)"`.
+  - `"stage sequence <n> already used by this build"`.
+- `409` — workspace-isolation trigger (`WS001`) via `raise_integrity_as_409`.
+
+**Audit** — writes `build_stage.created` (`target_type="build_stage"`).
+
+### `POST /api/builds/{build_id}/stages/{stage_id}/consume`
+
+Consume one stage. All-or-nothing.
+
+**Request** — `StageConsumeIn`: same shape as `ConsumeIn` — `lines` of `{ project_entry_id, part_id, quantity, lot_id?, storage_location_id? }`, plus `output_storage_location_id?` / `output_lot_name?`. The output fields only take effect on the stage that completes the build; a staged build produces its sub-assembly lot once, not once per stage.
+
+**Response** — `200 OK`
+
+```json
+{ "build_id": "…", "build_stage_id": "…",
+  "stage_status": "complete", "build_status": "in_progress",
+  "consumed_entries": ["…"], "remaining_stages": 1,
+  "output_lot_id": null, "output_stock_entry_id": null }
+```
+
+The emitted `build_consume` ledger rows carry `build_stage_id`, so `GET /api/builds/{build_id}/activity` shows which stage took what.
+
+**Errors**
+
+- `404 build.not_found`; `404 build_stage.not_found` — unknown stage, a stage of a *different* build, an archived stage, or a stage in another workspace.
+- `400 build.consume_error`:
+  - `"build is <status>"` / `"build is archived"`.
+  - `"stage '<name>' is already complete"`.
+  - `"stage '<name>' (sequence <n>) must be consumed before '<name>'"` — stages are consumed in `sequence` order.
+  - `"stage '<name>' has nothing to consume"`.
+  - `"project entry <id> is not in this stage"`.
+  - every `BuildError` the whole-build consume can raise (substitute/lot/storage validation, insufficient stock, under-consumed coverage) — the two paths share `apply_consume_lines`.
+- `409 stock.conflict_error` — output storage violates `single_part_only` / `existing_parts_only` on the final stage.
+
+**Audit** — writes `build_stage.consumed` (`target_type="build_stage"`).
+
 ### `GET /api/builds/{build_id}/activity`
 
 Combined timeline of `stock_entries` tagged with this `build_id` plus synthetic `build_created` / `build_updated` items.
@@ -177,7 +275,7 @@ Combined timeline of `stock_entries` tagged with this `build_id` plus synthetic 
 
 ## TODOs
 
-- TODO(verify): `BuildCreateIn`, `BuildPatchIn`, `ConsumeIn` exact field lists (`domain/builds/schemas.py`).
+- TODO(verify): `BuildCreateIn`, `BuildPatchIn`, `ConsumeIn` exact field lists (`domain/builds/schemas.py`). `BuildStageCreateIn` / `StageConsumeIn` are documented above from the schema.
 - TODO(verify): full set of `build.status` values and the transitions allowed via PATCH.
 - TODO(verify): `shortage_analysis` return shape (`domain/builds/service.py:77`).
 - TODO(verify): exact insufficient-stock error messages from `consume` (`service.py:392`, `service.py:425`).

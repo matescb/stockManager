@@ -401,6 +401,78 @@ def test_password_reset_requests_autovacuum_reloptions_round_trip(
 
 
 @pytest.mark.slow
+def test_build_stages_round_trip(round_trip_url: str) -> None:
+    """0076 adds two tables, one ledger column and three workspace triggers.
+
+    The column on `stock_entries` is the risky half: a downgrade that drops
+    the tables but leaves `stock_entries.build_stage_id` (or its FK) behind
+    would wedge the chain on the next upgrade. Assert both directions
+    explicitly rather than relying on the whole-chain sweep to notice.
+    """
+    cfg = _alembic_config(round_trip_url)
+
+    def tables() -> set[str]:
+        eng = create_engine(round_trip_url, future=True)
+        try:
+            return set(inspect(eng).get_table_names())
+        finally:
+            eng.dispose()
+
+    def stock_entry_columns() -> set[str]:
+        eng = create_engine(round_trip_url, future=True)
+        try:
+            return {col["name"] for col in inspect(eng).get_columns("stock_entries")}
+        finally:
+            eng.dispose()
+
+    def triggers() -> set[str]:
+        eng = create_engine(round_trip_url, future=True)
+        try:
+            with eng.connect() as conn:
+                return {
+                    row.tgname
+                    for row in conn.execute(
+                        text(
+                            "SELECT tgname FROM pg_trigger "
+                            "WHERE NOT tgisinternal AND tgname IN ("
+                            "'build_stages_workspace_fk_check', "
+                            "'build_stage_lines_workspace_fk_check', "
+                            "'stock_entries_build_stage_workspace_check')"
+                        )
+                    )
+                }
+        finally:
+            eng.dispose()
+
+    expected_triggers = {
+        "build_stages_workspace_fk_check",
+        "build_stage_lines_workspace_fk_check",
+        "stock_entries_build_stage_workspace_check",
+    }
+
+    _reset_schema(round_trip_url)
+    _upgrade(cfg, round_trip_url, "0075")
+    assert "build_stages" not in tables()
+    assert "build_stage_id" not in stock_entry_columns()
+
+    _upgrade(cfg, round_trip_url, "0076")
+    after_upgrade = _snapshot_schema(round_trip_url)
+    assert {"build_stages", "build_stage_lines"} <= tables()
+    assert "build_stage_id" in stock_entry_columns()
+    assert triggers() == expected_triggers
+
+    _downgrade(cfg, round_trip_url, "0075")
+    assert "build_stages" not in tables()
+    assert "build_stage_lines" not in tables()
+    assert "build_stage_id" not in stock_entry_columns()
+    assert triggers() == set()
+
+    _upgrade(cfg, round_trip_url, "0076")
+    assert _snapshot_schema(round_trip_url) == after_upgrade
+    assert triggers() == expected_triggers
+
+
+@pytest.mark.slow
 def test_snapshot_schema_captures_server_default(round_trip_url: str) -> None:
     _reset_schema(round_trip_url)
     eng = create_engine(round_trip_url, future=True)

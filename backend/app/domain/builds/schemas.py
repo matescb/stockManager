@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
@@ -35,6 +36,49 @@ class ConsumeLineIn(BaseModel):
 
 
 class ConsumeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lines: list[ConsumeLineIn] = Field(min_length=1)
+    output_storage_location_id: UUID | None = None
+    output_lot_name: str | None = None
+
+
+# --- Multi-stage builds (Track B2) ------------------------------------------
+
+
+class BuildStageLineIn(BaseModel):
+    """One BOM line a stage consumes, and how much of it.
+
+    `portion_pct` is a percentage of the line's whole-build requirement (the
+    attrition-adjusted integer from `service.py::_required`), not of
+    `project_entries.quantity` — so attrition applies exactly once, in the
+    one place it always has.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    project_entry_id: UUID
+    portion_pct: Decimal = Field(default=Decimal(100), gt=0, le=100, max_digits=7, decimal_places=4)
+
+
+class BuildStageCreateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    # Consumption order. Defaults to "append after the current last stage".
+    sequence: int | None = Field(default=None, ge=0)
+    comments: str | None = None
+    lines: list[BuildStageLineIn] = Field(min_length=1)
+
+
+class StageConsumeIn(BaseModel):
+    """Per-stage consume payload.
+
+    Identical to `ConsumeIn` except the output fields only take effect on the
+    stage that completes the build — a staged build produces its sub-assembly
+    lot once, not once per stage.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     lines: list[ConsumeLineIn] = Field(min_length=1)

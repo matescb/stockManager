@@ -6,16 +6,17 @@ an associated sub-assembly part, a 'build_produce' row + a Lot tagged
 source_type='build', source_build_id=build.id."""
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import ROUND_CEILING, Decimal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.core.time import utcnow
 from app.domain.builds.models import Build
-from app.domain.builds.schemas import ConsumeIn
+from app.domain.builds.schemas import ConsumeIn, ConsumeLineIn
 
 log = get_logger(__name__)
 from app.domain.lots.models import Lot
@@ -236,15 +237,35 @@ def apply_reservations(
     return written
 
 
-def release_reservations(
-    db: Session, *, workspace_id: UUID, user_id: UUID | None, build: Build
-) -> int:
-    """Write a counter-row for every outstanding reserve row tied to `build`.
+def _outstanding_reservations(
+    db: Session, *, workspace_id: UUID, build: Build
+) -> tuple[list[UUID], list[tuple[StockEntry, Decimal]]]:
+    """Reserve rows for `build` and how much of each is still outstanding.
 
-    "Outstanding" = a reserve row whose net contribution is still positive,
-    i.e. a row with `operation_type='reserve'` for which no matching
-    `operation_type='release'` (`related_entry_id == reserve.id`) yet exists.
-    Idempotent: returns 0 if there is nothing to release.
+    Returns `(all_reserve_part_ids, [(reserve_row, remaining), …])`.
+
+    `remaining` stays a `Decimal`. `stock_entries.quantity_delta` is
+    `Numeric(18,6)` since alembic 0074, so an `int()` here would truncate
+    any fraction the column can now physically hold — the same coercion
+    0074 had to remove from `_required`. Nothing writes a fractional
+    quantity today (every quantity schema above the DB is still `int`), so
+    this changes no current behaviour; it just refuses to be the place that
+    silently loses 0.5 of a metre when the units-of-measure track lands.
+
+    "Outstanding" is measured in **quantity**, not row existence: a reserve
+    row of 100 that has already been released by 40 (via one or more
+    `operation_type='release'` rows carrying `related_entry_id == reserve.id`)
+    is still outstanding for 60. Before multi-stage builds every release was
+    all-or-nothing so existence and quantity agreed; per-stage consume
+    releases only the slice it consumes, so the accounting has to be
+    quantity-based or the next release would over-release and drive
+    `reserved_quantity` negative.
+
+    Rows are returned in a deterministic order (occurred_at, id) so two
+    partial releases of the same reservation drain it in the same sequence.
+
+    The first element is *every* reserve row's part_id — including
+    fully-released ones — so callers take the same lock set they always did.
     """
     reserve_rows = list(
         db.execute(
@@ -253,82 +274,190 @@ def release_reservations(
             .where(StockEntry.build_id == build.id)
             .where(StockEntry.status == "reserved")
             .where(StockEntry.operation_type == "reserve")
+            .order_by(StockEntry.occurred_at, StockEntry.id)
         ).scalars()
     )
     if not reserve_rows:
+        return [], []
+    released_by_reserve: dict[UUID, Decimal] = {}
+    for related_id, released in db.execute(
+        select(
+            StockEntry.related_entry_id,
+            func.coalesce(func.sum(-StockEntry.quantity_delta), 0),
+        )
+        .where(StockEntry.workspace_id == workspace_id)
+        .where(StockEntry.build_id == build.id)
+        .where(StockEntry.status == "reserved")
+        .where(StockEntry.operation_type == "release")
+        .where(StockEntry.related_entry_id.is_not(None))
+        .group_by(StockEntry.related_entry_id)
+    ):
+        released_by_reserve[related_id] = Decimal(released or 0)
+
+    outstanding: list[tuple[StockEntry, Decimal]] = []
+    for r in reserve_rows:
+        remaining = Decimal(r.quantity_delta) - released_by_reserve.get(r.id, Decimal(0))
+        if remaining > 0:
+            outstanding.append((r, remaining))
+    return [r.part_id for r in reserve_rows], outstanding
+
+
+def _write_release(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    user_id: UUID | None,
+    build: Build,
+    reserve: StockEntry,
+    quantity: Decimal | int,
+    build_stage_id: UUID | None,
+    now: datetime,
+) -> None:
+    db.add(
+        StockEntry(
+            workspace_id=workspace_id,
+            part_id=reserve.part_id,
+            quantity_delta=-quantity,
+            status="reserved",
+            operation_type="release",
+            related_entry_id=reserve.id,
+            build_id=build.id,
+            build_stage_id=build_stage_id,
+            project_id=reserve.project_id,
+            occurred_at=now,
+            created_by=user_id,
+        )
+    )
+
+
+def release_reservations(
+    db: Session, *, workspace_id: UUID, user_id: UUID | None, build: Build
+) -> int:
+    """Write a counter-row for every outstanding reserve row tied to `build`.
+
+    Idempotent: returns 0 if there is nothing to release. Partial releases
+    written by per-stage consume are honoured — each reserve row is
+    countered only for the quantity still outstanding.
+    """
+    all_part_ids, outstanding = _outstanding_reservations(
+        db, workspace_id=workspace_id, build=build
+    )
+    if not all_part_ids:
         return 0
     # BE2-008: aggregate distinct part_ids from the reserve set, sort,
     # take the per-part lock before reading the release-counter set.
     # This serialises archive-while-consuming and any release flow that
     # races with another build releasing the same parts.
-    lock_parts_for_stock_write(
-        db,
-        workspace_id=workspace_id,
-        part_ids=[r.part_id for r in reserve_rows],
-    )
-    released_ids = set(
-        db.execute(
-            select(StockEntry.related_entry_id)
-            .where(StockEntry.workspace_id == workspace_id)
-            .where(StockEntry.build_id == build.id)
-            .where(StockEntry.status == "reserved")
-            .where(StockEntry.operation_type == "release")
-            .where(StockEntry.related_entry_id.is_not(None))
-        ).scalars()
-    )
+    lock_parts_for_stock_write(db, workspace_id=workspace_id, part_ids=all_part_ids)
     now = utcnow()
     written = 0
-    for r in reserve_rows:
-        if r.id in released_ids:
-            continue
-        counter = StockEntry(
+    for reserve, remaining in outstanding:
+        _write_release(
+            db,
             workspace_id=workspace_id,
-            part_id=r.part_id,
-            quantity_delta=-r.quantity_delta,
-            status="reserved",
-            operation_type="release",
-            related_entry_id=r.id,
-            build_id=build.id,
-            project_id=r.project_id,
-            occurred_at=now,
-            created_by=user_id,
+            user_id=user_id,
+            build=build,
+            reserve=reserve,
+            quantity=remaining,
+            build_stage_id=None,
+            now=now,
         )
-        db.add(counter)
         written += 1
     if written:
         db.flush()
     return written
 
 
-def consume(
+def release_reservation_amounts(
     db: Session,
     *,
     workspace_id: UUID,
     user_id: UUID | None,
     build: Build,
-    project: Project,
-    payload: ConsumeIn,
-) -> dict:
-    """Apply a build's consumption plan. All-or-nothing within the request."""
-    if build.status not in ("planned", "in_progress"):
-        raise BuildError(f"build is {build.status}")
+    amounts: dict[UUID, Decimal | int],
+    build_stage_id: UUID | None = None,
+) -> int:
+    """Release exactly `amounts[part_id]` units of this build's reservations.
 
-    # Take every lock this transaction needs up front, in deterministic
-    # UUID-string order, before any read or write. Bundles together the
-    # part_ids from: the project's BOM (touched by `release_reservations`),
-    # the consume lines themselves, and the optional sub-assembly output.
-    # Calling `lock_parts_for_stock_write` here means the inner
-    # `release_reservations` / per-line writes / `output_lot` insert all
-    # acquire their lock as a re-entrant no-op (Postgres advisory locks
-    # are transaction-scoped). Without bundling, two concurrent consumes
-    # touching overlapping BOM ∪ line sets could acquire locks in
-    # different orders → AB/BA deadlock.
+    Used by per-stage consume: reservations are taken **once, up front, for
+    the whole build** (see `apply_reservations`), and each stage releases
+    only the slice it is about to consume. Releasing the whole reservation
+    on the first stage would leave later stages unreserved; writing a fresh
+    reservation per stage would double-count against `reserved_quantity`.
+
+    Reserve rows are per BOM entry and carry no `project_entry_id`, so the
+    release is applied per **part** across that part's outstanding reserve
+    rows (oldest first, partial on the last). That is exactly the
+    granularity `stock/service.py::reserved_quantity` reads, which sums
+    reserved deltas per part.
+
+    Over-asking is clamped to what is actually outstanding, so a stage that
+    consumes more than was reserved (BOM edited after the build was created)
+    can never drive the reserved total negative.
+    """
+    all_part_ids, outstanding = _outstanding_reservations(
+        db, workspace_id=workspace_id, build=build
+    )
+    if not all_part_ids:
+        return 0
+    lock_parts_for_stock_write(db, workspace_id=workspace_id, part_ids=all_part_ids)
+
+    by_part: dict[UUID, list[tuple[StockEntry, int]]] = {}
+    for reserve, remaining in outstanding:
+        by_part.setdefault(reserve.part_id, []).append((reserve, remaining))
+
+    now = utcnow()
+    written = 0
+    for part_id in sorted(amounts, key=str):
+        want = amounts[part_id]
+        for reserve, remaining in by_part.get(part_id, []):
+            if want <= 0:
+                break
+            take = min(want, remaining)
+            _write_release(
+                db,
+                workspace_id=workspace_id,
+                user_id=user_id,
+                build=build,
+                reserve=reserve,
+                quantity=take,
+                build_stage_id=build_stage_id,
+                now=now,
+            )
+            want -= take
+            written += 1
+    if written:
+        db.flush()
+    return written
+
+
+def lock_for_consume(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    project: Project,
+    line_part_ids: list[UUID],
+) -> None:
+    """Take every lock a consume transaction needs, up front.
+
+    Deterministic UUID-string order, before any read or write. Bundles
+    together the part_ids from: the project's BOM (touched by the release
+    pass), the consume lines themselves, and the optional sub-assembly
+    output. Calling this here means the inner release / per-line writes /
+    `output_lot` insert all acquire their lock as a re-entrant no-op
+    (Postgres advisory locks are transaction-scoped). Without bundling, two
+    concurrent consumes touching overlapping BOM ∪ line sets could acquire
+    locks in different orders → AB/BA deadlock.
+
+    Multi-stage consume uses the same bundle — the whole BOM, not just the
+    stage's slice — so a stage consume and a whole-build consume of the same
+    project can never take the two lock sets in opposite orders.
+    """
     bom_part_ids = [
         e.part_id
         for e in _consumable_entries(db, workspace_id=workspace_id, project=project)
         if e.part_id is not None
     ]
-    line_part_ids = [line.part_id for line in payload.lines]
     output_part_ids: list[UUID] = (
         [project.associated_subassembly_part_id]
         if project.associated_subassembly_part_id is not None
@@ -340,17 +469,45 @@ def consume(
         part_ids=[*bom_part_ids, *line_part_ids, *output_part_ids],
     )
 
-    # Release any outstanding reservations first so the consumption itself
-    # doesn't get double-counted against on_hand+reserved.
-    release_reservations(db, workspace_id=workspace_id, user_id=user_id, build=build)
 
-    entries_by_id: dict[UUID, ProjectEntry] = {
+def project_entries_by_id(
+    db: Session, *, workspace_id: UUID, project: Project
+) -> dict[UUID, ProjectEntry]:
+    return {
         e.id: e
         for e in db.query(ProjectEntry)
         .filter(ProjectEntry.workspace_id == workspace_id, ProjectEntry.project_id == project.id)
         .all()
     }
 
+
+def apply_consume_lines(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    user_id: UUID | None,
+    build: Build,
+    project: Project,
+    lines: list[ConsumeLineIn],
+    entries_by_id: dict[UUID, ProjectEntry],
+    required_by_entry: dict[UUID, int],
+    now: datetime,
+    build_stage_id: UUID | None = None,
+) -> list[StockEntry]:
+    """Validate and write the `build_consume` ledger rows for `lines`.
+
+    Shared by the whole-build consume and the per-stage consume so both go
+    through the same demand-aggregation pre-pass, the same substitute /
+    lot / storage validation, and the same coverage check. The only
+    difference is `required_by_entry`: the whole-build path passes
+    `_required(entry, part, build.quantity)` for every consumable BOM entry;
+    the per-stage path passes that same number sliced by the stage's
+    portions. Both therefore route through `_required` and inherit
+    attrition.
+
+    `build_stage_id` tags the emitted rows so the ledger trail shows which
+    stage took what; it is None for a single-pass build.
+    """
     # Pre-pass: aggregate demand per exact (part_id, lot_id, storage_location_id)
     # tuple before any per-line write. Without this, two BOM entries can each
     # claim 60 of the same 100-piece reel and each pass `current_quantity >=
@@ -359,7 +516,7 @@ def consume(
     # is checked once, against the same per-tuple availability the per-line
     # path would have used.
     demand_by_tuple: dict[tuple[UUID, UUID | None, UUID | None], int] = {}
-    for line in payload.lines:
+    for line in lines:
         key = (line.part_id, line.lot_id, line.storage_location_id)
         demand_by_tuple[key] = demand_by_tuple.get(key, 0) + line.quantity
     for (part_id, lot_id, storage_location_id), total_demand in demand_by_tuple.items():
@@ -379,9 +536,8 @@ def consume(
     # Sum requested quantity per (entry, part) so we can validate against required
     requested_by_entry: dict[UUID, int] = {}
     consumed_entries: list[StockEntry] = []
-    now = utcnow()
 
-    for line in payload.lines:
+    for line in lines:
         e = entries_by_id.get(line.project_entry_id)
         if e is None:
             raise BuildError(f"project entry {line.project_entry_id} not in this project")
@@ -389,6 +545,13 @@ def consume(
             raise BuildError(f"project entry {e.id} has no part to consume")
         if e.dnp:
             raise BuildError(f"project entry {e.id} is DNP")
+        if e.id not in required_by_entry:
+            # `required_by_entry` covers every consumable BOM entry for a
+            # whole-build consume, so this only fires for a per-stage
+            # consume: a line pointing at a BOM entry this stage does not
+            # cover would otherwise slip past the coverage check and draw
+            # stock the stage never planned for.
+            raise BuildError(f"project entry {e.id} is not in this stage")
 
         # Validate the chosen part is the entry's main part, a registered
         # substitute, or (for meta-part entries) a meta member.
@@ -442,6 +605,7 @@ def consume(
             status="on_hand",
             operation_type="build_consume",
             build_id=build.id,
+            build_stage_id=build_stage_id,
             project_id=project.id,
             occurred_at=now,
             created_by=user_id,
@@ -451,22 +615,41 @@ def consume(
         consumed_entries.append(entry_row)
         requested_by_entry[e.id] = requested_by_entry.get(e.id, 0) + line.quantity
 
-    # Required-coverage check: every non-DNP/part entry in the project must be
-    # covered to at least its required quantity.
-    for e in entries_by_id.values():
-        if e.dnp or e.entry_type not in ("part", "meta_part") or e.part_id is None:
+    # Required-coverage check: every entry this pass is responsible for must
+    # be covered to at least its required quantity.
+    for entry_id, req in required_by_entry.items():
+        e = entries_by_id.get(entry_id)
+        if e is None:
             continue
-        part = db.get(Part, e.part_id)
+        part = db.get(Part, e.part_id) if e.part_id is not None else None
         if part is None:
             continue
-        req = _required(e, part, build.quantity)
-        got = requested_by_entry.get(e.id, 0)
+        got = requested_by_entry.get(entry_id, 0)
         if got < req:
             raise BuildError(
-                f"entry {e.id} ({part.name}) under-consumed (need {req}, supplied {got})"
+                f"entry {entry_id} ({part.name}) under-consumed (need {req}, supplied {got})"
             )
 
-    # Optional output: produce sub-assembly lot if the project has one
+    return consumed_entries
+
+
+def produce_output(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    user_id: UUID | None,
+    build: Build,
+    project: Project,
+    output_storage_location_id: UUID | None,
+    output_lot_name: str | None,
+    now: datetime,
+) -> tuple[Lot | None, StockEntry | None]:
+    """Emit the sub-assembly output lot + `build_produce` ledger row.
+
+    Shared by the whole-build consume and the final stage of a multi-stage
+    build — a staged build produces its output exactly once, when the last
+    stage completes, so the output quantity is still `build.quantity`.
+    """
     output_lot: Lot | None = None
     output_entry: StockEntry | None = None
     if project.associated_subassembly_part_id is not None:
@@ -475,8 +658,8 @@ def consume(
             raise BuildError("project's sub-assembly part not in workspace")
 
         storage = None
-        if payload.output_storage_location_id is not None:
-            storage = db.get(StorageLocation, payload.output_storage_location_id)
+        if output_storage_location_id is not None:
+            storage = db.get(StorageLocation, output_storage_location_id)
             if storage is None or storage.workspace_id != workspace_id:
                 raise BuildError("output storage not in workspace")
             if storage.archived_at is not None or storage.is_full:
@@ -495,7 +678,7 @@ def consume(
         output_lot = Lot(
             workspace_id=workspace_id,
             part_id=sub_part.id,
-            name=payload.output_lot_name or f"{build.name}-out",
+            name=output_lot_name or f"{build.name}-out",
             source_type="build",
             source_build_id=build.id,
             purchase_quantity=build.quantity,
@@ -521,11 +704,94 @@ def consume(
         db.add(output_entry)
         db.flush()
 
+    return output_lot, output_entry
+
+
+def complete_build(
+    db: Session,
+    *,
+    build: Build,
+    user_id: UUID | None,
+    output_lot: Lot | None,
+    now: datetime,
+) -> None:
+    """Close a build: status, timestamps and the output-lot back-reference.
+
+    `output_lot_id` is only ever written here and in nothing else — see
+    "Things to never do" in `docs/domain/builds-and-bom.md`.
+    """
     build.status = "complete"
     build.started_at = build.started_at or now
     build.completed_at = now
     build.output_lot_id = output_lot.id if output_lot else None
     build.updated_by = user_id
+
+
+def consume(
+    db: Session,
+    *,
+    workspace_id: UUID,
+    user_id: UUID | None,
+    build: Build,
+    project: Project,
+    payload: ConsumeIn,
+) -> dict:
+    """Apply a build's whole-BOM consumption plan in one pass.
+
+    All-or-nothing within the request. This is the single-pass path that
+    predates multi-stage builds and is unchanged by them; a build that has
+    stages is consumed one stage at a time via `builds/stages.py::consume_stage`
+    instead (the route refuses this endpoint for staged builds so the two
+    can never double-consume the same BOM).
+    """
+    if build.status not in ("planned", "in_progress"):
+        raise BuildError(f"build is {build.status}")
+
+    lock_for_consume(
+        db,
+        workspace_id=workspace_id,
+        project=project,
+        line_part_ids=[line.part_id for line in payload.lines],
+    )
+
+    # Release any outstanding reservations first so the consumption itself
+    # doesn't get double-counted against on_hand+reserved.
+    release_reservations(db, workspace_id=workspace_id, user_id=user_id, build=build)
+
+    entries_by_id = project_entries_by_id(db, workspace_id=workspace_id, project=project)
+
+    # Every consumable BOM entry must be covered by this single pass.
+    required_by_entry: dict[UUID, int] = {}
+    for e in _consumable_entries(db, workspace_id=workspace_id, project=project):
+        part = db.get(Part, e.part_id)
+        if part is None:
+            continue
+        required_by_entry[e.id] = _required(e, part, build.quantity)
+
+    now = utcnow()
+    consumed_entries = apply_consume_lines(
+        db,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        build=build,
+        project=project,
+        lines=list(payload.lines),
+        entries_by_id=entries_by_id,
+        required_by_entry=required_by_entry,
+        now=now,
+    )
+
+    output_lot, output_entry = produce_output(
+        db,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        build=build,
+        project=project,
+        output_storage_location_id=payload.output_storage_location_id,
+        output_lot_name=payload.output_lot_name,
+        now=now,
+    )
+    complete_build(db, build=build, user_id=user_id, output_lot=output_lot, now=now)
 
     log.info(
         "build consumed",

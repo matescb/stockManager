@@ -14,7 +14,7 @@ For the one-line domain table (which router serves which tables), see [`ARCHITEC
 - Every model module is registered in `backend/app/domain/all_models.py`. The test `tests/test_migrations.py::test_all_models_covers_every_domain` walks `app/domain/*/models.py` and asserts each `__tablename__` is in `Base.metadata.tables`.
 - Polymorphic tables (`attachments`, `custom_fields`, `tag_links`, `object_codes`) reference parents via a discriminator + id pair with **no FK on the id column**. See [polymorphic](polymorphic.md).
 
-## Entity catalogue (34 models)
+## Entity catalogue (36 models)
 
 ### users + workspaces
 
@@ -111,7 +111,11 @@ Personal access tokens — the non-cookie credential for KiCad, scripts and agen
 
 | Model | Table | Source |
 |---|---|---|
-| `Build` | `builds` | `backend/app/domain/builds/models.py:18` |
+| `Build` | `builds` | `backend/app/domain/builds/models.py:21` |
+| `BuildStage` | `build_stages` | `backend/app/domain/builds/models.py:39` |
+| `BuildStageLine` | `build_stage_lines` | `backend/app/domain/builds/models.py:83` |
+
+Stages are optional (Track B2, migration 0076) — a build with no `build_stages` rows is a single-pass build. See [`builds-and-bom.md`](builds-and-bom.md#multi-stage-builds).
 
 ### cross-cutting (polymorphic)
 
@@ -202,6 +206,13 @@ erDiagram
   BUILDS ||--o{ LOTS : "source_build_id (SET NULL)"
   BUILDS }o--o| LOTS : "output_lot_id (SET NULL)"
 
+  WORKSPACES ||--o{ BUILD_STAGES : ""
+  WORKSPACES ||--o{ BUILD_STAGE_LINES : ""
+  BUILDS ||--o{ BUILD_STAGES : "build_id (CASCADE)"
+  BUILD_STAGES ||--o{ BUILD_STAGE_LINES : "build_stage_id (CASCADE)"
+  PROJECT_ENTRIES ||--o{ BUILD_STAGE_LINES : "project_entry_id (CASCADE)"
+  BUILD_STAGES ||--o{ STOCK_ENTRIES : "build_stage_id (SET NULL)"
+
   EDA_FOOTPRINTS ||--o{ EDA_FOOTPRINT_MODELS : "footprint_id (CASCADE)"
   EDA_DATAFILES ||--o{ EDA_FOOTPRINT_MODELS : "datafile_id (CASCADE)"
   PARTS ||--o| PART_EDA : "part_id (CASCADE)"
@@ -241,6 +252,10 @@ The non-trivial cross-domain FKs and their delete behaviour. Within-domain CASCA
 | `stock_entries.order_entry_id` | `order_entries.id` | `SET NULL` (`fk_stock_entries_order_entry_id`) | `backend/app/domain/stock/models.py:69-73` |
 | `stock_entries.project_id` | `projects.id` | `SET NULL` | `backend/app/domain/stock/models.py:74` |
 | `stock_entries.build_id` | `builds.id` | `SET NULL` (`fk_stock_entries_build_id`) | `backend/app/domain/stock/models.py:75-79` |
+| `stock_entries.build_stage_id` | `build_stages.id` | `SET NULL` (`fk_stock_entries_build_stage_id`, + BEFORE trigger checks workspace, SQLSTATE `WS001`) | `backend/app/domain/stock/models.py`, `backend/alembic/versions/0076_build_stages.py` |
+| `build_stages.build_id` | `builds.id` | `CASCADE` (+ BEFORE trigger checks workspace, SQLSTATE `WS001`) | `backend/app/domain/builds/models.py:72` |
+| `build_stage_lines.build_stage_id` | `build_stages.id` | `CASCADE` (+ BEFORE trigger checks workspace, SQLSTATE `WS001`) | `backend/app/domain/builds/models.py:112` |
+| `build_stage_lines.project_entry_id` | `project_entries.id` | `CASCADE` (+ BEFORE trigger checks workspace, SQLSTATE `WS001`) | `backend/app/domain/builds/models.py:115` |
 | `stock_entries.related_entry_id` | `stock_entries.id` | `SET NULL` (self-ref; circular, written under savepoint) | `backend/app/domain/stock/models.py:60` |
 | `stock_entries.created_by` | `users.id` | `SET NULL` | `backend/app/domain/stock/models.py:86` |
 | `lots.parent_lot_id` | `lots.id` | `SET NULL` (split lineage) | `backend/app/domain/lots/models.py:27` |

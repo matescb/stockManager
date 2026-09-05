@@ -23,6 +23,10 @@ from app.domain.builds.service import (
     release_reservations,
     shortage_analysis,
 )
+
+# Track B2: the stage ROUTES live in `routes/build_stages.py` (this module
+# has a 300-line CI budget); only the two whole-build guards are here.
+from app.domain.builds.stages import has_consumed_stage, has_stages
 from app.domain.projects.models import Project
 from app.domain.stock.models import StockEntry
 from app.domain.stock.service import StockConflictError
@@ -135,6 +139,14 @@ def patch_build(
         raise_http(400, code=ErrorCodes.BUILD_READ_ONLY, message="completed builds are read-only")
     patch_data = payload.model_dump(exclude_unset=True)
     quantity_changed = "quantity" in patch_data and patch_data["quantity"] != b.quantity
+    if quantity_changed and has_consumed_stage(db, workspace_id=ws.id, build=b):
+        # Re-deriving the whole-build reservation would re-reserve material a
+        # completed stage already consumed. Refuse, don't silently double-count.
+        raise_http(
+            400,
+            code=ErrorCodes.BUILD_READ_ONLY,
+            message="cannot change quantity after a stage has been consumed",
+        )
     cancelling = patch_data.get("status") == "cancelled" and b.status != "cancelled"
     was_planned_or_in_progress = b.status in ("planned", "in_progress")
     for k, v in patch_data.items():
@@ -192,6 +204,15 @@ def consume_build(
 ):
     b = _get_build(db, ws.id, build_id)
     project = _get_project(db, ws.id, b.project_id)
+    if has_stages(db, workspace_id=ws.id, build=b):
+        # A staged build is consumed one stage at a time; the whole-BOM
+        # endpoint would draw every stage's stock while leaving the stages
+        # themselves reported as un-built.
+        raise_http(
+            400,
+            code=ErrorCodes.BUILD_HAS_STAGES,
+            message="build has stages; consume each stage via /stages/{stage_id}/consume",
+        )
     try:
         result = consume(
             db, workspace_id=ws.id, user_id=user.id, build=b, project=project, payload=payload
