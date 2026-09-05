@@ -289,6 +289,7 @@ def test_compose_prod_cron_sidecars_have_shutdown_grace_period():
         "backend-cron",
         "backend-cron-alerts",
         "backend-cron-sessions",
+        "backend-cron-printing",
     ):
         assert services[service_name].get("stop_grace_period") == "605s"
 
@@ -402,6 +403,81 @@ def test_compose_prod_backend_cron_alerts_command_shape():
     assert "python -m app.cli.run_job sourcing-alerts-evaluate" in joined
     assert "sleep 900" in joined
     assert "uvicorn" not in joined
+
+
+def test_compose_prod_backend_cron_printing_command_shape():
+    """backend-cron-printing must use the shared CLI scheduler path (ADR-0021).
+
+    Two parallel subshell loops, mirroring backend-cron-sessions, so neither
+    job's `timeout 600` can stack and push a run past stop_grace_period.
+    """
+    assert _COMPOSE_PROD_PATH.exists(), (
+        f"missing compose file at {_COMPOSE_PROD_PATH}"
+    )
+    data = yaml.safe_load(_COMPOSE_PROD_PATH.read_text())
+    cron = data["services"]["backend-cron-printing"]
+    cmd = cron.get("command")
+
+    assert isinstance(cmd, list), (
+        "backend-cron-printing.command must be a YAML list (JSON-array form)"
+    )
+    joined = " ".join(str(part) for part in cmd)
+    mkdir = "mkdir -p /tmp/stockmanager-job-heartbeats"
+    dispatch = "python -m app.cli.run_job print-dispatch"
+    reconcile = "python -m app.cli.run_job print-job-reconcile"
+
+    assert "trap 'kill 0' TERM" in joined
+    assert "trap 'kill 0' INT" in joined
+    assert mkdir in joined
+    assert f"timeout 600 {dispatch}" in joined
+    assert f"timeout 600 {reconcile}" in joined
+    # Dispatch on the tight operator-visible cadence; reconcile on the
+    # _STALE_SENT_THRESHOLD cadence.
+    assert "sleep 60;" in joined
+    assert "sleep 300;" in joined
+    assert joined.index(mkdir) < joined.index(dispatch)
+    assert joined.index(mkdir) < joined.index(reconcile)
+    assert "uvicorn" not in joined
+
+    healthcheck = cron.get("healthcheck", {})
+    healthcheck_test = " ".join(healthcheck.get("test", []))
+    assert "find /tmp/stockmanager-job-heartbeats" in healthcheck_test
+    assert "print-dispatch -mmin -10" in healthcheck_test
+    assert "print-job-reconcile -mmin -30" in healthcheck_test
+    # Shell-only probe: no Python cold start inside the 5s healthcheck timeout.
+    assert "python" not in healthcheck_test
+
+
+def test_compose_prod_print_host_defaults_to_empty():
+    """PRINT_HOST must default to empty so an unconfigured deploy is a no-op.
+
+    The printer is only reachable through a reverse-SSH tunnel + socat bridge
+    + ufw rule that a human sets up on the VPS by hand. Giving PRINT_HOST a
+    non-empty compose default would make every deploy start failing print jobs
+    against a sink that does not exist yet.
+    """
+    assert _COMPOSE_PROD_PATH.exists(), (
+        f"missing compose file at {_COMPOSE_PROD_PATH}"
+    )
+    data = yaml.safe_load(_COMPOSE_PROD_PATH.read_text())
+
+    for service_name in (
+        "backend",
+        "backend-cron",
+        "backend-cron-alerts",
+        "backend-cron-sessions",
+        "backend-cron-printing",
+    ):
+        env = data["services"][service_name]["environment"]
+        assert env["PRINT_HOST"] == "${PRINT_HOST:-}", (
+            f"{service_name} must inherit an empty-by-default PRINT_HOST"
+        )
+        assert env["PRINT_PORT"] == "${PRINT_PORT:-9100}"
+
+    env_example = (_REPO_ROOT / "deploy" / ".env.prod.example").read_text()
+    assert "\nPRINT_HOST=\n" in env_example, (
+        "deploy/.env.prod.example must ship PRINT_HOST empty"
+    )
 
 
 def test_dockerfile_prod_no_sentry_token_arg():

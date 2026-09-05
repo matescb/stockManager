@@ -89,6 +89,38 @@ def _run_password_reset_purge(db: Session) -> int:
     return purge_password_reset_requests(db)
 
 
+def _printing_is_configured() -> bool:
+    """True when a print sink is configured (``PRINT_HOST`` non-empty)."""
+    from app.core.config import settings
+
+    return bool((settings().PRINT_HOST or "").strip())
+
+
+def _run_print_dispatch(db: Session) -> int:
+    # Gated on PRINT_HOST because this job is the one that actually talks to
+    # the printer. With no sink configured (the default until the VPS-side
+    # tunnel + ufw rule exist — see docs/deployment.md "Label printer
+    # connectivity") send_jscript_batch would mark every queued job `failed`
+    # against a printer that was never meant to be reachable yet. Returning 0
+    # keeps the sidecar loop a harmless no-op and leaves the queue intact for
+    # whenever printing is switched on.
+    if not _printing_is_configured():
+        return 0
+
+    from app.domain.printing.print_service import dispatch_queued_batch
+
+    return dispatch_queued_batch(db)
+
+
+def _run_print_job_reconcile(db: Session) -> int:
+    # Deliberately NOT gated on PRINT_HOST: this is pure DB bookkeeping and
+    # never opens a socket. Turning printing off must still resolve jobs left
+    # stuck in `sent`, which is exactly the state this sweep exists to clear.
+    from app.domain.printing.print_service import reconcile_stale_print_jobs
+
+    return reconcile_stale_print_jobs(db)
+
+
 JOBS: dict[str, JobSpec] = {
     "sourcing-cache-sweep": JobSpec(
         name="sourcing-cache-sweep",
@@ -124,6 +156,29 @@ JOBS: dict[str, JobSpec] = {
         idempotency="Deletes only password-reset request rows older than 30 days.",
         run=_run_password_reset_purge,
         interval_setting="PASSWORD_RESET_PURGE_INTERVAL_SECONDS",
+    ),
+    "print-dispatch": JobSpec(
+        name="print-dispatch",
+        owner="backend/printing",
+        cadence="every 60 seconds",
+        idempotency=(
+            "Ships only queued batch_blank jobs that still carry a payload; "
+            "each job leaves the pass in a terminal status (printed or "
+            "failed), so a re-run never re-sends the same label. A no-op "
+            "returning 0 when PRINT_HOST is empty (printing disabled)."
+        ),
+        run=_run_print_dispatch,
+    ),
+    "print-job-reconcile": JobSpec(
+        name="print-job-reconcile",
+        owner="backend/printing",
+        cadence="every 5 minutes",
+        idempotency=(
+            "Marks only jobs still in 'sent' whose updated_at is older than "
+            "the staleness window as failed. Rows already terminal are not "
+            "matched, so re-running changes nothing."
+        ),
+        run=_run_print_job_reconcile,
     ),
 }
 

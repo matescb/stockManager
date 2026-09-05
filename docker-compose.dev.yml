@@ -28,6 +28,14 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
       # The kicad-render sidecar draws the CAD tab's 2D previews (see render/).
       EDA_RENDER_URL: http://kicad-render:8080
+      # Label printer. Empty (the default) = printing disabled; the print
+      # service fails closed rather than silently pretending to print. Set
+      # PRINT_HOST in .env to point dev at a real or stub printer. Dev has no
+      # printing cron sidecar — run the jobs by hand:
+      #   docker compose -f docker-compose.dev.yml exec backend \
+      #       python -m app.cli.run_job print-dispatch
+      PRINT_HOST: ${PRINT_HOST:-}
+      PRINT_PORT: ${PRINT_PORT:-9100}
     volumes:
       - ./backend:/app
       - uploads:/data/uploads
