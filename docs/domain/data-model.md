@@ -115,7 +115,7 @@ Personal access tokens — the non-cookie credential for KiCad, scripts and agen
 | `BuildStage` | `build_stages` | `backend/app/domain/builds/models.py:39` |
 | `BuildStageLine` | `build_stage_lines` | `backend/app/domain/builds/models.py:83` |
 
-Stages are optional (Track B2, migration 0075) — a build with no `build_stages` rows is a single-pass build. See [`builds-and-bom.md`](builds-and-bom.md#multi-stage-builds).
+Stages are optional (Track B2, migration 0076) — a build with no `build_stages` rows is a single-pass build. See [`builds-and-bom.md`](builds-and-bom.md#multi-stage-builds).
 
 ### cross-cutting (polymorphic)
 
@@ -252,7 +252,7 @@ The non-trivial cross-domain FKs and their delete behaviour. Within-domain CASCA
 | `stock_entries.order_entry_id` | `order_entries.id` | `SET NULL` (`fk_stock_entries_order_entry_id`) | `backend/app/domain/stock/models.py:69-73` |
 | `stock_entries.project_id` | `projects.id` | `SET NULL` | `backend/app/domain/stock/models.py:74` |
 | `stock_entries.build_id` | `builds.id` | `SET NULL` (`fk_stock_entries_build_id`) | `backend/app/domain/stock/models.py:75-79` |
-| `stock_entries.build_stage_id` | `build_stages.id` | `SET NULL` (`fk_stock_entries_build_stage_id`, + BEFORE trigger checks workspace, SQLSTATE `WS001`) | `backend/app/domain/stock/models.py`, `backend/alembic/versions/0075_build_stages.py` |
+| `stock_entries.build_stage_id` | `build_stages.id` | `SET NULL` (`fk_stock_entries_build_stage_id`, + BEFORE trigger checks workspace, SQLSTATE `WS001`) | `backend/app/domain/stock/models.py`, `backend/alembic/versions/0076_build_stages.py` |
 | `build_stages.build_id` | `builds.id` | `CASCADE` (+ BEFORE trigger checks workspace, SQLSTATE `WS001`) | `backend/app/domain/builds/models.py:72` |
 | `build_stage_lines.build_stage_id` | `build_stages.id` | `CASCADE` (+ BEFORE trigger checks workspace, SQLSTATE `WS001`) | `backend/app/domain/builds/models.py:112` |
 | `build_stage_lines.project_entry_id` | `project_entries.id` | `CASCADE` (+ BEFORE trigger checks workspace, SQLSTATE `WS001`) | `backend/app/domain/builds/models.py:115` |

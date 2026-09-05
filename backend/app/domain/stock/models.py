@@ -29,7 +29,7 @@ class StockEntry(Base):
         Index("ix_stock_ws_storage", "workspace_id", "storage_location_id"),
         Index("ix_stock_ws_occurred", "workspace_id", "occurred_at"),
         # Per-stage activity/trail lookups. Partial — only the rows a
-        # multi-stage consume writes carry a stage (alembic 0075).
+        # multi-stage consume writes carry a stage (alembic 0076).
         Index(
             "ix_stock_ws_build_stage",
             "workspace_id",
@@ -111,7 +111,7 @@ class StockEntry(Base):
         ForeignKey("builds.id", ondelete="SET NULL", name="fk_stock_entries_build_id"),
         nullable=True,
     )
-    # Multi-stage builds (Track B2, alembic 0075). NULL for every row a
+    # Multi-stage builds (Track B2, alembic 0076). NULL for every row a
     # single-pass build writes; set on the `build_consume` / `release` rows a
     # per-stage consume emits so the ledger trail shows which stage took what.
     # SET NULL mirrors `build_id`: deleting a build (which cascades its

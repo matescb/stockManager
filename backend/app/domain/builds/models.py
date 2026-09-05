@@ -37,7 +37,7 @@ class Build(WorkspaceOwned, Base):
 
 
 class BuildStage(WorkspaceOwned, Base):
-    """One assembly stage of a multi-stage build (Track B2, migration 0075).
+    """One assembly stage of a multi-stage build (Track B2, migration 0076).
 
     A stage is a child of the ``Build`` aggregate, never of the project: two
     builds of the same project may be staged differently (prototype run vs.

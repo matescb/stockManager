@@ -2210,7 +2210,7 @@ def test_build_stages_are_workspace_scoped():
 
 
 def test_build_stage_rows_reject_cross_workspace_ids_at_the_db():
-    """Defence in depth: bypassing the service layer entirely, the 0075
+    """Defence in depth: bypassing the service layer entirely, the 0076
     trigger refuses a stage pointing at another workspace's build.
 
     The custom `WS001` SQLSTATE (0060/0064) is outside psycopg's integrity

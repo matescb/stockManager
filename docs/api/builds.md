@@ -168,6 +168,8 @@ Track B2. A build may be assembled across several stages, each consuming a defin
 
 **Reservations are taken once, up front, by `POST /api/builds`.** Creating a stage writes no ledger row; each stage consume releases only the slice it consumes, so nothing is double-counted across stages. Domain detail: [`builds-and-bom.md`](../domain/builds-and-bom.md#multi-stage-builds).
 
+These three routes live in `backend/app/api/routes/build_stages.py`, mounted under the same `/api/builds` prefix. They were split out of `builds.py` to stay inside that module's 300-line `line-count-budget` cap — the same reason `parts_core` / `parts_scan` / `parts_assets` are separate modules.
+
 ### `GET /api/builds/{build_id}/stages`
 
 List the build's active stages, in consumption order, each with its lines and a per-stage shortage analysis.

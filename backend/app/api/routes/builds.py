@@ -14,15 +14,8 @@ from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.errors import ErrorCodes, raise_http
 from app.core.responses import ok
 from app.core.time import utcnow
-from app.domain.audit.service import log as _audit_log
-from app.domain.builds.models import Build, BuildStage
-from app.domain.builds.schemas import (
-    BuildCreateIn,
-    BuildPatchIn,
-    BuildStageCreateIn,
-    ConsumeIn,
-    StageConsumeIn,
-)
+from app.domain.builds.models import Build
+from app.domain.builds.schemas import BuildCreateIn, BuildPatchIn, ConsumeIn
 from app.domain.builds.service import (
     BuildError,
     apply_reservations,
@@ -30,13 +23,10 @@ from app.domain.builds.service import (
     release_reservations,
     shortage_analysis,
 )
-from app.domain.builds.stages import (
-    consume_stage,
-    create_stage,
-    has_consumed_stage,
-    has_stages,
-    stages_payload,
-)
+
+# Track B2: the stage ROUTES live in `routes/build_stages.py` (this module
+# has a 300-line CI budget); only the two whole-build guards are here.
+from app.domain.builds.stages import has_consumed_stage, has_stages
 from app.domain.projects.models import Project
 from app.domain.stock.models import StockEntry
 from app.domain.stock.service import StockConflictError
@@ -77,22 +67,6 @@ def _get_project(db, ws_id, pid) -> Project:
         return assert_in_workspace(db, Project, pid, ws_id, label="project")
     except HTTPException:
         raise_http(404, code=ErrorCodes.PROJECT_NOT_FOUND, message="project not found")
-
-
-def _get_stage(db, ws_id, build: Build, stage_id: UUID) -> BuildStage:
-    """Resolve a stage inside the current workspace AND the given build.
-
-    `assert_in_workspace` covers the tenant boundary; the extra `build_id`
-    check stops a stage of build A from being consumed through build B's
-    URL, which would consume against the wrong BOM allocation.
-    """
-    try:
-        stage = assert_in_workspace(db, BuildStage, stage_id, ws_id, label="build stage")
-    except HTTPException:
-        raise_http(404, code=ErrorCodes.BUILD_STAGE_NOT_FOUND, message="build stage not found")
-    if stage.build_id != build.id or stage.archived_at is not None:
-        raise_http(404, code=ErrorCodes.BUILD_STAGE_NOT_FOUND, message="build stage not found")
-    return stage
 
 
 @router.get("")
@@ -166,9 +140,8 @@ def patch_build(
     patch_data = payload.model_dump(exclude_unset=True)
     quantity_changed = "quantity" in patch_data and patch_data["quantity"] != b.quantity
     if quantity_changed and has_consumed_stage(db, workspace_id=ws.id, build=b):
-        # A quantity change re-derives the whole-build reservation, which
-        # would re-reserve material that a completed stage has already
-        # consumed. Refuse rather than silently double-count.
+        # Re-deriving the whole-build reservation would re-reserve material a
+        # completed stage already consumed. Refuse, don't silently double-count.
         raise_http(
             400,
             code=ErrorCodes.BUILD_READ_ONLY,
@@ -232,9 +205,9 @@ def consume_build(
     b = _get_build(db, ws.id, build_id)
     project = _get_project(db, ws.id, b.project_id)
     if has_stages(db, workspace_id=ws.id, build=b):
-        # A staged build is consumed one stage at a time. Allowing the
-        # whole-BOM endpoint here would draw every stage's stock at once
-        # while leaving the stages themselves reported as un-built.
+        # A staged build is consumed one stage at a time; the whole-BOM
+        # endpoint would draw every stage's stock while leaving the stages
+        # themselves reported as un-built.
         raise_http(
             400,
             code=ErrorCodes.BUILD_HAS_STAGES,
@@ -262,107 +235,6 @@ def consume_build(
         raise_http(400, code=ErrorCodes.BUILD_CONSUME_ERROR, message=str(exc))
     except DBAPIError as exc:
         raise_integrity_as_409(exc)
-    return ok(result)
-
-
-# --- Multi-stage builds (Track B2) -----------------------------------------
-#
-# Reservations are taken ONCE, up front, by `POST /api/builds` — creating a
-# stage writes no ledger row. Each stage consume releases only its own slice
-# of that reservation, so nothing is double-counted across stages. See
-# `docs/domain/builds-and-bom.md`.
-
-
-@router.get("/{build_id}/stages")
-def list_build_stages(build_id: UUID, db: DbSession, ws: CurrentWorkspace):
-    b = _get_build(db, ws.id, build_id)
-    project = _get_project(db, ws.id, b.project_id)
-    return ok(stages_payload(db, workspace_id=ws.id, build=b, project=project))
-
-
-@router.post("/{build_id}/stages", status_code=status.HTTP_201_CREATED)
-def create_build_stage(
-    build_id: UUID,
-    payload: BuildStageCreateIn,
-    db: DbSession,
-    ws: CurrentWorkspace,
-    user: CurrentUser,
-):
-    b = _get_build(db, ws.id, build_id)
-    project = _get_project(db, ws.id, b.project_id)
-    try:
-        stage = create_stage(
-            db,
-            workspace_id=ws.id,
-            user_id=user.id,
-            build=b,
-            project=project,
-            payload=payload,
-        )
-    except BuildError as exc:
-        raise_http(400, code=ErrorCodes.BUILD_STAGE_ERROR, message=str(exc))
-    except DBAPIError as exc:
-        raise_integrity_as_409(exc)
-    _audit_log(
-        db,
-        ws=ws,
-        user=user,
-        action="build_stage.created",
-        target_type="build_stage",
-        target_ids=[stage.id],
-        comment=f"stage '{stage.name}' (sequence {stage.sequence}) on build {b.id}",
-    )
-    payload_out = stages_payload(db, workspace_id=ws.id, build=b, project=project)
-    created = next((s for s in payload_out if s["id"] == str(stage.id)), None)
-    return ok(created)
-
-
-@router.post("/{build_id}/stages/{stage_id}/consume")
-def consume_build_stage(
-    build_id: UUID,
-    stage_id: UUID,
-    payload: StageConsumeIn,
-    db: DbSession,
-    ws: CurrentWorkspace,
-    user: CurrentUser,
-):
-    b = _get_build(db, ws.id, build_id)
-    project = _get_project(db, ws.id, b.project_id)
-    stage = _get_stage(db, ws.id, b, stage_id)
-    try:
-        result = consume_stage(
-            db,
-            workspace_id=ws.id,
-            user_id=user.id,
-            build=b,
-            project=project,
-            stage=stage,
-            payload=payload,
-        )
-    except StockConflictError as exc:
-        raise_http(
-            status.HTTP_409_CONFLICT,
-            code=ErrorCodes.STOCK_CONSTRAINT_VIOLATION,
-            message=str(exc),
-            constraint=exc.constraint,
-            storage_location_id=str(exc.storage_location_id),
-        )
-    except BuildError as exc:
-        raise_http(400, code=ErrorCodes.BUILD_CONSUME_ERROR, message=str(exc))
-    except DBAPIError as exc:
-        raise_integrity_as_409(exc)
-    _audit_log(
-        db,
-        ws=ws,
-        user=user,
-        action="build_stage.consumed",
-        target_type="build_stage",
-        target_ids=[stage.id],
-        comment=(
-            f"stage '{stage.name}' consumed {len(result['consumed_entries'])} lines; "
-            f"build now {result['build_status']}"
-        ),
-    )
     return ok(result)
 
 

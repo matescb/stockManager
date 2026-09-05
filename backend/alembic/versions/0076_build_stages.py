@@ -1,7 +1,7 @@
 """Add build_stages / build_stage_lines and stock_entries.build_stage_id.
 
-Revision ID: 0075
-Revises: 0074
+Revision ID: 0076
+Revises: 0075
 Create Date: 2026-09-05
 
 Track B2 — multi-stage builds. A build may be assembled across several
@@ -29,8 +29,9 @@ Defence-in-depth workspace triggers mirror 0064's contract: validate every
 parent ref on INSERT, only changed refs on UPDATE, and raise SQLSTATE
 ``WS001`` so ``raise_integrity_as_409`` maps a violation to a 409.
 
-Numbering: 0073 (object codes) and 0074 (uom widening) are sibling PRs in
-flight; this revision chains after 0074 for a single linear head.
+Numbering: 0073 (object codes) is merged; 0074 (uom widening) and 0075
+(label templates) are sibling PRs in flight. This revision chains after
+0075 for a single linear head.
 """
 
 from __future__ import annotations
@@ -39,8 +40,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "0075"
-down_revision = "0074"
+revision = "0076"
+down_revision = "0075"
 branch_labels = None
 depends_on = None
 

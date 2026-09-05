@@ -402,7 +402,7 @@ def test_password_reset_requests_autovacuum_reloptions_round_trip(
 
 @pytest.mark.slow
 def test_build_stages_round_trip(round_trip_url: str) -> None:
-    """0075 adds two tables, one ledger column and three workspace triggers.
+    """0076 adds two tables, one ledger column and three workspace triggers.
 
     The column on `stock_entries` is the risky half: a downgrade that drops
     the tables but leaves `stock_entries.build_stage_id` (or its FK) behind
@@ -451,23 +451,23 @@ def test_build_stages_round_trip(round_trip_url: str) -> None:
     }
 
     _reset_schema(round_trip_url)
-    _upgrade(cfg, round_trip_url, "0074")
+    _upgrade(cfg, round_trip_url, "0075")
     assert "build_stages" not in tables()
     assert "build_stage_id" not in stock_entry_columns()
 
-    _upgrade(cfg, round_trip_url, "0075")
+    _upgrade(cfg, round_trip_url, "0076")
     after_upgrade = _snapshot_schema(round_trip_url)
     assert {"build_stages", "build_stage_lines"} <= tables()
     assert "build_stage_id" in stock_entry_columns()
     assert triggers() == expected_triggers
 
-    _downgrade(cfg, round_trip_url, "0074")
+    _downgrade(cfg, round_trip_url, "0075")
     assert "build_stages" not in tables()
     assert "build_stage_lines" not in tables()
     assert "build_stage_id" not in stock_entry_columns()
     assert triggers() == set()
 
-    _upgrade(cfg, round_trip_url, "0075")
+    _upgrade(cfg, round_trip_url, "0076")
     assert _snapshot_schema(round_trip_url) == after_upgrade
     assert triggers() == expected_triggers
 

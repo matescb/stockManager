@@ -118,7 +118,7 @@ Substitute availability is summed across registered substitutes/members but is *
 
 ## Multi-stage builds
 
-Track B2, migration 0075. A build may be assembled across several stages instead of one all-at-once consume, mirroring PartsBox's multi-stage builds: each stage consumes a defined subset (and portion) of the BOM, so a partially-built device is tracked accurately and stock is drawn down progressively.
+Track B2, migration 0076. A build may be assembled across several stages instead of one all-at-once consume, mirroring PartsBox's multi-stage builds: each stage consumes a defined subset (and portion) of the BOM, so a partially-built device is tracked accurately and stock is drawn down progressively.
 
 ### Schema shape
 
@@ -135,7 +135,7 @@ Why `portion_pct` and not an absolute quantity: an absolute per-stage quantity i
 
 `stock_entries.build_stage_id` (nullable, `ON DELETE SET NULL`, partial index `ix_stock_ws_build_stage`) tags the ledger rows a per-stage consume writes so the trail shows what each stage took. It is NULL for every row a single-pass build emits. `SET NULL` mirrors `build_id` — a hard-deleted build cascades its stages away but must not delete independent stock history ([ADR-0028](../adr/0028-hard-delete-policy-and-workspace-trigger-contract.md)).
 
-Three defence-in-depth workspace triggers ship with 0075 — `build_stages_workspace_fk_check`, `build_stage_lines_workspace_fk_check`, `stock_entries_build_stage_workspace_check` — following the 0064 contract: validate every parent ref on INSERT, only changed refs on UPDATE, raise SQLSTATE `WS001`. Isolation is still enforced in code first; the triggers only stop raw SQL.
+Three defence-in-depth workspace triggers ship with 0076 — `build_stages_workspace_fk_check`, `build_stage_lines_workspace_fk_check`, `stock_entries_build_stage_workspace_check` — following the 0064 contract: validate every parent ref on INSERT, only changed refs on UPDATE, raise SQLSTATE `WS001`. Isolation is still enforced in code first; the triggers only stop raw SQL.
 
 ### Per-stage requirement allocation
 

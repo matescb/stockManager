@@ -210,6 +210,7 @@ from app.api.routes import (
     audit,
     auth,
     bom_presets,
+    build_stages,
     builds,
     catalog,
     categories,
@@ -573,6 +574,12 @@ app.include_router(lots.router, prefix="/api/lots", tags=["lots"], dependencies=
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"], dependencies=_member_gate)
 app.include_router(orders.router, prefix="/api/orders", tags=["orders"], dependencies=_member_gate)
 app.include_router(builds.router, prefix="/api/builds", tags=["builds"], dependencies=_member_gate)
+# Multi-stage builds (Track B2) — same prefix, split out of builds.py to stay
+# inside that module's line-count budget. No route overlap: every path here
+# has a `/stages` segment.
+app.include_router(
+    build_stages.router, prefix="/api/builds", tags=["builds"], dependencies=_member_gate
+)
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"], dependencies=_member_gate)
 app.include_router(bom_presets.router, prefix="/api/bom-presets", tags=["bom_presets"], dependencies=_member_gate)
 app.include_router(invitations.router, prefix="/api/invitations", tags=["invitations"])
