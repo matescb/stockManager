@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.core.time import utcnow
+from app.domain._quantity import QUANTITY_ZERO, quantity_out
 from app.domain.builds.models import Build
 from app.domain.builds.schemas import ConsumeIn, ConsumeLineIn
 
@@ -116,7 +117,11 @@ def shortage_analysis(
 ) -> list[dict]:
     """Per-entry analysis of needed vs. available stock. Considers main part
     + any registered bidirectional or one_way substitutes (for regular
-    parts) or meta-part members (for meta parts)."""
+    parts) or meta-part members (for meta parts).
+
+    `available`, `substitute_available` and `short_by` are exact
+    `Decimal`s straight off the ledger — callers that serialise these rows
+    must go through `shortage_rows_out`."""
     entries = list(
         db.execute(
             select(ProjectEntry)
@@ -143,8 +148,13 @@ def shortage_analysis(
         available = current_quantity(db, workspace_id=workspace_id, part_id=part.id)
 
         sub_ids = _candidate_part_ids(db, part=part)
+        # `start=QUANTITY_ZERO` so a part with no substitutes yields an
+        # exact Decimal zero rather than `sum()`'s int 0 — the rows below
+        # are compared and subtracted downstream, and one int sneaking in
+        # is how a mixed-type comparison creeps back.
         sub_avail = sum(
-            current_quantity(db, workspace_id=workspace_id, part_id=sid) for sid in sub_ids
+            (current_quantity(db, workspace_id=workspace_id, part_id=sid) for sid in sub_ids),
+            QUANTITY_ZERO,
         )
 
         out.append(
@@ -160,10 +170,38 @@ def shortage_analysis(
                 "available": available,
                 "substitute_ids": [str(s) for s in sub_ids],
                 "substitute_available": sub_avail,
-                "short_by": max(0, required - (available + sub_avail)),
+                "short_by": max(QUANTITY_ZERO, required - (available + sub_avail)),
             }
         )
     return out
+
+
+#: Quantity-bearing keys of a `shortage_analysis` row. `required` is an
+#: int by construction (`_required` ceils); the rest are ledger sums and
+#: are therefore exact `Decimal`s.
+_SHORTAGE_QUANTITY_KEYS = ("required", "available", "substitute_available", "short_by")
+
+
+def shortage_rows_out(rows: list[dict]) -> list[dict]:
+    """JSON-ready copies of `shortage_analysis` rows.
+
+    `shortage_analysis` keeps its quantities as exact `Decimal`s because
+    `reports/service.py` does arithmetic on them (`_can_build_now`,
+    `blocking_lines_count`). Two routes put the whole row straight on the
+    wire — `GET /api/builds/{id}` and `GET /api/reports/bom-shortage` —
+    and an untyped `Decimal` there renders as `5.0` instead of `5`.
+    (`mcp/tools/read.py::bom_shortages` reshapes the row, so it applies
+    `quantity_out` to the keys it emits rather than calling this.)
+    Converting at the boundary rather than inside `shortage_analysis`
+    keeps the internal arithmetic exact.
+    """
+    return [
+        {
+            key: (quantity_out(value) if key in _SHORTAGE_QUANTITY_KEYS else value)
+            for key, value in row.items()
+        }
+        for row in rows
+    ]
 
 
 def _consumable_entries(
@@ -530,7 +568,8 @@ def apply_consume_lines(
         )
         if total_demand > avail:
             raise BuildError(
-                f"insufficient stock for part {part_id} (have {avail}, want {total_demand})"
+                "insufficient stock for part "
+                f"{part_id} (have {quantity_out(avail)}, want {total_demand})"
             )
 
     # Sum requested quantity per (entry, part) so we can validate against required
@@ -593,7 +632,8 @@ def apply_consume_lines(
         )
         if line.quantity > avail:
             raise BuildError(
-                f"insufficient stock for part {line.part_id} (have {avail}, want {line.quantity})"
+                "insufficient stock for part "
+                f"{line.part_id} (have {quantity_out(avail)}, want {line.quantity})"
             )
 
         entry_row = StockEntry(

@@ -169,8 +169,10 @@ def move_stock(
         "moved": qty,
         "from_location": source.name,
         "to_location": target.name,
-        "on_hand": stock_service.current_quantity(
-            caller.db, workspace_id=caller.ws.id, part_id=part.id
+        "on_hand": quantity_out(
+            stock_service.current_quantity(
+                caller.db, workspace_id=caller.ws.id, part_id=part.id
+            )
         ),
     }
 
@@ -210,8 +212,10 @@ def _stock_out(caller: Caller, part, entry) -> dict[str, Any]:
             "entry_id": sid(entry.id),
             "quantity_delta": quantity_out(entry.quantity_delta),
             "storage_location_id": sid(entry.storage_location_id),
-            "on_hand": stock_service.current_quantity(
-                caller.db, workspace_id=caller.ws.id, part_id=part.id
+            "on_hand": quantity_out(
+                stock_service.current_quantity(
+                    caller.db, workspace_id=caller.ws.id, part_id=part.id
+                )
             ),
         }
     )

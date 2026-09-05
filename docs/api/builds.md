@@ -94,6 +94,8 @@ Fetch the build plus a fresh shortage analysis.
 
 `required` is the effective, attrition-adjusted, **ceil-rounded integer** demand (part-intrinsic attrition × per-BOM-line `attrition_pct`, then rounded up — see [`builds-and-bom.md`](../domain/builds-and-bom.md#required-quantity-formula)). `attrition_pct` is the line's waste rate, surfaced so the UI can show what inflated `required`.
 
+`available`, `substitute_available` and `short_by` are exact `Decimal` ledger sums inside the service; the route serialises them through `builds/service.py::shortage_rows_out`, which emits JSON integers while every quantity is whole. Same for the per-stage rows below.
+
 **Errors** — `404 build not found` (`builds.py:45-49`).
 
 **Notes**

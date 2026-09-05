@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -30,7 +31,7 @@ from app.domain.stock.service import (
 router = APIRouter()
 
 
-def _serialize(l: Lot, quantity: int | None = None) -> dict:
+def _serialize(l: Lot, quantity: Decimal | None = None) -> dict:
     return {
         "id": str(l.id),
         "part_id": str(l.part_id),
@@ -44,7 +45,7 @@ def _serialize(l: Lot, quantity: int | None = None) -> dict:
         "purchase_quantity": quantity_out(l.purchase_quantity),
         "purchase_unit_cost": float(l.purchase_unit_cost) if l.purchase_unit_cost is not None else None,
         "purchase_currency": l.purchase_currency,
-        "current_quantity": quantity,
+        "current_quantity": quantity_out(quantity),
         "created_at": l.created_at.isoformat(),
     }
 

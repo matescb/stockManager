@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.core import mail
 from app.core.config import settings
 from app.core.time import utcnow
+from app.domain._quantity import quantity_out
 from app.domain.parts.models import Part
 from app.domain.projects.models import Project
 from app.domain.sourcing import cache as sourcing_cache
@@ -296,10 +297,13 @@ def _evaluate_stock_below(
             "part_id": str(part.id),
             "part_name": part.name,
             "mpn": part.mpn,
-            "current_qty": qty,
+            # `current_qty` is rendered into a notification email and
+            # `new_state` is persisted to a JSON column — neither can take a
+            # raw Decimal, and both would read as "5.000000" if they could.
+            "current_qty": quantity_out(qty),
             "threshold_qty": threshold,
         },
-        new_state={"qty": qty},
+        new_state={"qty": quantity_out(qty)},
     )
 
 
@@ -324,10 +328,13 @@ def _evaluate_stock_above(
             "part_id": str(part.id),
             "part_name": part.name,
             "mpn": part.mpn,
-            "current_qty": qty,
+            # `current_qty` is rendered into a notification email and
+            # `new_state` is persisted to a JSON column — neither can take a
+            # raw Decimal, and both would read as "5.000000" if they could.
+            "current_qty": quantity_out(qty),
             "threshold_qty": threshold,
         },
-        new_state={"qty": qty},
+        new_state={"qty": quantity_out(qty)},
     )
 
 

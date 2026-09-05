@@ -74,6 +74,8 @@ Two `None` semantics — picking the wrong one is a recurring footgun:
 
 The full rationale (BE-002 / DB-002 in v2 teardown) is in the docstring at `backend/app/domain/stock/service.py:150-169`. Validators in `remove_stock`, `move_stock`, `adjust_stock`, and `consume` all pass `bucket_match=True`.
 
+**The return type is `Decimal`**, as it is for `bulk_current_quantities`, `bulk_current_quantities_by_lot`, `total_for_part`, `reserved_quantity`, `available_quantity`, `stock_summary_for_part` and `stock_for_storage`. `SUM()` over `NUMERIC` is exact and order-independent — the property that lets a balance be re-summed from scratch on every read without drifting. Don't coerce it: `float()` loses exactness and `int()` truncates. Round explicitly, with `math.ceil`, only where a whole number is genuinely the answer (a build count, a distributor package count), and serialise through `domain/_quantity.py::quantity_out`. `backend/scripts/check_quantity_coercions.py` enforces this in CI; see [ARCHITECTURE.md](../ARCHITECTURE.md#integer-only-quantities-db-005--migration-0032).
+
 ## Advisory locking
 
 Two append-only writers racing on the same (workspace, part) bucket can both pass `qty <= current_quantity` before either inserts. The fix is `pg_advisory_xact_lock`, hashed on `(workspace_id, part_id)` (`backend/app/domain/stock/service.py:50-84`). Locks release at COMMIT/ROLLBACK; nested calls are re-entrant within the same transaction.
@@ -123,3 +125,4 @@ Both call `_prepare_move` first, so the per-part advisory lock, the workspace ch
 - **Never `UPDATE` or `DELETE` `stock_entries` from a service.** Cross-table parent deletes drive `SET NULL` on the FK columns; nothing else touches existing rows.
 - **Never skip the per-part advisory lock on a producer-side write.** "Positive deltas can't go negative" is true in isolation but ignores invariant-read races (`single_part_only`, default-storage-mandatory) and the 0013 trigger turning a controllable 4xx into a 500. See the docstring at `backend/app/domain/stock/service.py:65-77`.
 - **Never assume `lot_id IS NULL` and `lot_id IS NOT NULL` aggregate together.** The trigger and the validators treat NULL as a distinct bucket. Use `bucket_match=True` for any read whose result drives a write.
+- **Never put a ledger quantity through `float()` or `int()`.** The columns are `Numeric(18,6)`; both coercions destroy a measured value silently, and today nothing would notice because every value is still whole. `backend/scripts/check_quantity_coercions.py` fails the build on either; annotate a deliberate exception with `# noqa: quantity-decimal` and say why.

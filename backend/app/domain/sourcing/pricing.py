@@ -52,7 +52,11 @@ def _normalise_break(item: Any) -> tuple[int, Decimal] | None:
     if quantity is None or unit_price is None:
         return None
 
-    quantity_int = int(quantity)
+    # A distributor price break is an integer count of purchasable
+    # packages — an external contract, not an internal ledger quantity
+    # (units-of-measure design, "Pricing interaction"). Converting a
+    # measured shortage into a package count happens above this layer.
+    quantity_int = int(quantity)  # noqa: quantity-decimal
     if quantity_int < 1:
         return None
     return quantity_int, Decimal(str(unit_price))

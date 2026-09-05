@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections import defaultdict
 from collections.abc import Sequence
 from datetime import datetime
@@ -14,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.time import utcnow
-from app.domain._quantity import quantity_out
+from app.domain._quantity import QUANTITY_ZERO, quantity_out
 from app.domain.builds.service import shortage_analysis
 from app.domain.lots.models import Lot
 from app.domain.parts.models import Part
@@ -108,7 +109,7 @@ def replenishment_cost_report(
     rows = [
         _row_for_part(
             part,
-            on_hand=on_hand_by_part.get(part.id, 0),
+            on_hand=on_hand_by_part.get(part.id, QUANTITY_ZERO),
             historical_costs=historical_by_part.get(part.id, {}),
             search_result=search_results.get((part.mpn or "").casefold()),
             sourcing_status=status,
@@ -309,7 +310,7 @@ def sourcing_risk_report(
         _sourcing_risk_row(
             part,
             result=search_results.get((part.mpn or "").casefold()),
-            on_hand=on_hand.get(part.id, 0),
+            on_hand=on_hand.get(part.id, QUANTITY_ZERO),
             historical=historical.get(part.id),
             preferred_distributors=preferred,
         )
@@ -357,20 +358,31 @@ def _unsourced_row(
         build_quantity=build_quantity,
         can_build_now=can_build_now,
         can_build_after_purchase=can_build_now,
-        blocking_lines_count=sum(1 for row in rows if int(row["short_by"]) > 0),
+        blocking_lines_count=sum(1 for row in rows if row["short_by"] > 0),
         est_purchase_cost=None,
         partial=partial,
     )
 
 
 def _can_build_now(rows: list[dict[str, Any]], *, build_quantity: int) -> int:
-    effective = [row for row in rows if int(row["required"]) > 0]
+    """How many whole copies of the project the current ledger covers.
+
+    The row quantities are exact `Decimal`s (`shortage_analysis`), and the
+    arithmetic stays in `Decimal` — truncating each input to `int` first,
+    as this did until uom step 2, would drop a BOM line requiring less than
+    one unit out of the analysis entirely and round every availability
+    down before the division. Only the *result* floors, because a build
+    count really is a whole number.
+    """
+    effective = [row for row in rows if row["required"] > 0]
     if not effective:
         return 0
     return min(
-        (int(row["available"]) + int(row.get("substitute_available", 0)))
-        * build_quantity
-        // int(row["required"])
+        int(
+            (row["available"] + row.get("substitute_available", QUANTITY_ZERO))
+            * build_quantity
+            // row["required"]
+        )
         for row in effective
     )
 
@@ -475,7 +487,7 @@ def _status_ok() -> ReplenishmentCostStatusOut:
 def _row_for_part(
     part: Part,
     *,
-    on_hand: int,
+    on_hand: Decimal,
     historical_costs: dict[str | None, Decimal],
     search_result: SourcingSearchResult | None,
     sourcing_status: ReplenishmentCostStatusOut,
@@ -555,8 +567,13 @@ def _row_for_part(
 def _best_replacement_offer(
     search_result: SourcingSearchResult | None,
     *,
-    qty: int,
+    qty: Decimal,
 ) -> tuple[Decimal, str | None] | None:
+    # `qty` is a holding, not a purchase quantity — it is only compared
+    # against integer price breaks, which is exact for a Decimal, so it is
+    # passed through rather than rounded. Converting a measured holding
+    # into an integer package count is the pricing step of this track
+    # (see the units-of-measure design, "Pricing interaction").
     if search_result is None or qty < 1:
         return None
 
@@ -632,12 +649,17 @@ def _sourcing_risk_row(
     part: Part,
     *,
     result: SourcingSearchResult | None,
-    on_hand: int,
+    on_hand: Decimal,
     historical: tuple[Decimal, str | None] | None,
     preferred_distributors: list[str],
 ) -> SourcingRiskRow:
     mpn = (part.mpn or "").strip()
-    typical_qty = max(int(part.low_stock_report_quantity or 10), 10)
+    # Distributor quantities are integer counts of purchasable packages —
+    # an external contract (`SourcingPriceBreak.quantity: int`), not an
+    # internal ledger quantity. Ceil rather than truncate so a measured
+    # threshold never asks for less than it needs; identical for every
+    # whole value, which is all this step can produce.
+    typical_qty = max(math.ceil(part.low_stock_report_quantity or 10), 10)
     offers = sourcing_service._joined_offers(  # noqa: SLF001
         [mpn],
         {mpn.casefold(): result} if result is not None else {},
@@ -815,14 +837,14 @@ def _low_stock_rows(
 
     rows: list[dict[str, Any]] = []
     for part in parts:
-        cur = on_hand.get(part.id, 0)
-        res = reserved.get(part.id, 0)
+        # Compare and subtract in exact Decimal; `quantity_out` only at the
+        # point the value enters the (untyped) response dict.
+        cur = on_hand.get(part.id, QUANTITY_ZERO)
+        res = reserved.get(part.id, QUANTITY_ZERO)
         avail = cur - res
-        threshold = (
-            quantity_out(part.low_stock_report_quantity)
-            if part.low_stock_report_quantity is not None
-            else 0
-        )
+        threshold = part.low_stock_report_quantity
+        if threshold is None:
+            threshold = QUANTITY_ZERO
         if avail < threshold:
             rows.append(
                 {
@@ -830,11 +852,11 @@ def _low_stock_rows(
                     "name": part.name,
                     "manufacturer": part.manufacturer,
                     "mpn": part.mpn,
-                    "on_hand": cur,
-                    "reserved": res,
-                    "available": avail,
-                    "threshold": threshold,
-                    "short_by": threshold - avail,
+                    "on_hand": quantity_out(cur),
+                    "reserved": quantity_out(res),
+                    "available": quantity_out(avail),
+                    "threshold": quantity_out(threshold),
+                    "short_by": quantity_out(threshold - avail),
                 }
             )
     rows.sort(key=lambda row: row["short_by"], reverse=True)
@@ -890,7 +912,10 @@ def _attach_low_stock_sourcing(
         result = search_results.get(str(mpn).casefold())
         if result is None:
             continue
-        short_by = max(1, int(row["short_by"]))
+        # `row["short_by"]` has already been through `quantity_out`; ceil
+        # to a whole purchasable quantity (a 0.4 shortfall still needs a
+        # package) before it reaches the distributor pricing contract.
+        short_by = max(1, math.ceil(row["short_by"]))
         offers = sourcing_service._joined_offers([str(mpn)], search_results, qty=short_by)
         best_offer = sourcing_service._best_offer_at_qty(offers, short_by)
         row["sourcing"] = SourcingReportData(
