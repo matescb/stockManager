@@ -168,7 +168,7 @@ export default function PartCreate() {
 
   return (
     <form onSubmit={submit} className="max-w-2xl card p-4 space-y-3">
-      <h1 className="text-xl font-semibold">Create part</h1>
+      <h1 className="page-title">Create part</h1>
       {err && <div className="text-danger text-sm">{err}</div>}
       {refreshFailed && (
         <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm space-y-2">

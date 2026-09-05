@@ -99,7 +99,7 @@ export default function ProjectSourcingPage() {
         <div>
           <div className="text-sm text-muted">Projects · {project?.name ?? "Project"} · Sourcing</div>
           <div className="mt-1 flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold">Source BOM</h1>
+            <h1 className="page-title">Source BOM</h1>
             {sourcingData?.partial && <span className="pill bg-warning/10 text-warning">Partial — some chunks served from cache</span>}
           </div>
         </div>

@@ -12,7 +12,7 @@ export default function PartLayout() {
   const { partId } = useParams<{ partId: string }>();
 
   if (!partId) {
-    return <div className="text-red-600 text-sm p-4">Missing part id.</div>;
+    return <div className="text-danger text-sm p-4">Missing part id.</div>;
   }
 
   return <PartLayoutQuery key={partId} partId={partId} />;
@@ -24,7 +24,7 @@ function PartLayoutQuery({ partId }: { partId: string }) {
     queryFn: ({ signal }) => api.get<Part>(`/parts/${partId}`, { signal }),
   });
 
-  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load part. {error instanceof ApiError ? error.userMessage : ""}</div>;
+  if (isError) return <div className="text-danger text-sm p-4">Failed to load part. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (!part) return <div className="text-muted">Loading…</div>;
   const items = [
     { to: `/parts/${part.id}/info`, label: "Part info" },

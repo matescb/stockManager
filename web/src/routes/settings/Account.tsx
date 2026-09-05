@@ -39,14 +39,14 @@ export default function Account() {
   if (!me) return null;
   return (
     <div className="max-w-xl space-y-4">
-      <h1 className="text-xl font-semibold">Account</h1>
+      <h1 className="page-title">Account</h1>
       <div className="card p-4 space-y-3 text-sm">
         <div><span className="text-muted">Name:</span> {me.user.name}</div>
         <div><span className="text-muted">Email:</span> {me.user.email}</div>
         <div><span className="text-muted">User ID:</span> <span className="font-mono">{me.user.id}</span></div>
       </div>
       <div className="card p-4 space-y-2">
-        <h2 className="text-md font-semibold">Accept workspace invitation</h2>
+        <h2 className="card-title">Accept workspace invitation</h2>
         <p className="text-sm text-muted">
           Paste an invitation token here to join a workspace someone invited you to.
           The invitation must have been issued for <code>{me.user.email}</code>.

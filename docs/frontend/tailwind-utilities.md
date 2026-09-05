@@ -39,7 +39,7 @@ TODO(verify): exact `tailwind.config.js` mapping.
 
 ## Component utility set (`@layer components`)
 
-`web/src/index.css:48-94`.
+`web/src/index.css:48-116`.
 
 ### Buttons
 
@@ -50,6 +50,11 @@ TODO(verify): exact `tailwind.config.js` mapping.
 | `.btn-danger` | `index.css:55-57` | Destructive action, red-tinted |
 | `.btn-ghost` | `index.css:58-60` | Transparent button, hover-fills to `panel2` |
 | `.btn-sm` | `index.css:61-63` | Modifier — smaller padding + xs text |
+
+`.btn-sm` is the only compact-button mechanism. Do **not** write
+`btn text-xs` — it shrinks the type but leaves `.btn`'s full `px-3 py-1.5`
+padding, so the button reads as a full-size control with small text. 24
+sites did this before the typographic-scale pass.
 
 All four destructive/affirmative variants `@apply btn` first, then layer
 the colour, so border + focus ring stay consistent
@@ -73,18 +78,42 @@ Both standardise focus-ring (`focus:ring-2 focus:ring-accent/40`) so a
 `<select>` styled with `.input` matches a `<input class="input">`
 visually.
 
+### Headings
+
+`index.css:73-97`. Tailwind's default fontSize scale is
+`xs / sm / base / lg / xl / 2xl …` — **there is no `md` step**, and
+`tailwind.config.js` extends only `colors` and `fontFamily`, so it never
+adds one. Preflight additionally flattens `h1`–`h6` to
+`font-size: inherit`, so a heading is only a heading if a class says so.
+These three utilities are the entire scale.
+
+| Class | Source | Size | When to use |
+|---|---|---|---|
+| `.page-title` | `index.css:89-91` | 20px/28 semibold | The topmost title of a route — one per page |
+| `.card-title` | `index.css:92-94` | 16px/20 semibold | Section heading inside a `card` or panel |
+| `.section-title` | `index.css:95-97` | 12px uppercase muted | Eyebrow over a label-ish group |
+
+Body copy is 14px (`text-sm`), so the ladder is **20 / 16 / 14 / 12** —
+modest, clearly separated steps sized for a dense operator tool rather
+than a marketing page. `.card-title` carries `leading-tight` on purpose:
+at 16px that is a 20px line box, the same height as the 14px/20px it
+replaced, so section titles gained size and weight without costing a
+pixel of vertical space.
+
+Do not hand-roll `text-xl font-semibold` on an `<h1>` or invent a new
+step — use the utility, so the scale stays tunable from one place.
+
 ### Surfaces
 
 | Class | Source | Notes |
 |---|---|---|
 | `.card` | `index.css:70-72` | Bordered, rounded panel — the wrapping container for almost every section |
-| `.section-title` | `index.css:73-75` | Uppercase tracked muted heading inside a card |
-| `.kbd` | `index.css:76-78` | Inline keyboard-key chip used in the command palette and tooltips |
-| `.pill` | `index.css:91-93` | Small rounded badge for status / count tags |
+| `.kbd` | `index.css:98-100` | Inline keyboard-key chip used in the command palette and tooltips |
+| `.pill` | `index.css:113-115` | Small rounded badge for status / count tags |
 
 ### Table
 
-`.table` (`index.css:79-90`) is the shared base — `<DataTable>` uses it
+`.table` (`index.css:101-112`) is the shared base — `<DataTable>` uses it
 internally. Header cells get uppercase tracked muted text, body cells get
 horizontal padding + subtle border. Hover highlights the row via
 `--c-rowHover`.
@@ -118,7 +147,11 @@ In practice that means:
 
 - Need a button? Use `btn` / `btn-primary` / `btn-danger` /
   `btn-ghost` (+ `btn-sm`). Do not write `bg-blue-500` /
-  `bg-red-600` / etc. — they bypass the dark-mode token system.
+  `bg-red-600` / etc. — they bypass the dark-mode token system. The same
+  applies to text: error copy is `text-danger`, never `text-red-600`.
+- Need a heading? Use `page-title` / `card-title` / `section-title`.
+  Never invent a size step — Tailwind has no `md`, and a class that
+  isn't in the config compiles to nothing and fails silently.
 - Need a panel? `card`. Need a sub-region inside one? Add structural
   Tailwind utilities (`p-4`, `flex`, `gap-2`) to a `card`.
 - Need a status chip? `pill`, optionally tinted via colour utilities
@@ -141,7 +174,7 @@ read the token list above before guessing a class name.
 
 ## Command palette overrides
 
-`web/src/index.css:96-140` styles `cmdk`'s `data-*` attributes
+`web/src/index.css:118-162` styles `cmdk`'s `data-*` attributes
 (`[cmdk-overlay]`, `[cmdk-dialog]`, `[cmdk-root]`, `[cmdk-input]`,
 `[cmdk-list]`, `[cmdk-empty]`, `[cmdk-group-heading]`, `[cmdk-item]`).
 These aren't reusable utilities — they're library-specific selectors

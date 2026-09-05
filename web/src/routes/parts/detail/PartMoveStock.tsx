@@ -134,7 +134,7 @@ export default function PartMoveStock() {
 
   return (
     <form onSubmit={submit} className="card p-4 max-w-2xl space-y-3">
-      <h3 className="text-md font-semibold">Move stock</h3>
+      <h3 className="card-title">Move stock</h3>
       {err && <div className="text-danger text-sm">{err}</div>}
       <InlineQueryError query={stockQuery} label="current stock" />
       <InlineQueryError query={storageQuery} label="storage locations" />

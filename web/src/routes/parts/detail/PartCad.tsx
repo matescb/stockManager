@@ -252,7 +252,7 @@ export default function PartCad() {
       />
 
       <section className="card p-4 space-y-3">
-        <h3 className="text-md font-semibold">Simulation (SPICE)</h3>
+        <h3 className="card-title">Simulation (SPICE)</h3>
         <div>
           <label className="label" htmlFor="cad-spice">Model file</label>
           <InlineQueryError query={datafilesQuery} label="data files" className="mb-2" />
@@ -318,7 +318,7 @@ export default function PartCad() {
       </section>
 
       <section className="card p-4 space-y-3">
-        <h3 className="text-md font-semibold">Schematic fields</h3>
+        <h3 className="card-title">Schematic fields</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="label" htmlFor="cad-value">Value</label>
@@ -458,7 +458,7 @@ function VendorZipCard({ partId, onImported }: ImportCardProps) {
 
   return (
     <section className="card p-4 space-y-3">
-      <h3 className="text-md font-semibold">Import from vendor zip</h3>
+      <h3 className="card-title">Import from vendor zip</h3>
       <p className="text-muted text-sm">
         A SnapEDA, SamacSys or UltraLibrarian download — the symbol, footprint, 3D
         models and SPICE model it carries are added to the library and wired to
@@ -525,7 +525,7 @@ function LcscCard({ partId, onImported }: ImportCardProps) {
 
   return (
     <section className="card p-4 space-y-3">
-      <h3 className="text-md font-semibold">Fetch from LCSC</h3>
+      <h3 className="card-title">Fetch from LCSC</h3>
       <p className="text-muted text-sm">
         Converts the EasyEDA symbol, footprint and 3D model for an LCSC part
         number into KiCad format.
@@ -624,7 +624,7 @@ function RefSlot({
 
   return (
     <section className="card p-4 space-y-3">
-      <h3 className="text-md font-semibold">{title}</h3>
+      <h3 className="card-title">{title}</h3>
       <div role="radiogroup" aria-label={`${title} source`} className="flex flex-wrap gap-4">
         {options.map((option) => (
           <label key={option.mode} className="flex items-center gap-2 text-sm">
@@ -751,7 +751,7 @@ function FootprintModels({
 
   return (
     <section className="card p-4 space-y-3">
-      <h3 className="text-md font-semibold">3D models</h3>
+      <h3 className="card-title">3D models</h3>
       {!footprintId ? (
         <p className="text-muted text-sm">
           Select a hosted footprint to attach 3D models to it.

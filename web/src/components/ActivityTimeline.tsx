@@ -208,7 +208,7 @@ export default function ActivityTimeline({ endpoint }: Props) {
     <div className="card p-4">
       <div className="flex items-center mb-3">
         <ActivityIcon className="w-4 h-4 mr-2 text-muted" />
-        <h3 className="text-md font-semibold">Activity</h3>
+        <h3 className="card-title">Activity</h3>
       </div>
 
       {isLoading ? (
@@ -241,7 +241,7 @@ export default function ActivityTimeline({ endpoint }: Props) {
           {hasNextPage && (
             <div className="mt-3 flex justify-center">
               <button
-                className="btn text-xs"
+                className="btn btn-sm"
                 onClick={() => fetchNextPage()}
                 disabled={isFetchingNextPage}
               >

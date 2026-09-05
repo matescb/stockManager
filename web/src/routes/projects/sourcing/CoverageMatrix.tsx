@@ -154,7 +154,7 @@ export function CoverageMatrix({ data, currency }: { data: SourcingBomResponse; 
 
   return (
     <section className="space-y-2">
-      <h2 className="text-md font-semibold">Coverage matrix</h2>
+      <h2 className="card-title">Coverage matrix</h2>
       <div className={`grid grid-cols-1 ${variants.length > 1 ? "lg:grid-cols-2" : ""} gap-3`}>
         {variants.map(variant => (
           <CoverageVariantCard

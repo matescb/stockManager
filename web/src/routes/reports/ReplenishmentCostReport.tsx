@@ -123,7 +123,7 @@ export default function ReplenishmentCostReport() {
 
   if (isError) {
     return (
-      <div className="text-red-600 text-sm p-4">
+      <div className="text-danger text-sm p-4">
         Failed to load replenishment cost report. {error instanceof ApiError ? error.userMessage : ""}
       </div>
     );

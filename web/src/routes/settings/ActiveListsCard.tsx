@@ -195,7 +195,7 @@ export function ActiveListsCard({
 
   return (
     <form className="card p-4 mb-4 space-y-4 text-sm" onSubmit={submit}>
-      <h2 className="text-md font-semibold">Active currencies / countries / distributors</h2>
+      <h2 className="card-title">Active currencies / countries / distributors</h2>
       <InlineQueryError query={masterQuery} label="workspace master lists" />
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <CheckboxList

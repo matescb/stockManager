@@ -205,7 +205,7 @@ export default function LabelTemplatesPage() {
 
   return (
     <div>
-      <h1 className="mb-1 text-xl font-semibold">Label templates</h1>
+      <h1 className="mb-1 page-title">Label templates</h1>
       <p className="mb-4 max-w-3xl text-sm text-muted">
         Layouts for the cab SQUIX label printer, authored in millimetres. Each
         entity type has one default, which is the template the Print label

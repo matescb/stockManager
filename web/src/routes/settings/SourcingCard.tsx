@@ -165,7 +165,7 @@ export function SourcingCard({
   return (
     <form className="card p-4 mb-4 space-y-3 text-sm" onSubmit={submit}>
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-md font-semibold">Sourcing provider</h2>
+        <h2 className="card-title">Sourcing provider</h2>
         {configured && (
           <span className="pill bg-success/10 text-success" aria-label="Sourcing credentials configured">
             Configured ✓

@@ -129,7 +129,7 @@ export default function BuildKitPanel({ buildId, build, stages, storage, isEdita
 
   return (
     <div className="card p-4 mb-4">
-      <h3 className="text-md font-semibold mb-3">Kitting</h3>
+      <h3 className="card-title mb-2">Kitting</h3>
       <div className="text-sm text-muted mb-3">
         Consolidate everything this {activeStageId ? "stage" : "build"} needs into one staging
         location, so the components travel to the bench as a tray instead of a shelf-walk.

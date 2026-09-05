@@ -164,7 +164,7 @@ export default function ScanImport() {
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
-        <h1 className="text-xl font-semibold">Scan to import</h1>
+        <h1 className="page-title">Scan to import</h1>
         <Link to="/parts" className="btn">Back to parts</Link>
       </div>
       <div className="grid md:grid-cols-2 gap-4">

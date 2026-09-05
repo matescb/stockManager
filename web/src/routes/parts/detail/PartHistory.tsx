@@ -18,7 +18,7 @@ export default function PartHistory() {
   });
   const { data: storage } = useQuery({ queryKey: useWsKey("storage"), queryFn: ({ signal }) => api.get<StorageLocation[]>("/storage", { signal }) });
   const sName = new Map(storage?.map(s => [s.id, s.name]) ?? []);
-  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load history. {error instanceof ApiError ? error.userMessage : ""}</div>;
+  if (isError) return <div className="text-danger text-sm p-4">Failed to load history. {error instanceof ApiError ? error.userMessage : ""}</div>;
   return (
     <DataTable
       rows={data ?? []}

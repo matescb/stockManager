@@ -99,7 +99,7 @@ function PickRoute({ stops }: { stops: PickListStop[] }) {
   if (stops.length === 0) {
     return (
       <section className="picklist-section mb-6">
-        <h2 className="text-md font-semibold mb-2">Pick route</h2>
+        <h2 className="card-title mb-2">Pick route</h2>
         <p className="text-muted">
           Nothing to pick — no stock on hand for any line on this sheet.
         </p>
@@ -109,7 +109,7 @@ function PickRoute({ stops }: { stops: PickListStop[] }) {
 
   return (
     <section className="picklist-section mb-6">
-      <h2 className="text-md font-semibold mb-2">Pick route</h2>
+      <h2 className="card-title mb-2">Pick route</h2>
       {stops.map((stop, index) => (
         <div
           key={stop.storage_location_id ?? "unassigned"}
@@ -168,7 +168,7 @@ function BomSummary({
 }) {
   return (
     <section className="picklist-summary">
-      <h2 className="text-md font-semibold mb-2">BOM summary</h2>
+      <h2 className="card-title mb-2">BOM summary</h2>
       {lines.length === 0 ? (
         <p className="text-muted">No consumable BOM lines.</p>
       ) : (

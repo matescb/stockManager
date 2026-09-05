@@ -82,7 +82,7 @@ export default function BomBuyabilityReport() {
 
   if (isError) {
     return (
-      <div className="text-red-600 text-sm p-4">
+      <div className="text-danger text-sm p-4">
         Failed to load BOM buyability report. {error instanceof ApiError ? error.userMessage : ""}
       </div>
     );

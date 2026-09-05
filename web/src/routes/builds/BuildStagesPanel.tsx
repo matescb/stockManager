@@ -171,9 +171,9 @@ export default function BuildStagesPanel({
   return (
     <div className="card p-4 mb-4">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-md font-semibold">Assembly stages</h3>
+        <h3 className="card-title">Assembly stages</h3>
         {isEditable && !build.archived_at && (
-          <button className="btn text-xs" onClick={() => setShowForm(v => !v)}>
+          <button className="btn btn-sm" onClick={() => setShowForm(v => !v)}>
             {showForm ? "Cancel" : "+ Add stage"}
           </button>
         )}
@@ -211,7 +211,7 @@ export default function BuildStagesPanel({
                         <option key={s.id} value={s.id}>{s.name}</option>
                       ))}
                     </select>
-                    <button className="btn-primary text-xs" disabled={busy} onClick={() => consume(stage)}>
+                    <button className="btn-primary btn-sm" disabled={busy} onClick={() => consume(stage)}>
                       {consumeMutation.isPending ? "Consuming…" : "Consume stage"}
                     </button>
                   </div>

@@ -73,7 +73,7 @@ async function copy(value: string, what: string) {
 
 function CopyButton({ value, what }: { value: string; what: string }) {
   return (
-    <button type="button" className="btn text-xs" onClick={() => copy(value, what)}>
+    <button type="button" className="btn btn-sm" onClick={() => copy(value, what)}>
       Copy
     </button>
   );
@@ -116,7 +116,7 @@ export default function KicadSetupSettings() {
 
   return (
     <div className="max-w-4xl">
-      <h1 className="text-xl font-semibold mb-4">KiCad setup</h1>
+      <h1 className="page-title mb-4">KiCad setup</h1>
       <p className="text-sm text-muted mb-4">
         Two things connect KiCad to this workspace, and you need both. The
         HTTP library puts your parts in KiCad&apos;s symbol chooser; the
@@ -127,7 +127,7 @@ export default function KicadSetupSettings() {
       <InlineQueryError query={setupQuery} label="KiCad setup" className="mb-3" />
 
       <div className="card p-4 mb-4 space-y-3">
-        <h2 className="text-md font-semibold">Step 1 — your token</h2>
+        <h2 className="card-title">Step 1 — your token</h2>
         <p className="text-sm text-muted">
           Both halves authenticate with one personal access token. Mint a{" "}
           <strong>read-only</strong> one: it ends up in a config file on your
@@ -162,7 +162,7 @@ export default function KicadSetupSettings() {
       {setup && (
         <>
           <div className="card p-4 mb-4 space-y-3">
-            <h2 className="text-md font-semibold">Step 2 — the HTTP library</h2>
+            <h2 className="card-title">Step 2 — the HTTP library</h2>
             <ol className="text-sm list-decimal ml-5 space-y-2">
               <li>
                 Download the library file and save it somewhere permanent —
@@ -209,7 +209,7 @@ export default function KicadSetupSettings() {
           </div>
 
           <div className="card p-4 mb-4 space-y-3">
-            <h2 className="text-md font-semibold">
+            <h2 className="card-title">
               Step 3 — the add-on package (PCM)
             </h2>
             <p className="text-sm text-muted">
@@ -251,7 +251,7 @@ export default function KicadSetupSettings() {
           </div>
 
           <div className="card p-4 mb-4 space-y-3">
-            <h2 className="text-md font-semibold">
+            <h2 className="card-title">
               Step 4 — SPICE models (only if you simulate)
             </h2>
             <p className="text-sm text-muted">
@@ -289,7 +289,7 @@ export default function KicadSetupSettings() {
 
           {setup.mcp_url && (
             <div className="card p-4 space-y-3">
-              <h2 className="text-md font-semibold">Not KiCad — AI agents</h2>
+              <h2 className="card-title">Not KiCad — AI agents</h2>
               <p className="text-sm text-muted">{setup.mcp_note}</p>
               <div className="flex items-start gap-2">
                 <div className="flex-1">

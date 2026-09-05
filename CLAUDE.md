@@ -319,6 +319,13 @@ them, that's the bug.
 - The visual language is a small Tailwind utility set defined in
   `src/index.css` (`btn`, `btn-primary`, `btn-danger`, `card`, `pill`,
   `input`, `label`, `table`). Use those before adding new ones.
+- **The heading scale is `page-title` / `card-title` / `section-title`**
+  (20 / 16 / 12px over 14px body). Tailwind's fontSize scale has no `md`
+  step and `tailwind.config.js` never adds one, so `text-md` compiled to
+  nothing — 64 section headings rendered at body size until this was
+  fixed. `src/__tests__/typographyScale.test.ts` fails the build if any
+  non-existent size step comes back. Full table:
+  `docs/frontend/tailwind-utilities.md`.
 
 ## Deploy is automatic — but gated by a human reviewer
 

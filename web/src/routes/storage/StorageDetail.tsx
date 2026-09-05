@@ -21,7 +21,7 @@ export function StorageDetailLayout() {
     queryFn: ({ signal }) => api.get<StorageLocation>(`/storage/${storageId}`, { signal }),
     enabled: !!storageId,
   });
-  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load storage location. {error instanceof ApiError ? error.userMessage : ""}</div>;
+  if (isError) return <div className="text-danger text-sm p-4">Failed to load storage location. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (!data) return <div className="text-muted">Loading…</div>;
   const items = [
     { to: `/storage/${data.id}/info`, label: "Info" },
@@ -82,7 +82,7 @@ export function StorageInfo() {
   // Hoisted above the `isError` early-return so the hook count stays
   // stable across renders (Rules of Hooks — see #284).
   const partName = new Map(parts?.map(p => [p.id, p.name]) ?? []);
-  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load storage contents. {error instanceof ApiError ? error.userMessage : ""}</div>;
+  if (isError) return <div className="text-danger text-sm p-4">Failed to load storage contents. {error instanceof ApiError ? error.userMessage : ""}</div>;
   return (
     <div className="card overflow-hidden">
       <table className="table">

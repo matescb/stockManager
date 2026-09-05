@@ -61,7 +61,7 @@ export default function PartMembers() {
 
   return (
     <div className="card p-4 max-w-2xl">
-      <h3 className="text-md font-semibold mb-2">Meta-part members</h3>
+      <h3 className="card-title mb-2">Meta-part members</h3>
       <QueryStateBoundary query={membersQuery} resourceLabel="members">
       <p className="text-sm text-muted mb-3">
         A meta-part stands for any of its members. When a BOM line uses this meta-part,
@@ -78,7 +78,7 @@ export default function PartMembers() {
                 {p?.mpn && <span className="text-muted ml-2">{p.mpn}</span>}
               </span>
               <button
-                className="btn-danger text-xs"
+                className="btn-danger btn-sm"
                 onClick={() => remove(m.member_part_id)}
                 disabled={removeMutation.isPending}
               >

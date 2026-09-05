@@ -115,7 +115,7 @@ export function SvgPreview({ src, title, heightClass = "h-64" }: Props) {
         <h4 className="text-sm font-semibold">{title}</h4>
         <button
           type="button"
-          className="btn text-xs"
+          className="btn btn-sm"
           aria-expanded={expanded}
           aria-controls={regionId}
           onClick={() => setExpanded((open) => !open)}
@@ -164,7 +164,7 @@ export function SvgPreview({ src, title, heightClass = "h-64" }: Props) {
             <div className="absolute right-2 top-2 flex gap-1">
               <button
                 type="button"
-                className="btn text-xs"
+                className="btn btn-sm"
                 aria-label="Zoom in"
                 onClick={() => zoomFromButton(1.25)}
               >
@@ -172,7 +172,7 @@ export function SvgPreview({ src, title, heightClass = "h-64" }: Props) {
               </button>
               <button
                 type="button"
-                className="btn text-xs"
+                className="btn btn-sm"
                 aria-label="Zoom out"
                 onClick={() => zoomFromButton(1 / 1.25)}
               >
@@ -180,7 +180,7 @@ export function SvgPreview({ src, title, heightClass = "h-64" }: Props) {
               </button>
               <button
                 type="button"
-                className="btn text-xs"
+                className="btn btn-sm"
                 aria-label="Reset view"
                 disabled={!zoomed}
                 onClick={() => setView(IDENTITY)}

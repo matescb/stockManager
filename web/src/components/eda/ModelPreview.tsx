@@ -41,7 +41,7 @@ export function ModelPreview({ src, format, title, heightClass = "h-64" }: Props
         <h4 className="text-sm font-semibold">{title}</h4>
         <button
           type="button"
-          className="btn text-xs"
+          className="btn btn-sm"
           aria-expanded={expanded}
           aria-controls={regionId}
           onClick={() => setExpanded((open) => !open)}

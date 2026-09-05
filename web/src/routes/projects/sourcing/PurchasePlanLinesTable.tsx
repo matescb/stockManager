@@ -125,7 +125,7 @@ export default function PurchasePlanLinesTable({
       })}
       {unfilled.length > 0 && (
         <section className="rounded-md border border-danger/40 bg-panel p-4">
-          <h2 className="text-md font-semibold text-danger">Unfilled lines</h2>
+          <h2 className="card-title text-danger">Unfilled lines</h2>
           <DataTable
             rows={unfilled}
             columns={columns}

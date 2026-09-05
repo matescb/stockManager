@@ -9,7 +9,7 @@ import { Link } from "react-router-dom";
 export default function NotFound() {
   return (
     <div className="card p-6 max-w-xl space-y-3">
-      <h1 className="text-xl font-semibold">Not found</h1>
+      <h1 className="page-title">Not found</h1>
       <p className="text-sm text-muted">
         The page you're looking for doesn't exist, or you don't have
         access to it. Common destinations:

@@ -194,7 +194,7 @@ export function BomRows({ rows, workspaceCurrency }: { rows: SourcingBomLine[]; 
 
   return (
     <section className="space-y-2">
-      <h2 className="text-md font-semibold">BOM rows</h2>
+      <h2 className="card-title">BOM rows</h2>
       <DataTable
         rows={rows}
         columns={columns}

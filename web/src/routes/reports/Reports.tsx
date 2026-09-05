@@ -300,7 +300,7 @@ export function LowStockReport() {
   });
 
 
-  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load low-stock report. {error instanceof ApiError ? error.userMessage : ""}</div>;
+  if (isError) return <div className="text-danger text-sm p-4">Failed to load low-stock report. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (isLoading) return <div className="text-muted">Loading…</div>;
   const sourcedData = includeSourcing && data && !Array.isArray(data) ? data : null;
   const rows = Array.isArray(data) ? data : data?.rows ?? [];
@@ -465,13 +465,13 @@ export function StockValueReport() {
     queryKey: useWsKey("report", "stock-value"),
     queryFn: ({ signal }) => api.get<StockValue>("/reports/stock-value", { signal }),
   });
-  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load stock value report. {error instanceof ApiError ? error.userMessage : ""}</div>;
+  if (isError) return <div className="text-danger text-sm p-4">Failed to load stock value report. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (isLoading) return <div className="text-muted">Loading…</div>;
   if (!data) return null;
   return (
     <div className="space-y-4">
       <div className="card p-4">
-        <h3 className="text-md font-semibold mb-3">By currency</h3>
+        <h3 className="card-title mb-2">By currency</h3>
         <table className="table">
           <thead><tr><th>Currency</th><th>Total value</th></tr></thead>
           <tbody>

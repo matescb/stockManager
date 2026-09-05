@@ -243,7 +243,7 @@ export default function PurchasePlanReviewPage() {
             Projects / {project?.name ?? "Project"} / Purchase plan
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-2" data-testid="purchase-plan-loaded">
-            <h1 className="text-xl font-semibold">
+            <h1 className="page-title">
               Purchase plan #{plan.id.slice(0, 8)} - {project?.name ?? "Project"} - strategy={plan.strategy}
             </h1>
             <span className={`pill ${fresh ? "bg-success/10 text-success" : "bg-warning/10 text-warning"}`}>

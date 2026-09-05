@@ -24,7 +24,7 @@ export default function BuildDetail() {
   const { buildId } = useParams<{ buildId: string }>();
 
   if (!buildId) {
-    return <div className="text-red-600 text-sm p-4">Missing build id.</div>;
+    return <div className="text-danger text-sm p-4">Missing build id.</div>;
   }
 
   return <BuildDetailQuery key={buildId} buildId={buildId} />;
@@ -36,7 +36,7 @@ function BuildDetailQuery({ buildId }: { buildId: string }) {
     queryFn: ({ signal }) => api.get<DetailOut>(`/builds/${buildId}`, { signal }),
   });
 
-  if (isError) return <div className="text-red-600 text-sm p-4">Failed to load build. {error instanceof ApiError ? error.userMessage : ""}</div>;
+  if (isError) return <div className="text-danger text-sm p-4">Failed to load build. {error instanceof ApiError ? error.userMessage : ""}</div>;
   if (!data) return <div className="text-muted">Loading…</div>;
 
   return <BuildDetailBody buildId={buildId} detail={data} />;
@@ -243,7 +243,7 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
       {err && <div className="card p-3 text-danger text-sm mb-3">{err}</div>}
 
       <div className="card p-4 mb-4">
-        <h3 className="text-md font-semibold mb-3">Shortage analysis</h3>
+        <h3 className="card-title mb-2">Shortage analysis</h3>
         {shortage.length === 0 ? (
           <div className="text-muted text-sm">Project has no consumable BOM lines.</div>
         ) : (
@@ -301,7 +301,7 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
           consumption happens stage by stage above. */}
       {isEditable && entries && stages.length === 0 && (
         <div className="card p-4 mb-4">
-          <h3 className="text-md font-semibold mb-3">Consumption plan</h3>
+          <h3 className="card-title mb-2">Consumption plan</h3>
           <div className="text-sm text-muted mb-2">
             One line per consumed part. Multiple lines per entry are allowed (e.g. main part + substitute).
             Use <strong>Auto-fill</strong> for a default plan, then tweak.
@@ -355,7 +355,7 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
                         <div className="text-xs text-muted">need {formatQuantity(s?.required, undefined, { fallback: "—" })}</div>
                       </td>
                       <td colSpan={4}>
-                        <button className="btn text-xs" onClick={() => addRow(e.id, e.part_id!)}>+ Add line</button>
+                        <button className="btn btn-sm" onClick={() => addRow(e.id, e.part_id!)}>+ Add line</button>
                       </td>
                     </tr>
                   );
@@ -404,7 +404,7 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
                     </td>
                     <td>
                       {idx === rows.length - 1 && (
-                        <button className="btn text-xs" onClick={() => addRow(e.id, e.part_id!)}>+ Sub</button>
+                        <button className="btn btn-sm" onClick={() => addRow(e.id, e.part_id!)}>+ Sub</button>
                       )}
                     </td>
                   </tr>

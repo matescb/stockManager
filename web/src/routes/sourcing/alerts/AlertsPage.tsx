@@ -186,7 +186,7 @@ export default function AlertsPage() {
         <div>
           <div className="text-sm text-muted">Sourcing</div>
           <div className="mt-1 flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold">Alerts</h1>
+            <h1 className="page-title">Alerts</h1>
             <PoweredByTrustedParts />
           </div>
         </div>

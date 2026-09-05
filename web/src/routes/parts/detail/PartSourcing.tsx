@@ -113,7 +113,7 @@ export default function PartSourcing() {
       <div className="card p-4 space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h3 className="text-md font-semibold">Sourcing</h3>
+            <h3 className="card-title">Sourcing</h3>
             <div className="text-xs text-muted">
               {providerLabel ? (
                 <>
@@ -153,7 +153,7 @@ export default function PartSourcing() {
           </div>
         </div>
         {isError ? (
-          <div className="text-red-600 text-sm">Failed to load sourcing data. {error instanceof ApiError ? error.userMessage : ""}</div>
+          <div className="text-danger text-sm">Failed to load sourcing data. {error instanceof ApiError ? error.userMessage : ""}</div>
         ) : isLoading ? (
           <div className="text-muted text-sm">Loading…</div>
         ) : rows.length === 0 ? (
@@ -230,7 +230,7 @@ function SecondaryProviderCard({
     <div className="card p-4 space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h3 className="text-md font-semibold flex items-center gap-2">
+          <h3 className="card-title flex items-center gap-2">
             {label}
             <span className="pill">Additional provider</span>
           </h3>
