@@ -197,7 +197,7 @@ gated on `q.trim().length >= 2`, `staleTime: 30_000`. Returns five
 groups: parts, storage, projects, lots, orders
 (`CommandPalette.tsx:106-178`). The "Navigate" group is hardcoded
 (`CommandPalette.tsx:73-104`). Styling for `cmdk`'s `data-*` attributes
-lives in `web/src/index.css:96-140`.
+lives in `web/src/index.css:118-162`.
 
 ## EntityHeader
 
