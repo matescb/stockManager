@@ -38,6 +38,9 @@ export class PartDetailPage {
    */
   async expandSubNavGroups(): Promise<void> {
     const nav = this.page.getByRole("navigation", { name: "Section navigation" });
+    // `count()` does not auto-wait, so settle the strip first — otherwise a
+    // call made while the layout query is still in flight sees zero groups.
+    await nav.waitFor({ state: "visible" });
     const groups = nav.locator("details");
     const count = await groups.count();
     for (let i = 0; i < count; i++) {
