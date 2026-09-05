@@ -118,6 +118,7 @@ const WorkspaceSettings = lazy(() => import("@/routes/settings/Workspace"));
 const CategoriesSettings = lazy(() => import("@/routes/settings/Categories"));
 const ApiTokensSettings = lazy(() => import("@/routes/settings/ApiTokens"));
 const KicadSetupSettings = lazy(() => import("@/routes/settings/KicadSetup"));
+const LabelTemplatesSettings = lazy(() => import("@/routes/labels/LabelTemplates"));
 
 // Scan landing page (/c/:code). Lazy because it is only ever reached
 // from a QR scan, never from in-app navigation.
@@ -313,6 +314,7 @@ export default function App() {
             <Route path="/settings/categories" element={<LazyRoute><CategoriesSettings /></LazyRoute>} />
             <Route path="/settings/api-tokens" element={<LazyRoute><ApiTokensSettings /></LazyRoute>} />
             <Route path="/settings/kicad" element={<LazyRoute><KicadSetupSettings /></LazyRoute>} />
+            <Route path="/settings/label-templates" element={<LazyRoute><LabelTemplatesSettings /></LazyRoute>} />
 
             {/* Scan landing. A printed label's QR encodes /c/<code>; the
                 page resolves the code and redirects to the object's own

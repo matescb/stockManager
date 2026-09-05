@@ -20,6 +20,8 @@ Page tree for the app. Each top-level folder is a feature area; lazy chunks are 
 | `storage/` | Storage location tree CRUD |
 | `reports/` | Aggregate reports (low-stock, value, BOM shortage, expiring) |
 | `settings/` | Workspace + member + invitation + provider creds + custom fields + tags |
+| `codes/` | `/c/:code` scan landing — resolves a printed short code to its object |
+| `labels/` | Label template designer (`/settings/label-templates`) + the Print label / batch-print actions the detail pages and lists import |
 | `NotFound.tsx` | 404 page |
 | `__tests__/` | Route-level tests |
 

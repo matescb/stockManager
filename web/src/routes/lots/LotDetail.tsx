@@ -7,6 +7,7 @@ import { useWsKey, lotMutationKeys } from "@/lib/queryKeys";
 import { formatDateTime } from "@/lib/format";
 import EntityHeader from "@/components/EntityHeader";
 import SubNav from "@/components/SubNav";
+import PrintLabelButton from "@/routes/labels/PrintLabelButton";
 import type { Lot, Part, StockEntry, StorageLocation } from "@/types";
 
 export function LotLayout() {
@@ -28,6 +29,13 @@ export function LotLayout() {
         title={data.name || data.id}
         subtitle={part ? `Part: ${part.name}` : `Part: ${data.part_id}`}
         idCode={data.id}
+        actions={
+          <PrintLabelButton
+            entityType="lot"
+            entityId={data.id}
+            entityName={data.name || data.id}
+          />
+        }
       />
       <SubNav items={items} />
       <Outlet key={data.id} context={{ lot: data }} />

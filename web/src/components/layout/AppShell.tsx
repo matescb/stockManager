@@ -43,7 +43,9 @@ function pageTitleFor(pathname: string): string {
   if (!seg) return "Home";
   if (seg === "settings") {
     const sub = pathname.split("/").filter(Boolean)[1] ?? "";
-    return sub === "account" ? "Account" : "Workspace";
+    if (sub === "account") return "Account";
+    if (sub === "label-templates") return "Label templates";
+    return "Workspace";
   }
   return seg.charAt(0).toUpperCase() + seg.slice(1);
 }

@@ -11,6 +11,7 @@ import EntityHeader from "@/components/EntityHeader";
 import AttachmentsPanel from "@/components/AttachmentsPanel";
 import ActivityTimeline from "@/components/ActivityTimeline";
 import { SourceBomButton } from "@/routes/projects/sourcing/SourceBomButton";
+import PrintLabelButton from "@/routes/labels/PrintLabelButton";
 import BuildStagesPanel from "./BuildStagesPanel";
 import type { Build, BuildShortageRow, BuildStage, Part, Project, ProjectEntry, StorageLocation } from "@/types";
 
@@ -220,6 +221,7 @@ function BuildDetailBody({ buildId, detail }: { buildId: string; detail: DetailO
         ]}
         actions={
           <div className="flex gap-2">
+            <PrintLabelButton entityType="build" entityId={build.id} entityName={build.name} />
             <SourceBomButton projectId={projectId} />
             {isEditable && (
               <button className="btn" onClick={fillSuggested}>Auto-fill</button>

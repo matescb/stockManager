@@ -700,6 +700,18 @@ export default function WorkspaceSettings() {
         </Link>
       </div>
 
+      <div className="card p-4 mb-4 space-y-2 text-sm">
+        <h2 className="text-md font-semibold">Label templates</h2>
+        <div className="text-xs text-muted">
+          Design the labels the cab SQUIX printer produces for parts, lots,
+          bins, orders and builds. Each type has one default, which is what the
+          Print label action uses.
+        </div>
+        <Link to="/settings/label-templates" className="btn inline-flex w-fit">
+          Open label designer
+        </Link>
+      </div>
+
       {cur && <ProvidersCard workspace={cur} workspaceId={workspaceId} />}
       {cur && <SourcingCard workspace={cur} workspaceId={workspaceId} />}
       {cur && <ActiveListsCard workspace={cur} workspaceId={workspaceId} />}
