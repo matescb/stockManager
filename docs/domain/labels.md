@@ -81,7 +81,7 @@ otherwise the row it tells the operator to inspect is rolled back with it. See
 
 ## Label templates
 
-`label_templates` (migration `0076`), workspace-owned. Geometry in columns
+`label_templates` (migration `0075`), workspace-owned. Geometry in columns
 (the renderer needs it to build the JScript `H` / `S` job header before it
 reads a single element); the placed elements in one `elements` JSONB list
 (read and written whole, never queried element-by-element).

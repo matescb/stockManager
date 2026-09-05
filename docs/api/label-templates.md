@@ -32,7 +32,7 @@ That admin check is expressed two ways, and the split is load-bearing
 
 ## Model
 
-`label_templates` (migration `0076`), `WorkspaceOwned`.
+`label_templates` (migration `0075`), `WorkspaceOwned`.
 
 | Column | Notes |
 |---|---|

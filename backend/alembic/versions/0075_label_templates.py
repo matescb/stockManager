@@ -28,8 +28,8 @@ by `POST /api/label-templates/defaults`, so the catalog exists once and a
 workspace created after this migration gets the same defaults as one created
 before it.
 
-Revision ID: 0076
-Revises: 0075
+Revision ID: 0075
+Revises: 0074
 Create Date: 2026-09-05
 """
 
@@ -39,8 +39,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "0076"
-down_revision = "0075"
+revision = "0075"
+down_revision = "0074"
 branch_labels = None
 depends_on = None
 
