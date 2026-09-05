@@ -422,7 +422,8 @@ jobs:
           # runtime bundle (`SENTRY_RELEASE` -> `VITE_APP_VERSION`). See
           # the "Set release name" step above and issue #283.
           VITE_APP_VERSION: ${{ steps.release.outputs.name }}
-        run: npm run build
+        run: |
+          VITE_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) npm run build
 
       # INFRA2-010: upload sourcemaps to Sentry from CI so the auth token
       # never enters the Docker build context / layer cache. Gated on push
@@ -591,6 +592,8 @@ jobs:
             --build-arg VITE_SENTRY_TRACES_SAMPLE_RATE=0.05 \
             --build-arg VITE_SENTRY_REPLAYS_SESSION_SAMPLE_RATE=0.0 \
             --build-arg VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE=0.0 \
+            --build-arg VITE_APP_VERSION="$(git rev-parse --short=12 HEAD)" \
+            --build-arg VITE_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             .
 
       # Lint the in-container nginx config. Catches syntax errors in
@@ -653,6 +656,8 @@ jobs:
             --build-arg VITE_SENTRY_TRACES_SAMPLE_RATE=0.05 \
             --build-arg VITE_SENTRY_REPLAYS_SESSION_SAMPLE_RATE=0.0 \
             --build-arg VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE=0.0 \
+            --build-arg VITE_APP_VERSION="$(git rev-parse --short=12 HEAD)" \
+            --build-arg VITE_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             -q .)
           docker run --rm "$IMAGE" test -f /usr/share/nginx/html/index.html
 
@@ -1001,6 +1006,11 @@ jobs:
           # deploys.
           export SENTRY_RELEASE
           SENTRY_RELEASE=$(git rev-parse --short=12 HEAD)
+          # Human-readable build stamp for the /about page, next to the
+          # two build SHAs. Same lifetime as SENTRY_RELEASE: exported for
+          # this deploy only, never written into .env.prod.
+          export BUILD_TIME
+          BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
           if [ ! -f .env.prod ]; then
             echo ".env.prod is missing on the VPS; aborting before touching containers."

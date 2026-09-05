@@ -358,6 +358,9 @@ services:
         VITE_SENTRY_REPLAYS_SESSION_SAMPLE_RATE: ${VITE_SENTRY_REPLAYS_SESSION_SAMPLE_RATE:-0.0}
         VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE: ${VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE:-0.0}
         VITE_APP_VERSION: ${SENTRY_RELEASE:-}
+        # ISO-8601 UTC build timestamp, exported by the deploy step next
+        # to SENTRY_RELEASE. Shown on /about; empty just omits the line.
+        VITE_BUILD_TIME: ${BUILD_TIME:-}
         # Umami self-hosted analytics. Both empty → no tracker injected.
         VITE_UMAMI_WEBSITE_ID: ${VITE_UMAMI_WEBSITE_ID:-}
         VITE_UMAMI_SCRIPT_URL: ${VITE_UMAMI_SCRIPT_URL:-}

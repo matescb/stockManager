@@ -19,6 +19,19 @@ RUN npm ci
 # Copy sources and produce dist/.
 COPY web/ ./
 
+# The in-app manual and the About page's "Latest changes" are bundled at
+# build time by `scripts/copy-docs.mjs` (a prebuild step, same shape as
+# copy-zxing-wasm.mjs). That script resolves its sources relative to the
+# repo root — which, with WORKDIR=/app holding `web/`, is `/` inside this
+# image. So the end-user doc shelf and CHANGELOG.md have to land at those
+# exact paths. Root-level `*.md` is excluded by .dockerignore, hence the
+# explicit `!CHANGELOG.md` negation there.
+#
+# Placed after `npm ci` so a docs-only edit doesn't invalidate the
+# dependency layer.
+COPY docs/user/ /docs/user/
+COPY CHANGELOG.md /CHANGELOG.md
+
 # Sentry DSN baked into the bundle at build time. Empty when unset → SDK
 # init no-ops, no events, no network egress. The DSN is intentionally
 # public (Sentry's threat model treats it as an identifier, not a key).
@@ -29,6 +42,9 @@ ARG VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE=0.0
 # Release identifier (git SHA) — used as Sentry's `release` tag so Sentry
 # groups issues per release.
 ARG VITE_APP_VERSION=
+# ISO-8601 UTC build timestamp, shown on /about beside the two build SHAs.
+# Empty is fine — the page just omits the "built at" line.
+ARG VITE_BUILD_TIME=
 # Umami (self-hosted analytics) — both must be set for the loader IIFE
 # in web/index.html to inject the tracker. Empty values disable tracking
 # entirely (no network call, no DOM mutation).
@@ -40,6 +56,7 @@ ENV VITE_SENTRY_TRACES_SAMPLE_RATE=$VITE_SENTRY_TRACES_SAMPLE_RATE
 ENV VITE_SENTRY_REPLAYS_SESSION_SAMPLE_RATE=$VITE_SENTRY_REPLAYS_SESSION_SAMPLE_RATE
 ENV VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE=$VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE
 ENV VITE_APP_VERSION=$VITE_APP_VERSION
+ENV VITE_BUILD_TIME=$VITE_BUILD_TIME
 ENV VITE_UMAMI_WEBSITE_ID=$VITE_UMAMI_WEBSITE_ID
 ENV VITE_UMAMI_SCRIPT_URL=$VITE_UMAMI_SCRIPT_URL
 # SENTRY_AUTH_TOKEN / _ORG / _PROJECT are NOT passed here — source-map

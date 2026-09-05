@@ -25,6 +25,7 @@ Reusable presentational + behavioural components shared across pages. Page-speci
 | `ChunkLoadErrorBoundary.tsx` | Catches stale-chunk errors after deploy → reload |
 | `ThemeToggle.tsx`, `ThemedToaster.tsx` | Theme toggle + sonner toaster wired to theme |
 | `Brand.tsx` | App logo / wordmark |
+| `Markdown.tsx` | Renders the in-app manual and the About page's changelog — `react-markdown` + `remark-gfm`, explicit `allowedElements`, and every href routed through `lib/userDocs.ts::resolveDocHref` |
 | `layout/AppShell.tsx` | App chrome — sidebar, top bar, route outlet |
 | `scanner/Scanner.tsx`, `ZxingScanner.tsx`, `ScanditScanner.tsx` | Dual-engine barcode scanner |
 | `eda/SymbolPreview.tsx`, `FootprintPreview.tsx` | KiCad 2D previews of a hosted symbol / footprint |

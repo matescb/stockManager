@@ -52,8 +52,19 @@ services:
     build: ./web
     environment:
       VITE_API_BASE: http://localhost:8000
+      # Build identity, shown side by side with the backend's on /about.
+      # Prod gets the deploy's 12-char git SHA; dev has no such thing, so
+      # the page says "development build" instead of inventing a version.
+      VITE_APP_VERSION: ${VITE_APP_VERSION:-}
+      VITE_BUILD_TIME: ${VITE_BUILD_TIME:-}
     volumes:
       - ./web:/app
+      # The in-app manual and the About page's changelog live outside
+      # web/, and web/scripts/copy-docs.mjs (a predev step) resolves them
+      # relative to the repo root — which is `/` when /app holds web/.
+      # Read-only: the container copies from these, never into them.
+      - ./docs/user:/docs/user:ro
+      - ./CHANGELOG.md:/CHANGELOG.md:ro
       - web_node_modules:/app/node_modules
     ports:
       - "5173:5173"

@@ -3,11 +3,13 @@ import { Link, NavLink, useLocation } from "react-router-dom";
 import {
   BarChart3,
   Bell,
+  BookOpen,
   Boxes,
   Check,
   ChevronDown,
   FolderKanban,
   Hammer,
+  Info,
   LogOut,
   Menu,
   Search,
@@ -207,6 +209,13 @@ function WorkspaceSwitcher({
   );
 }
 
+function footerLinkClass({ isActive }: { isActive: boolean }): string {
+  return cn(
+    "flex items-center gap-2.5 px-3 py-1.5 rounded-md text-sm transition-colors",
+    isActive ? "bg-accent/15 text-accent" : "text-muted hover:text-text hover:bg-panel2",
+  );
+}
+
 function Sidebar({
   mobileOpen,
   onClose,
@@ -268,20 +277,22 @@ function Sidebar({
           ))}
         </nav>
 
-        <div className="px-2 py-2 border-t border-border">
-          <NavLink
-            to="/settings/workspace"
-            className={({ isActive }) =>
-              cn(
-                "flex items-center gap-2.5 px-3 py-1.5 rounded-md text-sm transition-colors",
-                isActive
-                  ? "bg-accent/15 text-accent"
-                  : "text-muted hover:text-text hover:bg-panel2"
-              )
-            }
-          >
+        <div className="px-2 py-2 border-t border-border space-y-0.5">
+          <NavLink to="/settings/workspace" className={footerLinkClass}>
             <Settings size={16} />
             Settings
+          </NavLink>
+          {/* The in-app manual (`docs/user/`, bundled at build time) and
+              the build-identity page. Kept in the footer next to Settings
+              rather than in NAV — they're reference surfaces, not part of
+              the day-to-day workflow. */}
+          <NavLink to="/help" className={footerLinkClass}>
+            <BookOpen size={16} />
+            Help
+          </NavLink>
+          <NavLink to="/about" className={footerLinkClass}>
+            <Info size={16} />
+            About
           </NavLink>
         </div>
       </aside>

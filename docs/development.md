@@ -22,6 +22,26 @@ to avoid accidentally starting the dev stack with no `SESSION_SECRET` set.
 The `Makefile` also exposes `prod-up`, `prod-logs`, and `prod-rebuild`
 targets for the prod compose file.
 
+### Generated frontend assets
+
+Two `web/scripts/*.mjs` steps run as `predev` / `prebuild` (and, for the
+second, `pretest`) and write into gitignored directories:
+
+| Script | Writes | Why |
+|---|---|---|
+| `copy-zxing-wasm.mjs` | `web/public/zxing/` | serve the scanner wasm from our own origin, not a CDN |
+| `copy-docs.mjs` | `web/src/generated/` | inline the `docs/user/` manual + `CHANGELOG.md` into the bundle for `/help` and `/about` |
+
+`copy-docs.mjs` resolves its sources relative to the repo root, so it
+needs `docs/user/` and `CHANGELOG.md` to sit two levels above
+`web/scripts/`. That holds in a checkout; the dev container gets them as
+read-only bind mounts (`docker-compose.dev.yml`) and the prod image gets
+them via explicit `COPY` lines in `web/Dockerfile.prod` (plus a
+`!CHANGELOG.md` negation in `.dockerignore`, which otherwise drops every
+root-level `*.md`). Running `vitest` directly rather than through
+`npm test` skips `pretest` — run `node scripts/copy-docs.mjs` once first
+if `src/generated/` is missing.
+
 ## Adding or updating Python dependencies
 
 The backend uses [uv](https://docs.astral.sh/uv/) for deterministic

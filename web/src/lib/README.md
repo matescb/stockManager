@@ -18,6 +18,8 @@ Shared frontend infra: HTTP client, auth context, theme, query keys, mutations h
 | `bagCode.ts` | MIL-STD-130N parser + normaliser; produces the same signature the server computes |
 | `providerCatalog.ts` | Catalog vs spec custom-field key list (mirror of the server-side list) |
 | `cn.ts` | `cn(...)` className combiner |
+| `userDocs.ts` | In-app manual: loads the bundled `docs/user/` shelf, strips the H1 / `Audience:` line / screenshot placeholders, and enforces the doc-shelf link policy (`resolveDocHref`) |
+| `changelog.ts` | Bounded `## `-section split of the bundled `CHANGELOG.md` for the About page's "Latest changes" |
 | `*.test.ts`, `__dom__/`, `__fixtures__/` | Co-located unit / DOM tests + fixtures |
 
 ## Public surface
@@ -29,6 +31,7 @@ Shared frontend infra: HTTP client, auth context, theme, query keys, mutations h
 | Wire a mutation + invalidations | `mutations.ts::useApiMutation` |
 | Parse a scanned bag code | `bagCode.ts` (default export / named parser) |
 | Classify a key as catalog vs spec | `providerCatalog.ts` |
+| Load / link a manual page | `userDocs.ts::getDoc` / `listDocs` / `resolveDocHref` |
 
 ## Hard rules (this module)
 
@@ -36,6 +39,7 @@ Shared frontend infra: HTTP client, auth context, theme, query keys, mutations h
 2. **Query keys start with `["ws", wsId, …]`** so workspace switch invalidates everything tenant-scoped in one call. See [tanstack-patterns](../../../docs/frontend/tanstack-patterns.md).
 3. **`bagCode.ts` normalisation order must match `backend/app/domain/parts/services/bag_signature.py`.** The signature is the only stable correlation key for re-scans. See [ADR-0006](../../../docs/adr/0006-bag-signature-normalization.md).
 4. **`providerCatalog.ts` must mirror its server twin.** Catalog keys vs user specs split the Specs / Sourcing tabs. See [ADR-0007](../../../docs/adr/0007-provider-catalog-vs-spec-split.md).
+5. **The in-app manual surfaces the end-user doc shelf and nothing else.** `userDocs.ts::resolveDocHref` blocks every relative link that leaves `docs/user/` — engineer pages, ADRs and runbooks render as plain text, not as links. Pinned by `lib/__tests__/userDocs.test.ts`.
 
 ## See also
 

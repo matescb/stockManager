@@ -245,9 +245,9 @@ from app.api.routes import (
     workspaces,
 )
 from app.core.config import settings
-from app.core.deps import require_member_for_writes
+from app.core.deps import CurrentUser, require_member_for_writes
 from app.core.request_id import RequestIdMiddleware
-from app.core.responses import http_exception_handler, validation_exception_handler
+from app.core.responses import Envelope, http_exception_handler, ok, validation_exception_handler
 
 _is_prod = settings().APP_ENV == "prod"
 
@@ -802,3 +802,35 @@ def health():
             "uploads": "ok" if uploads_ok else f"not writable: {upload_dir}",
         },
     )
+
+
+@app.get("/api/version")
+def version(_user: CurrentUser) -> Envelope[dict[str, str | None]]:
+    """Which commit this backend was built from.
+
+    `SENTRY_RELEASE` is the 12-character git short SHA the deploy exports
+    (`.github/workflows/ci.yml`), the same string Vite inlines into the
+    SPA bundle as `VITE_APP_VERSION`. The frontend `/about` page shows
+    both side by side: there is no staging environment, the auto-deploy
+    rebuilds the two images separately, and a half-applied deploy is
+    therefore a real (and otherwise baffling) failure mode. Two SHAs that
+    disagree name it immediately.
+
+    Empty outside a deploy (local dev, tests) — reported as `null` rather
+    than `""` so the client can tell "not built by CI" from a real value.
+    Deliberately NOT the `0.1.0` in `pyproject.toml` / `FastAPI(version=)`:
+    both have been frozen since the initial commit and there are no git
+    tags, so surfacing them would be a fabricated answer.
+
+    **Auth: authenticated, unlike `/api/health`.** Health has to be
+    reachable by the compose healthcheck and the post-deploy CI gate,
+    which hold no credential; nothing needs the build SHA anonymously.
+    And while the frontend's SHA is already public (Vite inlines it into
+    a bundle anyone can fetch), the backend's is not — an unauthenticated
+    build fingerprint just tells a scanner which commit's known issues to
+    try. `CurrentUser` accepts either credential (session cookie or API
+    token) and is not workspace-scoped: the build id is a property of the
+    server, identical for every tenant, so there is nothing to isolate
+    and no mutation to write to `audit_log`.
+    """
+    return ok({"build": settings().SENTRY_RELEASE or None})

@@ -60,3 +60,4 @@ slowapi, per-process bucket store, per-IP. The reverse proxy must set `X-Forward
 | [search](search.md) | `/api/search` | Cross-entity search |
 | [catalog](catalog.md) | `/catalog` | Public token-gated read-only catalog |
 | [sentry-tunnel](sentry-tunnel.md) | `/api/sentry-tunnel` | Sentry envelope tunnel for ad-blocker bypass |
+| [system](system.md) | `/api/health`, `/api/version` | Liveness probe and the backend build identifier |
