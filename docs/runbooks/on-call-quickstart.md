@@ -83,6 +83,12 @@ exited with code 0. Cron sidecars should also be running:
 - `backend-cron-alerts` runs `sourcing-alerts-evaluate` every 900 seconds.
 - `backend-cron-sessions` runs `session-purge` and `password-reset-purge`
   every 3600 seconds by default.
+- `backend-cron-printing` runs `print-dispatch` every 60 seconds and
+  `print-job-reconcile` every 300 seconds. While `PRINT_HOST` is empty
+  (printing disabled — the default), `print-dispatch` is a no-op that still
+  writes its heartbeat, so this sidecar being healthy says nothing about
+  whether the printer is reachable. See
+  [deployment.md](../deployment.md#label-printer-connectivity).
 
 Each cron sidecar wraps each job run in `timeout 600`. Log line `timed out
 after 600s (exit=124)` means the job hit the 10-minute cap and was

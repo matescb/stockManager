@@ -277,14 +277,23 @@ them, that's the bug.
 - **Active-list migrations must preserve saved workspace defaults.** When a
   new active list is introduced, backfill it from any existing per-workspace
   value; FB-003a missed this for sourcing distributors and FB-007 fixed it.
-- **Three backend-cron sidecars run separate cadences.** `backend-cron`
+- **Four backend-cron sidecars run separate cadences.** `backend-cron`
   handles the hourly TrustedParts cache sweep (`sourcing-cache-sweep`),
   `backend-cron-alerts` handles the 15-minute alert evaluator
-  (`sourcing-alerts-evaluate`), and `backend-cron-sessions` handles
+  (`sourcing-alerts-evaluate`), `backend-cron-sessions` handles
   auth-retention purges (`session-purge` and `password-reset-purge`) in
-  parallel subshell loops. They share the same `run_job` registry per
-  ADR-0021; adding another cadence means another sidecar, not a parallel
-  scheduler.
+  parallel subshell loops, and `backend-cron-printing` handles label
+  printing (`print-dispatch` every 60s, `print-job-reconcile` every 300s),
+  also in parallel subshell loops. They share the same `run_job` registry
+  per ADR-0021; adding another cadence means another sidecar, not a
+  parallel scheduler.
+- **`PRINT_HOST` empty means printing is disabled, and that is the shipped
+  prod default.** The printer is only reachable through a reverse-SSH
+  tunnel + socat bridge + ufw rule that a human sets up on the VPS by hand
+  (`docs/deployment.md` — "Label printer connectivity"). Nothing in the
+  deploy automates it, so `print-dispatch` short-circuits to a no-op rather
+  than failing every queued job against a sink that was never meant to
+  exist yet. Don't "fix" that by letting the dispatcher run unconditionally.
 - **TrustedParts generated models are schema-pinned.** Refresh
   `docs/schemas/trustedparts-v2.json` with `make refresh-tp-spec`, regenerate
   `backend/app/domain/sourcing/_generated/` with `make regen-tp-models`, and

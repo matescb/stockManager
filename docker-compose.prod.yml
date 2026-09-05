@@ -67,6 +67,16 @@ x-backend-env: &backend-env
   # previews degrade to 503 rather than failing the app, so it is not a
   # backend startup dependency. Has a default, so .env.prod need not set it.
   EDA_RENDER_URL: ${EDA_RENDER_URL:-http://kicad-render:8080}
+  # cab SQUIX label printer, reached as raw JScript over TCP. EMPTY IS THE
+  # SUPPORTED DEFAULT and means "printing disabled": the print service raises
+  # PrinterUnreachable and the print-dispatch cron job short-circuits to a
+  # no-op, so a deploy with no printer configured is silent rather than noisy.
+  # The printer is NOT reachable from this VPS out of the box — a human has to
+  # stand up the reverse-SSH tunnel, the socat bridge, and the ufw rule for
+  # THIS stack's docker subnet first. Only then set PRINT_HOST to the bridge
+  # address. See docs/deployment.md "Label printer connectivity".
+  PRINT_HOST: ${PRINT_HOST:-}
+  PRINT_PORT: ${PRINT_PORT:-9100}
 
 services:
   db:
@@ -271,6 +281,61 @@ services:
     # either to 0 disables only that job. Both loops write independent
     # heartbeat files.
     command: ["sh", "-c", "trap 'kill 0' TERM; trap 'kill 0' INT; mkdir -p /tmp/stockmanager-job-heartbeats; session_interval=$$(python -m app.cli.run_job session-purge --print-interval) || exit $$?; reset_interval=$$(python -m app.cli.run_job password-reset-purge --print-interval) || exit $$?; pids=''; if [ $$session_interval -gt 0 ]; then (while true; do timeout 600 python -m app.cli.run_job session-purge; rc=$$?; if [ $$rc -eq 124 ]; then echo 'session-purge timed out after 600s (exit=124)'; elif [ $$rc -ne 0 ]; then echo \"session-purge failed (exit=$$rc)\"; fi; sleep $$session_interval; done) & pids=\"$$pids $$!\"; fi; if [ $$reset_interval -gt 0 ]; then (while true; do timeout 600 python -m app.cli.run_job password-reset-purge; rc=$$?; if [ $$rc -eq 124 ]; then echo 'password-reset-purge timed out after 600s (exit=124)'; elif [ $$rc -ne 0 ]; then echo \"password-reset-purge failed (exit=$$rc)\"; fi; sleep $$reset_interval; done) & pids=\"$$pids $$!\"; fi; if [ -z \"$$pids\" ]; then echo 'auth retention purges disabled'; sleep infinity; fi; wait"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+  backend-cron-printing:
+    build: ./backend
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: "0.5"
+    pids_limit: 256
+    oom_kill_disable: false
+    stop_grace_period: 605s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    environment:
+      <<: *backend-env
+    depends_on:
+      backend-init:
+        condition: service_completed_successfully
+      backend:
+        condition: service_healthy
+    # Shell-only probe (no Python cold start), so it stays far inside the 5s
+    # timeout. Both loops must be alive: -mmin windows are ~10x each loop's
+    # cadence, the same slack ratio the other sidecars use.
+    healthcheck:
+      test: ["CMD-SHELL", "test -d /tmp/stockmanager-job-heartbeats && find /tmp/stockmanager-job-heartbeats -name print-dispatch -mmin -10 -print -quit | grep -q . && find /tmp/stockmanager-job-heartbeats -name print-job-reconcile -mmin -30 -print -quit | grep -q ."]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 5m
+    # Label-printing cadence (ADR-0021: a new cadence means a new sidecar, not
+    # a second scheduler). Two independent subshell loops, mirroring
+    # backend-cron-sessions, because the two jobs have genuinely different
+    # cadences and each `timeout 600` run must stay the longest single command
+    # in the container (keeps stop_grace_period at the usual 605s):
+    #
+    #   print-dispatch      60s — ships queued batch_blank labels off the
+    #                             request path. This is the only operator-
+    #                             visible latency in the chain, so it is the
+    #                             tightest cadence that still costs just one
+    #                             short-lived process per minute. The printer
+    #                             needs ~1-2s per label, so a 60s pickup is a
+    #                             small fraction of any real batch's runtime.
+    #   print-job-reconcile 300s — matches print_service._STALE_SENT_THRESHOLD
+    #                             (5 minutes) exactly: never sweeps more often
+    #                             than the staleness window it enforces, and a
+    #                             job orphaned in 'sent' is resolved within
+    #                             ~10 minutes worst case.
+    #
+    # Safe to run with printing disabled: PRINT_HOST empty (the default) makes
+    # print-dispatch return 0 without opening a socket, and the heartbeat is
+    # still written, so the sidecar stays healthy and the queue is untouched.
+    command: ["sh", "-c", "trap 'kill 0' TERM; trap 'kill 0' INT; mkdir -p /tmp/stockmanager-job-heartbeats; (while true; do timeout 600 python -m app.cli.run_job print-dispatch; rc=$$?; if [ $$rc -eq 124 ]; then echo 'print-dispatch timed out after 600s (exit=124)'; elif [ $$rc -ne 0 ]; then echo \"print-dispatch failed (exit=$$rc)\"; fi; sleep 60; done) & (while true; do timeout 600 python -m app.cli.run_job print-job-reconcile; rc=$$?; if [ $$rc -eq 124 ]; then echo 'print-job-reconcile timed out after 600s (exit=124)'; elif [ $$rc -ne 0 ]; then echo \"print-job-reconcile failed (exit=$$rc)\"; fi; sleep 300; done) & wait"]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
 

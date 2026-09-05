@@ -484,3 +484,115 @@ def test_main_check_all_heartbeats_reports_combined_failure(
 
     assert exit_code == 1
     assert "jobs=example status=unhealthy reason=heartbeat" in capsys.readouterr().err
+
+
+def test_print_dispatch_registered() -> None:
+    spec = JOBS["print-dispatch"]
+
+    assert spec.name == "print-dispatch"
+    assert spec.owner == "backend/printing"
+    assert spec.cadence == "every 60 seconds"
+    assert "PRINT_HOST is empty" in spec.idempotency
+    assert spec.interval_setting is None
+
+
+def test_print_job_reconcile_registered() -> None:
+    spec = JOBS["print-job-reconcile"]
+
+    assert spec.name == "print-job-reconcile"
+    assert spec.owner == "backend/printing"
+    assert spec.cadence == "every 5 minutes"
+    assert "'sent'" in spec.idempotency
+    assert spec.interval_setting is None
+
+
+def test_print_dispatch_is_a_noop_when_print_host_is_empty(monkeypatch, tmp_path) -> None:
+    # The shipped prod default is PRINT_HOST="" (printing disabled until a
+    # human wires the VPS tunnel). The sidecar loop must not touch the queue.
+    from app.core.config import settings
+
+    session = _FakeSession()
+    calls: list[Session] = []
+
+    def _dispatch_queued_batch(db: Session, **_kwargs: object) -> int:
+        calls.append(db)
+        return 5
+
+    monkeypatch.setattr(
+        "app.domain.printing.print_service.dispatch_queued_batch",
+        _dispatch_queued_batch,
+    )
+    monkeypatch.setattr(settings(), "PRINT_HOST", "", raising=False)
+
+    affected = run_job(
+        "print-dispatch",
+        session_factory=lambda: session,  # type: ignore[return-value]
+        heartbeat_dir=tmp_path,
+    )
+
+    assert affected == 0
+    assert calls == []
+    # Still a clean run: the loop keeps its heartbeat so the sidecar's
+    # healthcheck stays green while printing is disabled.
+    assert session.committed is True
+    assert session.rolled_back is False
+    assert (tmp_path / "print-dispatch").exists()
+
+
+def test_print_dispatch_dispatches_when_print_host_is_set(monkeypatch, tmp_path) -> None:
+    from app.core.config import settings
+
+    session = _FakeSession()
+    calls: list[Session] = []
+
+    def _dispatch_queued_batch(db: Session, **_kwargs: object) -> int:
+        calls.append(db)
+        return 5
+
+    monkeypatch.setattr(
+        "app.domain.printing.print_service.dispatch_queued_batch",
+        _dispatch_queued_batch,
+    )
+    monkeypatch.setattr(settings(), "PRINT_HOST", "172.28.0.1", raising=False)
+
+    affected = run_job(
+        "print-dispatch",
+        session_factory=lambda: session,  # type: ignore[return-value]
+        heartbeat_dir=tmp_path,
+    )
+
+    assert affected == 5
+    assert calls == [session]
+    assert session.committed is True
+    assert session.closed is True
+
+
+def test_print_job_reconcile_runs_even_when_print_host_is_empty(
+    monkeypatch, tmp_path
+) -> None:
+    # Reconciliation is pure DB bookkeeping: disabling printing must not strand
+    # jobs left in 'sent', so this job is deliberately NOT gated on PRINT_HOST.
+    from app.core.config import settings
+
+    session = _FakeSession()
+    calls: list[Session] = []
+
+    def _reconcile_stale_print_jobs(db: Session, **_kwargs: object) -> int:
+        calls.append(db)
+        return 3
+
+    monkeypatch.setattr(
+        "app.domain.printing.print_service.reconcile_stale_print_jobs",
+        _reconcile_stale_print_jobs,
+    )
+    monkeypatch.setattr(settings(), "PRINT_HOST", "", raising=False)
+
+    affected = run_job(
+        "print-job-reconcile",
+        session_factory=lambda: session,  # type: ignore[return-value]
+        heartbeat_dir=tmp_path,
+    )
+
+    assert affected == 3
+    assert calls == [session]
+    assert (tmp_path / "print-job-reconcile").exists()

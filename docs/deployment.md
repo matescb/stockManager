@@ -396,26 +396,29 @@ sudo -u deploy docker compose -f docker-compose.prod.yml logs -f backend
 sudo -u deploy docker compose -f docker-compose.prod.yml logs -f backend-cron
 sudo -u deploy docker compose -f docker-compose.prod.yml logs -f backend-cron-alerts
 sudo -u deploy docker compose -f docker-compose.prod.yml logs -f backend-cron-sessions
+sudo -u deploy docker compose -f docker-compose.prod.yml logs -f backend-cron-printing
 sudo -u deploy docker compose -f docker-compose.prod.yml logs -f web
 ```
 
 ### Backend periodic jobs
 
-Three cron sidecars run allow-listed backend CLI jobs:
+Four cron sidecars run allow-listed backend CLI jobs:
 
 - `backend-cron` runs `sourcing-cache-sweep` once per hour.
 - `backend-cron-alerts` runs `sourcing-alerts-evaluate` every 15 minutes.
 - `backend-cron-sessions` runs `session-purge` and `password-reset-purge`
   hourly by default.
+- `backend-cron-printing` runs `print-dispatch` every 60 seconds and
+  `print-job-reconcile` every 5 minutes, in two parallel subshell loops.
 
 Each sidecar invokes `python -m app.cli.run_job <job-name>` and sleeps after
 completed runs, so a slow job delays that job's next start instead of
-overlapping it. Source: `docker-compose.prod.yml:170-264`,
-`backend/app/cli/run_job.py:85-119`.
+overlapping it. Source: `docker-compose.prod.yml:185-340`,
+`backend/app/cli/run_job.py:124-183`.
 
 The sourcing cache job opens a backend DB session and sweeps expired
 TrustedParts cache rows by workspace-scoped deletes. Source:
-`backend/app/cli/run_job.py:57-87`,
+`backend/app/cli/run_job.py:68-122`,
 `backend/app/domain/sourcing/cache.py:83-97`.
 
 Run it manually on the VPS:
@@ -432,6 +435,130 @@ Run it outside Docker against a local configured backend DB:
 cd backend
 uv run python -m app.cli.run_job sourcing-cache-sweep
 ```
+
+The two printing jobs behave the same way, and both are safe to run by hand
+while printing is disabled: `print-dispatch` returns 0 without opening a
+socket when `PRINT_HOST` is empty, and `print-job-reconcile` never touches the
+printer at all (it is pure DB bookkeeping, so it stays enabled either way and
+resolves jobs orphaned in `sent` even after printing is turned back off).
+
+### Label printer connectivity
+
+**Everything in this section is a MANUAL, one-time VPS + warehouse-host
+procedure. None of it is automated by the deploy job.** Until a human
+completes it and sets `PRINT_HOST`, printing is simply disabled: the print
+service fails closed with `PrinterUnreachable`, `print-dispatch` no-ops, and
+`backend-cron-printing` stays healthy. Nothing breaks on deploy.
+
+The cab SQUIX printer lives on the warehouse LAN (`192.168.1.249:9100`) and is
+not routable from this VPS. The sibling **skladVA** project already solved
+this; its notes are the reference architecture and should be read first —
+`deploy/printer-tunnel.md` in the sibling checkout (`/mnt/data/WORK/sklad`),
+plus its two systemd units there (`deploy/systemd/skladva-printer-tunnel.service`,
+`deploy/systemd/skladva-printer-bridge.service`). The chain, unchanged:
+
+```
+backend container ──▶ <docker bridge gateway>:9100   (host side)
+                       └ socat relay ──▶ 127.0.0.1:9100   (VPS loopback)
+                                          └ reverse-SSH tunnel ──▶ warehouse host
+                                                                   └▶ 192.168.1.249:9100 (printer)
+```
+
+The VPS keeps `gatewayports no`, so the tunnel binds VPS loopback only; the
+socat relay bound to a private docker bridge gateway is what makes it
+reachable from a container. No inbound port is opened towards the printer.
+
+**The one delta for stockManager.** skladVA's tunnel and socat bridge are
+already running on this VPS, but they are scoped to *its* network: socat binds
+`172.27.0.1` (the `skladva-net` gateway) and the ufw rule allows only
+`172.27.0.0/16`. stockManager's compose stack sits on its own bridge network
+(`stockmanager_default`, a different auto-assigned subnet), so its containers
+can neither reach that bind address nor pass that ufw rule. Before
+`PRINT_HOST` can be set, this stack needs **either** its own socat bind on the
+`stockmanager_default` gateway **or**, if you re-bind socat somewhere both
+stacks can reach, its own ufw allow rule for the `stockmanager_default`
+subnet. Reusing skladVA's rule verbatim will not work.
+
+Manual steps, in order:
+
+1. **Warehouse host — reverse-SSH tunnel.** Already running for skladVA; one
+   tunnel serves both stacks because it terminates on VPS loopback. Verify
+   with `systemctl status skladva-printer-tunnel` on the warehouse host. If
+   it is down, printing fails for both apps.
+
+2. **VPS — find this stack's gateway and subnet.**
+
+   ```bash
+   docker network inspect stockmanager_default \
+       --format '{{ (index .IPAM.Config 0).Subnet }} {{ (index .IPAM.Config 0).Gateway }}'
+   ```
+
+   Both values are assigned by docker and change if the network is destroyed
+   and recreated. Everything below refers to them as `<subnet>`/`<gateway>`.
+
+3. **VPS — second socat bind (root).** Add a stockManager-specific unit
+   modelled on `skladva-printer-bridge.service`, changing only the `bind=`
+   address:
+
+   ```ini
+   # /etc/systemd/system/stockmanager-printer-bridge.service
+   [Unit]
+   Description=stockManager printer bridge (<gateway>:9100 -> reverse-ssh tunnel 127.0.0.1:9100)
+   After=docker.service
+   Wants=docker.service
+
+   [Service]
+   ExecStart=/usr/bin/socat TCP-LISTEN:9100,bind=<gateway>,fork,reuseaddr TCP:127.0.0.1:9100
+   Restart=always
+   RestartSec=5
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+   ```bash
+   apt-get install -y socat   # already present if skladVA's bridge runs
+   systemctl daemon-reload
+   systemctl enable --now stockmanager-printer-bridge
+   ```
+
+4. **VPS — ufw rule for this stack's subnet (root).**
+
+   ```bash
+   ufw allow from <subnet> to any port 9100 proto tcp \
+       comment "stockManager container -> printer bridge"
+   ```
+
+5. **App config + redeploy.**
+
+   ```bash
+   # /srv/stockmanager/.env.prod
+   PRINT_HOST=<gateway>
+   PRINT_PORT=9100
+   ```
+
+   ```bash
+   cd /srv/stockmanager
+   sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
+       up -d backend backend-cron-printing
+   ```
+
+6. **Verify** from inside the backend container (`Y-000000N` means online and
+   idle):
+
+   ```bash
+   sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
+       exec backend python -c "import socket; from app.core.config import settings; \
+   s=socket.create_connection((settings().PRINT_HOST, settings().PRINT_PORT), timeout=6); \
+   s.sendall(b'\x1bs'); print(s.recv(9).decode())"
+   ```
+
+To disable printing again, set `PRINT_HOST=` (empty) and redeploy. Queued jobs
+stay queued rather than being failed against a sink that is gone, and
+`print-job-reconcile` keeps clearing anything stuck in `sent`.
+
+If the docker network is ever destroyed and recreated, its subnet and gateway
+may change — redo steps 2, 3, and 4, and update `PRINT_HOST`.
 
 ### psql shell
 
