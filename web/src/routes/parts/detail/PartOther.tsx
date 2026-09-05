@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -6,6 +7,7 @@ import { useApiMutation } from "@/lib/mutations";
 import { useAuth } from "@/lib/auth";
 import { archivePartKeys } from "@/lib/queryKeys";
 import type { Part } from "@/types";
+import ReplaceInProjectsModal from "./ReplaceInProjectsModal";
 
 export default function PartOther() {
   const { part } = useOutletContext<{ part: Part }>();
@@ -13,6 +15,7 @@ export default function PartOther() {
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
   const nav = useNavigate();
+  const [replaceOpen, setReplaceOpen] = useState(false);
 
   // Bare `qc.invalidateQueries()` (no key) used to nuke the entire
   // cache, including queries for unrelated workspaces and any in-flight
@@ -42,13 +45,29 @@ export default function PartOther() {
   }
 
   return (
-    <div className="card p-4 max-w-xl space-y-3">
-      <h3 className="text-md font-semibold">Other operations</h3>
-      {part.archived_at ? (
-        <button className="btn" onClick={restore} disabled={archiveMutation.isPending}>Restore from archive</button>
-      ) : (
-        <button className="btn-danger" onClick={archive} disabled={archiveMutation.isPending}>Archive part</button>
-      )}
+    <div className="card p-4 max-w-xl space-y-4">
+      <div className="space-y-2">
+        <h3 className="text-md font-semibold">Replace across projects</h3>
+        <p className="text-sm text-muted">
+          Swap this part for a replacement on every matching BOM line, across some or all projects.
+        </p>
+        <button className="btn" onClick={() => setReplaceOpen(true)}>
+          Replace in projects…
+        </button>
+      </div>
+
+      <hr className="border-border" />
+
+      <div className="space-y-2">
+        <h3 className="text-md font-semibold">Other operations</h3>
+        {part.archived_at ? (
+          <button className="btn" onClick={restore} disabled={archiveMutation.isPending}>Restore from archive</button>
+        ) : (
+          <button className="btn-danger" onClick={archive} disabled={archiveMutation.isPending}>Archive part</button>
+        )}
+      </div>
+
+      <ReplaceInProjectsModal open={replaceOpen} part={part} onClose={() => setReplaceOpen(false)} />
     </div>
   );
 }

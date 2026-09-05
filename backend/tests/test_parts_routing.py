@@ -40,6 +40,8 @@ EXPECTED_PARTS_ROUTES: set[tuple[str, str]] = {
     ("GET", "/api/parts/{meta_id}/members"),
     ("POST", "/api/parts/{meta_id}/members"),
     ("DELETE", "/api/parts/{meta_id}/members/{member_id}"),
+    # Replace a part across project BOMs (parts_relations router)
+    ("POST", "/api/parts/{part_id}/replace-in-projects"),
     # Bulk + scan-import + signature lookup + quick-remove
     ("POST", "/api/parts/bulk-delete"),
     ("POST", "/api/parts/bulk-import-from-scan"),

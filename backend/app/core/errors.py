@@ -241,6 +241,8 @@ class ErrorCodes:
     PART_PROVIDER_LINK_IS_PRIMARY = "part.provider_link_is_primary"
     PART_ASSET_NOT_FOUND = "part.asset_not_found"
     PART_ASSET_INVALID_FILENAME = "part.asset_invalid_filename"
+    # Replace-in-projects: source and replacement resolve to the same part.
+    PART_REPLACE_SAME_TARGET = "part.replace_same_target"
 
     # Activity cursor parsing.
     ACTIVITY_INVALID_CURSOR = "activity.invalid_cursor"
