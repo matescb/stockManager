@@ -22,11 +22,13 @@ from app.api._helpers import assert_in_workspace
 from app.core.errors import ErrorCodes, raise_http
 from app.domain._quantity import quantity_out
 from app.domain.custom_fields.models import CustomField
-from app.domain.parts.models import Part
+from app.domain.parts.models import Part, PartProviderLink
+from app.domain.parts.provider_links import serialize_link
 
 # Re-export request schemas from the canonical domain location (CQ-006).
 # Kept importable here for back-compat with split files (#118 step 2-4).
 from app.domain.parts.schemas import BulkDeleteIn, PartIn, PartPatch  # noqa: F401
+from app.domain.stock.service import bulk_current_quantities
 
 
 def audit_fields_comment(fields: list[str] | set[str]) -> str:
@@ -75,11 +77,14 @@ def serialize_part(
 ) -> dict:
     """Serialize a Part for API responses.
 
-    `provider_links` is emitted only when the caller loaded it. Part
-    LISTS deliberately don't — it would be a second query per page for
-    something no list column renders — and the key is absent there
-    rather than an empty array that would read as "no links". Detail-
-    shaped responses pass it; see `provider_links_for`.
+    `provider_links` is emitted only when the caller loaded it, and the
+    key is *absent* — not `[]` — when it wasn't: an empty array reads as
+    "this part has no links", which is a different fact from "this
+    response didn't look". Lists load them in one batched query per page
+    (`provider_links_for_parts`); detail-shaped responses load the one
+    part's rows (`provider_links_for`). Responses that echo a part
+    without touching the link table — create-part, for one — still pass
+    nothing and still omit the key.
     """
     if reserved is None:
         reserved = 0
@@ -110,6 +115,9 @@ def serialize_part(
         "linked_provider": p.linked_provider,
         "linked_external_id": p.linked_external_id,
         "last_refresh_at": p.last_refresh_at.isoformat() if p.last_refresh_at else None,
+        # "Last change" — maintained by the `WorkspaceOwned` mixin's
+        # `onupdate`, so it needs no column of its own and no migration.
+        "updated_at": p.updated_at.isoformat() if p.updated_at else None,
         "description_locally_edited": bool(p.description_locally_edited),
         "archived_at": p.archived_at.isoformat() if p.archived_at else None,
         # `on_hand` / `reserved` / `available` arrive as exact Decimals
@@ -129,11 +137,71 @@ def serialize_part(
 
 def provider_links_for(db, ws_id, part_id) -> list[dict]:
     """Serialized `part_provider_links` rows for one part."""
-    from app.domain.parts.provider_links import links_for_part, serialize_link
+    from app.domain.parts.provider_links import links_for_part
 
     return [
         serialize_link(row)
         for row in links_for_part(db, workspace_id=ws_id, part_id=part_id)
+    ]
+
+
+def provider_links_for_parts(db, ws_id, part_ids: list) -> dict:
+    """Serialized `part_provider_links` rows for a whole page, keyed by
+    part_id.
+
+    ONE statement for the page — the per-part `provider_links_for` in a
+    loop would be an N+1 on the busiest listing in the app, and a page of
+    200 rows would fire 200 round-trips to render one column. Parts with
+    no links map to `[]`, which is why the caller can hand the empty list
+    straight to `serialize_part` and mean "looked, found none".
+
+    Workspace-scoped like every other query here (CLAUDE.md invariant):
+    the `part_id IN (...)` set is already this workspace's, and the
+    explicit `workspace_id` predicate keeps that true even if a caller
+    ever passes ids it did not scope itself.
+    """
+    if not part_ids:
+        return {}
+    out: dict = {pid: [] for pid in part_ids}
+    rows = db.execute(
+        select(PartProviderLink)
+        .where(PartProviderLink.workspace_id == ws_id)
+        .where(PartProviderLink.part_id.in_(part_ids))
+        .where(PartProviderLink.archived_at.is_(None))
+        .order_by(PartProviderLink.part_id, PartProviderLink.provider)
+    ).scalars()
+    for row in rows:
+        out.setdefault(row.part_id, []).append(serialize_link(row))
+    return out
+
+
+def serialize_part_rows(db, *, ws_id, parts: list) -> list[dict]:
+    """Serialize a page of parts for a LIST response.
+
+    Every per-row extra — image URL, on-hand, reserved, provider links —
+    is one batched query for the whole page. Keeping them together here
+    is the point: a future column that needs another lookup has an
+    obvious place to add a *batched* one, and the list route never grows
+    a per-row query by accident.
+    """
+    part_ids = [p.id for p in parts]
+    image_urls = image_urls_for_parts(db, ws_id, part_ids)
+    on_hand_map = bulk_current_quantities(
+        db, workspace_id=ws_id, part_ids=part_ids, status="on_hand"
+    )
+    reserved_map = bulk_current_quantities(
+        db, workspace_id=ws_id, part_ids=part_ids, status="reserved"
+    )
+    links_map = provider_links_for_parts(db, ws_id, part_ids)
+    return [
+        serialize_part(
+            p,
+            on_hand=on_hand_map.get(p.id, 0),
+            reserved=reserved_map.get(p.id, 0),
+            image_url=image_urls.get(p.id),
+            provider_links=links_map.get(p.id, []),
+        )
+        for p in parts
     ]
 
 

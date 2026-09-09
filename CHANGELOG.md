@@ -47,6 +47,18 @@ the canonical record.
   is a footprint the package ships; references to anything else are left
   as stored. The package version's major is now `pcm.PACKAGE_FORMAT` (2),
   so already-installed copies are offered the update.
+- **More selectable columns on the parts list** — the `/parts` table grew
+  from nine defined columns to eighteen while the seven it *shows* by default
+  are unchanged: every new column is **hidden by default** and picked from the
+  "Columns" menu. Nine new ones: internal P/N, available, low-stock threshold,
+  provider, distributors, published, serialized, last refresh, and last change —
+  alongside the category column (full tree path, resolved client-side against
+  the list the rail already fetches). `GET /api/parts` list rows gained
+  `updated_at` (the mixin-maintained "last change" — no migration) and
+  `provider_links`, the latter loaded in **one batched query per page** rather
+  than per row. `[]` on a list row means "no distributor knows this part";
+  responses that never load the links (create-part) still omit the key.
+  No schema change.
 - **Hierarchical part categories** (`0078`) — `part_categories.parent_id`,
   a self-referencing FK with `ON DELETE SET NULL` and a
   `part_categories_parent_workspace_check` BEFORE trigger (SQLSTATE
