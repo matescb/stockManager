@@ -211,6 +211,35 @@ the `uploads` volume, because it is the only one that writes files.
   comment carries the **hostname only** — never the path or query string,
   where a signed-URL token would live (ADR-0025 / CLAUDE.md).
 
+## Operating it
+
+`part_datasheets.failure_code` is a short stable token, never free text and
+never a URL, so "why did this not localise" is one query:
+
+```sql
+SELECT failure_code, count(*)
+  FROM part_datasheets
+ WHERE workspace_id = :ws AND status = 'failed'
+ GROUP BY 1 ORDER BY 2 DESC;
+```
+
+| Code | Meaning |
+| --- | --- |
+| `http_<status>` (e.g. `http_404`, `http_403`, `http_503`) | Upstream said so. 403 is usually a vendor blocking datacentre IPs. |
+| `redirect_refused` | Upstream 30x'd. We never follow one — see above. |
+| `scheme_not_https` | The stored URL is plain `http://`. The unrestricted path is HTTPS-only, so these need the URL corrected upstream (or a product decision to allow them). |
+| `ip_not_public` | The hostname did not resolve, or resolved to a non-public address. |
+| `credentials_in_url` | The stored URL embeds `user:pass@`. |
+| `unexpected_type` | 200, but the body is not a PDF — usually an HTML landing page. |
+| `magic_mismatch` | Declared a type the leading bytes contradict. |
+| `too_large` | Over the 10 MB cap. |
+| `timeout`, `network_error` | Transient; retried after the cooldown. |
+| `local_wrong_workspace`, `local_file_missing`, `local_path_invalid` | The stored value is an `/api/parts/assets/...` path that does not resolve inside this workspace. |
+
+`failure_code` plus `attempts` and `last_attempt_at` is also how you tell a
+transient failure from a settled one: once `attempts` reaches
+`DATASHEET_BACKFILL_MAX_ATTEMPTS` the pair is left alone until its URL changes.
+
 ## Alternatives considered
 
 - **Add the 40 manufacturer domains to the allow-list** — rejected. It is
