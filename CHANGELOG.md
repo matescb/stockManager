@@ -15,6 +15,13 @@ the canonical record.
 
 ## Unreleased
 
+- **PCM package: 3D models linked on the CAD tab now ship in the
+  footprint.** Linking a STEP or WRL to a footprint wrote a join row
+  only, so the packaged `.kicad_mod` carried no `(model …)` node and
+  KiCad showed no model for footprints linked by hand (the zip importer
+  already wrote the node). The build appends a node for every linked
+  model the bytes don't already name. Package format 3, so installed
+  copies are offered the update.
 - **Datasheet fetches now send a User-Agent** (ADR-0033 postscript). The
   first production backfill stored zero of 249 external datasheets: httpx
   identifies as `python-httpx/…` and Akamai-fronted vendor origins answer

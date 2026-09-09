@@ -53,6 +53,7 @@ __all__ = [
     "set_property",
     "model_paths",
     "rewrite_model_paths",
+    "append_model",
 ]
 
 
@@ -429,3 +430,24 @@ def rewrite_model_paths(node: Node, fn: Callable[[str], str | None]) -> Node:
             continue
         out.append([child[0], Quoted(replacement), *child[2:]])
     return out
+
+
+def append_model(node: Node, path: str) -> Node:
+    """Return a copy of `node` with a `(model "path" …)` appended.
+
+    The placement is the identity KiCad itself writes for a freshly
+    added model — origin, unit scale, no rotation — because a node we
+    invent has no vendor placement to carry over. Appended, not
+    inserted: KiCad renders models in file order, and one already in
+    the bytes was put first by whoever authored the footprint.
+    """
+    return [
+        *node,
+        [
+            _MODEL,
+            Quoted(path),
+            ["offset", ["xyz", "0", "0", "0"]],
+            ["scale", ["xyz", "1", "1", "1"]],
+            ["rotate", ["xyz", "0", "0", "0"]],
+        ],
+    ]

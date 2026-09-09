@@ -63,7 +63,10 @@ Stored bytes are otherwise shipped verbatim, but two references inside
 them can only be resolved once the install location is known:
 
 * A footprint's ``(model …)`` paths — ``${STOCKMGR_3D}/<name>`` becomes
-  the installed ``3dmodels/`` path (`_footprint_for_package`).
+  the installed ``3dmodels/`` path, and a model linked on the CAD tab
+  that the bytes don't already name is appended as a new node
+  (`_footprint_for_package`). The link is a join row and nothing else;
+  without this the CAD tab would show a 3D model KiCad never gets.
 * A symbol's ``Footprint`` field. A vendor library's symbols name the
   VENDOR's footprint library — ``NSW:USB_A_Molex`` — and that nickname
   is registered on nobody's machine once the footprint ships through
@@ -112,7 +115,7 @@ from app.core.config import settings
 from app.core.errors import ErrorCodes, raise_http
 from app.domain.categories.models import PartCategory
 from app.domain.eda import kicad_library, kicad_refs, sexpr, storage
-from app.domain.eda.models import EdaDatafile, EdaFootprint, EdaSymbol
+from app.domain.eda.models import EdaDatafile, EdaFootprint, EdaFootprintModel, EdaSymbol
 
 __all__ = [
     "PCM_PREFIX",
@@ -201,7 +204,8 @@ GENERATOR = "stockmanager"
 # every version served and the reason an installed copy notices a deploy.
 #   1 — stored bytes verbatim, model paths rewritten.
 #   2 — symbol `Footprint` fields re-pointed at packaged footprints.
-PACKAGE_FORMAT = 2
+#   3 — CAD-tab-linked 3D models appended as `(model …)` nodes.
+PACKAGE_FORMAT = 3
 
 # The symbol property a `LibNick:Entry` footprint reference lives in.
 _FOOTPRINT_PROPERTY = "Footprint"
@@ -278,6 +282,8 @@ _STORED_MODEL_PREFIX = f"{kicad_refs.MODEL_PATH_VAR}/"
 # `(model …)` path inside the footprint names the row's `name` with no
 # way to say which kind it meant, so the reference resolves either way.
 _MODEL_KIND_RANK = {"step": 0, "wrl": 1}
+# The datafile kinds a footprint can link to (`service._MODEL_KINDS`).
+_MODEL_KINDS = tuple(_MODEL_KIND_RANK)
 
 # Schema caps on the three description fields.
 _MAX_NAME = 200
@@ -320,6 +326,9 @@ class _StoredEntry:
     stem: str = ""
     member: str = ""
     kind: str = ""
+    # Footprints only: names of the 3D datafiles linked on the CAD tab,
+    # in position order — see `_linked_models`.
+    models: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -460,8 +469,10 @@ def _latest_change(db: Session, *, workspace_id: UUID) -> datetime | None:
     return max((stamp for stamp in stamps if stamp is not None), default=None)
 
 
-def _library_entries(db: Session, Model, *, workspace_id: UUID) -> list[tuple[str, str, int, str]]:
-    """Active symbols or footprints as `(name, sha256, size, stem)`.
+def _library_entries(
+    db: Session, Model, *, workspace_id: UUID
+) -> list[tuple[UUID, str, str, int, str]]:
+    """Active symbols or footprints as `(id, name, sha256, size, stem)`.
 
     The category join carries `archived_at IS NULL` and a `workspace_id`
     equality check of its own — the first because an entry under an
@@ -470,7 +481,9 @@ def _library_entries(db: Session, Model, *, workspace_id: UUID) -> list[tuple[st
     code, never inferred from an FK (ADR-0002).
     """
     rows = db.execute(
-        select(Model.name, Model.sha256, Model.size_bytes, PartCategory.library_slug)
+        select(
+            Model.id, Model.name, Model.sha256, Model.size_bytes, PartCategory.library_slug
+        )
         .outerjoin(
             PartCategory,
             and_(
@@ -483,8 +496,53 @@ def _library_entries(db: Session, Model, *, workspace_id: UUID) -> list[tuple[st
         .where(Model.archived_at.is_(None))
     ).all()
     return [
-        (name, sha, size, kicad_refs.package_stem(slug)) for name, sha, size, slug in rows
+        (row_id, name, sha, size, kicad_refs.package_stem(slug))
+        for row_id, name, sha, size, slug in rows
     ]
+
+
+def _linked_models(db: Session, *, workspace_id: UUID) -> dict[UUID, tuple[str, ...]]:
+    """Footprint id → names of its CAD-tab-linked 3D datafiles, in position order.
+
+    `eda_footprint_models` is a join row and nothing more: linking a
+    model on the CAD tab writes it and leaves the stored footprint bytes
+    alone, so the package is the only place the link can become a
+    `(model …)` node (`_footprint_for_package`). The zip importer writes
+    both the row and the node, and the node wins there — a linked name
+    the bytes already reference is not appended twice.
+
+    Both parents are joined with a workspace equality of their own; the
+    link row's `workspace_id` is not trusted to imply either (ADR-0002).
+    """
+    rows = db.execute(
+        select(EdaFootprintModel.footprint_id, EdaDatafile.name)
+        .join(
+            EdaFootprint,
+            and_(
+                EdaFootprint.id == EdaFootprintModel.footprint_id,
+                EdaFootprint.workspace_id == EdaFootprintModel.workspace_id,
+            ),
+        )
+        .join(
+            EdaDatafile,
+            and_(
+                EdaDatafile.id == EdaFootprintModel.datafile_id,
+                EdaDatafile.workspace_id == EdaFootprintModel.workspace_id,
+                EdaDatafile.archived_at.is_(None),
+                EdaDatafile.kind.in_(_MODEL_KINDS),
+            ),
+        )
+        .where(EdaFootprintModel.workspace_id == workspace_id)
+        .order_by(
+            EdaFootprintModel.footprint_id,
+            EdaFootprintModel.position.asc(),
+            EdaDatafile.name.asc(),
+        )
+    ).all()
+    out: dict[UUID, list[str]] = {}
+    for footprint_id, name in rows:
+        out.setdefault(footprint_id, []).append(name)
+    return {footprint_id: tuple(names) for footprint_id, names in out.items()}
 
 
 def _datafiles(db: Session, *, workspace_id: UUID) -> list[tuple[str, str, str, int]]:
@@ -522,7 +580,7 @@ def plan_package(db: Session, *, ws) -> Plan:
 
     skipped = 0
     symbols: list[_StoredEntry] = []
-    for name, sha, size, stem in _library_entries(db, EdaSymbol, workspace_id=workspace_id):
+    for _, name, sha, size, stem in _library_entries(db, EdaSymbol, workspace_id=workspace_id):
         # `stem` is checked as well as `name` because for a symbol the STEM
         # is the member name (`symbols/<stem>.kicad_sym`) — the entry name
         # only ever goes inside the file. Slugs are pattern-validated at
@@ -540,28 +598,6 @@ def plan_package(db: Session, *, ws) -> Plan:
                 size_bytes=size,
                 ext=storage.EXT_BY_KIND[storage.SYMBOL_KIND],
                 stem=stem,
-            )
-        )
-
-    footprints: list[_StoredEntry] = []
-    for name, sha, size, stem in _library_entries(
-        db, EdaFootprint, workspace_id=workspace_id
-    ):
-        if not _is_safe_member_name(name) or not _is_safe_member_name(stem):
-            skipped += 1
-            continue
-        ext = storage.EXT_BY_KIND[storage.FOOTPRINT_KIND]
-        footprints.append(
-            _StoredEntry(
-                name=name,
-                sha256=sha,
-                size_bytes=size,
-                ext=ext,
-                stem=stem,
-                member=(
-                    f"{kicad_refs.FOOTPRINTS_DIR}/{stem}{kicad_refs.PRETTY_SUFFIX}"
-                    f"/{name}.{ext}"
-                ),
             )
         )
 
@@ -585,6 +621,43 @@ def plan_package(db: Session, *, ws) -> Plan:
             )
         )
 
+    blobs.sort(
+        key=lambda entry: (entry.member, _MODEL_KIND_RANK.get(entry.kind, 9), entry.name)
+    )
+    blobs = _dedupe_members(blobs, workspace_id=workspace_id)
+
+    # A linked model only becomes a node if its file is actually in the
+    # package — one skipped above (or lost to a member collision) would
+    # otherwise be a `(model …)` pointing at nothing on the installed
+    # machine, which is the exact breakage the phase-3 importer drops
+    # nodes to avoid.
+    shipped_models = {entry.name for entry in blobs if entry.kind in _MODEL_KINDS}
+    linked = _linked_models(db, workspace_id=workspace_id)
+    footprints: list[_StoredEntry] = []
+    for row_id, name, sha, size, stem in _library_entries(
+        db, EdaFootprint, workspace_id=workspace_id
+    ):
+        if not _is_safe_member_name(name) or not _is_safe_member_name(stem):
+            skipped += 1
+            continue
+        ext = storage.EXT_BY_KIND[storage.FOOTPRINT_KIND]
+        footprints.append(
+            _StoredEntry(
+                name=name,
+                sha256=sha,
+                size_bytes=size,
+                ext=ext,
+                stem=stem,
+                member=(
+                    f"{kicad_refs.FOOTPRINTS_DIR}/{stem}{kicad_refs.PRETTY_SUFFIX}"
+                    f"/{name}.{ext}"
+                ),
+                models=tuple(
+                    model for model in linked.get(row_id, ()) if model in shipped_models
+                ),
+            )
+        )
+
     if skipped:
         # Count only. The names are the reason they were skipped, so
         # they're exactly the strings not to paste into a log line.
@@ -596,10 +669,6 @@ def plan_package(db: Session, *, ws) -> Plan:
 
     symbols.sort(key=lambda entry: (entry.stem, entry.name))
     footprints.sort(key=lambda entry: (entry.stem, entry.name))
-    blobs.sort(
-        key=lambda entry: (entry.member, _MODEL_KIND_RANK.get(entry.kind, 9), entry.name)
-    )
-    blobs = _dedupe_members(blobs, workspace_id=workspace_id)
 
     total = sum(entry.size_bytes for entry in (*symbols, *footprints, *blobs))
     if total > MAX_CONTENT_BYTES:
@@ -678,6 +747,9 @@ def _fingerprint(
             hasher.update(
                 f"{label}\t{entry.stem}\t{entry.name}\t{entry.sha256}\n".encode()
             )
+            # Links live in a table the row's sha256 knows nothing about.
+            for model in entry.models:
+                hasher.update(f"\tmodel\t{model}\n".encode())
     return hasher.hexdigest()
 
 
@@ -763,8 +835,11 @@ def _symbol_for_package(raw: bytes, footprint_libraries: dict[str, str]) -> byte
     return sexpr.emit(sexpr.set_property(node, _FOOTPRINT_PROPERTY, target)).encode("utf-8")
 
 
-def _footprint_for_package(identifier: str, raw: bytes) -> bytes:
-    """Re-point a stored footprint's 3D models at their install location.
+def _footprint_for_package(
+    identifier: str, raw: bytes, models: tuple[str, ...] = ()
+) -> bytes:
+    """Re-point a stored footprint's 3D models at their install location,
+    then append the CAD-tab-linked `models` the bytes don't already name.
 
     Paths that aren't ours are left exactly as they are: a hand-uploaded
     footprint may legitimately reference `${KICAD8_3DMODEL_DIR}` or some
@@ -793,7 +868,18 @@ def _footprint_for_package(identifier: str, raw: bytes) -> bytes:
     except (UnicodeDecodeError, sexpr.SexprError):
         _log.error("pcm: stored footprint is not parseable")
         _unavailable("a stored footprint could not be read")
-    return sexpr.emit(sexpr.rewrite_model_paths(node, rewrite)).encode("utf-8")
+    node = sexpr.rewrite_model_paths(node, rewrite)
+    # Deduped on the EMITTED path, not the stored name: a footprint
+    # re-uploaded after KiCad saved it already names the installed path
+    # verbatim, and that is the same model as the link.
+    present = set(sexpr.model_paths(node))
+    for name in models:
+        path = kicad_refs.pcm_model_path(identifier, name)
+        if path in present:
+            continue
+        present.add(path)
+        node = sexpr.append_model(node, path)
+    return sexpr.emit(node).encode("utf-8")
 
 
 def _member_info(member: str) -> zipfile.ZipInfo:
@@ -901,7 +987,7 @@ def write_archive(plan: Plan, sink) -> int:
             # model paths means parsing and re-emitting it. Footprints are
             # capped at 2 MiB by `storage.MAX_BYTES_BY_KIND`.
             data = _footprint_for_package(
-                plan.identifier, _read_stored(plan.workspace_id, entry)
+                plan.identifier, _read_stored(plan.workspace_id, entry), entry.models
             )
             _add_member(archive, entry.member, data)
             install_size += len(data)
