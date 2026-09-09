@@ -158,7 +158,43 @@ them, that's the bug.
   downloaded once, stored at `{UPLOAD_DIR}/parts/{ws_id}/{sha}.{ext}`,
   served via `GET /api/parts/assets/{ws_id}/{filename}` (optional `?name=`
   for the Save-As dialog). Don't change the URL structure — `PartInfo`
-  builds it directly with `withDownloadName()`.
+  builds it directly with `withDownloadName()`. Because the path is a
+  content hash, two parts with the same file share it: the attachment
+  delete route only unlinks when no other attachment in the workspace
+  references the same `storage_key`.
+- **The datasheet backfill fetches without a host allow-list; the resolved
+  IP is pinned instead.** `domain/parts/services/assets.py` drops
+  `_ALLOWED_HOSTS` only when BOTH `kind` is in `_UNRESTRICTED_KINDS`
+  (`"datasheet"`) AND the caller passes `allow_any_host=True`. The only
+  caller that opts in is the `datasheet-backfill` cron job; request-path
+  callers (`fetch_provider_asset`, used by provider import/refresh) keep
+  the allow-list, so no HTTP request can reach an arbitrary host or block
+  the single worker on a vendor timeout. Why at all: 249 of 257 prod
+  datasheets live on 40+ manufacturer domains, so the list localised
+  nothing. What carries the weight: `_resolve_pinned_ip` resolves ONCE,
+  refuses the host if *any* returned address fails `is_global`, and the
+  request goes to that **IP literal** with `Host:` and the `sni_hostname`
+  extension preserving the real name — so httpx never re-resolves and
+  check/connect cannot disagree. Plus HTTPS-only, `follow_redirects=False`,
+  no `user:pass@` URLs, the 10 MB streaming cap, a 30s wall-clock budget
+  (httpx's timeout is per-operation, so a slow-dribble host never trips it),
+  magic-byte validation and PDF-only. The per-host throttle is gated on the
+  same opt-in and must stay that way: it is a blocking sleep, and
+  bulk-import-from-scan fetches up to 50 images from one CDN host inside a
+  single 60s request. Don't add a kind to `_UNRESTRICTED_KINDS`, don't pass
+  `allow_any_host` from a route, don't throttle the request path, don't
+  connect by hostname, don't follow redirects. ADR-0033;
+  `tests/test_datasheet_fetch_policy.py` pins all of it.
+- **Outbound asset fetches must send a User-Agent.** httpx's default
+  (`python-httpx/…`) is 403'd by Akamai-fronted vendor origins — that, not
+  the pinned IP-literal request shape, is why the first production backfill
+  stored nothing. Measured across 8 hosts: the pinned shape and a plain
+  hostname request get identical results everywhere, so the pinning is not
+  the problem and must not be "fixed". `ASSET_FETCH_USER_AGENT` defaults to
+  `Mozilla/5.0 (compatible; stockmanager-datasheet-fetcher/1.0; +<APP_BASE_URL>)`.
+  Don't default it to a fake browser string — that impersonates Chrome, and
+  it was measured to buy nothing the compatible form doesn't. ADR-0033
+  postscript.
 - **`bag_signature`** on `stock_entries` is the SHA-256 of the normalised
   raw bag code. Re-scanning a bag matches the same signature, which is
   how the inline "Found bag" UI works. If you touch
@@ -277,16 +313,21 @@ them, that's the bug.
 - **Active-list migrations must preserve saved workspace defaults.** When a
   new active list is introduced, backfill it from any existing per-workspace
   value; FB-003a missed this for sourcing distributors and FB-007 fixed it.
-- **Four backend-cron sidecars run separate cadences.** `backend-cron`
+- **Five backend-cron sidecars run separate cadences.** `backend-cron`
   handles the hourly TrustedParts cache sweep (`sourcing-cache-sweep`),
   `backend-cron-alerts` handles the 15-minute alert evaluator
   (`sourcing-alerts-evaluate`), `backend-cron-sessions` handles
   auth-retention purges (`session-purge` and `password-reset-purge`) in
-  parallel subshell loops, and `backend-cron-printing` handles label
+  parallel subshell loops, `backend-cron-printing` handles label
   printing (`print-dispatch` every 60s, `print-job-reconcile` every 300s),
-  also in parallel subshell loops. They share the same `run_job` registry
-  per ADR-0021; adding another cadence means another sidecar, not a
-  parallel scheduler.
+  also in parallel subshell loops, and `backend-cron-datasheets` handles
+  the local datasheet backfill (`datasheet-backfill`, hourly by default).
+  They share the same `run_job` registry per ADR-0021; adding another
+  cadence means another sidecar, not a parallel scheduler.
+- **`backend-cron-datasheets` is the only cron sidecar that mounts the
+  `uploads` volume.** It writes fetched PDFs into
+  `{UPLOAD_DIR}/parts/{ws_id}/`. Don't drop the volume from that service,
+  and don't add it to the others — they have no business writing files.
 - **`PRINT_HOST` empty means printing is disabled, and that is the shipped
   prod default.** The printer is only reachable through a reverse-SSH
   tunnel + socat bridge + ufw rule that a human sets up on the VPS by hand

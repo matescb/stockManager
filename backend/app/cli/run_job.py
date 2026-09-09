@@ -89,6 +89,16 @@ def _run_password_reset_purge(db: Session) -> int:
     return purge_password_reset_requests(db)
 
 
+def _run_datasheet_backfill(db: Session) -> int:
+    # Not gated on a host setting the way print-dispatch is: the job's own
+    # DATASHEET_BACKFILL_INTERVAL_SECONDS=0 short-circuits it to a no-op
+    # inside the service, and the sidecar's --print-interval loop never
+    # starts it in the first place.
+    from app.domain.parts.services.datasheets import backfill_missing_datasheets
+
+    return backfill_missing_datasheets(db)
+
+
 def _printing_is_configured() -> bool:
     """True when a print sink is configured (``PRINT_HOST`` non-empty)."""
     from app.core.config import settings
@@ -168,6 +178,20 @@ JOBS: dict[str, JobSpec] = {
             "returning 0 when PRINT_HOST is empty (printing disabled)."
         ),
         run=_run_print_dispatch,
+    ),
+    "datasheet-backfill": JobSpec(
+        name="datasheet-backfill",
+        owner="backend/parts",
+        cadence="hourly (configurable)",
+        idempotency=(
+            "Processes at most DATASHEET_BACKFILL_BATCH_SIZE parts whose "
+            "datasheet_url has no stored part_datasheets row. A stored row is "
+            "never re-downloaded; a failure increments attempts and starts a "
+            "retry cooldown, so re-running resumes rather than repeating. A "
+            "no-op returning 0 when DATASHEET_BACKFILL_INTERVAL_SECONDS is 0."
+        ),
+        run=_run_datasheet_backfill,
+        interval_setting="DATASHEET_BACKFILL_INTERVAL_SECONDS",
     ),
     "print-job-reconcile": JobSpec(
         name="print-job-reconcile",

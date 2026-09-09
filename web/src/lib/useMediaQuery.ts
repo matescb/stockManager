@@ -17,15 +17,15 @@ import { useEffect, useState } from "react";
  * see, so the click handler has to know the breakpoint too.
  *
  * When you use this, keep the query and the Tailwind prefix in sync —
- * `XL_VIEWPORT_QUERY` is the one and only place that mapping is written
- * down.
+ * `XL_VIEWPORT_QUERY` and `LG_VIEWPORT_QUERY` are the one and only place
+ * that mapping is written down.
  */
 
 /**
  * Tailwind's `xl` breakpoint. `tailwind.config.js` extends only `colors`
  * and `fontFamily`, so the default screens apply and `xl` is 1280px.
  *
- * **Why `xl` and not `lg`.** The parts list is three columns now: the
+ * **Why `xl` and not `lg`.** The parts list is three columns: the
  * category rail (#909) is `hidden lg:block w-56`, the table, and the
  * preview. Counting the 240px app sidebar and the page padding, a 320px
  * pane at `lg` would leave the table 176px — unusable. At `xl` it gets
@@ -35,6 +35,24 @@ import { useEffect, useState } from "react";
  * is the layout #909 shipped.
  */
 export const XL_VIEWPORT_QUERY = "(min-width: 1280px)";
+
+/**
+ * Tailwind's `lg` breakpoint (1024px).
+ *
+ * **Why this exists.** The 176px figure above is what the rail costs. A
+ * collapsed rail is a 44px strip, so at `lg` the same row has 692px to
+ * split instead of 512px — the pane's 320px still leaves the table 356px,
+ * which is a working table rather than a column of ellipses. So the
+ * preview's breakpoint is a function of the rail, not a constant:
+ * `usePartPreview` asks for `lg` when the rail is collapsed and `xl` when
+ * it isn't, and `PartPreviewPane` is handed the matching Tailwind prefix
+ * from the same decision so the CSS and the click handler can never
+ * disagree.
+ *
+ * Below `lg` nothing changes: the rail is `hidden`, there is no strip to
+ * collapse, and a row click navigates exactly as it always has.
+ */
+export const LG_VIEWPORT_QUERY = "(min-width: 1024px)";
 
 function evaluate(query: string): boolean {
   // SSR has no window; jsdom has `matchMedia` only in newer versions and
@@ -72,4 +90,9 @@ export function useMediaQuery(query: string): boolean {
 /** `true` at Tailwind's `xl` breakpoint and wider. */
 export function useIsXlViewport(): boolean {
   return useMediaQuery(XL_VIEWPORT_QUERY);
+}
+
+/** `true` at Tailwind's `lg` breakpoint and wider. */
+export function useIsLgViewport(): boolean {
+  return useMediaQuery(LG_VIEWPORT_QUERY);
 }

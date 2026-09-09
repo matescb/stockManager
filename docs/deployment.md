@@ -397,12 +397,13 @@ sudo -u deploy docker compose -f docker-compose.prod.yml logs -f backend-cron
 sudo -u deploy docker compose -f docker-compose.prod.yml logs -f backend-cron-alerts
 sudo -u deploy docker compose -f docker-compose.prod.yml logs -f backend-cron-sessions
 sudo -u deploy docker compose -f docker-compose.prod.yml logs -f backend-cron-printing
+sudo -u deploy docker compose -f docker-compose.prod.yml logs -f backend-cron-datasheets
 sudo -u deploy docker compose -f docker-compose.prod.yml logs -f web
 ```
 
 ### Backend periodic jobs
 
-Four cron sidecars run allow-listed backend CLI jobs:
+Five cron sidecars run allow-listed backend CLI jobs:
 
 - `backend-cron` runs `sourcing-cache-sweep` once per hour.
 - `backend-cron-alerts` runs `sourcing-alerts-evaluate` every 15 minutes.
@@ -410,6 +411,11 @@ Four cron sidecars run allow-listed backend CLI jobs:
   hourly by default.
 - `backend-cron-printing` runs `print-dispatch` every 60 seconds and
   `print-job-reconcile` every 5 minutes, in two parallel subshell loops.
+- `backend-cron-datasheets` runs `datasheet-backfill` hourly by default
+  (`DATASHEET_BACKFILL_INTERVAL_SECONDS`; `0` disables it and parks the loop
+  on `sleep infinity`, which still reports healthy). It is the **only** cron
+  sidecar that mounts the `uploads` volume — it writes fetched datasheet PDFs
+  into the content-addressed asset store. See ADR-0033.
 
 Each sidecar invokes `python -m app.cli.run_job <job-name>` and sleeps after
 completed runs, so a slow job delays that job's next start instead of

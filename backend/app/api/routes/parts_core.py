@@ -37,6 +37,9 @@ from app.api.routes._parts_shared import (
 from app.api.routes._parts_shared import (
     serialize_part as _serialize,
 )
+from app.api.routes._parts_shared import (
+    serialize_part_rows as _serialize_rows,
+)
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, require_role
 from app.core.errors import ErrorCodes, raise_http
 from app.core.pagination import decode_cursor, paginate
@@ -66,7 +69,6 @@ from app.domain.parts.services.mpn_unique import (
 from app.domain.parts.services.mpn_unique import is_mpn_unique_violation
 from app.domain.stock.models import StockEntry
 from app.domain.stock.service import (
-    bulk_current_quantities,
     reserved_quantity,
     stock_summary_for_part,
     total_for_part,
@@ -168,22 +170,9 @@ def list_parts(
         )
         next_cursor = None
 
-    part_ids = [p.id for p in parts]
-    image_urls = _image_urls_for_parts(db, ws.id, part_ids)
-    on_hand_map = bulk_current_quantities(
-        db, workspace_id=ws.id, part_ids=part_ids, status="on_hand"
-    )
-    reserved_map = bulk_current_quantities(
-        db, workspace_id=ws.id, part_ids=part_ids, status="reserved"
-    )
-    items = []
-    for p in parts:
-        items.append(_serialize(
-            p,
-            on_hand=on_hand_map.get(p.id, 0),
-            reserved=reserved_map.get(p.id, 0),
-            image_url=image_urls.get(p.id),
-        ))
+    # One batched query per extra, for the whole page — see
+    # `_parts_shared.serialize_part_rows`.
+    items = _serialize_rows(db, ws_id=ws.id, parts=parts)
     if use_paged:
         return ok({"items": items, "next_cursor": next_cursor})
     return ok(items)

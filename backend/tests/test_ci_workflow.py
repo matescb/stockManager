@@ -290,8 +290,54 @@ def test_compose_prod_cron_sidecars_have_shutdown_grace_period():
         "backend-cron-alerts",
         "backend-cron-sessions",
         "backend-cron-printing",
+        "backend-cron-datasheets",
     ):
         assert services[service_name].get("stop_grace_period") == "605s"
+
+
+def test_compose_prod_datasheet_sidecar_shape():
+    """backend-cron-datasheets: ADR-0021 scheduler path + ADR-0033 storage.
+
+    Three things are load-bearing and easy to lose in a compose reformat:
+    the JSON-array exec form, the uploads volume (this is the ONLY cron
+    sidecar that writes files), and the --print-interval gate that lets
+    DATASHEET_BACKFILL_INTERVAL_SECONDS=0 disable the job without making
+    the container unhealthy.
+    """
+    assert _COMPOSE_PROD_PATH.exists(), (
+        f"missing compose file at {_COMPOSE_PROD_PATH}"
+    )
+    data = yaml.safe_load(_COMPOSE_PROD_PATH.read_text())
+    cron = data["services"]["backend-cron-datasheets"]
+
+    cmd = cron.get("command")
+    assert isinstance(cmd, list), (
+        "backend-cron-datasheets.command must be a YAML list (JSON-array form)"
+    )
+    joined = " ".join(str(part) for part in cmd)
+    assert "python -m app.cli.run_job datasheet-backfill" in joined
+    assert "--print-interval" in joined, "cadence must come from settings"
+    assert "sleep infinity" in joined, "interval 0 must park, not exit"
+    assert "timeout 600" in joined
+    assert "uvicorn" not in joined
+
+    # Writes PDFs into the content-addressed store, so it needs the volume.
+    assert cron.get("volumes") == ["uploads:/data/uploads"]
+
+    # Heartbeat probe must tolerate a deliberately-disabled job.
+    healthcheck = " ".join(cron.get("healthcheck", {}).get("test", []))
+    assert "--check-all-heartbeats datasheet-backfill" in healthcheck
+
+
+def test_compose_prod_only_datasheet_cron_mounts_uploads():
+    """No other cron sidecar has any business writing to the asset store."""
+    data = yaml.safe_load(_COMPOSE_PROD_PATH.read_text())
+    services = data["services"]
+    for name in ("backend-cron", "backend-cron-alerts", "backend-cron-sessions",
+                 "backend-cron-printing"):
+        assert not services[name].get("volumes"), (
+            f"{name} must not mount the uploads volume"
+        )
 
 
 def test_compose_prod_has_web_and_cron_healthchecks():

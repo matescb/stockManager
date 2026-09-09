@@ -20,6 +20,8 @@ Shared frontend infra: HTTP client, auth context, theme, query keys, mutations h
 | `bagCode.ts` | MIL-STD-130N parser + normaliser; produces the same signature the server computes |
 | `providerCatalog.ts` | Catalog vs spec custom-field key list (mirror of the server-side list) |
 | `cn.ts` | `cn(...)` className combiner |
+| `useMediaQuery.ts` | `LG_VIEWPORT_QUERY` / `XL_VIEWPORT_QUERY` — the only place a Tailwind breakpoint is restated in TS, for the two places behaviour (not just styling) forks on width |
+| `usePanelCollapse.ts` | Remembered collapse state for the app sidebar and the parts category rail — per workspace, same `localStorage` pattern as `DataTable` |
 | `userDocs.ts` | In-app manual: loads the bundled `docs/user/` shelf, strips the H1 / `Audience:` line / screenshot placeholders, and enforces the doc-shelf link policy (`resolveDocHref`) |
 | `changelog.ts` | Bounded `## `-section split of the bundled `CHANGELOG.md` for the About page's "Latest changes" |
 | `*.test.ts`, `__dom__/`, `__fixtures__/` | Co-located unit / DOM tests + fixtures |

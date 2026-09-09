@@ -36,19 +36,29 @@ def test_print_interval_each_job(
     capsys: pytest.CaptureFixture[str],
     job_name: str,
 ) -> None:
-    monkeypatch.setenv("SESSION_PURGE_INTERVAL_SECONDS", "123")
-    monkeypatch.setenv("PASSWORD_RESET_PURGE_INTERVAL_SECONDS", "456")
+    # One distinct value per settings-backed job, so the assertion below
+    # proves --print-interval reads THAT job's setting and not a neighbour's.
+    intervals = {
+        "SESSION_PURGE_INTERVAL_SECONDS": "123",
+        "PASSWORD_RESET_PURGE_INTERVAL_SECONDS": "456",
+        "DATASHEET_BACKFILL_INTERVAL_SECONDS": "789",
+    }
+    for name, value in intervals.items():
+        monkeypatch.setenv(name, value)
 
     exit_code = _run_main(monkeypatch, job_name, "--print-interval")
 
     output = capsys.readouterr()
-    if job_name == "session-purge":
+    interval_setting = JOBS[job_name].interval_setting
+    if interval_setting is not None:
+        # Every settings-backed job must be reachable through the sidecar's
+        # `--print-interval` gate; a new one that forgets its env var here
+        # would silently never start.
+        assert interval_setting in intervals, (
+            f"{job_name} interval setting {interval_setting} is not covered here"
+        )
         assert exit_code == 0
-        assert output.out == "123\n"
-        assert output.err == ""
-    elif job_name == "password-reset-purge":
-        assert exit_code == 0
-        assert output.out == "456\n"
+        assert output.out == f"{intervals[interval_setting]}\n"
         assert output.err == ""
     else:
         assert exit_code == 2

@@ -42,7 +42,9 @@ List parts. Two response shapes selected by query (not by route):
 { "data": { "items": [ <PartOut>, … ], "next_cursor": "…" | null }, "status": { … } }
 ```
 
-`PartOut` is built by `serialize_part` (`backend/app/api/routes/_parts_shared.py:44-85`); includes `id`, `part_type`, `name`, `manufacturer`, `mpn`, `internal_part_number`, `description`, `footprint`, `notes_markdown`, `low_stock_report_quantity`, `attrition_percentage`, `attrition_min_quantity`, `default_storage_location_id`, `default_storage_mandatory`, `serialized`, `published`, `linked_provider`, `linked_external_id`, `last_refresh_at`, `description_locally_edited`, `archived_at`, `on_hand`, `reserved`, `available`, `image_url`.
+`PartOut` is built by `serialize_part` (`backend/app/api/routes/_parts_shared.py:69-136`); includes `id`, `part_type`, `name`, `manufacturer`, `mpn`, `internal_part_number`, `description`, `footprint`, `notes_markdown`, `low_stock_report_quantity`, `attrition_percentage`, `attrition_min_quantity`, `default_storage_location_id`, `default_storage_mandatory`, `serialized`, `published`, `linked_provider`, `linked_external_id`, `last_refresh_at`, `updated_at`, `description_locally_edited`, `archived_at`, `on_hand`, `reserved`, `available`, `image_url`.
+
+List rows additionally carry `provider_links` — see the note below. `updated_at` is the mixin-maintained "last change" timestamp; it needs no column of its own and is what the parts table's *Last change* column sorts on.
 
 **Notes**
 
@@ -51,6 +53,9 @@ List parts. Two response shapes selected by query (not by route):
 - **The category predicate is applied to the statement *before* `paginate()`.** The cursor is an HMAC-signed `(name, id)` seek position over whatever statement produced the page, so filtering the returned rows instead would yield short pages and — once a page's worth of rows all failed the filter — an empty page carrying a non-null `next_cursor`, which clients read as end-of-list. Pinned by `backend/tests/test_parts_category_filter.py::test_category_filter_survives_a_page_boundary`, which asserts page *shape* (every page but the last is exactly `limit` rows) rather than mere completeness — a post-filter still reaches every row eventually.
 - `image_url` comes from each part's `custom_fields(key="image_url")` row, batched via `image_urls_for_parts` (`_parts_shared.py:28-41`).
 - `on_hand` / `reserved` are roll-ups via `bulk_current_quantities`; never compute outside `domain/stock/service.py` (CLAUDE.md, ledger invariant — see [ADR-0001](../adr/0001-append-only-stock-ledger.md)).
+- **`provider_links` is on list rows, batched.** One `SELECT … WHERE part_id IN (…)` per page via `provider_links_for_parts` (`_parts_shared.py:148-175`), not the per-part `provider_links_for` in a loop — that would be an N+1 on the busiest endpoint in the app, and a 200-row page would fire 200 extra round-trips to render one column. `backend/tests/test_parts_list_columns.py::test_provider_links_do_not_scale_with_row_count` compares the query count for a 2-row page against a 20-row one, so any per-row query fails it.
+- **`[]` and *absent* mean different things.** A list row that has no links carries `"provider_links": []` — "looked, found none". A response that never loaded them (create-part, for one) omits the key entirely. `PartSchema` on the frontend keeps the field optional so both parse.
+- Every per-row extra is assembled by `serialize_part_rows` (`_parts_shared.py:178-205`): one query each for image URLs, on-hand, reserved and provider links, for the whole page.
 - Source: `backend/app/api/routes/parts_core.py:55-135`.
 
 ### `POST /api/parts`

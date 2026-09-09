@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from "react";
 import type { KeyboardEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { useIsXlViewport } from "@/lib/useMediaQuery";
+import { useIsLgViewport, useIsXlViewport } from "@/lib/useMediaQuery";
 import type { Part } from "@/types";
 
 /**
@@ -15,10 +15,19 @@ import type { Part } from "@/types";
  * back/forward for free and keeps the full `/parts/:partId/*` routes
  * completely untouched.
  *
- * **Below `xl` a row click navigates to the full page, exactly as it did
- * before this pane existed.** There is no room for a split pane on a
- * phone, and a drawer would be a second thing to build, learn and get
- * wrong. Narrow viewports are byte-for-byte unchanged.
+ * **Below the pane's breakpoint a row click navigates to the full page,
+ * exactly as it did before this pane existed.** There is no room for a
+ * split pane on a phone, and a drawer would be a second thing to build,
+ * learn and get wrong. Narrow viewports are byte-for-byte unchanged.
+ *
+ * **That breakpoint is `xl`, or `lg` once the category rail is
+ * collapsed.** The rail is the reason `xl` was needed at all — it costs
+ * 240px of the row, and a pane on top of it at `lg` left the table 176px.
+ * Collapsed, the rail is a 44px strip and that pressure is gone, so the
+ * pane can come forward one step. `paneBreakpoint` is the single source
+ * for both halves of the decision: this hook gates the click handler on
+ * it, and `PartPreviewPane` derives its Tailwind prefix from it, so the
+ * CSS that reveals the pane and the JS that fills it cannot drift apart.
  *
  * **History: push on activation, replace on browse.** Clicking a row (or
  * pressing Enter on it) is a deliberate act, so it pushes an entry and
@@ -30,8 +39,22 @@ import type { Part } from "@/types";
 /** The search param that carries the selected part id. */
 export const PREVIEW_PARAM = "sel";
 
+/** The Tailwind breakpoint at and above which a pane fits on screen. */
+export type PaneBreakpoint = "lg" | "xl";
+
+export type PartPreviewOptions = {
+  /**
+   * The parts-list category rail is collapsed, giving its 240px column
+   * back to the row. Moves the pane's breakpoint from `xl` down to `lg`.
+   */
+  railCollapsed?: boolean;
+};
+
 export type PartPreview = {
-  /** Selected part id, or null when nothing is selected (or below `xl`). */
+  /**
+   * Selected part id, or null when nothing is selected (or the viewport
+   * is below `paneBreakpoint`).
+   */
   selectedId: string | null;
   /**
    * The already-loaded list row for `selectedId`, when the list happens
@@ -39,9 +62,18 @@ export type PartPreview = {
    * `/parts` rows are full part objects, not a projection.
    */
   selectedRow: Part | null;
-  /** `true` at `xl` and wider, i.e. when a pane can be shown at all. */
-  isXlViewport: boolean;
-  /** Row click / Enter / Space. Selects at `xl`+, navigates below it. */
+  /** `true` when the viewport is wide enough to show a pane at all. */
+  canPreview: boolean;
+  /**
+   * The breakpoint the pane may appear at. `PartsPreviewLayout` hands it
+   * to `PartPreviewPane`, whose visibility class has to match `canPreview`
+   * exactly or a click would select a row into a pane nobody can see.
+   */
+  paneBreakpoint: PaneBreakpoint;
+  /**
+   * Row click / Enter / Space. Selects at `paneBreakpoint` and wider,
+   * navigates below it.
+   */
   openRow: (row: Part) => void;
   /** Arrow-key focus move. Follows the focused row into the pane. */
   previewRow: (row: Part) => void;
@@ -67,16 +99,28 @@ export type PartPreview = {
   onContainerKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
 };
 
-export function usePartPreview(rows: Part[]): PartPreview {
+export function usePartPreview(
+  rows: Part[],
+  options: PartPreviewOptions = {},
+): PartPreview {
+  const { railCollapsed = false } = options;
   const nav = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const isXlViewport = useIsXlViewport();
+  const isLgViewport = useIsLgViewport();
+
+  // One branch, not two booleans ANDed together: `paneBreakpoint` is
+  // literally the name of the query `canPreview` consulted, so the class
+  // the pane gets and the behaviour the list gets are the same decision.
+  const paneBreakpoint: PaneBreakpoint = railCollapsed ? "lg" : "xl";
+  const canPreview = railCollapsed ? isLgViewport : isXlViewport;
 
   // A `?sel=` that arrives on a narrow viewport is kept in the URL but
   // ignored: no pane is rendered and no navigation is hijacked. Widening
-  // the window then reveals the preview the link was pointing at.
+  // the window — or collapsing the rail — then reveals the preview the
+  // link was pointing at.
   const paramValue = searchParams.get(PREVIEW_PARAM);
-  const selectedId = isXlViewport ? paramValue : null;
+  const selectedId = canPreview ? paramValue : null;
 
   const selectedRow = useMemo(
     () => (selectedId ? rows.find((r) => r.id === selectedId) ?? null : null),
@@ -100,23 +144,23 @@ export function usePartPreview(rows: Part[]): PartPreview {
 
   const openRow = useCallback(
     (row: Part) => {
-      if (!isXlViewport) {
+      if (!canPreview) {
         nav(`/parts/${row.id}/info`);
         return;
       }
       setSelection(row.id, "push");
     },
-    [isXlViewport, nav, setSelection],
+    [canPreview, nav, setSelection],
   );
 
   const previewRow = useCallback(
     (row: Part) => {
-      // Below `xl` the arrow keys keep doing what they always did — move
-      // focus, and nothing else.
-      if (!isXlViewport) return;
+      // With no pane on screen the arrow keys keep doing what they always
+      // did — move focus, and nothing else.
+      if (!canPreview) return;
       setSelection(row.id, "replace");
     },
-    [isXlViewport, setSelection],
+    [canPreview, setSelection],
   );
 
   const closePreview = useCallback(() => setSelection(null, "replace"), [setSelection]);
@@ -142,7 +186,8 @@ export function usePartPreview(rows: Part[]): PartPreview {
   return {
     selectedId,
     selectedRow,
-    isXlViewport,
+    canPreview,
+    paneBreakpoint,
     openRow,
     previewRow,
     closePreview,

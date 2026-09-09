@@ -79,15 +79,22 @@ export const PartSchema = z.object({
   linked_provider: z.enum(["mouser", "digikey"]).nullable(),
   linked_external_id: nullableString,
   last_refresh_at: nullableString,
+  // "Last change". Maintained by the server's `WorkspaceOwned` mixin, so
+  // it is always sent; optional here for the same reason as `published`
+  // below — a response cached before the field shipped must still parse.
+  updated_at: optionalNullableString,
   description_locally_edited: z.boolean(),
   archived_at: nullableString,
   on_hand: nullableNumber,
   reserved: z.number(),
   available: z.number(),
   image_url: nullableString,
-  // Detail-shaped responses only — part LISTS omit the key rather than
-  // send an empty array that would read as "no links". Optional so a
-  // list row still parses.
+  // Present whenever the response actually loaded the link rows — part
+  // detail, and (since the parts-list column work) part LISTS, which load
+  // them in one batched query per page. Responses that echo a part
+  // without touching the link table, such as create-part, omit the key
+  // rather than send an empty array: `[]` means "looked, found none",
+  // absent means "did not look". Optional so both still parse.
   provider_links: z.array(ProviderLinkSchema).optional(),
 });
 export type Part = z.infer<typeof PartSchema>;

@@ -34,6 +34,7 @@ Jobs using this scheduler:
 - `password-reset-purge` — expired password reset request cleanup in `backend-cron-sessions`; hourly by default, configurable via `PASSWORD_RESET_PURGE_INTERVAL_SECONDS`, set to `0` to disable.
 - `print-dispatch` — queued batch label dispatch in `backend-cron-printing`, every 60 seconds. A no-op returning `0` while `PRINT_HOST` is empty, which is the default until the printer tunnel is configured by hand on the VPS.
 - `print-job-reconcile` — stale `sent` print-job reconciliation in `backend-cron-printing`, every 5 minutes, matching `_STALE_SENT_THRESHOLD`. Not gated on `PRINT_HOST`: it is pure database bookkeeping and must keep resolving orphaned jobs after printing is switched off.
+- `datasheet-backfill` — local datasheet fetch/attach sweep in `backend-cron-datasheets`; hourly by default, configurable via `DATASHEET_BACKFILL_INTERVAL_SECONDS`, set to `0` to disable. The only cron sidecar that mounts the `uploads` volume, because it is the only one that writes files. See ADR-0033.
 
 ## Consequences
 

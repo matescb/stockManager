@@ -22,6 +22,46 @@ the canonical record.
   already wrote the node). The build appends a node for every linked
   model the bytes don't already name. Package format 3, so installed
   copies are offered the update.
+- **Datasheet fetches now send a User-Agent** (ADR-0033 postscript). The
+  first production backfill stored zero of 249 external datasheets: httpx
+  identifies as `python-httpx/…` and Akamai-fronted vendor origins answer
+  403. Measured across 8 vendor hosts, the pinned IP-literal request shape is
+  **not** the problem — it gets byte-identical results to a plain hostname
+  request everywhere, so the DNS-rebinding protection stays untouched.
+  `ASSET_FETCH_USER_AGENT` defaults to the crawler-convention
+  `Mozilla/5.0 (compatible; stockmanager-datasheet-fetcher/1.0; +$APP_BASE_URL)`.
+  Also: connect and read timeouts are now separate (10s / 20s), the
+  wall-clock budget is 45s (batch size 12 → 10 to stay inside `timeout 600`),
+  and a per-run per-host failure breaker stops one refusing vendor burning
+  the retry budget of every part that cites it — it records one
+  `part.datasheet.host_blocked` audit row instead. Permanent failures (404,
+  410, non-HTTPS, non-PDF, oversize) now retire a row immediately instead of
+  being retried for five days; 403/429/5xx/timeout stay retryable.
+
+- **Local datasheet store** (`0079`, ADR-0033) — datasheets are now
+  downloaded into the content-addressed asset store and registered as
+  `attachments` rows (`file_type='datasheet'`), instead of being hot links
+  to a manufacturer site. **Security-relevant:** the SSRF host allow-list in
+  `domain/parts/services/assets.py` no longer applies to datasheets fetched by
+  the cron backfill — the relaxation needs an explicit `allow_any_host=True`
+  that no request handler passes, so nothing a user can trigger reaches a
+  non-allow-listed host. It was blocking essentially every real datasheet —
+  249 of 257 prod datasheet URLs live on 40+ manufacturer domains and only 7 were
+  allow-listed, so 5 PDFs had ever landed on disk. Images keep the
+  allow-list unchanged. What replaces it: the hostname is resolved **once**
+  and the request is issued against that validated IP literal (`Host:` and
+  TLS SNI/cert verification keep the real name), closing the
+  DNS-rebinding window the old resolve-then-reresolve check left open;
+  plus HTTPS-only, `follow_redirects=False`, no `user:pass@` URLs, the
+  10 MB streaming cap, magic-byte validation, PDF-only for datasheets, and
+  a per-host throttle. Read ADR-0033 before touching any of it.
+  New `part_datasheets` table carries the fetch bookkeeping (`status`,
+  `attempts`, `failure_code`) plus a `derived` JSONB slot so the planned
+  Datalab markdown/JSON conversion needs no further migration. New
+  `datasheet-backfill` job runs in a new `backend-cron-datasheets` sidecar
+  (ADR-0021) — resumable, idempotent, `DATASHEET_BACKFILL_INTERVAL_SECONDS=0`
+  disables it.
+
 - **PCM package: symbol `Footprint` fields are re-pointed at packaged
   footprints.** Symbols imported from a vendor library kept the vendor's
   footprint nickname (`NSW:…`), which the installed package never
@@ -30,6 +70,18 @@ the canonical record.
   is a footprint the package ships; references to anything else are left
   as stored. The package version's major is now `pcm.PACKAGE_FORMAT` (2),
   so already-installed copies are offered the update.
+- **More selectable columns on the parts list** — the `/parts` table grew
+  from nine defined columns to eighteen while the seven it *shows* by default
+  are unchanged: every new column is **hidden by default** and picked from the
+  "Columns" menu. Nine new ones: internal P/N, available, low-stock threshold,
+  provider, distributors, published, serialized, last refresh, and last change —
+  alongside the category column (full tree path, resolved client-side against
+  the list the rail already fetches). `GET /api/parts` list rows gained
+  `updated_at` (the mixin-maintained "last change" — no migration) and
+  `provider_links`, the latter loaded in **one batched query per page** rather
+  than per row. `[]` on a list row means "no distributor knows this part";
+  responses that never load the links (create-part) still omit the key.
+  No schema change.
 - **Hierarchical part categories** (`0078`) — `part_categories.parent_id`,
   a self-referencing FK with `ON DELETE SET NULL` and a
   `part_categories_parent_workspace_check` BEFORE trigger (SQLSTATE

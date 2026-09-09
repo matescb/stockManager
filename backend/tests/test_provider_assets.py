@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import socket
 import uuid
 
 import pytest
@@ -43,6 +44,26 @@ def _resp(
     )
 
 
+def _fake_getaddrinfo(*addresses: str):
+    """Build a `socket.getaddrinfo` stand-in returning `addresses`.
+
+    Resolution is pinned now (ADR-0033): `_resolve_pinned_ip` resolves ONCE
+    via getaddrinfo, validates every returned address, and the request is
+    then issued against that literal. Patching getaddrinfo (rather than the
+    old gethostbyname) keeps these tests exercising the real validation.
+    """
+
+    def _resolver(host, port, *args, **kwargs):
+        infos = []
+        for address in addresses:
+            family = socket.AF_INET6 if ":" in address else socket.AF_INET
+            sockaddr = (address, port, 0, 0) if family == socket.AF_INET6 else (address, port)
+            infos.append((family, socket.SOCK_STREAM, 6, "", sockaddr))
+        return infos
+
+    return _resolver
+
+
 # ---------------------------------------------------------------------------
 # fetch_provider_asset — host allow-list + SSRF guard + redirect refusal
 # ---------------------------------------------------------------------------
@@ -66,7 +87,7 @@ def test_rejects_host_resolving_to_private_ip(monkeypatch, tmp_path):
     """Even an allow-listed host gets refused if DNS hands back a non-public
     IP (defence against DNS rebinding / homoglyph confusion / lab DNS)."""
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
-    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "10.0.0.5")
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _fake_getaddrinfo("10.0.0.5"))
     monkeypatch.setattr(assets, "_http_get", lambda _u: _resp())
     out = assets.fetch_provider_asset(
         "https://www.mouser.com/foo.png", str(uuid.uuid4()), "image"
@@ -76,7 +97,7 @@ def test_rejects_host_resolving_to_private_ip(monkeypatch, tmp_path):
 
 def test_rejects_loopback_resolution(monkeypatch, tmp_path):
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
-    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "127.0.0.1")
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _fake_getaddrinfo("127.0.0.1"))
     monkeypatch.setattr(assets, "_http_get", lambda _u: _resp())
     assert assets.fetch_provider_asset(
         "https://media.digikey.com/foo.png", str(uuid.uuid4()), "image"
@@ -86,7 +107,7 @@ def test_rejects_loopback_resolution(monkeypatch, tmp_path):
 def test_rejects_aws_metadata_resolution(monkeypatch, tmp_path):
     """169.254/16 is link-local; ip.is_global is False so it must be refused."""
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
-    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "169.254.169.254")
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _fake_getaddrinfo("169.254.169.254"))
     monkeypatch.setattr(assets, "_http_get", lambda _u: _resp())
     assert assets.fetch_provider_asset(
         "https://www.mouser.com/foo.png", str(uuid.uuid4()), "image"
@@ -95,7 +116,7 @@ def test_rejects_aws_metadata_resolution(monkeypatch, tmp_path):
 
 def test_allowed_host_with_public_ip_succeeds(monkeypatch, tmp_path):
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
-    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "93.184.216.34")
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
     monkeypatch.setattr(assets, "_http_get", lambda _u: _resp())
     out = assets.fetch_provider_asset(
         "https://media.digikey.com/parts/img.png", str(uuid.uuid4()), "image"
@@ -107,7 +128,7 @@ def test_allowed_host_with_public_ip_succeeds(monkeypatch, tmp_path):
 def test_redirect_response_is_refused(monkeypatch, tmp_path):
     """The helper sets follow_redirects=False; a 30x is treated as a refusal."""
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
-    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "93.184.216.34")
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
     monkeypatch.setattr(
         assets, "_http_get",
         lambda _u: _resp(status_code=302, body=b"", content_type="text/html"),
@@ -122,7 +143,7 @@ def test_svg_content_type_lands_as_bin(monkeypatch, tmp_path):
     The body still lands on disk because the helper is best-effort, but
     with a `.bin` extension which the serve route forces to download."""
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
-    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "93.184.216.34")
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
     body = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
     monkeypatch.setattr(
         assets, "_http_get",
@@ -139,7 +160,7 @@ def test_svg_url_suffix_lands_as_bin(monkeypatch, tmp_path):
     """An upstream that serves SVG but advertises octet-stream still ends
     up with .bin — the URL-suffix fallback also blocks .svg."""
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
-    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "93.184.216.34")
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
     monkeypatch.setattr(
         assets, "_http_get",
         lambda _u: _resp(body=b"<svg/>", content_type="application/octet-stream"),
@@ -159,7 +180,7 @@ def test_svg_url_suffix_lands_as_bin(monkeypatch, tmp_path):
 def test_magic_bytes_mismatch_png_declared_pdf_rejected(monkeypatch, tmp_path):
     """Body starts with PDF magic but Content-Type says image/png → rejected."""
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
-    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "93.184.216.34")
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
     monkeypatch.setattr(
         assets, "_http_get",
         lambda _u: _resp(body=b"%PDF-1.4 this is not a PNG", content_type="image/png"),
@@ -173,7 +194,7 @@ def test_magic_bytes_mismatch_png_declared_pdf_rejected(monkeypatch, tmp_path):
 def test_magic_bytes_mismatch_jpg_declared_pdf_rejected(monkeypatch, tmp_path):
     """Body starts with JPEG magic but Content-Type says application/pdf → rejected."""
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
-    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "93.184.216.34")
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
     jpeg_magic = b"\xff\xd8\xff\xe0" + b"\x00" * 12
     monkeypatch.setattr(
         assets, "_http_get",
@@ -188,7 +209,7 @@ def test_magic_bytes_mismatch_jpg_declared_pdf_rejected(monkeypatch, tmp_path):
 def test_magic_bytes_match_png_accepted(monkeypatch, tmp_path):
     """Body starts with PNG magic and Content-Type says image/png → accepted."""
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
-    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "93.184.216.34")
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
     png_body = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
     monkeypatch.setattr(
         assets, "_http_get",
@@ -204,7 +225,7 @@ def test_magic_bytes_match_png_accepted(monkeypatch, tmp_path):
 def test_magic_bytes_match_pdf_accepted(monkeypatch, tmp_path):
     """Body starts with PDF magic and Content-Type says application/pdf → accepted."""
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
-    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "93.184.216.34")
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
     pdf_body = b"%PDF-1.4 fake content"
     monkeypatch.setattr(
         assets, "_http_get",
@@ -222,7 +243,7 @@ def test_magic_bytes_unknown_body_with_known_ext_rejected(monkeypatch, tmp_path)
     trusting the Content-Type was a content-type-confusion bypass (#246).
     Strict policy: declared ext must match a known sniff result."""
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
-    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "93.184.216.34")
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
     # Body with no recognisable magic prefix.
     monkeypatch.setattr(
         assets, "_http_get",
@@ -257,7 +278,7 @@ def test_magic_bytes_unknown_body_rejected_per_ext(
     (GIF stays in the allow-list per the issue-246 operator decision;
     the reject path covers the unknown-magic case for it too.)"""
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
-    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "93.184.216.34")
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
     monkeypatch.setattr(
         assets, "_http_get",
         lambda _u: _resp(
@@ -276,7 +297,7 @@ def test_magic_bytes_unknown_body_rejected_per_ext(
 def test_magic_bytes_gif_mismatch_rejected(monkeypatch, tmp_path):
     """PNG body disguised as GIF (Content-Type image/gif) is rejected."""
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
-    monkeypatch.setattr(assets.socket, "gethostbyname", lambda _h: "93.184.216.34")
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
     png_body = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
     monkeypatch.setattr(
         assets, "_http_get",

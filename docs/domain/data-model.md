@@ -42,8 +42,11 @@ For the one-line domain table (which router serves which tables), see [`ARCHITEC
 | `PartMetaMember` | `part_meta_members` | `backend/app/domain/parts/models.py:100` |
 | `PartSubstitute` | `part_substitutes` | `backend/app/domain/parts/models.py:111` |
 | `BulkImportIdempotency` | `bulk_import_idempotency` | `backend/app/domain/parts/models.py:123` |
+| `PartDatasheet` | `part_datasheets` | `backend/app/domain/parts/models.py` |
 
 `Part` carries `part_type` (`linked|local|meta|sub_assembly`) — see [parts](parts.md). The MPN partial unique `uq_parts_ws_mpn` is the load-bearing constraint (`backend/app/domain/parts/models.py:33-39`).
+
+`PartDatasheet` (migration `0079`) is the local datasheet store's bookkeeping: one row per (workspace, part, source URL), unique on `source_url_sha256` because the URL itself is TEXT. It points at the `attachments` row holding the stored PDF (`ON DELETE SET NULL` — losing the attachment must not lose the record that the URL was already fetched) and carries `status` / `attempts` / `failure_code`, which is what makes the backfill resumable. `derived` (JSONB) + `derived_status` are the forward slot for the planned Datalab markdown/JSON conversion. A `part_datasheets_workspace_fk_check` BEFORE trigger validates `part_id` and `attachment_id` against the row's workspace (SQLSTATE `WS001`). See [ADR-0033](../adr/0033-datasheet-fetch-drops-host-allow-list.md).
 
 ### categories
 

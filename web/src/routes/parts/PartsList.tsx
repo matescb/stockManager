@@ -2,23 +2,26 @@ import { useRef, useCallback, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Boxes, ImageOff, Loader2, Printer, Trash2 } from "lucide-react";
+import { Boxes, Loader2, Printer, Trash2 } from "lucide-react";
 import { api, ApiError, getPaged } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
 import { PagedPartsSchema } from "@/lib/schemas";
 import type { Part } from "@/lib/schemas";
 import { useCategories } from "@/lib/useCategories";
-import { categoryPath } from "@/lib/categoryTree";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
-import { isSafeHttpOrSameOriginUrl } from "@/lib/url";
-import { DataTable, quantityColumn } from "@/components/DataTable";
+import { DataTable } from "@/components/DataTable";
 import EmptyState from "@/components/EmptyState";
 import PartsTopNav from "@/components/PartsTopNav";
 import { useConfirm } from "@/components/ConfirmDialog";
 import QueryStateBoundary from "@/components/QueryStateBoundary";
 import BatchPrintDialog, { type BatchPrintItem } from "@/routes/labels/BatchPrintDialog";
-import PartsCategoryRail, { PartsCategoryBar } from "./PartsCategoryRail";
+import { usePanelCollapse } from "@/lib/usePanelCollapse";
+import PartsCategoryRail, {
+  CATEGORY_RAIL_PANEL_ID,
+  PartsCategoryBar,
+} from "./PartsCategoryRail";
+import { partsListColumns } from "./partsColumns";
 import PartsPreviewLayout from "@/routes/parts/preview/PartsPreviewLayout";
 import { usePartPreview } from "@/routes/parts/preview/usePartPreview";
 
@@ -76,7 +79,11 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
     () => categoriesQuery.data ?? [],
     [categoriesQuery.data],
   );
-  const categoryNames = new Map(categories.map((c) => [c.id, c.name] as const));
+  // The column set is data, not markup — see `partsColumns.tsx`. Memoised
+  // on `categories` because `DataTable` filters and sorts through the
+  // array on every render, and a fresh one each keystroke would rebuild
+  // the category path lookup with it.
+  const columns = useMemo(() => partsListColumns({ categories }), [categories]);
 
   const bulkDeleteMutation = useApiMutation<{ archived_ids: string[]; skipped: number }, { part_ids: string[] }>({
     mutationKey: ["parts", "bulk-delete"],
@@ -141,12 +148,20 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
   const hasNextPage = query.hasNextPage;
   const isFetchingNextPage = query.isFetchingNextPage;
 
-  // Master-detail: a row click selects into the preview pane at `xl` and
-  // wider, and navigates to the full part page below it exactly as it
-  // always did. Selection lives in `?sel=<id>`, alongside the category
-  // filter's `?category=` — both writers use a functional `setSearchParams`
-  // updater over the previous params, so neither clobbers the other.
-  const preview = usePartPreview(allParts);
+  // Master-detail: a row click selects into the preview pane once the
+  // viewport is wide enough, and navigates to the full part page below
+  // that exactly as it always did. Selection lives in `?sel=<id>`,
+  // alongside the category filter's `?category=` — both writers use a
+  // functional `setSearchParams` updater over the previous params, so
+  // neither clobbers the other.
+  //
+  // Collapsing the rail hands its 240px back to the row, which is what
+  // lets the pane appear at `lg` instead of waiting for `xl`; the rail's
+  // state is therefore owned here rather than inside the rail itself.
+  const categoryRail = usePanelCollapse(CATEGORY_RAIL_PANEL_ID);
+  const preview = usePartPreview(allParts, {
+    railCollapsed: categoryRail.collapsed,
+  });
 
   // IntersectionObserver sentinel — auto-load next page when the user
   // scrolls to the bottom of the table.
@@ -228,7 +243,11 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
         }
       />
       <div className="flex gap-4 items-start">
-        <PartsCategoryRail {...categoryFilterProps} />
+        <PartsCategoryRail
+          {...categoryFilterProps}
+          collapsed={categoryRail.collapsed}
+          onToggleCollapsed={categoryRail.toggle}
+        />
         <div className="flex-1 min-w-0">
           <PartsCategoryBar {...categoryFilterProps} />
           <QueryStateBoundary query={query} resourceLabel="parts">
@@ -297,65 +316,7 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
                   onRowClick={preview.openRow}
                   onRowFocusChange={preview.previewRow}
                   rowClassName={preview.rowClassName}
-                  columns={[
-                    {
-                      key: "image",
-                      header: "",
-                      width: "44px",
-                      render: (r) => {
-                        const safeImageUrl = isSafeHttpOrSameOriginUrl(r.image_url) ? r.image_url : null;
-                        return safeImageUrl ? (
-                          <img
-                            src={safeImageUrl}
-                            alt=""
-                            loading="lazy"
-                            className="h-8 w-8 object-contain rounded bg-panel"
-                          />
-                        ) : (
-                          <div className="h-8 w-8 rounded bg-panel2/40 flex items-center justify-center text-muted">
-                            <ImageOff size={14} />
-                          </div>
-                        );
-                      },
-                    },
-                    { key: "part_type", header: "Type", accessor: (r) => r.part_type, width: "100px" },
-                    {
-                      key: "name",
-                      header: "Part",
-                      accessor: (r) => r.name,
-                      render: (r) => <span className="font-medium">{r.name}</span>,
-                    },
-                    { key: "mpn", header: "MPN", accessor: (r) => r.mpn ?? "" },
-                    { key: "manufacturer", header: "Manufacturer", accessor: (r) => r.manufacturer ?? "" },
-                    { key: "footprint", header: "Footprint", accessor: (r) => r.footprint ?? "" },
-                    {
-                      key: "category",
-                      header: "Category",
-                      // Full path ("Passives / Resistors"), not the leaf name:
-                      // with a tree, two branches may hold same-named leaves,
-                      // and this string is what search and CSV export see.
-                      accessor: (r) =>
-                        r.category_id
-                          ? categoryPath(categories, r.category_id) ||
-                            categoryNames.get(r.category_id) ||
-                            ""
-                          : "",
-                      hidden: true,
-                    },
-                    quantityColumn<Part>({
-                      key: "on_hand",
-                      header: "Stock",
-                      value: (r) => r.on_hand ?? 0,
-                      width: "80px",
-                    }),
-                    quantityColumn<Part>({
-                      key: "reserved",
-                      header: "Reserved",
-                      value: (r) => r.reserved ?? 0,
-                      width: "100px",
-                      hidden: true,
-                    }),
-                  ]}
+                  columns={columns}
                 />
 
                 {/* Infinite-scroll sentinel and load-more footer */}

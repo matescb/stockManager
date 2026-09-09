@@ -576,7 +576,10 @@ export function DataTable<T>({
         </button>
         <details className="relative">
           <summary className="btn cursor-pointer list-none">Columns</summary>
-          <div className="absolute right-0 top-full mt-1 z-20 card p-2 min-w-[200px]">
+          {/* Capped + scrollable: the parts table alone declares eighteen
+              columns, and an uncapped menu ran off the bottom of the
+              viewport with no way to reach the last few. */}
+          <div className="absolute right-0 top-full mt-1 z-20 card p-2 min-w-[200px] max-h-[60vh] overflow-y-auto">
             {columns.map(c => (
               <label key={c.key} className="flex items-center gap-2 px-2 py-1 text-sm cursor-pointer">
                 <input
