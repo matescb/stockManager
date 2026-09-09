@@ -8,7 +8,9 @@ import { useWsKey } from "@/lib/queryKeys";
 import { formatQuantity } from "@/lib/format";
 import { isSafeHttpOrSameOriginUrl } from "@/lib/url";
 import { providerLabel } from "@/lib/providers";
+import { cn } from "@/lib/cn";
 import type { Part, StorageLocation } from "@/types";
+import type { PaneBreakpoint } from "./usePartPreview";
 
 /**
  * The parts-list preview pane — "is this the part I meant?" without
@@ -58,14 +60,31 @@ type PartStockResponse = {
 /** How many storage locations to name before collapsing to "+N more". */
 const MAX_STORAGE_ROWS = 3;
 
+/**
+ * Written out as whole class strings rather than built from a template,
+ * because Tailwind's JIT scans source text — `` `${bp}:flex` `` would
+ * compile to nothing and the pane would never appear.
+ */
+const PANE_VISIBILITY: Record<PaneBreakpoint, string> = {
+  lg: "hidden lg:flex",
+  xl: "hidden xl:flex",
+};
+
 type Props = {
   partId: string;
   /** The list row for `partId`, when the loaded pages happen to hold it. */
   fallbackRow: Part | null;
   onClose: () => void;
+  /** Breakpoint the pane may show at; comes from `usePartPreview`. */
+  breakpoint: PaneBreakpoint;
 };
 
-export default function PartPreviewPane({ partId, fallbackRow, onClose }: Props) {
+export default function PartPreviewPane({
+  partId,
+  fallbackRow,
+  onClose,
+  breakpoint,
+}: Props) {
   const partQuery = useQuery({
     queryKey: useWsKey("part", partId),
     queryFn: ({ signal }) => api.get<Part>(`/parts/${partId}`, { signal }),
@@ -108,7 +127,7 @@ export default function PartPreviewPane({ partId, fallbackRow, onClose }: Props)
 
   if (!part) {
     return (
-      <PaneShell label="Part preview" onClose={onClose}>
+      <PaneShell label="Part preview" onClose={onClose} breakpoint={breakpoint}>
         <p className="text-sm text-muted">
           {partQuery.isError ? "Could not load this part." : "Loading…"}
         </p>
@@ -123,7 +142,7 @@ export default function PartPreviewPane({ partId, fallbackRow, onClose }: Props)
   const reserved = part.reserved ?? 0;
 
   return (
-    <PaneShell label={`Preview of ${part.name}`} onClose={onClose}>
+    <PaneShell label={`Preview of ${part.name}`} onClose={onClose} breakpoint={breakpoint}>
       <div className="flex items-start gap-3">
         {safeImageUrl ? (
           <img
@@ -226,27 +245,34 @@ export default function PartPreviewPane({ partId, fallbackRow, onClose }: Props)
  * `aria-modal`. `Modal.tsx` is the right component for the opposite
  * case; this is deliberately not it.
  *
- * `hidden xl:flex` mirrors `usePartPreview`'s breakpoint check. The hook
- * already refuses to select below `xl`, so this is belt-and-braces for
- * the frame between a resize and the re-render. The pane holds at 320px
- * through `xl` and only widens at `2xl` — at `xl` the category rail and
- * the table are already sharing 768px, so a wider pane there comes
+ * The visibility class mirrors `usePartPreview`'s breakpoint check, and
+ * takes it from the same `paneBreakpoint` value rather than restating it
+ * — `xl` normally, `lg` once the category rail is collapsed. The hook
+ * already refuses to select below that width, so the class is
+ * belt-and-braces for the frame between a resize and the re-render. The
+ * pane holds at 320px and only widens at `2xl`; below that the rail and
+ * the table are still sharing the rest of the row, so a wider pane comes
  * straight out of the table.
  */
 function PaneShell({
   label,
   onClose,
   children,
+  breakpoint,
 }: {
   label: string;
   onClose: () => void;
   children: ReactNode;
+  breakpoint: PaneBreakpoint;
 }) {
   return (
     <aside
       aria-label={label}
       data-testid="part-preview-pane"
-      className="card sticky top-4 hidden max-h-[calc(100vh-2rem)] w-80 shrink-0 flex-col gap-4 self-start overflow-y-auto p-4 xl:flex 2xl:w-96"
+      className={cn(
+        "card sticky top-4 max-h-[calc(100vh-2rem)] w-80 shrink-0 flex-col gap-4 self-start overflow-y-auto p-4 2xl:w-96",
+        PANE_VISIBILITY[breakpoint],
+      )}
     >
       <div className="flex items-start justify-between gap-2">
         <span className="section-title">Preview</span>

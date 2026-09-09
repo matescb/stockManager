@@ -20,7 +20,10 @@ import type { PartPreview } from "./usePartPreview";
  *
  * The widths are why the preview waits for `xl` while the rail appears at
  * `lg` — see `XL_VIEWPORT_QUERY`. At `lg` the rail and table already own
- * the row; a pane there would leave the table 176px.
+ * the row; a pane there would leave the table 176px. Collapse the rail to
+ * its 44px strip and that stops being true, which is why the pane's
+ * breakpoint arrives as `preview.paneBreakpoint` rather than being baked
+ * into the pane's class list (`LG_VIEWPORT_QUERY`).
  *
  * `min-w-0` on the table column is load-bearing: a flex item defaults to
  * `min-width: auto`, so without it the table refuses to shrink below its
@@ -50,6 +53,7 @@ export default function PartsPreviewLayout({
           partId={preview.selectedId}
           fallbackRow={preview.selectedRow}
           onClose={preview.closePreview}
+          breakpoint={preview.paneBreakpoint}
         />
       )}
     </div>

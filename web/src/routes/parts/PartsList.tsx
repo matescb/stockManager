@@ -18,7 +18,11 @@ import PartsTopNav from "@/components/PartsTopNav";
 import { useConfirm } from "@/components/ConfirmDialog";
 import QueryStateBoundary from "@/components/QueryStateBoundary";
 import BatchPrintDialog, { type BatchPrintItem } from "@/routes/labels/BatchPrintDialog";
-import PartsCategoryRail, { PartsCategoryBar } from "./PartsCategoryRail";
+import { usePanelCollapse } from "@/lib/usePanelCollapse";
+import PartsCategoryRail, {
+  CATEGORY_RAIL_PANEL_ID,
+  PartsCategoryBar,
+} from "./PartsCategoryRail";
 import PartsPreviewLayout from "@/routes/parts/preview/PartsPreviewLayout";
 import { usePartPreview } from "@/routes/parts/preview/usePartPreview";
 
@@ -141,12 +145,20 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
   const hasNextPage = query.hasNextPage;
   const isFetchingNextPage = query.isFetchingNextPage;
 
-  // Master-detail: a row click selects into the preview pane at `xl` and
-  // wider, and navigates to the full part page below it exactly as it
-  // always did. Selection lives in `?sel=<id>`, alongside the category
-  // filter's `?category=` — both writers use a functional `setSearchParams`
-  // updater over the previous params, so neither clobbers the other.
-  const preview = usePartPreview(allParts);
+  // Master-detail: a row click selects into the preview pane once the
+  // viewport is wide enough, and navigates to the full part page below
+  // that exactly as it always did. Selection lives in `?sel=<id>`,
+  // alongside the category filter's `?category=` — both writers use a
+  // functional `setSearchParams` updater over the previous params, so
+  // neither clobbers the other.
+  //
+  // Collapsing the rail hands its 240px back to the row, which is what
+  // lets the pane appear at `lg` instead of waiting for `xl`; the rail's
+  // state is therefore owned here rather than inside the rail itself.
+  const categoryRail = usePanelCollapse(CATEGORY_RAIL_PANEL_ID);
+  const preview = usePartPreview(allParts, {
+    railCollapsed: categoryRail.collapsed,
+  });
 
   // IntersectionObserver sentinel — auto-load next page when the user
   // scrolls to the bottom of the table.
@@ -228,7 +240,11 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
         }
       />
       <div className="flex gap-4 items-start">
-        <PartsCategoryRail {...categoryFilterProps} />
+        <PartsCategoryRail
+          {...categoryFilterProps}
+          collapsed={categoryRail.collapsed}
+          onToggleCollapsed={categoryRail.toggle}
+        />
         <div className="flex-1 min-w-0">
           <PartsCategoryBar {...categoryFilterProps} />
           <QueryStateBoundary query={query} resourceLabel="parts">
