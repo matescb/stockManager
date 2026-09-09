@@ -12,6 +12,8 @@ import {
   Info,
   LogOut,
   Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
   Search,
   Settings,
   ShoppingCart,
@@ -21,6 +23,7 @@ import {
 } from "lucide-react";
 import { useIsMutating } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
+import { usePanelCollapse } from "@/lib/usePanelCollapse";
 import { cn } from "@/lib/cn";
 import Brand from "@/components/Brand";
 import CommandPalette from "@/components/CommandPalette";
@@ -28,6 +31,12 @@ import ThemeToggle from "@/components/ThemeToggle";
 import { useConfirm } from "@/components/ConfirmDialog";
 
 type NavItem = { to: string; label: string; icon: typeof Boxes };
+
+/**
+ * Panel id for the sidebar's remembered collapse state. See
+ * `lib/usePanelCollapse.ts` — the value is per workspace.
+ */
+const SIDEBAR_PANEL_ID = "sidebar";
 
 const NAV: NavItem[] = [
   { to: "/parts",    label: "Parts",    icon: Boxes },
@@ -57,6 +66,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const loc = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
+  // Collapsed is a `lg`-and-up concept only: below `lg` the sidebar is an
+  // overlay drawer that is already fully hidden, and an icon rail there
+  // would just be a second, worse drawer.
+  const sidebar = usePanelCollapse(SIDEBAR_PANEL_ID);
 
   // Close any drawer/menu on route change.
   useEffect(() => {
@@ -67,7 +80,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-full flex bg-bg text-text">
       <CommandPalette />
-      <Sidebar mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
+      <Sidebar
+        mobileOpen={mobileOpen}
+        onClose={() => setMobileOpen(false)}
+        collapsed={sidebar.collapsed}
+        onToggleCollapsed={sidebar.toggle}
+      />
 
       <div className="flex-1 min-w-0 flex flex-col">
         <header className="sticky top-0 z-20 border-b border-border bg-panel/80 backdrop-blur">
@@ -209,19 +227,57 @@ function WorkspaceSwitcher({
   );
 }
 
-function footerLinkClass({ isActive }: { isActive: boolean }): string {
-  return cn(
-    "flex items-center gap-2.5 px-3 py-1.5 rounded-md text-sm transition-colors",
-    isActive ? "bg-accent/15 text-accent" : "text-muted hover:text-text hover:bg-panel2",
+/**
+ * One sidebar entry, in both shapes.
+ *
+ * Collapsed, the label is dropped from the layout at `lg` and up — so it
+ * has to come back as an accessible name, or the icon rail would be a row
+ * of unlabelled links to a screen reader. `title` gives the same string to
+ * a pointer user as a tooltip. Below `lg` nothing is collapsed and the
+ * `aria-label` simply repeats the visible text, which is harmless.
+ */
+function SidebarLink({
+  to,
+  label,
+  icon: Icon,
+  collapsed,
+}: {
+  to: string;
+  label: string;
+  icon: typeof Boxes;
+  collapsed: boolean;
+}) {
+  return (
+    <NavLink
+      to={to}
+      title={collapsed ? label : undefined}
+      aria-label={collapsed ? label : undefined}
+      className={({ isActive }) =>
+        cn(
+          "flex items-center gap-2.5 px-3 py-1.5 rounded-md text-sm transition-colors",
+          collapsed && "lg:justify-center lg:gap-0 lg:px-0",
+          isActive
+            ? "bg-accent/15 text-accent"
+            : "text-muted hover:text-text hover:bg-panel2",
+        )
+      }
+    >
+      <Icon size={16} />
+      <span className={cn(collapsed && "lg:hidden")}>{label}</span>
+    </NavLink>
   );
 }
 
 function Sidebar({
   mobileOpen,
   onClose,
+  collapsed,
+  onToggleCollapsed,
 }: {
   mobileOpen: boolean;
   onClose: () => void;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }) {
   return (
     <>
@@ -235,16 +291,45 @@ function Sidebar({
       )}
 
       <aside
+        id="app-sidebar"
         className={cn(
           "fixed inset-y-0 left-0 z-40 w-60 shrink-0 border-r border-border bg-panel flex flex-col",
           "transition-transform duration-150",
           "lg:sticky lg:top-0 lg:h-screen lg:translate-x-0",
+          // Every collapse class is `lg:`-prefixed: the mobile drawer keeps
+          // its full 240px, so opening it while collapsed shows the normal
+          // labelled menu rather than a 64px sliver of icons.
+          collapsed && "lg:w-16",
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         )}
         aria-label="Primary navigation"
       >
-        <div className="h-12 px-4 flex items-center justify-between border-b border-border">
-          <Link to="/parts"><Brand /></Link>
+        <div
+          className={cn(
+            "h-12 px-4 flex items-center justify-between border-b border-border",
+            collapsed && "lg:px-2 lg:justify-center",
+          )}
+        >
+          <Link to="/parts" className={cn(collapsed && "lg:hidden")}><Brand /></Link>
+          {/* The collapse toggle is the only chrome that survives into the
+              collapsed rail, which is what keeps the state escapable
+              without devtools.
+
+              `aria-controls` names the whole `<aside>`, not just `<nav>`:
+              collapsing hides the brand, the search label and the footer
+              labels as well, so the nav alone would under-describe what
+              the button does. */}
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            className="btn-ghost btn-sm hidden lg:inline-flex"
+            aria-expanded={!collapsed}
+            aria-controls="app-sidebar"
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          </button>
           <button
             type="button"
             onClick={onClose}
@@ -255,52 +340,40 @@ function Sidebar({
           </button>
         </div>
 
-        <SearchTrigger />
+        <SearchTrigger collapsed={collapsed} />
 
         <nav className="flex-1 px-2 pt-1 space-y-0.5 overflow-y-auto">
           {NAV.map(item => (
-            <NavLink
+            <SidebarLink
               key={item.to}
               to={item.to}
-              className={({ isActive }) =>
-                cn(
-                  "flex items-center gap-2.5 px-3 py-1.5 rounded-md text-sm transition-colors",
-                  isActive
-                    ? "bg-accent/15 text-accent"
-                    : "text-muted hover:text-text hover:bg-panel2"
-                )
-              }
-            >
-              <item.icon size={16} />
-              {item.label}
-            </NavLink>
+              label={item.label}
+              icon={item.icon}
+              collapsed={collapsed}
+            />
           ))}
         </nav>
 
         <div className="px-2 py-2 border-t border-border space-y-0.5">
-          <NavLink to="/settings/workspace" className={footerLinkClass}>
-            <Settings size={16} />
-            Settings
-          </NavLink>
+          <SidebarLink
+            to="/settings/workspace"
+            label="Settings"
+            icon={Settings}
+            collapsed={collapsed}
+          />
           {/* The in-app manual (`docs/user/`, bundled at build time) and
               the build-identity page. Kept in the footer next to Settings
               rather than in NAV — they're reference surfaces, not part of
               the day-to-day workflow. */}
-          <NavLink to="/help" className={footerLinkClass}>
-            <BookOpen size={16} />
-            Help
-          </NavLink>
-          <NavLink to="/about" className={footerLinkClass}>
-            <Info size={16} />
-            About
-          </NavLink>
+          <SidebarLink to="/help" label="Help" icon={BookOpen} collapsed={collapsed} />
+          <SidebarLink to="/about" label="About" icon={Info} collapsed={collapsed} />
         </div>
       </aside>
     </>
   );
 }
 
-function SearchTrigger() {
+function SearchTrigger({ collapsed }: { collapsed: boolean }) {
   // The actual command palette lands in step 4; this is the trigger surface.
   return (
     <div className="px-2 pt-2 pb-1">
@@ -309,11 +382,21 @@ function SearchTrigger() {
         onClick={() =>
           window.dispatchEvent(new CustomEvent("stockmgr:openCommandPalette"))
         }
-        className="w-full inline-flex items-center gap-2 rounded-md border border-border bg-bg px-3 py-1.5 text-left text-sm text-muted hover:bg-panel2 transition-colors"
+        // Collapsed the visible text goes away at `lg`, so the name has to
+        // be carried by the label instead of the "Search…" span. It repeats
+        // that span verbatim, ellipsis included: below `lg` the text is
+        // still on screen even while collapsed, and a name that dropped a
+        // character would stop matching the visible label (WCAG 2.5.3).
+        aria-label={collapsed ? "Search…" : undefined}
+        title={collapsed ? "Search…" : undefined}
+        className={cn(
+          "w-full inline-flex items-center gap-2 rounded-md border border-border bg-bg px-3 py-1.5 text-left text-sm text-muted hover:bg-panel2 transition-colors",
+          collapsed && "lg:justify-center lg:gap-0 lg:px-0",
+        )}
       >
         <Search size={14} />
-        <span className="flex-1 truncate">Search…</span>
-        <span className="kbd">⌘K</span>
+        <span className={cn("flex-1 truncate", collapsed && "lg:hidden")}>Search…</span>
+        <span className={cn("kbd", collapsed && "lg:hidden")}>⌘K</span>
       </button>
     </div>
   );

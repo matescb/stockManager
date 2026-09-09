@@ -377,7 +377,7 @@ wiring — the right URL and format reach it, and the WebGL context is released
 | `ThemeToggle` | `ThemeToggle.tsx` | system / light / dark switch |
 | `ActivityTimeline` | `ActivityTimeline.tsx` | Timeline view for entity activity feeds |
 | `AttachmentsPanel` | `AttachmentsPanel.tsx` | Upload + list panel for entity attachments |
-| `layout/AppShell` | `layout/AppShell.tsx` | Top nav, mobile drawer, command-palette mount |
+| `layout/AppShell` | `layout/AppShell.tsx` | Top nav, mobile drawer, command-palette mount. The sidebar collapses to a 64px icon rail at `lg` and up (`lib/usePanelCollapse.ts`, remembered per workspace); every collapse class is `lg:`-prefixed so the mobile drawer keeps its full labelled width |
 
 ## TODO(verify)
 
