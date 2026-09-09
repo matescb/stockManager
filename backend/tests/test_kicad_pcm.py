@@ -449,6 +449,137 @@ def test_foreign_model_paths_are_left_alone(ws: Tenant):
     assert sexpr.model_paths(sexpr.parse(text)) == [foreign]
 
 
+def _step_file(tenant: Tenant) -> dict:
+    files = tenant.session.get("/api/eda/datafiles").json()["data"]
+    return [d for d in files if d["kind"] == "step"][0]
+
+
+def _packaged_models(tenant: Tenant, member: str) -> list[str]:
+    archive = _open_zip(tenant.pcm.get(_archive(tenant.token)))
+    return sexpr.model_paths(sexpr.parse(archive.read(member).decode()))
+
+
+def _link(tenant: Tenant, footprint_id: str, datafile_id: str, position: int = 0) -> None:
+    r = tenant.session.post(
+        f"/api/eda/footprints/{footprint_id}/models",
+        json={"datafile_id": datafile_id, "position": position},
+    )
+    assert r.status_code == 200, r.text
+
+
+def _installed_model(tenant: Tenant, name: str) -> str:
+    return f"${{KICAD8_3RD_PARTY}}/3dmodels/com_stockmanager_{tenant.workspace_id.hex}/{name}"
+
+
+def test_a_model_linked_in_the_cad_tab_ships_in_the_footprint(ws: Tenant):
+    """Linking a model on the CAD tab writes a join row and nothing else;
+    the stored footprint bytes still carry no `(model …)`. The package
+    is the only place that link can become a node, so it has to."""
+    bare = ws.footprint("R_Bare")
+    cube = _step_file(ws)
+    _link(ws, bare["id"], cube["id"])
+
+    member = "footprints/SM_uncategorized.pretty/R_Bare.kicad_mod"
+    assert _packaged_models(ws, member) == [_installed_model(ws, "cube.step")]
+
+
+def test_a_linked_model_already_in_the_bytes_is_not_duplicated(ws: Tenant):
+    """The zip importer writes BOTH the node and the link row, so the
+    common case is a link whose model the bytes already name."""
+    fp = ws.session.get("/api/eda/footprints").json()["data"][0]
+    cube = _step_file(ws)
+    _link(ws, fp["id"], cube["id"])
+
+    member = "footprints/SM_passives.pretty/R_0402.kicad_mod"
+    assert _packaged_models(ws, member) == [_installed_model(ws, "cube.step")]
+
+
+def test_linked_models_are_appended_in_position_order(ws: Tenant):
+    """KiCad renders the first model. Nodes already in the bytes keep
+    their place; linked ones follow in the order the CAD tab set."""
+    ws.datafile("a.step", _STEP_BYTES, name="a.step")
+    ws.datafile("b.step", _STEP_BYTES, name="b.step")
+    files = {d["name"]: d["id"] for d in ws.session.get("/api/eda/datafiles").json()["data"]}
+    fp = ws.session.get("/api/eda/footprints").json()["data"][0]
+    _link(ws, fp["id"], files["b.step"], position=0)
+    _link(ws, fp["id"], files["a.step"], position=1)
+
+    member = "footprints/SM_passives.pretty/R_0402.kicad_mod"
+    assert _packaged_models(ws, member) == [
+        _installed_model(ws, "cube.step"),
+        _installed_model(ws, "b.step"),
+        _installed_model(ws, "a.step"),
+    ]
+
+
+def test_an_appended_model_is_placed_at_the_origin_unscaled(ws: Tenant):
+    """A node we invent has no vendor placement to carry over, so it
+    gets the identity KiCad itself writes for a freshly added model."""
+    bare = ws.footprint("R_Bare")
+    cube = _step_file(ws)
+    _link(ws, bare["id"], cube["id"])
+
+    archive = _open_zip(ws.pcm.get(_archive(ws.token)))
+    text = archive.read("footprints/SM_uncategorized.pretty/R_Bare.kicad_mod").decode()
+    (model,) = [c for c in sexpr.parse(text) if sexpr.head(c) == "model"]
+    assert model[2:] == [
+        ["offset", ["xyz", "0", "0", "0"]],
+        ["scale", ["xyz", "1", "1", "1"]],
+        ["rotate", ["xyz", "0", "0", "0"]],
+    ]
+
+
+def test_linking_a_3d_model_changes_the_archive(ws: Tenant):
+    """The link row has no timestamp and the footprint bytes don't
+    change, so the cache key has to carry the link itself."""
+    bare = ws.footprint("R_Bare")
+    before = _archive_body(ws)
+    cube = _step_file(ws)
+
+    _backdate(ws)
+    _link(ws, bare["id"], cube["id"])
+
+    assert _archive_body(ws) != before
+
+
+def test_the_fingerprint_carries_linked_models():
+    """The version moves when a link is made (`_touch`), which would mask
+    a fingerprint that forgot the link whenever two builds fall in
+    different two-second ticks — so this pins the function directly,
+    with everything but the link held equal."""
+    base = dict(name="R_0402", sha256="ab" * 32, size_bytes=10, ext="kicad_mod", stem="SM_x")
+    plain = pcm._StoredEntry(**base)
+    linked = pcm._StoredEntry(**base, models=("cube.step",))
+    args = ("id", "3.0.0", "ws", [])
+    assert pcm._fingerprint(*args, [plain], []) != pcm._fingerprint(*args, [linked], [])
+
+
+def test_a_model_already_naming_the_installed_path_is_not_duplicated(ws: Tenant):
+    """A footprint saved by KiCad after the package was installed names
+    the installed path verbatim, and re-uploading keeps it that way
+    (foreign paths are left alone). Linking that same model on the CAD
+    tab is the same model, not a second one."""
+    installed = _installed_model(ws, "cube.step")
+    fp = ws.footprint("R_Saved", model=installed)
+    _link(ws, fp["id"], _step_file(ws)["id"])
+
+    member = "footprints/SM_uncategorized.pretty/R_Saved.kicad_mod"
+    assert _packaged_models(ws, member) == [installed]
+
+
+def test_another_workspaces_links_do_not_reach_this_package(ws: Tenant, other: Tenant):
+    """The link table is read for one workspace; a link the other
+    workspace makes — to a model of the same name, on a footprint of the
+    same name — must not put a node in this workspace's footprint."""
+    other.datafile("cube.step", _STEP_BYTES, name="cube.step")
+    theirs = other.footprint("R_Bare")
+    _link(other, theirs["id"], _step_file(other)["id"])
+    ws.footprint("R_Bare")
+
+    member = "footprints/SM_uncategorized.pretty/R_Bare.kicad_mod"
+    assert _packaged_models(ws, member) == []
+
+
 def test_spice_models_ship_under_resources(ws: Tenant):
     """The PCM has no SPICE slot, so they go in `resources/` and the user
     points one path variable at the installed directory. The bytes are
@@ -987,11 +1118,11 @@ def test_derive_version_is_monotonic():
 
 
 def test_derive_version_shape_at_a_day_boundary():
-    assert pcm._derive_version(pcm.VERSION_EPOCH)[0] == "2.0.0"
+    assert pcm._derive_version(pcm.VERSION_EPOCH)[0] == "3.0.0"
     end_of_day = pcm.VERSION_EPOCH + timedelta(hours=23, minutes=59, seconds=59)
-    assert pcm._derive_version(end_of_day)[0] == "2.0.43199"
-    assert pcm._derive_version(pcm.VERSION_EPOCH + timedelta(days=1))[0] == "2.1.0"
-    assert pcm._derive_version(pcm.VERSION_EPOCH + timedelta(days=10_000))[0] == "3.0.0"
+    assert pcm._derive_version(end_of_day)[0] == "3.0.43199"
+    assert pcm._derive_version(pcm.VERSION_EPOCH + timedelta(days=1))[0] == "3.1.0"
+    assert pcm._derive_version(pcm.VERSION_EPOCH + timedelta(days=10_000))[0] == "4.0.0"
 
 
 def test_the_package_format_revision_outranks_every_earlier_version():
@@ -1021,8 +1152,8 @@ def test_derive_version_clamps_below_the_epoch():
     """A restored backup or a skewed clock must not produce a negative
     component — the PCM's version pattern rejects the whole document."""
     stale = datetime(2020, 6, 1, tzinfo=timezone.utc)
-    assert pcm._derive_version(stale)[0] == "2.0.0"
-    assert pcm._derive_version(None)[0] == "2.0.0"
+    assert pcm._derive_version(stale)[0] == "3.0.0"
+    assert pcm._derive_version(None)[0] == "3.0.0"
 
 
 # ---------------------------------------------------------------------
