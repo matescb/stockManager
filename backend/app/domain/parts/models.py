@@ -3,11 +3,13 @@ from __future__ import annotations
 import uuid
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Column,
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
@@ -187,6 +189,88 @@ class PartProviderLink(WorkspaceOwned, Base):
     external_id = Column(String(300), nullable=True)
     source_url = Column(String(500), nullable=True)
     last_refresh_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class PartDatasheet(WorkspaceOwned, Base):
+    """One part's locally-stored datasheet, keyed by the URL it came from.
+
+    Shape rationale (ADR-0033):
+
+    * ``source_url`` is the upstream URL exactly as it appears on the part's
+      ``datasheet_url`` custom field. It stays the provenance record; the
+      backfill never rewrites the custom field, so a provider refresh and
+      this table can never fight over the same value.
+    * ``source_url_sha256`` exists only because ``source_url`` is TEXT and a
+      btree unique index over a 2 KB URL would blow Postgres' index-row
+      limit. It is the idempotency key: one row per
+      (workspace, part, source URL).
+    * ``attachment_id`` points at the ``attachments`` row that makes the PDF
+      a first-class object (``file_type='datasheet'``), inheriting the
+      polymorphic-cleanup listeners on part hard-delete.
+    * ``status`` / ``attempts`` / ``failure_code`` / ``last_attempt_at`` are
+      what make the backfill resumable: a vendor 404 marks the row and the
+      sweep moves on, and a bounded attempt count stops a dead link being
+      retried forever.
+    * ``derived`` + ``derived_status`` are the forward slot for the planned
+      Datalab conversion (markdown / JSON / extracted images). The converted
+      artifacts themselves become further ``attachments`` rows on the same
+      part; ``derived`` holds the manifest that ties them together (their
+      attachment ids, the converter version, page count). That keeps the
+      conversion step a pure write to this JSONB document plus new
+      attachments — no second migration.
+    """
+
+    __tablename__ = "part_datasheets"
+    __table_args__ = (
+        # Idempotency key for the backfill: re-running must find the
+        # existing row rather than download the PDF a second time.
+        Index(
+            "uq_part_datasheets_ws_part_url",
+            "workspace_id",
+            "part_id",
+            "source_url_sha256",
+            unique=True,
+        ),
+        # The backfill's candidate scan and the "what failed" ops query.
+        Index("ix_part_datasheets_ws_status", "workspace_id", "status"),
+        Index("ix_part_datasheets_ws_part", "workspace_id", "part_id"),
+    )
+
+    part_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("parts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_url = Column(Text, nullable=False)
+    source_url_sha256 = Column(String(64), nullable=False)
+    # stored | failed
+    status = Column(String(20), nullable=False, default="failed")
+    attachment_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("attachments.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # Relative to UPLOAD_DIR — `parts/{ws_id}/{sha}.{ext}`, the same
+    # content-addressed layout the provider-asset serve route uses.
+    storage_key = Column(String(800), nullable=True)
+    content_sha256 = Column(String(64), nullable=True)
+    content_type = Column(String(120), nullable=True)
+    size_bytes = Column(BigInteger, nullable=True)
+    fetched_at = Column(DateTime(timezone=True), nullable=True)
+    attempts = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    last_attempt_at = Column(DateTime(timezone=True), nullable=True)
+    # Short stable token from `services/assets.py` (http_404, timeout,
+    # ip_not_public, magic_mismatch, ...). Never free text, never a URL.
+    failure_code = Column(String(40), nullable=True)
+    # none | pending | ready | failed — the Datalab conversion state.
+    derived_status = Column(
+        String(20), nullable=False, default="none", server_default=text("'none'")
+    )
+    derived = Column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    derived_updated_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class PartCadKey(Base):

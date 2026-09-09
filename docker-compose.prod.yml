@@ -339,6 +339,63 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
 
+  backend-cron-datasheets:
+    build: ./backend
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: "0.5"
+    pids_limit: 256
+    oom_kill_disable: false
+    stop_grace_period: 605s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    environment:
+      <<: *backend-env
+      DATASHEET_BACKFILL_INTERVAL_SECONDS:
+      DATASHEET_BACKFILL_BATCH_SIZE:
+      DATASHEET_BACKFILL_MAX_ATTEMPTS:
+      DATASHEET_BACKFILL_RETRY_AFTER_SECONDS:
+      ASSET_FETCH_MIN_HOST_INTERVAL_SECONDS:
+    # The ONLY cron sidecar that needs the uploads volume: it writes the
+    # fetched PDFs into the same content-addressed store the backend serves
+    # from ({UPLOAD_DIR}/parts/{ws}/{sha}.{ext}). backend-init has already
+    # chowned it to UID 1000, which is what this image runs as.
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      backend-init:
+        condition: service_completed_successfully
+      backend:
+        condition: service_healthy
+    # Python probe (not the shell `find` one) because this job can be
+    # DISABLED: --check-all-heartbeats returns 0 when the interval is 0, so
+    # a deliberately-off backfill doesn't show the sidecar as unhealthy.
+    # Same shape as backend-cron-sessions.
+    healthcheck:
+      test: ["CMD-SHELL", "python -m app.cli.run_job --check-all-heartbeats datasheet-backfill --heartbeat-max-age-seconds 5400"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 11m
+    # Local datasheet backfill (ADR-0033). A new cadence means a new sidecar,
+    # never a second scheduler (ADR-0021). Cadence comes from
+    # DATASHEET_BACKFILL_INTERVAL_SECONDS via --print-interval, mirroring
+    # backend-cron-sessions; 0 parks the loop on `sleep infinity` so the
+    # container stays up and healthy with the feature switched off.
+    #
+    # One run processes at most DATASHEET_BACKFILL_BATCH_SIZE parts (default
+    # 12). Worst case per candidate is resolution + the 2s per-host throttle
+    # + the 30s wall-clock fetch budget, so ~444s — inside the `timeout 600`
+    # that keeps the longest single command below stop_grace_period: 605s.
+    # The job also commits per candidate, so even a `timeout` kill keeps the
+    # work it finished.
+    command: ["sh", "-c", "trap 'kill 0' TERM; trap 'kill 0' INT; mkdir -p /tmp/stockmanager-job-heartbeats; interval=$$(python -m app.cli.run_job datasheet-backfill --print-interval) || exit $$?; if [ $$interval -le 0 ]; then echo 'datasheet backfill disabled'; sleep infinity; fi; while true; do timeout 600 python -m app.cli.run_job datasheet-backfill; rc=$$?; if [ $$rc -eq 124 ]; then echo 'datasheet-backfill timed out after 600s (exit=124)'; elif [ $$rc -ne 0 ]; then echo \"datasheet-backfill failed (exit=$$rc)\"; fi; sleep $$interval; done"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
   web:
     build:
       # Context is the repo root so the Dockerfile can COPY both `web/` (sources)

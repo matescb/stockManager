@@ -236,10 +236,24 @@ def delete(
     a = assert_in_workspace(db, Attachment, attachment_id, ws.id, label="attachment")
     abs_path = os.path.join(settings().UPLOAD_DIR, a.storage_key)
     object_type = a.object_type
-    try:
-        os.remove(abs_path)
-    except FileNotFoundError:
-        pass
+    # Content-addressed datasheets (domain/parts/services/datasheets.py) are
+    # stored under `parts/{ws}/{sha}.{ext}`, so two parts that share the same
+    # PDF share one file on disk. Removing it because ONE attachment row was
+    # deleted would break the other. Only unlink when this row is the last
+    # reference within the workspace; upload-route attachments carry a UUID
+    # in their storage_key so the count is always 1 for them.
+    shared_refs = db.execute(
+        select(Attachment.id)
+        .where(Attachment.workspace_id == ws.id)
+        .where(Attachment.storage_key == a.storage_key)
+        .where(Attachment.id != a.id)
+        .limit(1)
+    ).first()
+    if shared_refs is None:
+        try:
+            os.remove(abs_path)
+        except FileNotFoundError:
+            pass
     db.delete(a)
     _audit_log(
         db,

@@ -21,6 +21,7 @@ This module's surface is its model. CRUD lives in the route. Orphan cleanup (whe
 1. **No FK from `Attachment` to its parent.** The `(entity_type, entity_id)` pair is application-managed. Parent deletes must call the cleanup helper.
 2. **Workspace-scoped.** `Attachment.workspace_id` is required; every read/write filters by workspace. See [ADR-0002](../../../../docs/adr/0002-code-enforced-workspace-isolation.md).
 3. **File contents live on disk under `UPLOAD_DIR`** (content-addressed for provider assets — see `domain/parts/services/assets.py`). The DB row is metadata only.
+4. **A content-addressed file may be shared by several attachments.** Stored datasheets (`file_type='datasheet'`, written by `domain/parts/services/datasheets.py`) live at `parts/{ws_id}/{sha}.{ext}`, so two parts with the same PDF share one file. The delete route unlinks only when no other attachment in the workspace references the same `storage_key`. See [ADR-0033](../../../../docs/adr/0033-datasheet-fetch-drops-host-allow-list.md).
 
 ## See also
 

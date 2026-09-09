@@ -45,12 +45,32 @@ def _resp(
     )
 
 
+def _target(url: str = "https://media.digikey.com/x.png") -> assets._FetchTarget:
+    """A pre-resolved, pinned target — what `fetch_asset` hands `_http_get`.
+
+    Resolution + IP validation happen in `_build_target`; `_http_get` only
+    ever sees an already-validated target, so these tests construct one
+    directly instead of touching DNS.
+    """
+    return assets._FetchTarget(
+        request_url=url.replace("media.digikey.com", "93.184.216.34"),
+        host_header="media.digikey.com",
+        sni_hostname="media.digikey.com",
+        ip="93.184.216.34",
+        redacted_ref=url,
+    )
+
+
 def test_fetch_writes_to_uploads_and_returns_local_path(monkeypatch, ws_id, tmp_path):
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
     # SEC2-006 added a provider host allow-list. These pre-existing tests
     # use example.com URLs to exercise the content-addressing logic; the
     # allow-list isn't the unit under test here, so bypass it.
     monkeypatch.setattr(assets, "_host_is_allowed", lambda _h: True)
+    # Resolution is pinned now (ADR-0033) — stub it so these unit tests
+    # never touch DNS. The resolver itself is covered by
+    # tests/test_datasheet_fetch_policy.py.
+    monkeypatch.setattr(assets, "_resolve_pinned_ip", lambda _h, _p: "93.184.216.34")
     monkeypatch.setattr(assets, "_http_get", lambda url: _resp())
 
     result = assets.fetch_provider_asset("https://example.com/img.png", ws_id, "image")
@@ -70,6 +90,10 @@ def test_fetch_is_idempotent(monkeypatch, ws_id, tmp_path):
     """Same URL + same body → same content-hashed filename, no rewrite."""
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
     monkeypatch.setattr(assets, "_host_is_allowed", lambda _h: True)
+    # Resolution is pinned now (ADR-0033) — stub it so these unit tests
+    # never touch DNS. The resolver itself is covered by
+    # tests/test_datasheet_fetch_policy.py.
+    monkeypatch.setattr(assets, "_resolve_pinned_ip", lambda _h, _p: "93.184.216.34")
     monkeypatch.setattr(assets, "_http_get", lambda url: _resp())
 
     a = assets.fetch_provider_asset("https://example.com/img.png", ws_id, "image")
@@ -80,6 +104,10 @@ def test_fetch_is_idempotent(monkeypatch, ws_id, tmp_path):
 def test_fetch_returns_none_on_404(monkeypatch, ws_id, tmp_path):
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
     monkeypatch.setattr(assets, "_host_is_allowed", lambda _h: True)
+    # Resolution is pinned now (ADR-0033) — stub it so these unit tests
+    # never touch DNS. The resolver itself is covered by
+    # tests/test_datasheet_fetch_policy.py.
+    monkeypatch.setattr(assets, "_resolve_pinned_ip", lambda _h, _p: "93.184.216.34")
     monkeypatch.setattr(assets, "_http_get", lambda url: _resp(status_code=404, body=b""))
     assert assets.fetch_provider_asset("https://example.com/missing", ws_id, "image") is None
 
@@ -89,6 +117,10 @@ def test_fetch_returns_none_on_oversize(monkeypatch, ws_id, tmp_path):
     that to the same refusal as a 4xx / network error."""
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
     monkeypatch.setattr(assets, "_host_is_allowed", lambda _h: True)
+    # Resolution is pinned now (ADR-0033) — stub it so these unit tests
+    # never touch DNS. The resolver itself is covered by
+    # tests/test_datasheet_fetch_policy.py.
+    monkeypatch.setattr(assets, "_resolve_pinned_ip", lambda _h, _p: "93.184.216.34")
     monkeypatch.setattr(assets, "_http_get", lambda url: _resp(body=None))
     assert assets.fetch_provider_asset("https://example.com/huge.png", ws_id, "image") is None
 
@@ -129,7 +161,7 @@ def test_http_get_streams_and_aborts_when_exceeds_max_bytes(monkeypatch, tmp_pat
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with patch("app.domain.parts.services.assets.httpx.Client", return_value=mock_client):
-        out = assets._http_get("https://media.digikey.com/huge.png")
+        out = assets._http_get(_target("https://media.digikey.com/huge.png"))
 
     assert out.body is None, "oversize stream must signal refusal via body=None"
     assert out.status_code == 200
@@ -170,7 +202,7 @@ def test_http_get_aborts_on_content_length_pre_check(monkeypatch, tmp_path):
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with patch("app.domain.parts.services.assets.httpx.Client", return_value=mock_client):
-        out = assets._http_get("https://media.digikey.com/fat.png")
+        out = assets._http_get(_target("https://media.digikey.com/fat.png"))
 
     assert out.body is None
     assert chunks_read == [], "Content-Length pre-check must abort before iter_bytes"
@@ -201,7 +233,7 @@ def test_http_get_ignores_malformed_content_length(monkeypatch, tmp_path):
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with patch("app.domain.parts.services.assets.httpx.Client", return_value=mock_client):
-        out = assets._http_get("https://media.digikey.com/ok.png")
+        out = assets._http_get(_target("https://media.digikey.com/ok.png"))
 
     assert out.body == body
 
@@ -209,6 +241,10 @@ def test_http_get_ignores_malformed_content_length(monkeypatch, tmp_path):
 def test_fetch_returns_none_on_network_error(monkeypatch, ws_id, tmp_path):
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
     monkeypatch.setattr(assets, "_host_is_allowed", lambda _h: True)
+    # Resolution is pinned now (ADR-0033) — stub it so these unit tests
+    # never touch DNS. The resolver itself is covered by
+    # tests/test_datasheet_fetch_policy.py.
+    monkeypatch.setattr(assets, "_resolve_pinned_ip", lambda _h, _p: "93.184.216.34")
     def boom(_url):
         raise RuntimeError("simulated DNS failure")
     monkeypatch.setattr(assets, "_http_get", boom)
@@ -226,6 +262,10 @@ def test_fetch_falls_back_to_url_extension(monkeypatch, ws_id, tmp_path):
     Fall back to the URL's path suffix so the file lands with a usable extension."""
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
     monkeypatch.setattr(assets, "_host_is_allowed", lambda _h: True)
+    # Resolution is pinned now (ADR-0033) — stub it so these unit tests
+    # never touch DNS. The resolver itself is covered by
+    # tests/test_datasheet_fetch_policy.py.
+    monkeypatch.setattr(assets, "_resolve_pinned_ip", lambda _h, _p: "93.184.216.34")
     monkeypatch.setattr(
         assets, "_http_get",
         lambda url: _resp(body=b"%PDF-1.4 fake", content_type="application/octet-stream"),
@@ -240,6 +280,10 @@ def test_fetch_falls_back_to_url_extension(monkeypatch, ws_id, tmp_path):
 def test_fetch_pdf_content_type_yields_pdf(monkeypatch, ws_id, tmp_path):
     monkeypatch.setattr(settings(), "UPLOAD_DIR", str(tmp_path), raising=False)
     monkeypatch.setattr(assets, "_host_is_allowed", lambda _h: True)
+    # Resolution is pinned now (ADR-0033) — stub it so these unit tests
+    # never touch DNS. The resolver itself is covered by
+    # tests/test_datasheet_fetch_policy.py.
+    monkeypatch.setattr(assets, "_resolve_pinned_ip", lambda _h, _p: "93.184.216.34")
     monkeypatch.setattr(
         assets, "_http_get",
         lambda url: _resp(body=b"%PDF-1.4 fake", content_type="application/pdf"),
