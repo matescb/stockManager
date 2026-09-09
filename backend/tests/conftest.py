@@ -28,6 +28,12 @@ os.environ.setdefault(
 )
 os.environ.setdefault("SESSION_SECRET", "test-secret")
 os.environ.setdefault("UPLOAD_DIR", "/tmp/stockmgr-test-uploads")
+# The per-host outbound-asset throttle (ADR-0033) defaults to 2s in prod so a
+# datasheet backfill can't hammer one vendor. In tests every fetch is a
+# monkeypatched seam, so the gap would only add dead wall time — the throttle
+# itself is covered by tests/test_datasheet_fetch_policy.py, which sets the
+# setting explicitly.
+os.environ.setdefault("ASSET_FETCH_MIN_HOST_INTERVAL_SECONDS", "0")
 # CORS allow-list must include the TestClient host (`testserver`) so the
 # CSRF Origin middleware (SEC2-001) doesn't block every state-changing
 # request the suite makes. We force-merge `http://testserver` in even

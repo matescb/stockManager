@@ -15,6 +15,30 @@ the canonical record.
 
 ## Unreleased
 
+- **Local datasheet store** (`0079`, ADR-0033) — datasheets are now
+  downloaded into the content-addressed asset store and registered as
+  `attachments` rows (`file_type='datasheet'`), instead of being hot links
+  to a manufacturer site. **Security-relevant:** the SSRF host allow-list in
+  `domain/parts/services/assets.py` no longer applies to datasheets fetched by
+  the cron backfill — the relaxation needs an explicit `allow_any_host=True`
+  that no request handler passes, so nothing a user can trigger reaches a
+  non-allow-listed host. It was blocking essentially every real datasheet —
+  249 of 257 prod datasheet URLs live on 40+ manufacturer domains and only 7 were
+  allow-listed, so 5 PDFs had ever landed on disk. Images keep the
+  allow-list unchanged. What replaces it: the hostname is resolved **once**
+  and the request is issued against that validated IP literal (`Host:` and
+  TLS SNI/cert verification keep the real name), closing the
+  DNS-rebinding window the old resolve-then-reresolve check left open;
+  plus HTTPS-only, `follow_redirects=False`, no `user:pass@` URLs, the
+  10 MB streaming cap, magic-byte validation, PDF-only for datasheets, and
+  a per-host throttle. Read ADR-0033 before touching any of it.
+  New `part_datasheets` table carries the fetch bookkeeping (`status`,
+  `attempts`, `failure_code`) plus a `derived` JSONB slot so the planned
+  Datalab markdown/JSON conversion needs no further migration. New
+  `datasheet-backfill` job runs in a new `backend-cron-datasheets` sidecar
+  (ADR-0021) — resumable, idempotent, `DATASHEET_BACKFILL_INTERVAL_SECONDS=0`
+  disables it.
+
 - **Hierarchical part categories** (`0078`) — `part_categories.parent_id`,
   a self-referencing FK with `ON DELETE SET NULL` and a
   `part_categories_parent_workspace_check` BEFORE trigger (SQLSTATE

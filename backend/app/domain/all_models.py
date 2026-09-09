@@ -44,6 +44,7 @@ from app.domain.parts.models import (  # noqa: F401
     BulkImportIdempotency,
     Part,
     PartCadKey,
+    PartDatasheet,
     PartMetaMember,
     PartProviderLink,
     PartSubstitute,

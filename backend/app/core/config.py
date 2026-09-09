@@ -143,6 +143,29 @@ class Settings(BaseSettings):
     PRINT_HOST: str = ""
     PRINT_PORT: int = 9100
 
+    # ---- Local datasheet store (ADR-0033) --------------------------------
+    # Minimum gap, in seconds, between two outbound asset fetches aimed at
+    # the SAME hostname. The datasheet backfill sweeps a few hundred URLs
+    # concentrated on a few dozen vendor domains; without this it would
+    # issue every request for one vendor back to back. 0 disables the
+    # throttle (used by tests — never set it to 0 in prod).
+    ASSET_FETCH_MIN_HOST_INTERVAL_SECONDS: float = Field(default=2.0, ge=0)
+    # Cadence (seconds) of the backend-cron-datasheets backfill job.
+    # 0 disables the job entirely, which is how an operator turns local
+    # datasheet storage off without a redeploy of anything else.
+    DATASHEET_BACKFILL_INTERVAL_SECONDS: int = Field(default=3600, ge=0)
+    # Parts processed per backfill run. Bounded so one run always finishes
+    # far inside the sidecar's `timeout 600`: worst case is
+    # batch x (fetch timeout + host throttle).
+    DATASHEET_BACKFILL_BATCH_SIZE: int = Field(default=20, ge=1, le=200)
+    # After this many failed attempts a (part, url) pair is left alone
+    # until its URL changes — a permanently dead vendor link must not be
+    # retried forever.
+    DATASHEET_BACKFILL_MAX_ATTEMPTS: int = Field(default=5, ge=1)
+    # Cooldown before a failed (part, url) pair is retried. A vendor 404
+    # today is very likely a 404 in an hour; a day is the honest cadence.
+    DATASHEET_BACKFILL_RETRY_AFTER_SECONDS: int = Field(default=86400, ge=0)
+
     @field_validator("SENTRY_TRACES_SAMPLE_RATE", mode="before")
     @classmethod
     def _blank_sentry_traces_rate_to_none(cls, value):
@@ -153,6 +176,7 @@ class Settings(BaseSettings):
     @field_validator(
         "SESSION_PURGE_INTERVAL_SECONDS",
         "PASSWORD_RESET_PURGE_INTERVAL_SECONDS",
+        "DATASHEET_BACKFILL_INTERVAL_SECONDS",
         mode="before",
     )
     @classmethod
