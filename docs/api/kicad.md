@@ -178,9 +178,11 @@ Member layout:
 | `3dmodels/<name>` | flat; `.3dshapes` is not required |
 | `resources/spice/<name>` | SPICE decks |
 
-Archives are **byte-deterministic**: fixed member order, fixed zip timestamps, fixed create-system — so `download_sha256` is stable for identical content (`pcm.py:53-58`).
+Stored bytes ship verbatim with two exceptions, both references that can only be resolved once the install location is known. A footprint's `(model …)` paths become the installed `3dmodels/` path. A symbol's `Footprint` field is re-pointed at the packaged footprint it names: a vendor library's symbols say `NSW:USB_A_Molex`, a nickname registered on nobody's machine once the footprint ships as `PCM_SM_<slug>`, so the field becomes `PCM_SM_<slug>:USB_A_Molex`. The entry name is the match key and the original nickname is not consulted: a hosted `R_0603` also claims a `Resistor_SMD:R_0603` reference, the same name-wins rule the importer applies when wiring a part. A field naming an entry we do not host is left exactly as stored (`pcm.py::_symbol_for_package`).
 
-Build capacity is bounded by a two-slot semaphore with a 30 s wait. Exhaustion, a stored file gone missing, an unparseable stored footprint, or content over 200 MiB answer **503** `kicad.package_unavailable` — the one status other than 404 and 429 this surface emits. Reaching it needs a valid read-only token, so unlike the 404 it is not an oracle (`pcm.py:250-261`).
+Archives are **byte-deterministic**: fixed member order, fixed zip timestamps, fixed create-system — so `download_sha256` is stable for identical content (`pcm.py:53-58`). The version's major is `pcm.PACKAGE_FORMAT`, bumped whenever the build emits different bytes for unchanged content, so installed copies are offered an update after such a deploy even though no timestamp moved.
+
+Build capacity is bounded by a two-slot semaphore with a 30 s wait. Exhaustion, a stored file gone missing, an unparseable stored footprint, or content over 200 MiB answer **503** `kicad.package_unavailable` — the one status other than 404 and 429 this surface emits. Reaching it needs a valid read-only token, so unlike the 404 it is not an oracle (`pcm.py:288-299`).
 
 ## The naming contract
 

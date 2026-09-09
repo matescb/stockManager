@@ -39,6 +39,14 @@ the canonical record.
   (ADR-0021) — resumable, idempotent, `DATASHEET_BACKFILL_INTERVAL_SECONDS=0`
   disables it.
 
+- **PCM package: symbol `Footprint` fields are re-pointed at packaged
+  footprints.** Symbols imported from a vendor library kept the vendor's
+  footprint nickname (`NSW:…`), which the installed package never
+  registers, so every placed symbol reported a missing footprint. The
+  build now rewrites the field to `PCM_SM_<slug>:<entry>` when the entry
+  is a footprint the package ships; references to anything else are left
+  as stored. The package version's major is now `pcm.PACKAGE_FORMAT` (2),
+  so already-installed copies are offered the update.
 - **Hierarchical part categories** (`0078`) — `part_categories.parent_id`,
   a self-referencing FK with `ON DELETE SET NULL` and a
   `part_categories_parent_workspace_check` BEFORE trigger (SQLSTATE
