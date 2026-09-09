@@ -185,6 +185,16 @@ them, that's the bug.
   `allow_any_host` from a route, don't throttle the request path, don't
   connect by hostname, don't follow redirects. ADR-0033;
   `tests/test_datasheet_fetch_policy.py` pins all of it.
+- **Outbound asset fetches must send a User-Agent.** httpx's default
+  (`python-httpx/…`) is 403'd by Akamai-fronted vendor origins — that, not
+  the pinned IP-literal request shape, is why the first production backfill
+  stored nothing. Measured across 8 hosts: the pinned shape and a plain
+  hostname request get identical results everywhere, so the pinning is not
+  the problem and must not be "fixed". `ASSET_FETCH_USER_AGENT` defaults to
+  `Mozilla/5.0 (compatible; stockmanager-datasheet-fetcher/1.0; +<APP_BASE_URL>)`.
+  Don't default it to a fake browser string — that impersonates Chrome, and
+  it was measured to buy nothing the compatible form doesn't. ADR-0033
+  postscript.
 - **`bag_signature`** on `stock_entries` is the SHA-256 of the normalised
   raw bag code. Re-scanning a bag matches the same signature, which is
   how the inline "Found bag" UI works. If you touch

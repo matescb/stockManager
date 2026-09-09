@@ -63,6 +63,56 @@ LOCAL_ASSET_PREFIX = "/api/parts/assets/"
 STATUS_STORED = "stored"
 STATUS_FAILED = "failed"
 
+# Failure codes that say something about the HOST rather than the URL.
+# A 404 means this one document moved; a 403 or a timeout means the vendor is
+# refusing us, and every other part pointing at that vendor is going to get
+# the same answer this run.
+_HOST_LEVEL_FAILURES: frozenset[str] = frozenset(
+    {
+        "http_401",
+        "http_403",
+        "http_407",
+        "http_429",
+        "http_502",
+        "http_503",
+        "http_504",
+        "timeout",
+        "too_slow",
+        "ip_not_public",
+        "network_error",
+    }
+)
+# Consecutive host-level failures before the rest of that host's candidates
+# are left alone for the remainder of the run. Two, not one: a single 403
+# could be one bad document, two in a row is the vendor.
+_HOST_FAILURE_TRIP = 2
+
+# Failures that will never succeed for this URL no matter how often we ask.
+# A dead vendor link is not going to come back, so retrying it four more times
+# over four days is four wasted fetches and four days of it crowding out a
+# candidate that could have worked. These exhaust the attempt budget in one
+# go, which the candidate query already treats as settled — no new column, no
+# migration.
+#
+# Deliberately NOT terminal: `timeout`, `network_error`, `too_slow`,
+# `http_403`, `http_429`, `ip_not_public` and the 5xx family. Those are all
+# statements about right now — a slow origin, a WAF mood, a DNS blip — and the
+# whole point of the retry budget is to outlast them.
+_TERMINAL_FAILURES: frozenset[str] = frozenset(
+    {
+        "http_404",
+        "http_410",
+        "invalid_url",
+        "credentials_in_url",
+        "scheme_not_https",
+        "unexpected_type",
+        "magic_mismatch",
+        "too_large",
+        "local_wrong_workspace",
+        "local_path_invalid",
+    }
+)
+
 _FILENAME_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
@@ -74,6 +124,10 @@ class BackfillOutcome:
     stored: int = 0
     adopted: int = 0
     failed: int = 0
+    # Candidates left untouched because their host had already tripped the
+    # per-run failure breaker. Deliberately NOT counted as processed: nothing
+    # was attempted and no attempt counter moved.
+    skipped: int = 0
 
     @property
     def affected(self) -> int:
@@ -213,7 +267,13 @@ def _mark_stored(
 
 def _mark_failed(row: PartDatasheet, *, failure_code: str, user_id: UUID | None) -> None:
     row.status = STATUS_FAILED
-    row.attempts = (row.attempts or 0) + 1
+    if failure_code in _TERMINAL_FAILURES:
+        # Spend the whole budget at once. `_candidate_rows` already treats
+        # `attempts >= max` as settled, so this retires the row without
+        # needing a separate "terminal" column to carry the same fact.
+        row.attempts = settings().DATASHEET_BACKFILL_MAX_ATTEMPTS
+    else:
+        row.attempts = (row.attempts or 0) + 1
     row.last_attempt_at = utcnow()
     row.failure_code = failure_code
     row.updated_by = user_id
@@ -424,6 +484,13 @@ def fetch_datasheet_for_part(
     return row
 
 
+def _source_host(url: str) -> str:
+    try:
+        return (urlparse(url.strip()).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
 def _candidate_rows(db: Session, *, limit: int) -> list[tuple[UUID, UUID, str]]:
     """(workspace_id, part_id, datasheet_url) still needing local storage.
 
@@ -487,6 +554,39 @@ def _candidate_rows(db: Session, *, limit: int) -> list[tuple[UUID, UUID, str]]:
         (workspace_id, part_id, value)
         for workspace_id, part_id, value in db.execute(stmt).all()
     ]
+
+
+def _last_failure_code(
+    db: Session, *, workspace_id: UUID, part_id: UUID, source_url: str
+) -> str | None:
+    """The failure code just written for this candidate, if it failed."""
+    row = _existing_record(
+        db,
+        workspace_id=workspace_id,
+        part_id=part_id,
+        url_sha=_url_sha256(source_url),
+    )
+    return row.failure_code if row is not None else None
+
+
+def _log_host_block_audit(
+    db: Session, *, ws: Workspace, host: str, reason: str | None
+) -> None:
+    """One vendor-level audit row per blocked host per run.
+
+    The alternative — a part-level row per affected part — buries the single
+    actionable fact ("this vendor is refusing us") under dozens of identical
+    entries. Host and reason code only; no path, no query string.
+    """
+    audit_log(
+        db,
+        ws=ws,
+        user=None,
+        action="part.datasheet.host_blocked",
+        target_type="part_datasheet_host",
+        target_ids=None,
+        comment=f"host={host} reason={reason or 'unknown'}",
+    )
 
 
 _BACKFILL_LOCK_KEY = "datasheet-backfill"
@@ -572,6 +672,13 @@ def _run_backfill(db: Session, *, limit: int | None) -> int:
 
     workspace_cache: dict[UUID, Workspace | None] = {}
     part_cache: dict[tuple[UUID, UUID], Part | None] = {}
+    # Per-run, per-host failure counters. A vendor that is refusing us should
+    # cost a couple of attempts, not one attempt on every part that happens to
+    # cite it — with 28 vishay parts and a 5-attempt ceiling, a host-wide 403
+    # would otherwise retire the whole vendor in five runs, and bury the one
+    # fact worth knowing under 28 identical part-level rows.
+    host_failures: dict[str, int] = {}
+    blocked_hosts: set[str] = set()
     outcome = BackfillOutcome()
 
     for workspace_id, part_id, source_url in candidates:
@@ -600,10 +707,41 @@ def _run_backfill(db: Session, *, limit: int | None) -> int:
         # rest of the batch. Whitespace is handled where the URL is parsed
         # (`assets._build_target`, `adopt_local_datasheet`) instead.
         is_local = _is_local_asset_url(source_url)
+        host = "" if is_local else _source_host(source_url)
+
+        if host and host in blocked_hosts:
+            # Leave the row completely untouched — no attempt burned, no
+            # status change. It stays a candidate for the next run, by which
+            # time the vendor may have stopped refusing us.
+            outcome = replace(outcome, skipped=outcome.skipped + 1)
+            continue
+
         if is_local:
             row = adopt_local_datasheet(db, ws=ws, part=part, source_url=source_url)
         else:
             row = fetch_datasheet_for_part(db, ws=ws, part=part, source_url=source_url)
+
+        if host:
+            failure_code = None if row is not None else _last_failure_code(
+                db, workspace_id=workspace_id, part_id=part_id, source_url=source_url
+            )
+            if failure_code in _HOST_LEVEL_FAILURES:
+                host_failures[host] = host_failures.get(host, 0) + 1
+                if host_failures[host] >= _HOST_FAILURE_TRIP:
+                    blocked_hosts.add(host)
+                    logger.warning(
+                        "datasheet-backfill host looks blocked host=%s reason=%s "
+                        "after=%d consecutive failures; skipping its remaining "
+                        "candidates this run",
+                        host,
+                        failure_code,
+                        host_failures[host],
+                    )
+                    _log_host_block_audit(db, ws=ws, host=host, reason=failure_code)
+            else:
+                # Any non-host-level outcome (including success) clears the
+                # counter — the trip is for CONSECUTIVE failures.
+                host_failures.pop(host, None)
 
         # Commit this candidate before starting the next fetch. See the
         # public docstring: the sidecar's `timeout 600` must never be able to
@@ -622,10 +760,13 @@ def _run_backfill(db: Session, *, limit: int | None) -> int:
         )
 
     logger.info(
-        "datasheet-backfill processed=%d stored=%d adopted=%d failed=%d",
+        "datasheet-backfill processed=%d stored=%d adopted=%d failed=%d "
+        "skipped=%d blocked_hosts=%s",
         outcome.processed,
         outcome.stored,
         outcome.adopted,
         outcome.failed,
+        outcome.skipped,
+        ",".join(sorted(blocked_hosts)) or "-",
     )
     return outcome.processed

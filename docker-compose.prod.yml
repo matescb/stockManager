@@ -359,6 +359,7 @@ services:
       DATASHEET_BACKFILL_MAX_ATTEMPTS:
       DATASHEET_BACKFILL_RETRY_AFTER_SECONDS:
       ASSET_FETCH_MIN_HOST_INTERVAL_SECONDS:
+      ASSET_FETCH_USER_AGENT:
     # The ONLY cron sidecar that needs the uploads volume: it writes the
     # fetched PDFs into the same content-addressed store the backend serves
     # from ({UPLOAD_DIR}/parts/{ws}/{sha}.{ext}). backend-init has already
@@ -387,8 +388,8 @@ services:
     # container stays up and healthy with the feature switched off.
     #
     # One run processes at most DATASHEET_BACKFILL_BATCH_SIZE parts (default
-    # 12). Worst case per candidate is resolution + the 2s per-host throttle
-    # + the 30s wall-clock fetch budget, so ~444s — inside the `timeout 600`
+    # 10). Worst case per candidate is resolution + the 2s per-host throttle
+    # + the 45s wall-clock fetch budget, so ~500s — inside the `timeout 600`
     # that keeps the longest single command below stop_grace_period: 605s.
     # The job also commits per candidate, so even a `timeout` kill keeps the
     # work it finished.

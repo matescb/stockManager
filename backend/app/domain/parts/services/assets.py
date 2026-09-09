@@ -63,6 +63,13 @@ exception, the per-host throttle, called out at the end):
 - **Wall-clock budget.** httpx's `timeout` is per operation, so a host
   that dribbles a byte every 9s never trips it. `_MAX_WALL_CLOCK_SEC`
   bounds the whole fetch.
+- **A real User-Agent.** httpx's default (`python-httpx/<version>`) is
+  403'd outright by Akamai-fronted vendor origins — that is what stalled
+  the first production backfill, not the pinned request shape (measured:
+  the same pinned request is 403 with no UA and 200 application/pdf with
+  one). `ASSET_FETCH_USER_AGENT` carries the crawler-convention form
+  `Mozilla/5.0 (compatible; <name>/<version>; +<contact url>)`: honest
+  about what we are, contactable, and shaped the way WAF rules expect.
 
 The per-host throttle is the one control that is NOT applied to both
 policies. `_throttle_host` is a process-global `time.sleep`, so it belongs
@@ -99,8 +106,19 @@ log = logging.getLogger(__name__)
 # read timer forever and never trips it, so the size cap alone does not bound
 # how long a single fetch can take. `_MAX_WALL_CLOCK_SEC` is the missing
 # budget, enforced by the streaming loop.
-_TIMEOUT_SEC = 10.0
-_MAX_WALL_CLOCK_SEC = 30.0
+#
+# The two phases are timed separately. Connect is the one that should be
+# short — a vendor origin that has not completed a TCP+TLS handshake in 10s
+# is not going to serve us a PDF. Read is per chunk, and a large datasheet
+# from a slow origin legitimately pauses between chunks, so it gets more
+# room. Neither bounds the total; `_MAX_WALL_CLOCK_SEC` does.
+_CONNECT_TIMEOUT_SEC = 10.0
+_READ_TIMEOUT_SEC = 20.0
+# 45s at the 10 MB cap is a ~230 KB/s floor — slow, but a real origin serving
+# a real datasheet clears it. Raising this means lowering
+# DATASHEET_BACKFILL_BATCH_SIZE to keep a run inside the sidecar's
+# `timeout 600`.
+_MAX_WALL_CLOCK_SEC = 45.0
 _MAX_BYTES = 10 * 1024 * 1024  # 10 MB ceiling — datasheet PDFs are usually 1-3 MB
 _CHUNK_SIZE = 64 * 1024  # 64 KB — streaming read granularity for the size-cap guard
 
@@ -526,11 +544,26 @@ def _http_get(target: _FetchTarget) -> _AssetResponse:
     """
     ref = target.redacted_ref
     started_at = time.monotonic()
-    with httpx.Client(timeout=_TIMEOUT_SEC, follow_redirects=False) as client:
+    timeout = httpx.Timeout(
+        connect=_CONNECT_TIMEOUT_SEC,
+        read=_READ_TIMEOUT_SEC,
+        write=_CONNECT_TIMEOUT_SEC,
+        pool=_CONNECT_TIMEOUT_SEC,
+    )
+    with httpx.Client(timeout=timeout, follow_redirects=False) as client:
         with client.stream(
             "GET",
             target.request_url,
-            headers={"Host": target.host_header},
+            headers={
+                "Host": target.host_header,
+                # Load-bearing. Without it httpx sends
+                # `User-Agent: python-httpx/<version>` and Akamai-fronted
+                # vendor origins answer 403 — that is what stalled the first
+                # production backfill. Measured on assets.nexperia.com: this
+                # exact request is 403 with no UA and 200 application/pdf
+                # with one.
+                "User-Agent": settings().ASSET_FETCH_USER_AGENT,
+            },
             extensions={"sni_hostname": target.sni_hostname},
         ) as resp:
             headers = dict(resp.headers)

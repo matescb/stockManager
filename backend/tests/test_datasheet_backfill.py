@@ -302,7 +302,10 @@ def test_one_bad_url_does_not_stall_the_batch(db, monkeypatch):
     failed = by_part[part_bad.id]
     assert failed.status == datasheets.STATUS_FAILED
     assert failed.failure_code == "http_404"
-    assert failed.attempts == 1
+    # A 404 is terminal: the whole attempt budget is spent at once so a dead
+    # vendor link doesn't occupy a slot in four more bounded batches. See
+    # `_TERMINAL_FAILURES`.
+    assert failed.attempts == settings().DATASHEET_BACKFILL_MAX_ATTEMPTS
     assert failed.attachment_id is None
     assert failed.last_attempt_at is not None
 
@@ -321,13 +324,15 @@ def test_one_bad_url_does_not_stall_the_batch(db, monkeypatch):
 
 
 def test_failed_row_is_not_retried_inside_the_cooldown(db, monkeypatch):
+    """503, not 404: a terminal failure would make this pass for the wrong
+    reason — it is the cooldown under test, not the attempt ceiling."""
     ws, client = _new_workspace(db, "ds-cooldown@example.com")
-    url = "https://www.murata.com/docs/gone.pdf"
+    url = "https://www.murata.com/docs/flaky.pdf"
     _part_with_datasheet(db, client, ws, name="M1", url=url)
 
     calls: list[str] = []
     monkeypatch.setattr(
-        assets, "_http_get", _fake_http({url: _pdf(status_code=404, body=b"")}, calls)
+        assets, "_http_get", _fake_http({url: _pdf(status_code=503, body=b"")}, calls)
     )
 
     assert datasheets.backfill_missing_datasheets(db) == 1
@@ -364,13 +369,18 @@ def test_failed_row_is_retried_after_the_cooldown(db, monkeypatch):
 
 
 def test_exhausted_attempts_stop_the_retry_loop(db, monkeypatch):
+    """A RETRYABLE failure that keeps failing still eventually retires.
+
+    Uses 503 rather than 404 so the ceiling is what stops it, not the
+    terminal-failure shortcut.
+    """
     ws, client = _new_workspace(db, "ds-exhausted@example.com")
     url = "https://www.molex.com/docs/dead.pdf"
     _part_with_datasheet(db, client, ws, name="X1", url=url)
 
     calls: list[str] = []
     monkeypatch.setattr(
-        assets, "_http_get", _fake_http({url: _pdf(status_code=404, body=b"")}, calls)
+        assets, "_http_get", _fake_http({url: _pdf(status_code=503, body=b"")}, calls)
     )
     assert datasheets.backfill_missing_datasheets(db) == 1
 
@@ -886,3 +896,233 @@ def test_backfill_takes_and_releases_the_lock_around_a_real_run(db, monkeypatch)
 
     # ...and released on the way out, even though the run committed.
     assert _held() == 0, "the backfill leaked its advisory lock"
+
+# ---------------------------------------------------------------------------
+# Per-host failure breaker.
+# ---------------------------------------------------------------------------
+
+
+def test_a_403ing_host_does_not_burn_attempts_on_every_part(db, monkeypatch):
+    """One refusing vendor should cost a couple of attempts, not all of them.
+
+    Prod has 28 vishay parts, 21 ti, 17 we-online. With a 5-attempt ceiling
+    and no breaker, a host-wide 403 would retire an entire vendor's parts in
+    five runs and bury the one useful fact under 28 identical part-level
+    failures.
+    """
+    ws, client = _new_workspace(db, "ds-hostblock@example.com")
+    urls = [f"https://assets.nexperia.com/documents/data-sheet/N{i}.pdf" for i in range(5)]
+    for index, url in enumerate(urls):
+        _part_with_datasheet(db, client, ws, name=f"NX{index}", url=url)
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        assets,
+        "_http_get",
+        _fake_http({url: _pdf(status_code=403, body=b"") for url in urls}, calls),
+    )
+
+    processed = datasheets.backfill_missing_datasheets(db)
+
+    # Two attempts trip the breaker; the remaining three are left alone.
+    assert len(calls) == datasheets._HOST_FAILURE_TRIP, (
+        f"kept hammering a refusing host: {len(calls)} requests"
+    )
+    assert processed == datasheets._HOST_FAILURE_TRIP
+
+    records = _records(db, ws)
+    assert len(records) == datasheets._HOST_FAILURE_TRIP, (
+        "skipped candidates must not get a failure row"
+    )
+    assert all(r.failure_code == "http_403" for r in records)
+    assert all(r.attempts == 1 for r in records)
+
+
+def test_a_blocked_host_logs_one_vendor_level_audit_row(db, monkeypatch):
+    ws, client = _new_workspace(db, "ds-hostaudit@example.com")
+    urls = [f"https://assets.nexperia.com/documents/data-sheet/A{i}.pdf" for i in range(4)]
+    for index, url in enumerate(urls):
+        _part_with_datasheet(db, client, ws, name=f"AX{index}", url=url)
+
+    monkeypatch.setattr(
+        assets,
+        "_http_get",
+        _fake_http({url: _pdf(status_code=403, body=b"") for url in urls}, []),
+    )
+
+    datasheets.backfill_missing_datasheets(db)
+
+    rows = list(
+        db.execute(
+            select(AuditLog)
+            .where(AuditLog.workspace_id == ws.id)
+            .where(AuditLog.action == "part.datasheet.host_blocked")
+        ).scalars()
+    )
+    assert len(rows) == 1, "one vendor-level row, not one per affected part"
+    comment = rows[0].comment or ""
+    assert "host=assets.nexperia.com" in comment
+    assert "reason=http_403" in comment
+    assert "/documents/" not in comment
+
+
+def test_skipped_candidates_are_retried_on_the_next_run(db, monkeypatch):
+    """The breaker is per-run. A vendor that stops refusing us must recover
+    without anyone touching the database."""
+    ws, client = _new_workspace(db, "ds-hostrecover@example.com")
+    urls = [f"https://assets.nexperia.com/documents/data-sheet/R{i}.pdf" for i in range(4)]
+    for index, url in enumerate(urls):
+        _part_with_datasheet(db, client, ws, name=f"RX{index}", url=url)
+
+    monkeypatch.setattr(
+        assets,
+        "_http_get",
+        _fake_http({url: _pdf(status_code=403, body=b"") for url in urls}, []),
+    )
+    assert datasheets.backfill_missing_datasheets(db) == datasheets._HOST_FAILURE_TRIP
+
+    # Vendor relents; the two never-attempted parts are still candidates.
+    calls: list[str] = []
+    monkeypatch.setattr(
+        assets, "_http_get", _fake_http({url: _pdf() for url in urls}, calls)
+    )
+    assert datasheets.backfill_missing_datasheets(db) == 2
+    assert len(calls) == 2
+
+    stored = [r for r in _records(db, ws) if r.status == datasheets.STATUS_STORED]
+    assert len(stored) == 2
+
+
+def test_a_404_is_not_treated_as_a_host_level_failure(db, monkeypatch):
+    """One missing document says nothing about the vendor. Every part must
+    still get its own attempt."""
+    ws, client = _new_workspace(db, "ds-host404@example.com")
+    urls = [f"https://www.vishay.com/docs/{i}.pdf" for i in range(4)]
+    for index, url in enumerate(urls):
+        _part_with_datasheet(db, client, ws, name=f"V{index}", url=url)
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        assets,
+        "_http_get",
+        _fake_http({url: _pdf(status_code=404, body=b"") for url in urls}, calls),
+    )
+
+    assert datasheets.backfill_missing_datasheets(db) == 4
+    assert len(calls) == 4, "a 404 must not trip the host breaker"
+    assert len(_records(db, ws)) == 4
+
+
+def test_a_success_between_failures_clears_the_host_counter(db, monkeypatch):
+    """The trip is on CONSECUTIVE failures — a host that mostly works but has
+    one dead document must not be blocked."""
+    ws, client = _new_workspace(db, "ds-hostmixed@example.com")
+    bad_a = "https://assets.nexperia.com/documents/data-sheet/bad-a.pdf"
+    good = "https://assets.nexperia.com/documents/data-sheet/good.pdf"
+    bad_b = "https://assets.nexperia.com/documents/data-sheet/bad-b.pdf"
+    for name, url in (("MA", bad_a), ("MB", good), ("MC", bad_b)):
+        _part_with_datasheet(db, client, ws, name=name, url=url)
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        assets,
+        "_http_get",
+        _fake_http(
+            {
+                bad_a: _pdf(status_code=403, body=b""),
+                good: _pdf(),
+                bad_b: _pdf(status_code=403, body=b""),
+            },
+            calls,
+        ),
+    )
+
+    assert datasheets.backfill_missing_datasheets(db) == 3
+    assert len(calls) == 3, "the success between the 403s must reset the counter"
+
+
+# ---------------------------------------------------------------------------
+# Terminal vs retryable failures.
+# ---------------------------------------------------------------------------
+
+
+def test_a_404_retires_the_row_immediately(db, monkeypatch):
+    """A dead vendor link will never come back — don't spend five days on it.
+
+    Retrying a 404 four more times is four wasted fetches, and each one
+    crowds out a candidate from a bounded batch that could have worked.
+    """
+    ws, client = _new_workspace(db, "ds-terminal404@example.com")
+    url = "https://www.vishay.com/docs/gone-forever.pdf"
+    _part_with_datasheet(db, client, ws, name="T1", url=url)
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        assets, "_http_get", _fake_http({url: _pdf(status_code=404, body=b"")}, calls)
+    )
+
+    assert datasheets.backfill_missing_datasheets(db) == 1
+    record = _records(db, ws)[0]
+    assert record.failure_code == "http_404"
+    assert record.attempts == settings().DATASHEET_BACKFILL_MAX_ATTEMPTS, (
+        "a terminal failure must spend the whole budget at once"
+    )
+
+    # Settled: not a candidate again even long after the cooldown.
+    record.last_attempt_at = utcnow() - datasheets.timedelta(days=365)
+    db.flush()
+    assert datasheets.backfill_missing_datasheets(db) == 0
+    assert len(calls) == 1
+
+
+def test_a_timeout_stays_retryable(db, monkeypatch):
+    """A slow origin is a statement about right now, not about the URL."""
+    ws, client = _new_workspace(db, "ds-retryable@example.com")
+    url = "https://www.analog.com/media/slow.pdf"
+    _part_with_datasheet(db, client, ws, name="T2", url=url)
+
+    import httpx
+
+    def _timeout(_target):
+        raise httpx.ReadTimeout("slow vendor")
+
+    monkeypatch.setattr(assets, "_http_get", _timeout)
+
+    assert datasheets.backfill_missing_datasheets(db) == 1
+    record = _records(db, ws)[0]
+    assert record.failure_code == "timeout"
+    assert record.attempts == 1, "a transient failure must only cost one attempt"
+
+    # Still a candidate once the cooldown lapses.
+    record.last_attempt_at = utcnow() - datasheets.timedelta(
+        seconds=settings().DATASHEET_BACKFILL_RETRY_AFTER_SECONDS + 60
+    )
+    db.flush()
+    calls: list[str] = []
+    monkeypatch.setattr(assets, "_http_get", _fake_http({url: _pdf()}, calls))
+    assert datasheets.backfill_missing_datasheets(db) == 1
+    assert _records(db, ws)[0].status == datasheets.STATUS_STORED
+
+
+def test_a_403_stays_retryable_so_a_waf_mood_is_survivable(db, monkeypatch):
+    """403 is the one that motivated this whole fix: it was a missing header,
+    not a permanent refusal. It must never be classified terminal."""
+    assert "http_403" not in datasheets._TERMINAL_FAILURES
+
+    ws, client = _new_workspace(db, "ds-403retry@example.com")
+    url = "https://assets.nexperia.com/documents/data-sheet/T3.pdf"
+    _part_with_datasheet(db, client, ws, name="T3", url=url)
+    monkeypatch.setattr(
+        assets, "_http_get", _fake_http({url: _pdf(status_code=403, body=b"")}, [])
+    )
+
+    assert datasheets.backfill_missing_datasheets(db) == 1
+    assert _records(db, ws)[0].attempts == 1
+
+
+def test_terminal_and_retryable_sets_do_not_overlap():
+    """A code cannot be both — the two sets drive opposite attempt handling."""
+    assert not (datasheets._TERMINAL_FAILURES & datasheets._HOST_LEVEL_FAILURES), (
+        "a host-level failure is by definition about the host's current mood, "
+        "so it cannot also be a permanent property of the URL"
+    )
