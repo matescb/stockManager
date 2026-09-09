@@ -44,10 +44,9 @@ is the nickname phase 5 already told KiCad to expect.
 
 Everything is read from the content-addressed store in `storage.py`.
 Symbol libraries are a concatenation of stored canonical `(symbol …)`
-entries inside a `(kicad_symbol_lib …)` wrapper — no re-parse, because
-what is stored is already canonical. Footprints ARE re-parsed, for one
-reason: their stored `${STOCKMGR_3D}/<name>` model paths have to become
-the install path the PCM will actually extract to.
+entries inside a `(kicad_symbol_lib …)` wrapper; footprints are copied
+one per member. Each is re-parsed on the way for exactly one field —
+see "Two rewrites" below.
 
 Determinism
 -----------
@@ -56,6 +55,35 @@ Two builds of unchanged content produce byte-identical zips: members are
 emitted in a fixed order with a fixed timestamp and a fixed
 `create_system`. That is what makes `download_sha256` stable, and it is
 what lets the on-disk cache be content-addressed.
+
+Two rewrites on the way into the zip
+------------------------------------
+
+Stored bytes are otherwise shipped verbatim, but two references inside
+them can only be resolved once the install location is known:
+
+* A footprint's ``(model …)`` paths — ``${STOCKMGR_3D}/<name>`` becomes
+  the installed ``3dmodels/`` path (`_footprint_for_package`).
+* A symbol's ``Footprint`` field. A vendor library's symbols name the
+  VENDOR's footprint library — ``NSW:USB_A_Molex`` — and that nickname
+  is registered on nobody's machine once the footprint ships through
+  the PCM as ``PCM_SM_<slug>``. When the entry it names is a footprint
+  we ship, the field is re-pointed at that footprint's library
+  (`_symbol_for_package`), whatever library it named before — the
+  workspace's footprint is the one its parts use. A reference to an
+  entry we do not host — KiCad's own ``Resistor_SMD:R_0603``, a library
+  the user keeps by hand — is left exactly as stored, because there is
+  nothing of ours to point it at.
+
+Both rewrites are pure functions of the plan, so the cache key covers
+them through the entries it already lists. What it cannot cover is a
+change to the REWRITE ITSELF: a deploy that emits different bytes for
+the same rows moves neither the timestamps nor the fingerprint, and
+installed copies would stay stale forever. `PACKAGE_FORMAT` exists for
+that — it is folded into the fingerprint and into the version's major,
+so bumping it re-keys the cache and outranks every version the previous
+format could have produced. Bump it whenever the emitted bytes change
+for unchanged content.
 """
 from __future__ import annotations
 
@@ -167,6 +195,16 @@ KICAD_VERSION = "8.0"
 # and every later release still reads it.
 SYMBOL_LIB_FORMAT_VERSION = "20211014"
 GENERATOR = "stockmanager"
+
+# The revision of what the build emits for given content. Read the module
+# docstring ("Two rewrites …") before touching it; it is the major of
+# every version served and the reason an installed copy notices a deploy.
+#   1 — stored bytes verbatim, model paths rewritten.
+#   2 — symbol `Footprint` fields re-pointed at packaged footprints.
+PACKAGE_FORMAT = 2
+
+# The symbol property a `LibNick:Entry` footprint reference lives in.
+_FOOTPRINT_PROPERTY = "Footprint"
 
 # Refuse to build past this much source content. A build reads every
 # stored file into memory and deflates it inside a request, so the cap is
@@ -370,7 +408,7 @@ def _derive_version(latest: datetime | None) -> tuple[str, int]:
         moment = VERSION_EPOCH
     delta = moment - VERSION_EPOCH
     version = (
-        f"{1 + delta.days // _MINOR_ROLLOVER}."
+        f"{PACKAGE_FORMAT + delta.days // _MINOR_ROLLOVER}."
         f"{delta.days % _MINOR_ROLLOVER}."
         f"{delta.seconds // _VERSION_TICK_SECONDS}"
     )
@@ -633,6 +671,7 @@ def _fingerprint(
     part of this that a fingerprint cannot fix.
     """
     hasher = hashlib.sha256()
+    hasher.update(f"format {PACKAGE_FORMAT}\n".encode())
     hasher.update(f"{identifier}\n{version}\n{workspace_name}\n".encode())
     for label, entries in (("sym", symbols), ("fp", footprints), ("blob", blobs)):
         for entry in entries:
@@ -672,6 +711,56 @@ def _symbol_library(entry_bytes: list[bytes]) -> bytes:
         f"(generator {GENERATOR})\n"
     ).encode()
     return header + b"\n".join(entry_bytes) + b"\n)\n"
+
+
+def _footprint_libraries(footprints: tuple[_StoredEntry, ...]) -> dict[str, str]:
+    """Packaged footprint name → the nickname KiCad registers its library as.
+
+    Names are unique per workspace (`uq_eda_footprints_ws_name`), so this
+    is a function, not a choice.
+    """
+    return {entry.name: kicad_refs.stem_nickname(entry.stem) for entry in footprints}
+
+
+def _symbol_for_package(raw: bytes, footprint_libraries: dict[str, str]) -> bytes:
+    """Re-point a stored symbol's `Footprint` field at a packaged footprint.
+
+    The field is `LibNick:Entry`, or a bare `Entry` in a library that was
+    never tidied. Either way the ENTRY NAME is what identifies the
+    footprint; if it is one we ship, the nickname becomes that of the
+    library it ships in — otherwise the bytes go out exactly as stored.
+    A colon cannot occur in an entry name (`_UNSAFE_NAME_CHARS`, and
+    KiCad's own `LIB_ID` rules), so the entry is whatever follows the
+    last one.
+
+    The original nickname is deliberately not consulted. A workspace
+    that hosts an `R_0603` has said that is the `R_0603` its parts use,
+    and `Resistor_SMD:R_0603` in a vendor symbol is re-pointed at it —
+    the same name-wins rule `importer.wire_part` applies when it links
+    a part to an archive's footprint. A reference the workspace hosts
+    nothing for is the only kind left alone.
+
+    Only a symbol that actually changes is re-emitted. The stored form is
+    already a canonical emission, so the round-trip is byte-stable, but
+    "we didn't touch it" is a stronger guarantee than "it came out the
+    same" and costs nothing.
+    """
+    try:
+        node = sexpr.parse(raw.decode("utf-8"))
+    except (UnicodeDecodeError, sexpr.SexprError):
+        _log.error("pcm: stored symbol is not parseable")
+        _unavailable("a stored symbol could not be read")
+    current = sexpr.get_property(node, _FOOTPRINT_PROPERTY)
+    if not current:
+        return raw
+    entry = current.rpartition(":")[2]
+    nickname = footprint_libraries.get(entry)
+    if nickname is None:
+        return raw
+    target = f"{nickname}:{entry}"
+    if target == current:
+        return raw
+    return sexpr.emit(sexpr.set_property(node, _FOOTPRINT_PROPERTY, target)).encode("utf-8")
 
 
 def _footprint_for_package(identifier: str, raw: bytes) -> bytes:
@@ -720,18 +809,22 @@ def _add_member(archive: zipfile.ZipFile, member: str, data: bytes) -> None:
 
 
 def _write_symbol_library(
-    archive: zipfile.ZipFile, workspace_id: UUID, stem: str, entries: list[_StoredEntry]
+    archive: zipfile.ZipFile,
+    workspace_id: UUID,
+    stem: str,
+    entries: list[_StoredEntry],
+    footprint_libraries: dict[str, str],
 ) -> int:
     """Stream one category's symbols into a `.kicad_sym` library.
 
-    A plain concatenation of stored canonical `(symbol …)` entries inside
-    a `(kicad_symbol_lib …)` wrapper: the stored form is already the
-    canonical emission of a single entry, so there is nothing to re-parse
-    and no chance for a round-trip to change what KiCad reads.
+    A concatenation of stored canonical `(symbol …)` entries inside a
+    `(kicad_symbol_lib …)` wrapper. Each entry passes through
+    `_symbol_for_package` on the way, which returns the stored bytes
+    untouched unless its `Footprint` field names a footprint we ship.
 
     Written entry-by-entry into the open member rather than joined first,
-    so peak memory is ONE symbol rather than the whole library plus the
-    joined copy of it.
+    so peak memory is ONE symbol and its parse tree rather than the whole
+    library plus the joined copy of it.
     """
     header = (
         f"(kicad_symbol_lib (version {SYMBOL_LIB_FORMAT_VERSION}) "
@@ -748,7 +841,9 @@ def _write_symbol_library(
             if index:
                 sink.write(b"\n")
                 written += 1
-            data = _read_stored(workspace_id, entry)
+            data = _symbol_for_package(
+                _read_stored(workspace_id, entry), footprint_libraries
+            )
             sink.write(data)
             written += len(data)
         sink.write(b"\n)\n")
@@ -795,9 +890,10 @@ def write_archive(plan: Plan, sink) -> int:
 
         # `plan.symbols` is sorted by (stem, name), so consecutive runs of
         # one stem are exactly one library's contents, in a stable order.
+        footprint_libraries = _footprint_libraries(plan.footprints)
         for stem, entries in itertools.groupby(plan.symbols, key=lambda e: e.stem):
             install_size += _write_symbol_library(
-                archive, plan.workspace_id, stem, list(entries)
+                archive, plan.workspace_id, stem, list(entries), footprint_libraries
             )
 
         for entry in plan.footprints:

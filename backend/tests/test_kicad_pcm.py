@@ -68,12 +68,17 @@ def _all_paths(token: str) -> list[str]:
 # ---------------------------------------------------------------------
 
 
-def _symbol_text(name: str) -> str:
+def _symbol_text(name: str, *, footprint: str | None = None) -> str:
+    field = (
+        f'  (property "Footprint" "{footprint}" (at 0 0 0))\n'
+        if footprint is not None
+        else ""
+    )
     return (
         f'(symbol "{name}" (in_bom yes) (on_board yes)\n'
         f'  (property "Reference" "R" (at 0 0 0))\n'
         f'  (property "Value" "{name}" (at 0 0 0))\n'
-        f")\n"
+        f"{field})\n"
     )
 
 
@@ -127,8 +132,19 @@ class Tenant:
         assert r.status_code in (200, 201), r.text
         return r.json()["data"]
 
-    def symbol(self, entry: str, *, category_id: str | None = None) -> dict:
-        return self._upload("symbols", f"{entry}.kicad_sym", _symbol_text(entry), category_id)
+    def symbol(
+        self,
+        entry: str,
+        *,
+        category_id: str | None = None,
+        footprint: str | None = None,
+    ) -> dict:
+        return self._upload(
+            "symbols",
+            f"{entry}.kicad_sym",
+            _symbol_text(entry, footprint=footprint),
+            category_id,
+        )
 
     def footprint(
         self, entry: str, *, category_id: str | None = None, model: str | None = None
@@ -439,6 +455,99 @@ def test_spice_models_ship_under_resources(ws: Tenant):
     never rewritten — the simulator is the arbiter of what's in them."""
     archive = _open_zip(ws.pcm.get(_archive(ws.token)))
     assert archive.read("resources/spice/diode.lib") == _SPICE_BYTES
+
+
+def _footprint_field(tenant: Tenant, entry: str, stem: str = "SM_passives") -> str | None:
+    archive = _open_zip(tenant.pcm.get(_archive(tenant.token)))
+    text = archive.read(f"symbols/{stem}.kicad_sym").decode()
+    return sexpr.get_property(dict(sexpr.entries(text))[entry], "Footprint")
+
+
+def test_symbol_footprint_references_are_repointed_at_the_packaged_library(ws: Tenant):
+    """A vendor library's symbols name the vendor's footprint library —
+    `NSW:R_0402` — and that nickname is registered on nobody's machine
+    once the footprint ships through the PCM as `PCM_SM_passives`. Placing
+    the symbol then reports the footprint as missing, which is exactly
+    what the package exists to prevent."""
+    passives = ws.session.get("/api/categories").json()["data"][0]["id"]
+    ws.symbol("R_Vendor", category_id=passives, footprint="NSW:R_0402")
+
+    assert _footprint_field(ws, "R_Vendor") == "PCM_SM_passives:R_0402"
+
+
+def test_the_repointed_nickname_is_the_footprints_own_library(ws: Tenant):
+    """The footprint's category decides where it ships, so that — not the
+    symbol's category — is the nickname the reference has to name."""
+    passives = ws.session.get("/api/categories").json()["data"][0]["id"]
+    ws.footprint("R_0603")  # uncategorised
+    ws.symbol("R_Cross", category_id=passives, footprint="NSW:R_0603")
+
+    assert _footprint_field(ws, "R_Cross") == "PCM_SM_uncategorized:R_0603"
+
+
+def test_a_bare_footprint_name_is_qualified(ws: Tenant):
+    """`R_0402` with no library at all resolves nowhere in KiCad; if we
+    host an entry by that name, naming our library is the only reading
+    that works."""
+    passives = ws.session.get("/api/categories").json()["data"][0]["id"]
+    ws.symbol("R_Bare", category_id=passives, footprint="R_0402")
+
+    assert _footprint_field(ws, "R_Bare") == "PCM_SM_passives:R_0402"
+
+
+def test_footprint_references_we_do_not_host_are_left_alone(ws: Tenant):
+    """`Resistor_SMD:R_0603` is KiCad's own library. With no hosted
+    `R_0603` there is nothing to point at, and rewriting it would turn a
+    working reference into a broken one."""
+    passives = ws.session.get("/api/categories").json()["data"][0]["id"]
+    ws.symbol("R_Stock", category_id=passives, footprint="Resistor_SMD:R_0603")
+
+    assert _footprint_field(ws, "R_Stock") == "Resistor_SMD:R_0603"
+
+
+def test_a_hosted_footprint_wins_over_a_stock_library_of_the_same_name(ws: Tenant):
+    """The entry NAME is the match key and the original nickname is not
+    consulted — on purpose. A workspace hosting an `R_0603` has said
+    that is the `R_0603` its parts use, which is the same name-wins rule
+    the importer applies when it wires a part. This pins that the
+    previous test passes because nothing is hosted, not because stock
+    nicknames are recognised."""
+    passives = ws.session.get("/api/categories").json()["data"][0]["id"]
+    ws.footprint("R_0603", category_id=passives)
+    ws.symbol("R_Stock", category_id=passives, footprint="Resistor_SMD:R_0603")
+
+    assert _footprint_field(ws, "R_Stock") == "PCM_SM_passives:R_0603"
+
+
+def test_a_symbol_without_a_footprint_field_ships_verbatim(ws: Tenant):
+    """No field, no rewrite — and no field invented either. The stored
+    canonical bytes are what land in the library."""
+    archive = _open_zip(ws.pcm.get(_archive(ws.token)))
+    text = archive.read("symbols/SM_passives.kicad_sym").decode()
+    stored = pathlib.Path(
+        pcm.storage.path_for(
+            ws.workspace_id,
+            f"{ws.session.get('/api/eda/symbols').json()['data'][0]['sha256']}.kicad_sym",
+        )
+    ).read_text()
+
+    assert stored in text
+    assert sexpr.get_property(dict(sexpr.entries(text))["R_Generic"], "Footprint") is None
+
+
+def test_hosting_a_referenced_footprint_changes_the_archive(ws: Tenant):
+    """Uploading the footprint a symbol already names changes the
+    symbol's bytes too, so the cache key has to move with it."""
+    passives = ws.session.get("/api/categories").json()["data"][0]["id"]
+    ws.symbol("R_Late", category_id=passives, footprint="NSW:R_0805")
+    before = _archive_body(ws)
+    assert _footprint_field(ws, "R_Late") == "NSW:R_0805"
+
+    _backdate(ws)
+    ws.footprint("R_0805", category_id=passives)
+
+    assert _archive_body(ws) != before
+    assert _footprint_field(ws, "R_Late") == "PCM_SM_passives:R_0805"
 
 
 def test_kicad_setup_names_the_installed_spice_directory(ws: Tenant):
@@ -878,19 +987,42 @@ def test_derive_version_is_monotonic():
 
 
 def test_derive_version_shape_at_a_day_boundary():
-    assert pcm._derive_version(pcm.VERSION_EPOCH)[0] == "1.0.0"
+    assert pcm._derive_version(pcm.VERSION_EPOCH)[0] == "2.0.0"
     end_of_day = pcm.VERSION_EPOCH + timedelta(hours=23, minutes=59, seconds=59)
-    assert pcm._derive_version(end_of_day)[0] == "1.0.43199"
-    assert pcm._derive_version(pcm.VERSION_EPOCH + timedelta(days=1))[0] == "1.1.0"
-    assert pcm._derive_version(pcm.VERSION_EPOCH + timedelta(days=10_000))[0] == "2.0.0"
+    assert pcm._derive_version(end_of_day)[0] == "2.0.43199"
+    assert pcm._derive_version(pcm.VERSION_EPOCH + timedelta(days=1))[0] == "2.1.0"
+    assert pcm._derive_version(pcm.VERSION_EPOCH + timedelta(days=10_000))[0] == "3.0.0"
+
+
+def test_the_package_format_revision_outranks_every_earlier_version():
+    """Bumping `PACKAGE_FORMAT` is how a change to what the build EMITS
+    (not to the content it is built from) reaches installed copies: the
+    PCM compares version strings, and timestamps alone would never move
+    for a deploy. Every version under the new format has to beat every
+    version the previous format produced before the bump — which holds
+    as long as the bump ships before the day count first rolls into the
+    major (2053, see `_MINOR_ROLLOVER`)."""
+    newest_old = f"{pcm.PACKAGE_FORMAT - 1}.9999.43199"
+    oldest_new = pcm._derive_version(pcm.VERSION_EPOCH)[0]
+    assert _as_tuple(oldest_new) > _as_tuple(newest_old)
+
+
+def test_the_package_format_revision_re_keys_the_cache(monkeypatch):
+    """The constant has to be in TWO places. The version alone would make
+    the PCM download an "update" that a warm cache still serves as the
+    old format's bytes — forever, because nothing else moves the key."""
+    args = ("id", "2.0.0", "ws", [], [], [])
+    before = pcm._fingerprint(*args)
+    monkeypatch.setattr(pcm, "PACKAGE_FORMAT", pcm.PACKAGE_FORMAT + 1)
+    assert pcm._fingerprint(*args) != before
 
 
 def test_derive_version_clamps_below_the_epoch():
     """A restored backup or a skewed clock must not produce a negative
     component — the PCM's version pattern rejects the whole document."""
     stale = datetime(2020, 6, 1, tzinfo=timezone.utc)
-    assert pcm._derive_version(stale)[0] == "1.0.0"
-    assert pcm._derive_version(None)[0] == "1.0.0"
+    assert pcm._derive_version(stale)[0] == "2.0.0"
+    assert pcm._derive_version(None)[0] == "2.0.0"
 
 
 # ---------------------------------------------------------------------
