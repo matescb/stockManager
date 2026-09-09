@@ -495,7 +495,7 @@ _BACKFILL_LOCK_KEY = "datasheet-backfill"
 def _try_acquire_backfill_lock(db: Session) -> bool:
     """Take the SESSION-level advisory lock guarding the backfill.
 
-    `run_job` wraps every job in `pg_try_advisory_xact_lock`, which Postgres
+    `run_job` wraps every job in the xact-scoped advisory lock, which Postgres
     drops at the first COMMIT. This job commits per candidate on purpose, so
     it needs a lock that outlives those commits — otherwise a manual
     `python -m app.cli.run_job datasheet-backfill` could interleave with the

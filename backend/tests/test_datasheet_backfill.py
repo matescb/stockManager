@@ -24,9 +24,10 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 
+from app.core.advisory_locks import DATASHEET_BACKFILL_LOCK_CLASSID
 from app.core.config import settings
 from app.core.time import utcnow
 from app.domain.attachments.models import Attachment
@@ -818,46 +819,70 @@ def test_each_candidate_is_committed_before_the_next_fetch(db, monkeypatch):
     )
 
 
-def test_a_second_connection_cannot_run_the_backfill_concurrently(db, engine, monkeypatch):
-    """The SESSION-level lock actually excludes another connection.
+def test_backfill_is_a_no_op_while_the_lock_is_held(db, monkeypatch):
+    """A run that cannot take the lock must do nothing, not race.
 
     Committing per candidate releases `run_job`'s `pg_try_advisory_xact_lock`
     at the first commit, so without a lock of its own a manual
     `python -m app.cli.run_job datasheet-backfill` could interleave with the
-    sidecar and both would race the same candidates. Postgres advisory locks
-    are re-entrant within one session, so this has to be proved across two
-    real connections.
+    sidecar and both would work the same candidates.
+
+    Exclusion itself is between two Postgres *sessions*, and advisory locks
+    are re-entrant within one — so the DB-level contract (session-scoped
+    `pg_try_advisory_lock`, never the xact variant) is pinned at the source
+    level in `tests/test_advisory_lock_classids.py`. What is asserted here is
+    the behaviour that contract buys: a refused lock means a clean no-op.
     """
     ws, client = _new_workspace(db, "ds-lock@example.com")
     url = "https://www.molex.com/docs/lock.pdf"
     _part_with_datasheet(db, client, ws, name="LK1", url=url)
+
+    calls: list[str] = []
+    monkeypatch.setattr(assets, "_http_get", _fake_http({url: _pdf()}, calls))
+    monkeypatch.setattr(datasheets, "_try_acquire_backfill_lock", lambda _db: False)
+
+    assert datasheets.backfill_missing_datasheets(db) == 0
+    assert calls == [], "a run that lost the lock must not fetch anything"
+    assert _records(db, ws) == []
+    assert _attachments(db, ws) == []
+
+
+def test_backfill_takes_and_releases_the_lock_around_a_real_run(db, monkeypatch):
+    """The lock must not leak: a finished run leaves none held.
+
+    `pg_locks` is the honest check — re-acquiring on the same session would
+    succeed either way, because Postgres advisory locks are re-entrant per
+    session. A leaked lock would wedge every later run of the job.
+    """
+    ws, client = _new_workspace(db, "ds-lock-release@example.com")
+    url = "https://www.molex.com/docs/release.pdf"
+    _part_with_datasheet(db, client, ws, name="LK2", url=url)
     monkeypatch.setattr(assets, "_http_get", _fake_http({url: _pdf()}, []))
 
-    from sqlalchemy.orm import Session as _Session
+    def _held() -> int:
+        return db.execute(
+            text(
+                "SELECT count(*) FROM pg_locks "
+                "WHERE locktype = 'advisory' AND classid = :classid "
+                "AND pid = pg_backend_pid()"
+            ),
+            {"classid": DATASHEET_BACKFILL_LOCK_CLASSID},
+        ).scalar_one()
 
-    other_connection = engine.connect()
-    other = _Session(bind=other_connection)
-    try:
-        assert datasheets._try_acquire_backfill_lock(db) is True
-        try:
-            assert datasheets._try_acquire_backfill_lock(other) is False, (
-                "a second connection acquired the backfill lock"
-            )
-        finally:
-            datasheets._release_backfill_lock(db)
+    assert _held() == 0
 
-        # Released — the other connection can now take it.
-        assert datasheets._try_acquire_backfill_lock(other) is True
-        # ...and while it holds it, a real run is a no-op rather than a race.
-        assert datasheets.backfill_missing_datasheets(db) == 0
-        datasheets._release_backfill_lock(other)
-    finally:
-        other.close()
-        other_connection.close()
+    # Held for the duration of a run...
+    seen_during_run: list[int] = []
+    real_fetch = datasheets.fetch_datasheet_for_part
 
-    # Lock free again: the run proceeds and releases on the way out.
+    def _spy(*args, **kwargs):
+        seen_during_run.append(_held())
+        return real_fetch(*args, **kwargs)
+
+    monkeypatch.setattr(datasheets, "fetch_datasheet_for_part", _spy)
+
     assert datasheets.backfill_missing_datasheets(db) == 1
-    assert datasheets._try_acquire_backfill_lock(db) is True, (
-        "the lock must be released when the run finishes"
-    )
-    datasheets._release_backfill_lock(db)
+    assert seen_during_run == [1], "the lock must be held while the run works"
+
+    # ...and released on the way out, even though the run committed.
+    assert _held() == 0, "the backfill leaked its advisory lock"
