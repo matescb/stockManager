@@ -404,7 +404,13 @@ def _build_target(url: str, *, allow_list_required: bool) -> tuple[_FetchTarget 
 
     Returns `(target, None)` on success or `(None, failure_code)` on
     refusal. Every refusal path here happens BEFORE any socket is opened.
+
+    Surrounding whitespace is stripped here rather than by callers: the
+    datasheet backfill keys its records on the custom-field value verbatim,
+    so it must be able to hand us a padded value without normalising it
+    first (a normalised copy would never match the row it came from).
     """
+    url = (url or "").strip()
     if not url:
         return None, "invalid_url"
     try:

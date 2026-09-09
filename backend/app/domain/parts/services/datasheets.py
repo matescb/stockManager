@@ -84,7 +84,7 @@ def _url_sha256(url: str) -> str:
 
 
 def _is_local_asset_url(value: str) -> bool:
-    return value.startswith(LOCAL_ASSET_PREFIX)
+    return value.strip().startswith(LOCAL_ASSET_PREFIX)
 
 
 def datasheet_file_name(part: Part, ext: str) -> str:
@@ -285,7 +285,7 @@ def adopt_local_datasheet(
     if row.status == STATUS_STORED and row.attachment_id is not None:
         return row
 
-    remainder = source_url[len(LOCAL_ASSET_PREFIX):].split("?", 1)[0]
+    remainder = source_url.strip()[len(LOCAL_ASSET_PREFIX):].split("?", 1)[0]
     parts = remainder.split("/")
     if len(parts) != 2:
         _mark_failed(row, failure_code="local_path_invalid", user_id=user_id)
@@ -527,12 +527,18 @@ def backfill_missing_datasheets(db: Session, *, limit: int | None = None) -> int
         if part is None:
             continue
 
-        url = source_url.strip()
-        is_local = _is_local_asset_url(url)
+        # `source_url` is passed VERBATIM, never stripped. The candidate
+        # query below excludes settled rows by comparing
+        # `part_datasheets.source_url` to `custom_fields.value`, so a
+        # normalised copy would never match the row it came from and the
+        # candidate would be re-selected on every run forever, starving the
+        # rest of the batch. Whitespace is handled where the URL is parsed
+        # (`assets._build_target`, `adopt_local_datasheet`) instead.
+        is_local = _is_local_asset_url(source_url)
         if is_local:
-            row = adopt_local_datasheet(db, ws=ws, part=part, source_url=url)
+            row = adopt_local_datasheet(db, ws=ws, part=part, source_url=source_url)
         else:
-            row = fetch_datasheet_for_part(db, ws=ws, part=part, source_url=url)
+            row = fetch_datasheet_for_part(db, ws=ws, part=part, source_url=source_url)
 
         succeeded = row is not None
         outcome = replace(

@@ -670,3 +670,66 @@ def test_deleting_one_attachment_keeps_a_shared_content_addressed_file(
     response = client.delete(f"/api/attachments/{remaining[0].id}")
     assert response.status_code == 200, response.text
     assert not shared_path.exists(), "last reference should unlink the file"
+
+
+def test_padded_custom_field_value_settles_and_stops_being_a_candidate(db, monkeypatch):
+    """A `datasheet_url` with surrounding whitespace must not loop forever.
+
+    The candidate query excludes settled rows by comparing
+    `part_datasheets.source_url` to `custom_fields.value`. If the backfill
+    stored a stripped copy, the comparison would never match, the same part
+    would be re-selected on every run, and with a bounded batch it would
+    starve every other candidate. The record key is therefore the verbatim
+    field value; stripping happens where the URL is parsed.
+    """
+    ws, client = _new_workspace(db, "ds-padded@example.com")
+    padded = "  https://www.tdk.com/docs/padded.pdf\n"
+    other = "https://www.te.com/docs/other.pdf"
+    _part_with_datasheet(db, client, ws, name="W1", url=padded)
+    _part_with_datasheet(db, client, ws, name="W2", url=other)
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        assets,
+        "_http_get",
+        _fake_http(
+            {
+                "https://www.tdk.com/docs/padded.pdf": _pdf(),
+                other: _pdf(body=_OTHER_PDF_BODY),
+            },
+            calls,
+        ),
+    )
+
+    assert datasheets.backfill_missing_datasheets(db) == 2
+    assert len(calls) == 2
+
+    records = {r.source_url: r for r in _records(db, ws)}
+    assert padded in records, "the record key must be the verbatim field value"
+    assert records[padded].status == datasheets.STATUS_STORED
+
+    # The whole point: a second run finds nothing left to do.
+    assert datasheets.backfill_missing_datasheets(db) == 0
+    assert len(calls) == 2
+
+
+def test_padded_local_asset_value_is_adopted(db, monkeypatch, tmp_path):
+    ws, client = _new_workspace(db, "ds-padded-local@example.com")
+    sha = "f" * 64
+    asset_dir = tmp_path / "parts" / str(ws.id)
+    asset_dir.mkdir(parents=True)
+    (asset_dir / f"{sha}.pdf").write_bytes(_PDF_BODY)
+
+    padded_local = f"  /api/parts/assets/{ws.id}/{sha}.pdf  "
+    _part_with_datasheet(db, client, ws, name="W3", url=padded_local)
+
+    def _must_not_fetch(_target):  # pragma: no cover - must never run
+        raise AssertionError("a padded local path must still be recognised as local")
+
+    monkeypatch.setattr(assets, "_http_get", _must_not_fetch)
+
+    assert datasheets.backfill_missing_datasheets(db) == 1
+    record = _records(db, ws)[0]
+    assert record.status == datasheets.STATUS_STORED
+    assert record.content_sha256 == sha
+    assert datasheets.backfill_missing_datasheets(db) == 0
