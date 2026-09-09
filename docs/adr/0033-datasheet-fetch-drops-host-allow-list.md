@@ -248,7 +248,7 @@ SELECT failure_code, count(*)
 
 | Code | Meaning |
 | --- | --- |
-| `http_<status>` (e.g. `http_404`, `http_403`, `http_503`) | Upstream said so. 403 is usually a vendor blocking datacentre IPs. |
+| `http_<status>` (e.g. `http_404`, `http_403`, `http_503`) | Upstream said so. A 403 is often a WAF reacting to the request, not a permanent refusal — see the postscript. 404/410 are terminal; the rest are retried. |
 | `redirect_refused` | Upstream 30x'd. We never follow one — see above. |
 | `scheme_not_https` | The stored URL is plain `http://`. The unrestricted path is HTTPS-only, so these need the URL corrected upstream (or a product decision to allow them). |
 | `ip_not_public` | The hostname did not resolve, or resolved to a non-public address. |
@@ -256,13 +256,97 @@ SELECT failure_code, count(*)
 | `unexpected_type` | 200, but the body is not a PDF — usually an HTML landing page. |
 | `magic_mismatch` | Declared a type the leading bytes contradict. |
 | `too_large` | Over the 10 MB cap. |
-| `timeout`, `network_error` | Transient; retried after the cooldown. |
+| `timeout`, `network_error` | Transient; retried after the cooldown. A host that times out under every UA and shape (measured: st.com, analog.com) is blocking datacentre egress — not fixable client-side. |
 | `too_slow` | The fetch ran past the 30s wall-clock budget — typically a host dribbling bytes just fast enough to keep httpx's read timer alive. |
 | `local_wrong_workspace`, `local_file_missing`, `local_path_invalid` | The stored value is an `/api/parts/assets/...` path that does not resolve inside this workspace. |
 
 `failure_code` plus `attempts` and `last_attempt_at` is also how you tell a
 transient failure from a settled one: once `attempts` reaches
 `DATASHEET_BACKFILL_MAX_ATTEMPTS` the pair is left alone until its URL changes.
+
+## Postscript: the first backfill stored nothing, and why
+
+The feature shipped and localised zero of the 249 external datasheets. Live
+failure codes after the first runs: `http_403` x3 (all `assets.nexperia.com`)
+and `timeout` x1 (`www.analog.com`).
+
+The natural suspicion was that the **pinned IP-literal request shape** —
+`GET https://<ip>/path` with a `Host:` header — reads as scanner traffic to a
+CDN WAF, i.e. that the control closing DNS rebinding was also breaking the
+feature. It was worth taking seriously, because if true it would have been a
+genuine security-vs-function tension.
+
+**It was measured, and it was not the shape.** Across 8 vendor hosts, the
+pinned request and a plain hostname request got byte-identical results —
+same status, same content type — including on Akamai-fronted `www.ti.com`
+(200 application/pdf) and `assets.nexperia.com`:
+
+| host | ip-literal, no UA | hostname, no UA | ip-literal + UA | hostname + UA |
+| --- | --- | --- | --- | --- |
+| assets.nexperia.com | 403 | 403 | 200 pdf | 200 pdf |
+| www.ti.com | 200 pdf | 200 pdf | 200 pdf | 200 pdf |
+| www.we-online.com | 200 pdf | 200 pdf | 200 pdf | 200 pdf |
+| www.st.com | timeout | timeout | timeout | timeout |
+| www.analog.com | timeout | timeout | timeout | timeout |
+
+The discriminator is the **User-Agent**. httpx defaults to
+`python-httpx/<version>`, which Akamai-fronted origins refuse outright. On a
+real Nexperia datasheet, the identical pinned request is `403 text/html` with
+no UA and `200 application/pdf, 338688 bytes, %PDF-1.4` with one.
+
+So the pinning stays exactly as it is; no transport or resolver rewrite was
+needed. `ASSET_FETCH_USER_AGENT` now carries
+`Mozilla/5.0 (compatible; stockmanager-datasheet-fetcher/1.0; +<APP_BASE_URL>)`
+— the convention legitimate crawlers use: honest about what we are,
+contactable, and shaped the way WAF rules key on. A **fake browser UA is
+deliberately not the default.** It was measured too: it only helps
+`www.mouser.com`, which reaches us through the allow-listed provider API
+anyway, and impersonating Chrome to get past a WAF is not a thing this
+codebase should do quietly.
+
+`www.st.com` and `www.analog.com` time out regardless of UA, shape, or a 60s
+budget — including a plain browser-UA hostname request. That is the
+"vendor blocks datacentre egress" case this ADR already anticipated, not
+something a client-side change fixes. Those settle as `timeout` and retire
+after `DATASHEET_BACKFILL_MAX_ATTEMPTS`.
+
+Two consequences of the investigation, both in `tests/`:
+
+- `test_the_request_shape_is_ip_literal_plus_host_and_sni` pins the wire
+  shape, so a future change to how pinning is implemented is a deliberate
+  decision rather than a drift.
+- A per-run, per-host failure breaker: two consecutive host-level failures
+  (403/429/5xx/timeout, **not** 404) stop the run touching that vendor's
+  remaining candidates, and write one `part.datasheet.host_blocked` audit row
+  instead of one failure row per part. Without it, prod's 28 vishay or 21 ti
+  parts would burn their whole 5-attempt budget on a single vendor-wide
+  refusal and bury the one actionable fact under 28 identical rows.
+
+### Terminal vs retryable failures
+
+`_TERMINAL_FAILURES` (404, 410, invalid/credentialed URL, non-HTTPS,
+`unexpected_type`, `magic_mismatch`, `too_large`, and the bad-local-path
+codes) spend the whole attempt budget in one go, because none of them can
+come out differently next time. A dead vendor link retried four more times is
+four wasted fetches, and each one occupies a slot in a bounded batch that a
+workable candidate could have used. It reuses the existing
+`attempts >= max` settled predicate rather than adding a "terminal" column.
+
+`http_403`, `http_429`, the 5xx family, `timeout`, `too_slow`, `network_error`
+and `ip_not_public` stay retryable — every one of them is a statement about
+right now, and the 403 in particular turned out to be a missing header rather
+than a refusal, which is exactly why it must not be terminal.
+
+### `redirect_refused` costs real coverage — tracked in #918
+
+`follow_redirects=False` is doing its job, and vendors redirect datasheet URLs
+constantly (canonical → CDN, http → https, regional edges), so this shows up
+as a real failure code in prod. The fix is **not** `follow_redirects=True` —
+that hands destination choice to an attacker-controlled `Location` header.
+It is to follow redirects manually, re-running the full resolution and
+validation on every hop, with a capped chain and loop detection. That is a
+new state machine touching this ADR's security model, so it is its own change:
+issue #918.
 
 ## Known limitations
 

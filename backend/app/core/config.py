@@ -156,17 +156,32 @@ class Settings(BaseSettings):
     #
     # 0 disables the throttle (used by tests — never set it to 0 in prod).
     ASSET_FETCH_MIN_HOST_INTERVAL_SECONDS: float = Field(default=2.0, ge=0)
+    # User-Agent for outbound asset fetches. Empty means "derive one from
+    # APP_BASE_URL" (see the validator below) — an operator only sets this to
+    # override the default.
+    #
+    # Sending NO User-Agent is what broke the first production backfill:
+    # httpx identifies as `python-httpx/<version>`, and Akamai-fronted vendor
+    # origins answer that with 403. Measured on assets.nexperia.com: the exact
+    # same pinned request returns 403 with no UA and 200 application/pdf with
+    # one. The default follows the crawler convention
+    # `Mozilla/5.0 (compatible; <name>/<version>; +<contact url>)` — honest
+    # about what we are, contactable, and shaped the way WAF rulesets expect.
+    # Do not put a fake browser UA here: it misrepresents the client, and the
+    # measurements showed it buys nothing the compatible form doesn't.
+    ASSET_FETCH_USER_AGENT: str = ""
+    # Parts processed per backfill run.
     # Cadence (seconds) of the backend-cron-datasheets backfill job.
     # 0 disables the job entirely, which is how an operator turns local
     # datasheet storage off without a redeploy of anything else.
     DATASHEET_BACKFILL_INTERVAL_SECONDS: int = Field(default=3600, ge=0)
-    # Parts processed per backfill run. Bounded so one run always finishes
-    # inside the sidecar's `timeout 600`. Worst case per candidate is
-    # resolution + the 2s host throttle + the 30s wall-clock fetch budget
-    # (`assets._MAX_WALL_CLOCK_SEC`), call it ~37s; 12 x 37 = 444s.
-    # Raising this past ~15 means a run can be killed mid-sweep — survivable
-    # since the job commits per candidate, but it wastes the killed fetch.
-    DATASHEET_BACKFILL_BATCH_SIZE: int = Field(default=12, ge=1, le=200)
+    # Bounded so one run always finishes inside the sidecar's `timeout 600`.
+    # Worst case per candidate is resolution + the 2s host throttle + the 45s
+    # wall-clock fetch budget (`assets._MAX_WALL_CLOCK_SEC`), call it ~50s;
+    # 10 x 50 = 500s. Raising this means a run can be killed mid-sweep —
+    # survivable since the job commits per candidate, but it wastes the
+    # in-flight fetch.
+    DATASHEET_BACKFILL_BATCH_SIZE: int = Field(default=10, ge=1, le=200)
     # After this many failed attempts a (part, url) pair is left alone
     # until its URL changes — a permanently dead vendor link must not be
     # retried forever.
@@ -193,6 +208,21 @@ class Settings(BaseSettings):
         if value == "":
             return cls.model_fields[info.field_name].default
         return value
+
+    @model_validator(mode="after")
+    def _default_asset_user_agent(self) -> "Settings":
+        """Derive the outbound User-Agent from APP_BASE_URL when unset.
+
+        Keeping the contact URL tied to APP_BASE_URL means the UA stays
+        truthful across deployments without anyone remembering to update a
+        second setting.
+        """
+        if not self.ASSET_FETCH_USER_AGENT:
+            self.ASSET_FETCH_USER_AGENT = (
+                "Mozilla/5.0 (compatible; stockmanager-datasheet-fetcher/1.0; "
+                f"+{self.APP_BASE_URL})"
+            )
+        return self
 
     @field_validator("EXTRA_WEAK_PASSWORDS", mode="before")
     @classmethod

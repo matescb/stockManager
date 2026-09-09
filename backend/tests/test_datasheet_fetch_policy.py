@@ -782,3 +782,126 @@ def test_fast_response_is_not_penalised_by_the_budget(monkeypatch):
 
     assert result.failure_code is None
     assert result.stored is not None
+
+# ---------------------------------------------------------------------------
+# User-Agent.
+#
+# The first production backfill stored nothing: every assets.nexperia.com URL
+# came back 403. Measured against the live host, the same pinned request is
+# 403 with no UA and 200 application/pdf with one — httpx's default
+# `python-httpx/<version>` is what Akamai-fronted origins refuse. These tests
+# pin the header so that never silently regresses.
+# ---------------------------------------------------------------------------
+
+
+def test_a_user_agent_is_sent_on_every_fetch(monkeypatch):
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver(_PUBLIC_IP))
+    mock_client = _capture_httpx_stream()
+
+    with patch(
+        "app.domain.parts.services.assets.httpx.Client", return_value=mock_client
+    ):
+        assert _fetch(_VENDOR_URL).stored is not None
+
+    _method_url, kwargs = mock_client.stream.call_args
+    ua = kwargs["headers"].get("User-Agent")
+    assert ua, "no User-Agent sent — vendor CDNs 403 httpx's default"
+    assert "httpx" not in ua.lower()
+    assert "python-requests" not in ua.lower()
+
+
+def test_the_default_user_agent_identifies_us_and_is_contactable(monkeypatch):
+    """Crawler convention: `Mozilla/5.0 (compatible; <name>/<ver>; +<url>)`.
+
+    Honest about what we are and how to reach us, while still parsing as a
+    browser-family UA — which is what the WAF rules actually key on. It must
+    NOT be a fake browser string: that misrepresents the client, and the
+    measurements showed it buys nothing this form doesn't.
+    """
+    ua = settings().ASSET_FETCH_USER_AGENT
+
+    assert ua.startswith("Mozilla/5.0 (compatible;")
+    assert "stockmanager-datasheet-fetcher" in ua
+    assert "+" in ua, "the contact URL marker is part of the convention"
+    # A verbatim browser UA claims to be Chrome/Safari/Firefox. Ours doesn't.
+    for impersonation in ("Chrome/", "Safari/", "Firefox/", "Edg/"):
+        assert impersonation not in ua, f"default UA impersonates a browser: {ua}"
+
+
+def test_the_user_agent_is_configurable(monkeypatch):
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver(_PUBLIC_IP))
+    monkeypatch.setattr(
+        settings(), "ASSET_FETCH_USER_AGENT", "custom-fetcher/9.9", raising=False
+    )
+    mock_client = _capture_httpx_stream()
+
+    with patch(
+        "app.domain.parts.services.assets.httpx.Client", return_value=mock_client
+    ):
+        _fetch(_VENDOR_URL)
+
+    _method_url, kwargs = mock_client.stream.call_args
+    assert kwargs["headers"]["User-Agent"] == "custom-fetcher/9.9"
+
+
+def test_the_user_agent_is_sent_on_the_allow_listed_path_too(monkeypatch):
+    """A UA is simply correct for any outbound request, not a datasheet hack."""
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver(_PUBLIC_IP))
+    mock_client = _capture_httpx_stream()
+
+    with patch(
+        "app.domain.parts.services.assets.httpx.Client", return_value=mock_client
+    ):
+        assets.fetch_provider_asset(
+            "https://media.digikey.com/photos/a.png", _ws(), "image"
+        )
+
+    _method_url, kwargs = mock_client.stream.call_args
+    assert kwargs["headers"]["User-Agent"] == settings().ASSET_FETCH_USER_AGENT
+
+
+def test_the_request_shape_is_ip_literal_plus_host_and_sni(monkeypatch):
+    """Pin the full wire shape we settled on after the 403 investigation.
+
+    Measured across 8 vendor hosts: this shape is byte-for-byte as acceptable
+    to CDNs as a plain hostname request (identical status codes on every host,
+    including Akamai-fronted ti.com and nexperia). The 403s were the missing
+    User-Agent, NOT the IP literal — so the pinning that closes DNS rebinding
+    stays exactly as it is. If a future change moves pinning down to a
+    transport/resolver hook, this test is the thing to update deliberately.
+    """
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver(_PUBLIC_IP))
+    mock_client = _capture_httpx_stream()
+
+    with patch(
+        "app.domain.parts.services.assets.httpx.Client", return_value=mock_client
+    ):
+        _fetch("https://assets.nexperia.com/documents/data-sheet/BC847.pdf")
+
+    (method, request_url), kwargs = mock_client.stream.call_args
+    assert method == "GET"
+    # authority is the validated literal...
+    assert request_url == f"https://{_PUBLIC_IP}/documents/data-sheet/BC847.pdf"
+    # ...while the name survives in both places a server looks for it.
+    assert kwargs["headers"]["Host"] == "assets.nexperia.com"
+    assert kwargs["extensions"]["sni_hostname"] == "assets.nexperia.com"
+    assert kwargs["headers"]["User-Agent"] == settings().ASSET_FETCH_USER_AGENT
+
+
+def test_connect_and_read_timeouts_are_separate(monkeypatch):
+    """A large PDF from a slow origin pauses between chunks; a dead origin
+    never completes a handshake. Those want different budgets, and neither is
+    the total — `_MAX_WALL_CLOCK_SEC` is."""
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver(_PUBLIC_IP))
+    mock_client = _capture_httpx_stream()
+
+    with patch(
+        "app.domain.parts.services.assets.httpx.Client", return_value=mock_client
+    ) as client_cls:
+        _fetch(_VENDOR_URL)
+
+    timeout = client_cls.call_args.kwargs["timeout"]
+    assert timeout.connect == assets._CONNECT_TIMEOUT_SEC
+    assert timeout.read == assets._READ_TIMEOUT_SEC
+    assert timeout.read > timeout.connect
+    assert assets._MAX_WALL_CLOCK_SEC > timeout.read
