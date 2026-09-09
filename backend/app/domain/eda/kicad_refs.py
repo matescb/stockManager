@@ -115,6 +115,7 @@ __all__ = [
     "MODEL_PATH_VAR",
     "SPICE_PATH_VAR",
     "package_stem",
+    "stem_nickname",
     "library_nickname",
     "symbol_lib_nickname",
     "footprint_lib_nickname",
@@ -171,6 +172,15 @@ def package_stem(category_slug: str | None) -> str:
     return f"{LIBRARY_PREFIX}{category_slug or UNCATEGORIZED_SLUG}"
 
 
+def stem_nickname(stem: str) -> str:
+    """``PCM_<stem>`` — the nickname the PCM registers a file stem under.
+
+    For a packager that already holds the stem (`pcm.py` files entries by
+    stem) and must name the library KiCad will have registered it as.
+    """
+    return f"{PCM_NICKNAME_PREFIX}{stem}"
+
+
 def library_nickname(category_slug: str | None) -> str:
     """``PCM_SM_<slug>`` — the nickname the PCM will register the stem under.
 
@@ -178,7 +188,7 @@ def library_nickname(category_slug: str | None) -> str:
     symbol and the footprint library of a category — see the module
     docstring for why the prefix is not optional.
     """
-    return f"{PCM_NICKNAME_PREFIX}{package_stem(category_slug)}"
+    return stem_nickname(package_stem(category_slug))
 
 
 # Spelled out at the call site so phase 6's library generation reads as
