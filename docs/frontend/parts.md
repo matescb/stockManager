@@ -54,6 +54,40 @@ Three rules the implementation depends on:
 Arrow Up/Down moves row focus. It is opt-in: a table that does not pass it keeps
 the arrow-key behaviour it always had.
 
+## Parts List Columns
+
+The column set lives in `web/src/routes/parts/partsColumns.tsx`, not inline in
+`PartsList.tsx` — eighteen columns is data, and splitting them out makes each
+accessor unit-testable without mounting the route
+(`__tests__/partsColumns.test.tsx`).
+
+- **New columns ship `hidden: true`.** The ask was "more columns I *can*
+  pick", not a wider default table. `DataTable`'s `initialHiddenFor` merges the
+  persisted per-workspace map *over* the declared defaults, so a user who has
+  explicitly toggled a column keeps their choice and everyone else keeps the
+  seven-column table. The columns that were already visible stay visible;
+  `__dom__/PartsList.columns.dom.test.tsx` asserts the exact default header row
+  so hiding one of them can't pass as "shipping a new one hidden".
+- **The Category column resolves the name client-side.** Rows carry only
+  `category_id`; `PartsList` already fetches the whole category list for the
+  rail (`useCategories({ includeArchived: true })`), so the column joins against
+  that instead of asking the server for a name it would have to look up per row.
+  It renders the full path (`Passives / Resistors`) because two branches may
+  hold same-named leaves.
+- **Dates use `formatDate` as the *accessor*.** `YYYY-MM-DD` sorts
+  lexicographically in chronological order and CSV then matches the screen; a
+  locale `MM/DD/YYYY` accessor would sort by month. The full timestamp rides
+  along in a `title`.
+- **Quantities go through `quantityColumn`.** It keeps a numeric `accessor`
+  (so 10 sorts after 9) and a formatted `render`. A `render` with no `accessor`
+  exports an *empty* CSV cell, which is why every column but the thumbnail
+  declares one.
+- **Distributors** renders one link per `provider_links` row, using the link's
+  `source_url` and `isSafeHttpOrSameOriginUrl` — a non-http URL renders as plain
+  text, never as an anchor. The anchors `stopPropagation` so following one does
+  not also select the row. The server sends `provider_links` on list rows in one
+  batched query per page; see [Parts API](../api/parts.md#get-apiparts).
+
 Source: `web/src/routes/parts/preview/`,
 `web/src/routes/parts/__dom__/PartsList.preview.dom.test.tsx`.
 
