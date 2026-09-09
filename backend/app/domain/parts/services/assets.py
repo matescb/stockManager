@@ -26,7 +26,8 @@ made to block the single uvicorn worker (ADR-0012) on an arbitrary vendor.
 ADR-0033 records the decision and the compensating controls; this docstring
 is the short form.
 
-Everything else is unchanged and applies to BOTH policies:
+Everything else is unchanged and applies to BOTH policies (with one
+exception, the per-host throttle, called out at the end):
 
 - **Pinned resolution.** `_resolve_pinned_ip` resolves the hostname ONCE
   via `getaddrinfo`, rejects the host if *any* returned address is not
@@ -59,10 +60,17 @@ Everything else is unchanged and applies to BOTH policies:
   that masquerades as an innocuous image or PDF.
 - **No credentials in the URL.** A `user:pass@host` URL is refused
   outright rather than silently forwarded to an arbitrary host.
-- **Per-host throttle.** A backfill sweeping 250 datasheets must not
-  hammer one vendor; `_throttle_host` enforces a minimum gap between
-  requests to the same hostname
-  (`ASSET_FETCH_MIN_HOST_INTERVAL_SECONDS`).
+- **Wall-clock budget.** httpx's `timeout` is per operation, so a host
+  that dribbles a byte every 9s never trips it. `_MAX_WALL_CLOCK_SEC`
+  bounds the whole fetch.
+
+The per-host throttle is the one control that is NOT applied to both
+policies. `_throttle_host` is a process-global `time.sleep`, so it belongs
+only on the unrestricted path, which runs offline in the cron sidecar. The
+allow-listed callers are request handlers — bulk-import-from-scan fetches
+up to 50 images from one provider CDN inside a single 60s request, and
+refresh-from-provider is a sync route on a single uvicorn worker — and a 2s
+gap per fetch would take both out.
 
 Log lines carry a redacted reference (`scheme://host/path`) — never the
 query string, which is where a signed-URL token or credential would live.
@@ -86,7 +94,13 @@ from app.core.config import settings
 log = logging.getLogger(__name__)
 
 
+# httpx's `timeout` is PER OPERATION (connect, then each read), not a budget
+# for the whole request. A host that dribbles one chunk every 9s resets the
+# read timer forever and never trips it, so the size cap alone does not bound
+# how long a single fetch can take. `_MAX_WALL_CLOCK_SEC` is the missing
+# budget, enforced by the streaming loop.
 _TIMEOUT_SEC = 10.0
+_MAX_WALL_CLOCK_SEC = 30.0
 _MAX_BYTES = 10 * 1024 * 1024  # 10 MB ceiling — datasheet PDFs are usually 1-3 MB
 _CHUNK_SIZE = 64 * 1024  # 64 KB — streaming read granularity for the size-cap guard
 
@@ -97,6 +111,14 @@ _CHUNK_SIZE = 64 * 1024  # 64 KB — streaming read granularity for the size-cap
 _UNRESTRICTED_KINDS: frozenset[str] = frozenset({"datasheet"})
 
 _DEFAULT_PORT_BY_SCHEME: dict[str, int] = {"http": 80, "https": 443}
+
+
+class _WallClockExceeded(Exception):
+    """One fetch ran past `_MAX_WALL_CLOCK_SEC`.
+
+    Distinct from `httpx.TimeoutException`: that fires when a single socket
+    operation stalls, which a slow-dribble server never triggers.
+    """
 
 
 @dataclass
@@ -503,6 +525,7 @@ def _http_get(target: _FetchTarget) -> _AssetResponse:
     other refusal.
     """
     ref = target.redacted_ref
+    started_at = time.monotonic()
     with httpx.Client(timeout=_TIMEOUT_SEC, follow_redirects=False) as client:
         with client.stream(
             "GET",
@@ -534,6 +557,11 @@ def _http_get(target: _FetchTarget) -> _AssetResponse:
             chunks: list[bytes] = []
             total = 0
             for chunk in resp.iter_bytes(chunk_size=_CHUNK_SIZE):
+                # Wall-clock budget. Checked per chunk because that is the
+                # only place a slow-dribble server gives us control back —
+                # its per-read timer is reset by every byte it sends.
+                if (time.monotonic() - started_at) > _MAX_WALL_CLOCK_SEC:
+                    raise _WallClockExceeded(ref)
                 total += len(chunk)
                 if total > _MAX_BYTES:
                     log.warning(
@@ -600,10 +628,22 @@ def fetch_asset(
     if target is None:
         return AssetFetchResult(failure_code=failure)
 
-    _throttle_host(target.sni_hostname)
+    # Throttle ONLY on the relaxed path. `_throttle_host` is a process-global
+    # `time.sleep` keyed on hostname, and the allow-listed callers run inside
+    # request handlers: bulk-import-from-scan pulls up to 50 images from the
+    # SAME provider CDN host inside one request with a 60s deadline, and
+    # refresh-from-provider is a sync route on a single uvicorn worker whose
+    # thread pool would fill with sleepers. Serialising either at 2s a piece
+    # is a self-inflicted outage. The backfill is the only caller that both
+    # needs the courtesy gap and can afford to wait for it.
+    if unrestricted:
+        _throttle_host(target.sni_hostname)
 
     try:
         resp = _http_get(target)
+    except _WallClockExceeded:
+        log.warning("remote asset rejected: wall-clock budget exceeded (%s)", target.redacted_ref)
+        return AssetFetchResult(failure_code="too_slow")
     except httpx.TimeoutException:
         return AssetFetchResult(failure_code="timeout")
     except Exception:

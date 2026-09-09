@@ -41,9 +41,10 @@ from datetime import timedelta
 from urllib.parse import urlparse
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from app.core.advisory_locks import DATASHEET_BACKFILL_LOCK_CLASSID
 from app.core.config import settings
 from app.core.time import utcnow
 from app.domain.attachments.models import Attachment
@@ -447,7 +448,18 @@ def _candidate_rows(db: Session, *, limit: int) -> list[tuple[UUID, UUID, str]]:
         .where(PartDatasheet.source_url == CustomField.value)
         .where(PartDatasheet.archived_at.is_(None))
         .where(
-            (PartDatasheet.status == STATUS_STORED)
+            # `attachment_id IS NOT NULL` is load-bearing. Deleting the
+            # attachment unlinks the file but leaves this row `stored`
+            # (`ON DELETE SET NULL`), so without this clause a routine
+            # attachment delete would permanently exclude the part from the
+            # sweep and the datasheet would be gone with nothing to notice
+            # it. A freshly-orphaned row is still held off by the
+            # `last_attempt_at` cooldown below, so it re-fetches on the next
+            # cycle rather than immediately.
+            (
+                (PartDatasheet.status == STATUS_STORED)
+                & PartDatasheet.attachment_id.is_not(None)
+            )
             | (PartDatasheet.attempts >= max_attempts)
             | (PartDatasheet.last_attempt_at > retry_cutoff)
         )
@@ -477,6 +489,40 @@ def _candidate_rows(db: Session, *, limit: int) -> list[tuple[UUID, UUID, str]]:
     ]
 
 
+_BACKFILL_LOCK_KEY = "datasheet-backfill"
+
+
+def _try_acquire_backfill_lock(db: Session) -> bool:
+    """Take the SESSION-level advisory lock guarding the backfill.
+
+    `run_job` wraps every job in `pg_try_advisory_xact_lock`, which Postgres
+    drops at the first COMMIT. This job commits per candidate on purpose, so
+    it needs a lock that outlives those commits — otherwise a manual
+    `python -m app.cli.run_job datasheet-backfill` could interleave with the
+    sidecar's run and two workers would race the same candidates.
+    """
+    result = db.execute(
+        text(
+            "SELECT pg_try_advisory_lock("
+            "CAST(:classid AS int4), CAST(hashtext(:key) AS int4)"
+            ")"
+        ),
+        {"classid": DATASHEET_BACKFILL_LOCK_CLASSID, "key": _BACKFILL_LOCK_KEY},
+    )
+    return bool(result.scalar())
+
+
+def _release_backfill_lock(db: Session) -> None:
+    db.execute(
+        text(
+            "SELECT pg_advisory_unlock("
+            "CAST(:classid AS int4), CAST(hashtext(:key) AS int4)"
+            ")"
+        ),
+        {"classid": DATASHEET_BACKFILL_LOCK_CLASSID, "key": _BACKFILL_LOCK_KEY},
+    )
+
+
 def backfill_missing_datasheets(db: Session, *, limit: int | None = None) -> int:
     """Fetch (or adopt) datasheets for parts that don't have one locally.
 
@@ -490,6 +536,13 @@ def backfill_missing_datasheets(db: Session, *, limit: int | None = None) -> int
       of re-attempting the same dead link.
     * One bad URL cannot stall the batch: every per-candidate failure is
       confined to that candidate.
+    * **Each candidate is committed before the next one starts.** The
+      sidecar caps a run with `timeout 600`; under one big transaction a
+      kill would roll back every `attempts` increment made in that run, so
+      the deterministic candidate ordering would hand back the exact same
+      URL first on the next run — a backfill that logs `exit=124` hourly
+      and never advances. Committing per candidate means a killed run keeps
+      everything it finished.
 
     Workspace isolation: candidates carry their own `workspace_id` and every
     lookup and write below is filtered by it.
@@ -500,6 +553,18 @@ def backfill_missing_datasheets(db: Session, *, limit: int | None = None) -> int
         # harmless no-op so the sidecar loop and heartbeat stay healthy.
         return 0
 
+    if not _try_acquire_backfill_lock(db):
+        logger.info("datasheet-backfill skipped: another run holds the lock")
+        return 0
+
+    try:
+        return _run_backfill(db, limit=limit)
+    finally:
+        _release_backfill_lock(db)
+
+
+def _run_backfill(db: Session, *, limit: int | None) -> int:
+    config = settings()
     batch = limit if limit is not None else config.DATASHEET_BACKFILL_BATCH_SIZE
     candidates = _candidate_rows(db, limit=batch)
     if not candidates:
@@ -539,6 +604,13 @@ def backfill_missing_datasheets(db: Session, *, limit: int | None = None) -> int
             row = adopt_local_datasheet(db, ws=ws, part=part, source_url=source_url)
         else:
             row = fetch_datasheet_for_part(db, ws=ws, part=part, source_url=source_url)
+
+        # Commit this candidate before starting the next fetch. See the
+        # public docstring: the sidecar's `timeout 600` must never be able to
+        # roll back attempt counters, or the sweep re-selects the same URL
+        # forever. `SessionLocal` sets expire_on_commit=False, so the cached
+        # Workspace/Part objects stay usable across the commit.
+        db.commit()
 
         succeeded = row is not None
         outcome = replace(

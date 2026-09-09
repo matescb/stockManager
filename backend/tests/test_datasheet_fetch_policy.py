@@ -631,3 +631,154 @@ def test_opt_in_does_not_relax_non_datasheet_kinds(monkeypatch):
 
     assert result.stored is None
     assert result.failure_code == "host_not_allowed"
+
+
+# ---------------------------------------------------------------------------
+# Throttle scoping.
+#
+# `tests/conftest.py` pins ASSET_FETCH_MIN_HOST_INTERVAL_SECONDS to 0 for the
+# whole suite, which is exactly why an unconditional throttle went unnoticed
+# in review. Every test below sets a NON-ZERO interval and asserts on real
+# sleep calls, so a regression cannot hide behind the suite-wide default.
+# ---------------------------------------------------------------------------
+
+
+def _record_sleeps(monkeypatch, interval: float = 5.0) -> list[float]:
+    """Arm a non-zero throttle and capture what it would sleep."""
+    monkeypatch.setattr(
+        settings(), "ASSET_FETCH_MIN_HOST_INTERVAL_SECONDS", interval, raising=False
+    )
+    slept: list[float] = []
+    clock = {"now": 1000.0}
+
+    def _sleep(seconds: float) -> None:
+        slept.append(seconds)
+        clock["now"] += seconds
+
+    monkeypatch.setattr(assets.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(assets.time, "sleep", _sleep)
+    return slept
+
+
+def test_request_path_is_never_throttled(monkeypatch):
+    """The allow-listed path must not sleep, however many fetches it makes.
+
+    `POST /api/parts/bulk-import-from-scan` pulls an image per row — up to 50
+    rows, all from the SAME provider CDN host — inside one request with a 60s
+    deadline, via `provider_import.py`. A 2s gap per fetch would serialise
+    that into a deadline_exceeded. `refresh-from-provider` is worse: a sync
+    route on a single uvicorn worker, so sleeping threads accumulate in the
+    anyio pool until every sync route stalls.
+    """
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver(_PUBLIC_IP))
+    monkeypatch.setattr(assets, "_http_get", lambda _t: _pdf_response())
+    slept = _record_sleeps(monkeypatch)
+
+    ws = _ws()
+    for _ in range(6):
+        # Same host every time — the worst case for a per-hostname throttle.
+        assert (
+            assets.fetch_provider_asset(
+                "https://media.digikey.com/photos/a.png", ws, "image"
+            )
+            is not None
+        )
+
+    assert slept == [], f"request path slept {slept!r} — it must never throttle"
+
+
+def test_request_path_datasheet_is_never_throttled(monkeypatch):
+    """Same guarantee for a datasheet fetched WITHOUT the backfill opt-in."""
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver(_PUBLIC_IP))
+    monkeypatch.setattr(assets, "_http_get", lambda _t: _pdf_response())
+    slept = _record_sleeps(monkeypatch)
+
+    ws = _ws()
+    for _ in range(4):
+        assets.fetch_provider_asset(
+            "https://media.digikey.com/pdf/a.pdf", ws, "datasheet"
+        )
+
+    assert slept == []
+
+
+def test_backfill_path_is_throttled(monkeypatch):
+    """The opt-in path still gets the courtesy gap — that is its whole point."""
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver(_PUBLIC_IP))
+    monkeypatch.setattr(assets, "_http_get", lambda _t: _pdf_response())
+    slept = _record_sleeps(monkeypatch)
+
+    ws = _ws()
+    for _ in range(3):
+        assets.fetch_asset(_VENDOR_URL, ws, "datasheet", allow_any_host=True)
+
+    assert slept == [5.0, 5.0], (
+        f"backfill path must gap repeat requests to one host, slept {slept!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Wall-clock budget.
+# ---------------------------------------------------------------------------
+
+
+def test_slow_dribble_host_hits_the_wall_clock_budget(monkeypatch):
+    """httpx's timeout is per operation, so a dribbling host never trips it.
+
+    Each chunk resets the read timer, so `_TIMEOUT_SEC` alone lets one fetch
+    run forever under the 10 MB cap. In the sidecar that would blow the
+    `timeout 600` and — before the per-candidate commit — take the whole
+    run's attempt counters down with it.
+    """
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver(_PUBLIC_IP))
+
+    clock = {"now": 0.0}
+    monkeypatch.setattr(assets.time, "monotonic", lambda: clock["now"])
+    chunks_served = {"n": 0}
+
+    def _iter_bytes(chunk_size=65536):
+        # A byte at a time, 9s apart: under the 10s per-read timeout forever.
+        while True:
+            chunks_served["n"] += 1
+            clock["now"] += 9.0
+            yield b"%PDF-1.7"[:1]
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.headers = {"content-type": "application/pdf"}
+    mock_resp.iter_bytes = _iter_bytes
+
+    mock_stream_ctx = MagicMock()
+    mock_stream_ctx.__enter__ = lambda _s: mock_resp
+    mock_stream_ctx.__exit__ = MagicMock(return_value=False)
+
+    mock_client = MagicMock()
+    mock_client.stream.return_value = mock_stream_ctx
+    mock_client.__enter__ = lambda _s: mock_client
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with patch(
+        "app.domain.parts.services.assets.httpx.Client", return_value=mock_client
+    ):
+        result = _fetch(_VENDOR_URL)
+
+    assert result.stored is None
+    assert result.failure_code == "too_slow"
+    # Bailed out rather than reading forever: 30s budget / 9s a chunk.
+    assert chunks_served["n"] <= 6, (
+        f"kept reading past the budget: {chunks_served['n']} chunks"
+    )
+
+
+def test_fast_response_is_not_penalised_by_the_budget(monkeypatch):
+    """A normal fetch must not be affected by the wall-clock guard."""
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver(_PUBLIC_IP))
+    mock_client = _capture_httpx_stream()
+
+    with patch(
+        "app.domain.parts.services.assets.httpx.Client", return_value=mock_client
+    ):
+        result = _fetch(_VENDOR_URL)
+
+    assert result.failure_code is None
+    assert result.stored is not None

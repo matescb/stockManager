@@ -176,9 +176,13 @@ them, that's the bug.
   request goes to that **IP literal** with `Host:` and the `sni_hostname`
   extension preserving the real name — so httpx never re-resolves and
   check/connect cannot disagree. Plus HTTPS-only, `follow_redirects=False`,
-  no `user:pass@` URLs, the 10 MB streaming cap, magic-byte validation,
-  PDF-only, and a per-host throttle. Don't add a kind to
-  `_UNRESTRICTED_KINDS`, don't pass `allow_any_host` from a route, don't
+  no `user:pass@` URLs, the 10 MB streaming cap, a 30s wall-clock budget
+  (httpx's timeout is per-operation, so a slow-dribble host never trips it),
+  magic-byte validation and PDF-only. The per-host throttle is gated on the
+  same opt-in and must stay that way: it is a blocking sleep, and
+  bulk-import-from-scan fetches up to 50 images from one CDN host inside a
+  single 60s request. Don't add a kind to `_UNRESTRICTED_KINDS`, don't pass
+  `allow_any_host` from a route, don't throttle the request path, don't
   connect by hostname, don't follow redirects. ADR-0033;
   `tests/test_datasheet_fetch_policy.py` pins all of it.
 - **`bag_signature`** on `stock_entries` is the SHA-256 of the normalised

@@ -17,9 +17,12 @@ Shape:
   unique index because `source_url` is TEXT and a btree over a 2 KB URL
   exceeds Postgres' index-row limit.
 * `attachment_id` points at the `attachments` row that makes the stored PDF
-  a first-class object. `ON DELETE SET NULL` rather than CASCADE: deleting
-  the attachment must not erase the record that we already fetched this URL,
-  or the backfill would silently re-download it.
+  a first-class object. `ON DELETE SET NULL` rather than CASCADE, so deleting
+  the attachment keeps this row's attempt history and `derived` manifest.
+  The NULL is meaningful: `_candidate_rows` treats a row as settled only when
+  `status = 'stored' AND attachment_id IS NOT NULL`, so an attachment delete
+  (which also unlinks the file) puts the part back in the sweep after its
+  cooldown instead of leaving a `stored` row pointing at nothing.
 * `part_id` CASCADEs. A datasheet is derived metadata about the part, not
   independent history, so it falls on the "may cascade" side of ADR-0028
   alongside cad keys and provider links. The polymorphic-cleanup listener
@@ -136,8 +139,9 @@ def upgrade() -> None:
             ["workspace_id"], ["workspaces.id"], ondelete="CASCADE"
         ),
         sa.ForeignKeyConstraint(["part_id"], ["parts.id"], ondelete="CASCADE"),
-        # SET NULL, not CASCADE: losing the attachment must not lose the
-        # record that this URL was already fetched.
+        # SET NULL, not CASCADE: losing the attachment keeps this row's
+        # attempt history and derived manifest, and the resulting NULL is
+        # what makes the part a backfill candidate again.
         sa.ForeignKeyConstraint(
             ["attachment_id"], ["attachments.id"], ondelete="SET NULL"
         ),

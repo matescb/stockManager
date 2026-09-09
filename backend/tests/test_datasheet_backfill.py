@@ -733,3 +733,131 @@ def test_padded_local_asset_value_is_adopted(db, monkeypatch, tmp_path):
     assert record.status == datasheets.STATUS_STORED
     assert record.content_sha256 == sha
     assert datasheets.backfill_missing_datasheets(db) == 0
+
+
+def test_deleting_the_attachment_makes_the_part_a_candidate_again(db, monkeypatch):
+    """Deleting a datasheet attachment must not orphan the part forever.
+
+    `attachments.delete` unlinks the file, and `part_datasheets.attachment_id`
+    is `ON DELETE SET NULL` — so without an `attachment_id IS NOT NULL` clause
+    in the settled subquery the row stays `stored`, the sweep skips it, and
+    the datasheet is silently gone with nothing left to re-fetch it. That is
+    data loss on a routine user action.
+    """
+    ws, client = _new_workspace(db, "ds-orphan@example.com")
+    url = "https://www.nexperia.com/docs/orphan.pdf"
+    part = _part_with_datasheet(db, client, ws, name="OR1", url=url)
+
+    calls: list[str] = []
+    monkeypatch.setattr(assets, "_http_get", _fake_http({url: _pdf()}, calls))
+
+    assert datasheets.backfill_missing_datasheets(db) == 1
+    attachment = _attachments(db, ws)[0]
+    record = _records(db, ws)[0]
+    assert record.attachment_id == attachment.id
+
+    response = client.delete(f"/api/attachments/{attachment.id}")
+    assert response.status_code == 200, response.text
+    db.expire_all()
+
+    record = _records(db, ws)[0]
+    assert record.attachment_id is None, "FK should have nulled the reference"
+    assert record.status == datasheets.STATUS_STORED, "row keeps its history"
+
+    # Still inside the retry cooldown, so not yet re-swept — deliberate, so a
+    # delete does not immediately re-download.
+    assert datasheets.backfill_missing_datasheets(db) == 0
+
+    record.last_attempt_at = utcnow() - datasheets.timedelta(
+        seconds=settings().DATASHEET_BACKFILL_RETRY_AFTER_SECONDS + 60
+    )
+    db.flush()
+
+    assert datasheets.backfill_missing_datasheets(db) == 1, (
+        "an attachment-less stored row must become a candidate again"
+    )
+    assert len(calls) == 2
+    refreshed = _records(db, ws)[0]
+    assert refreshed.attachment_id is not None
+    assert refreshed.status == datasheets.STATUS_STORED
+    assert [a.object_id for a in _attachments(db, ws)] == [part.id]
+
+
+def test_each_candidate_is_committed_before_the_next_fetch(db, monkeypatch):
+    """A killed run must keep the attempt counters it earned.
+
+    `run_job` wraps a job in one transaction. Under a single commit at the
+    end, the sidecar's `timeout 600` would roll back every `attempts`
+    increment, and the deterministic candidate ordering would re-select the
+    same URL first on the next run — a sweep that never advances. So the
+    fetch loop must commit as it goes.
+    """
+    ws, client = _new_workspace(db, "ds-commit@example.com")
+    urls = [f"https://www.yageo.com/docs/c{i}.pdf" for i in range(3)]
+    for index, url in enumerate(urls):
+        _part_with_datasheet(db, client, ws, name=f"C{index}", url=url)
+
+    commits: list[int] = []
+    real_commit = db.commit
+    calls: list[str] = []
+
+    def _counting_commit():
+        commits.append(len(calls))
+        real_commit()
+
+    monkeypatch.setattr(db, "commit", _counting_commit)
+    monkeypatch.setattr(
+        assets, "_http_get", _fake_http({url: _pdf() for url in urls}, calls)
+    )
+
+    assert datasheets.backfill_missing_datasheets(db) == 3
+
+    # One commit per candidate, each landing after that candidate's fetch.
+    assert commits == [1, 2, 3], (
+        f"expected a commit after every fetch, got {commits!r}"
+    )
+
+
+def test_a_second_connection_cannot_run_the_backfill_concurrently(db, engine, monkeypatch):
+    """The SESSION-level lock actually excludes another connection.
+
+    Committing per candidate releases `run_job`'s `pg_try_advisory_xact_lock`
+    at the first commit, so without a lock of its own a manual
+    `python -m app.cli.run_job datasheet-backfill` could interleave with the
+    sidecar and both would race the same candidates. Postgres advisory locks
+    are re-entrant within one session, so this has to be proved across two
+    real connections.
+    """
+    ws, client = _new_workspace(db, "ds-lock@example.com")
+    url = "https://www.molex.com/docs/lock.pdf"
+    _part_with_datasheet(db, client, ws, name="LK1", url=url)
+    monkeypatch.setattr(assets, "_http_get", _fake_http({url: _pdf()}, []))
+
+    from sqlalchemy.orm import Session as _Session
+
+    other_connection = engine.connect()
+    other = _Session(bind=other_connection)
+    try:
+        assert datasheets._try_acquire_backfill_lock(db) is True
+        try:
+            assert datasheets._try_acquire_backfill_lock(other) is False, (
+                "a second connection acquired the backfill lock"
+            )
+        finally:
+            datasheets._release_backfill_lock(db)
+
+        # Released — the other connection can now take it.
+        assert datasheets._try_acquire_backfill_lock(other) is True
+        # ...and while it holds it, a real run is a no-op rather than a race.
+        assert datasheets.backfill_missing_datasheets(db) == 0
+        datasheets._release_backfill_lock(other)
+    finally:
+        other.close()
+        other_connection.close()
+
+    # Lock free again: the run proceeds and releases on the way out.
+    assert datasheets.backfill_missing_datasheets(db) == 1
+    assert datasheets._try_acquire_backfill_lock(db) is True, (
+        "the lock must be released when the run finishes"
+    )
+    datasheets._release_backfill_lock(db)

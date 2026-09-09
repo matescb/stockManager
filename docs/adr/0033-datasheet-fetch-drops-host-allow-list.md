@@ -106,7 +106,8 @@ The compensating controls that now carry the weight, in full:
 | Magic-byte validation against the Content-Type-derived extension | A compromised CDN serving something that is not the file type it claims |
 | Datasheets must sniff as PDF; anything else is refused | A vendor URL that 200s with an HTML landing page filling the store with junk, and any non-PDF payload reaching disk on the unrestricted path |
 | No SVG (on the image path `image/svg+xml` and `.svg` land as `.bin`, served `attachment`; on the datasheet path they are refused outright) | Stored-XSS through inline-rendered SVG |
-| Per-host throttle (`ASSET_FETCH_MIN_HOST_INTERVAL_SECONDS`, default 2s) | A 250-URL backfill hammering one vendor and earning a block |
+| Per-host throttle (`ASSET_FETCH_MIN_HOST_INTERVAL_SECONDS`, default 2s) — **backfill path only** | A 250-URL backfill hammering one vendor and earning a block |
+| Wall-clock budget (`_MAX_WALL_CLOCK_SEC`, 30s) — both paths | A host dribbling one chunk every 9s, which resets httpx's per-operation read timer forever and never trips it |
 | Redacted logging (`scheme://host/path`, no query string) | Signed-URL tokens leaking into logs |
 | The unrestricted path needs an explicit `allow_any_host=True`, passed only by the cron backfill — never by a request handler, and never from a user-supplied URL parameter | Turning the helper into an open request proxy, and tying up the single uvicorn worker on a vendor's timeout |
 
@@ -135,13 +136,18 @@ TLS verification is never relaxed anywhere in this path — no `verify=False`
 - **Trade-offs**: A vendor that blocks datacentre IPs will return 403; that
   part gets a `failed` row with `failure_code=http_403` and is retried on the
   configured cooldown rather than forever.
-- **Trade-offs**: One backfill run holds its database transaction open across
-  the batch's network I/O (`run_job` owns the transaction and its advisory
-  lock). That is bounded by `DATASHEET_BACKFILL_BATCH_SIZE` x (10s fetch
-  timeout + the per-host throttle) — 240s worst case at the shipped defaults,
-  typically well under a minute. Raising the batch size raises that idle-in-
-  transaction window; if it ever needs to be large, commit per candidate and
-  drop the xact-scoped lock first.
+- **Trade-offs**: The backfill commits **per candidate** rather than once per
+  run. That is deliberate: `run_job` wraps a job in one transaction, so a
+  `timeout 600` kill would roll back every `attempts` increment the run made,
+  and the deterministic candidate ordering would hand back the same URL first
+  next time — a sweep that never advances. The cost is that `run_job`'s
+  `pg_try_advisory_xact_lock` is released at the first commit, so the job
+  takes its own SESSION-level lock
+  (`DATASHEET_BACKFILL_LOCK_CLASSID`) for the duration.
+  Worst case per candidate is resolution + the 2s throttle + the 30s
+  wall-clock budget, so at the shipped batch of 12 a run is bounded at ~444s,
+  inside the sidecar's `timeout 600`. Raising the batch past ~15 means a run
+  can be killed mid-sweep; survivable, but it wastes the in-flight fetch.
 - **What it forbids**:
   - Do not add another `kind` to `_UNRESTRICTED_KINDS` without a new ADR.
   - Do not pass `allow_any_host=True` from a request handler. If a route ever
@@ -154,6 +160,14 @@ TLS verification is never relaxed anywhere in this path — no `verify=False`
     a refusal by design.
   - Do not relax the unrestricted path to allow plain HTTP.
   - Do not remove the per-host throttle to make the backfill faster.
+  - Do not apply the per-host throttle to the allow-listed (request-path)
+    callers. It is a blocking sleep;
+    `POST /api/parts/bulk-import-from-scan` fetches up to 50 images from a
+    single provider CDN host inside one request with a 60s deadline, and
+    `refresh-from-provider` is a sync route on a single uvicorn worker.
+  - Do not treat `_TIMEOUT_SEC` as a request budget. It is httpx's
+    per-operation timeout; `_MAX_WALL_CLOCK_SEC` is the budget.
+  - Do not go back to one commit per backfill run.
   - Do not expose a route that takes a URL and calls `fetch_asset` with it.
 
 ## Storage shape
@@ -192,6 +206,12 @@ conversion needs no further migration: the converted artifacts become further
 (their attachment ids, converter version, page count). This PR does not
 implement the Datalab HTTP integration.
 
+`attachment_id` being nullable has one consequence worth stating: a row whose
+attachment was deleted is **no longer settled**. `_candidate_rows` requires
+`status = 'stored' AND attachment_id IS NOT NULL`, so deleting a datasheet
+attachment (which also unlinks the file) puts the part back in the sweep after
+its cooldown rather than leaving a `stored` row pointing at nothing.
+
 ## Backfill
 
 `datasheet-backfill` is registered in the `run_job` allow-list and runs in a
@@ -199,8 +219,11 @@ new `backend-cron-datasheets` sidecar — a new cadence means a new sidecar,
 never a second scheduler (ADR-0021). It is the only cron sidecar that mounts
 the `uploads` volume, because it is the only one that writes files.
 
-- Bounded batch (`DATASHEET_BACKFILL_BATCH_SIZE`, default 20) so one run
-  always finishes far inside the sidecar's `timeout 600`.
+- Bounded batch (`DATASHEET_BACKFILL_BATCH_SIZE`, default 12) so one run
+  finishes inside the sidecar's `timeout 600`; ~249 backlogged URLs clear in
+  about a day.
+- Commits per candidate, under its own session-level advisory lock, so a
+  killed run keeps every attempt counter it earned.
 - A `stored` row is never re-downloaded.
 - A failure writes a `failed` row with an incremented attempt count and starts
   a cooldown (`DATASHEET_BACKFILL_RETRY_AFTER_SECONDS`), capped by
@@ -234,11 +257,27 @@ SELECT failure_code, count(*)
 | `magic_mismatch` | Declared a type the leading bytes contradict. |
 | `too_large` | Over the 10 MB cap. |
 | `timeout`, `network_error` | Transient; retried after the cooldown. |
+| `too_slow` | The fetch ran past the 30s wall-clock budget — typically a host dribbling bytes just fast enough to keep httpx's read timer alive. |
 | `local_wrong_workspace`, `local_file_missing`, `local_path_invalid` | The stored value is an `/api/parts/assets/...` path that does not resolve inside this workspace. |
 
 `failure_code` plus `attempts` and `last_attempt_at` is also how you tell a
 transient failure from a settled one: once `attempts` reaches
 `DATASHEET_BACKFILL_MAX_ATTEMPTS` the pair is left alone until its URL changes.
+
+## Known limitations
+
+Tracked in issue #916, deliberately out of scope here:
+
+- **Only the first resolved address is tried.** `_resolve_pinned_ip` validates
+  every address in the answer but returns `addresses[0]`, so a dead CDN edge
+  burns an attempt on a host that is reachable via its second A record.
+- **Orphan files.** A run killed between the write and the candidate's commit,
+  or a part hard-delete (whose polymorphic cleanup is DB-only), leaves a
+  content-addressed file with no row referencing it. Harmless but unbounded.
+- **`source_url` duplicates token-bearing URLs.** The row stores the vendor URL
+  verbatim because it is the idempotency key against `custom_fields.value`, so
+  a signed query string now sits in a second table. Logs and `audit_log` are
+  already redacted; this is data-at-rest surface only.
 
 ## Alternatives considered
 
