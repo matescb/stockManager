@@ -218,6 +218,12 @@ def resolve_category_ref(caller: Caller, ref: str) -> PartCategory:
     Archived categories match nothing — every picker hides them, and
     filing a part under one is not something an agent should discover
     by accident.
+
+    One query fetches the whole active list rather than four narrower
+    ones, because both refusals need that list anyway and a category
+    tree is small by construction (`list_categories` returns it whole,
+    and the UI renders it as a tree). If that ever stops being true,
+    the fix is a `lower(name)` index and four queries — not a cache.
     """
     rows = list(
         caller.db.execute(
