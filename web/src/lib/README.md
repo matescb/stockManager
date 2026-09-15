@@ -19,6 +19,7 @@ Shared frontend infra: HTTP client, auth context, theme, query keys, mutations h
 | `format.ts` | Date / money / quantity formatters (locale-pinned). `formatQuantity` is the single seam for every quantity the UI shows — see [quantities](../../../docs/frontend/quantities.md) |
 | `bagCode.ts` | MIL-STD-130N parser + normaliser; produces the same signature the server computes |
 | `providerCatalog.ts` | Catalog vs spec custom-field key list (mirror of the server-side list) |
+| `partType.ts` | How `part_type` is written on screen — `linked · DigiKey` for a provider-backed part |
 | `cn.ts` | `cn(...)` className combiner |
 | `useMediaQuery.ts` | `LG_VIEWPORT_QUERY` / `XL_VIEWPORT_QUERY` — the only place a Tailwind breakpoint is restated in TS, for the two places behaviour (not just styling) forks on width |
 | `usePanelCollapse.ts` | Remembered collapse state for the app sidebar and the parts category rail — per workspace, same `localStorage` pattern as `DataTable` |
@@ -36,6 +37,7 @@ Shared frontend infra: HTTP client, auth context, theme, query keys, mutations h
 | Wire a mutation + invalidations | `mutations.ts::useApiMutation` |
 | Parse a scanned bag code | `bagCode.ts` (default export / named parser) |
 | Classify a key as catalog vs spec | `providerCatalog.ts` |
+| Label a part's type | `partType.ts::partTypeLabel` |
 | Load / link a manual page | `userDocs.ts::getDoc` / `listDocs` / `resolveDocHref` |
 
 ## Hard rules (this module)

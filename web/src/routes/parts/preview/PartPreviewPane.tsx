@@ -7,7 +7,7 @@ import { api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
 import { formatQuantity } from "@/lib/format";
 import { isSafeHttpOrSameOriginUrl } from "@/lib/url";
-import { providerLabel } from "@/lib/providers";
+import { partTypeLabel } from "@/lib/partType";
 import { cn } from "@/lib/cn";
 import type { Part, StorageLocation } from "@/types";
 import type { PaneBreakpoint } from "./usePartPreview";
@@ -166,12 +166,13 @@ export default function PartPreviewPane({
       </div>
 
       <div className="flex flex-wrap gap-1.5">
-        <span className="pill">{part.part_type}</span>
-        {part.linked_provider && (
-          <span className="pill bg-accent/15 text-accent">
-            {providerLabel(part.linked_provider)}
-          </span>
-        )}
+        {/* One pill, not two: the type pill now names the provider
+            itself, so the separate provider pill that used to sit
+            beside it said the same word twice. The accent styling it
+            carried stays here, on the linked case. */}
+        <span className={cn("pill", part.linked_provider && "bg-accent/15 text-accent")}>
+          {partTypeLabel(part)}
+        </span>
         {part.archived_at && <span className="pill bg-danger/20 text-danger">archived</span>}
       </div>
 

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
 import { formatQuantity } from "@/lib/format";
+import { partTypeLabel } from "@/lib/partType";
 import EntityHeader from "@/components/EntityHeader";
 import SubNav, { type SubNavEntry } from "@/components/SubNav";
 import PrintLabelButton from "@/routes/labels/PrintLabelButton";
@@ -115,7 +116,7 @@ function PartLayoutQuery({ partId }: { partId: string }) {
         subtitle={
           <span>
             {part.manufacturer || "—"} {part.mpn && <span className="ml-2">{part.mpn}</span>}
-            <span className="pill ml-2">{part.part_type}</span>
+            <span className="pill ml-2">{partTypeLabel(part)}</span>
             {part.archived_at && <span className="pill ml-2 bg-danger/20 text-danger">archived</span>}
           </span>
         }

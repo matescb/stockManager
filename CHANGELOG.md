@@ -35,6 +35,21 @@ the canonical record.
   widths (200 / 200 / 120; `name` was already capped on create but not
   on patch). An over-long value used to reach Postgres and come back a
   `DataError` — a 500 for what is plainly a bad request.
+- **`part_type` now follows the provider link** (`0080`). The column was
+  written once, at creation, and never again — so a part created `local`
+  that a supplier lookup later linked kept saying `local`, and the type
+  pill renders the raw column. 160 of 324 prod parts were in that state.
+  `domain/parts/part_type.py` re-derives `linked` / `local` from
+  `linked_provider` at both transitions (the primary branch of
+  refresh-from-provider, and the unlink PATCH) and writes one
+  `part.type_synced` audit row per change; migration `0080` fixes the rows
+  that already drifted. `meta` and `sub_assembly` are user-declared roles
+  and are never rewritten, even on a part that carries a provider link.
+  The type pill in the part header, the parts list and the list preview
+  now names the provider too (`linked · DigiKey`) through one shared
+  helper, `web/src/lib/partType.ts`; the parts-list column still sorts,
+  searches and exports on the raw value. The downgrade is a deliberate
+  no-op — the old values were wrong and unrecorded.
 
 - **PCM package: 3D models linked on the CAD tab now ship in the
   footprint.** Linking a STEP or WRL to a footprint wrote a join row
