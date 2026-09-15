@@ -167,12 +167,15 @@ List custom fields for an object, sorted by `key`.
 ```json
 { "data": [ { "id": "…", "key": "…", "value": "…",
               "source": "manual" | "provider" | "override",
-              "original_value": "…" | null } ], "status": { … } }
+              "original_value": "…" | null,
+              "provider": "digikey" | "mouser" | null,
+              "value_num": "10000" | null } ], "status": { … } }
 ```
 
 **Notes**
 
-- Source: `backend/app/api/routes/custom_fields.py:28-39`.
+- `provider` and `value_num` are additive (alembic `0081`) and NULL on every row until the spec schema is wired into import and refresh. `provider` says which provider wrote the row; `value_num` is the SI base-unit number behind `value`, sent as a **string** so an exact `Numeric(36,18)` does not become a JS double. Sort and range-filter on it server-side. See [ADR-0034](../adr/0034-spec-schema.md).
+- Source: `backend/app/api/routes/custom_fields.py:20-39`.
 
 ### `POST /api/custom-fields`
 

@@ -24,6 +24,12 @@ def _serialize(r: CustomField) -> dict:
         "value": r.value,
         "source": r.source,
         "original_value": r.original_value,
+        # Both added by alembic 0081 and NULL on every row until A3 starts
+        # writing them. `value_num` goes out as a string so an exact
+        # `Numeric(36,18)` does not become a JS double on the way — sorting
+        # and range filters on it are server-side, where the index is.
+        "provider": r.provider,
+        "value_num": None if r.value_num is None else str(r.value_num),
     }
 
 

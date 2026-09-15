@@ -372,6 +372,13 @@ export const CustomFieldRowSchema = z.object({
   value: nullableString,
   source: SpecSourceSchema,
   original_value: nullableString,
+  // Added by alembic 0081; NULL on every row until the spec schema is
+  // wired into import/refresh. Optional here so a fixture or an older
+  // server that omits them still parses. `value_num` is the SI base-unit
+  // number behind `value`, sent as a string to stay exact — sort and
+  // filter on it server-side, don't compare it in JS.
+  provider: nullableString.optional().default(null),
+  value_num: nullableString.optional().default(null),
 });
 export type CustomFieldRow = z.infer<typeof CustomFieldRowSchema>;
 

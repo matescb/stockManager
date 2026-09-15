@@ -51,6 +51,20 @@ the canonical record.
   searches and exports on the raw value. The downgrade is a deliberate
   no-op — the old values were wrong and unrecorded.
 
+- **Canonical spec schema for provider specs (foundation, no behaviour
+  change yet).** Provider specs are stored verbatim, so the Specs tab
+  carries TARIC and CNHTS customs codes, ~1,000 rows whose value is
+  literally `-`, and three spellings of the same resistance. New
+  `domain/parts/spec_schema.py` names the canonical specs per category
+  (resistor, ceramic/electrolytic/tantalum/film capacitor, inductor,
+  diode/schottky/zener/TVS, LED, BJT, MOSFET), the DigiKey and Mouser
+  field names that feed each one, the junk denylist and the
+  catalog-vs-spec boundary; `spec_values.py` turns `10 kOhms`,
+  `0.063W, 1/16W` and `26mOhm Max` into a base-unit number plus one
+  canonical display string. Migration `0081` adds nullable
+  `custom_fields.provider` and `custom_fields.value_num`. Nothing calls
+  the new code yet — import and refresh are wired up in a follow-up.
+  ADR-0034.
 - **PCM package: 3D models linked on the CAD tab now ship in the
   footprint.** Linking a STEP or WRL to a footprint wrote a join row
   only, so the packaged `.kicad_mod` carried no `(model …)` node and

@@ -12,6 +12,9 @@ Owns the `Part` aggregate (linked / local / meta / sub-assembly), MPN uniqueness
 | `schemas.py` | Pydantic request/response models for the parts API |
 | `provider_fields.py` | Which custom-field keys a provider owns + the primary/secondary namespace boundary |
 | `part_type.py` | Re-derives `part_type` (`linked` / `local`) from `linked_provider` at every link/unlink, and audits the change |
+| `spec_schema.py` | Maps one provider spec payload onto the canonical per-category schema — `canonical` / `optional` / `catalog` / `dropped` |
+| `spec_schema_tables.py` | The schema data: canonical keys + provider aliases per category, the junk denylist, the catalog key list, our-category-name → slug rules |
+| `spec_values.py` | SI value parser/formatter — `10 kOhms` → `(10000, "Ω", "10 kΩ")`. Never raises |
 | `provider_credentials.py` | `credentials_for` / `upsert` / `clear` for per-workspace provider keys |
 | `provider_links.py` | `part_provider_links` CRUD — which providers know a given part |
 | `services/assets.py` | Remote asset (image / datasheet) download → content-addressed storage; owns the two fetch policies |
@@ -32,6 +35,10 @@ Owns the `Part` aggregate (linked / local / meta / sub-assembly), MPN uniqueness
 | MPN lookup (cached / fresh) | `services/provider_cache.py::lookup_with_cache`, `::lookup_fresh` |
 | Resolve a provider's credentials | `provider_credentials.py::credentials_for` |
 | Whose namespace is this key? | `provider_fields.py::provider_owns_custom_field_key` |
+| Classify one provider spec payload | `spec_schema.py::normalise` |
+| What is this category missing? | `spec_schema.py::missing_mandatory` |
+| Our category name → schema slug | `spec_schema.py::category_slug_for` |
+| Parse a spec value | `spec_values.py::parse_si`, `::format_si` |
 | A part's provider links | `provider_links.py::links_for_part`, `::upsert_link` |
 | Keep `part_type` in step with the link | `part_type.py::sync_part_type_and_log` |
 

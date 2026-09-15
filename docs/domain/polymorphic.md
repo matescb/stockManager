@@ -32,7 +32,7 @@ Common shape:
 
 `Tag` (`backend/app/domain/tags/models.py:10`) is the workspace-scoped tag definition; `TagLink` is the join from a tag to a polymorphic parent.
 
-`Attachment` adds `file_name`, `file_type` (default `other`), `mime_type`, `size_bytes`, `storage_key`, `uploaded_by`. `CustomField` adds `key`, `value`, `source` (`manual | provider | override`), `original_value`.
+`Attachment` adds `file_name`, `file_type` (default `other`), `mime_type`, `size_bytes`, `storage_key`, `uploaded_by`. `CustomField` adds `key`, `value`, `source` (`manual | provider | override`), `original_value`, and — since alembic `0081` — `provider` and `value_num`.
 
 ## Why no FK on `object_id`
 
@@ -98,7 +98,20 @@ Sources: `backend/app/domain/attachments/models.py:13-26`, `backend/app/domain/c
 | `provider` | Supplied by an external data source (e.g. Mouser/DigiKey lookup). |
 | `override` | User edited a row that was originally `provider`. The upstream value is preserved in `original_value` so the next refresh can detect divergence and choose not to overwrite. |
 
-The catalog vs spec split (see [providers](providers.md)) operates on `provider`-source rows by key name — the source field tells you *who* wrote the row; the catalog/spec classification tells you *which UI tab* renders it.
+The catalog vs spec split (see [providers](providers.md)) operates on `provider`-source rows by key name — the source field tells you *how* the row was written; the catalog/spec classification tells you *which UI tab* renders it.
+
+### `CustomField.provider` and `CustomField.value_num`
+
+Two nullable columns added by alembic `0081` for the spec schema ([ADR-0034](../adr/0034-spec-schema.md)). Both are NULL on every existing row; nothing writes them yet.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `provider` | `String(40)`, nullable | Which provider wrote this row (`digikey`, `mouser`). `source` says how the row was written, this says who. NULL for manual rows and for provider rows predating the column. Once a secondary provider can write the same canonical key as the primary, the key prefix no longer identifies the writer and this column is what scopes a refresh's delete pass. |
+| `value_num` | `Numeric(36, 18)`, nullable | The SI base-unit number behind `value` — `value = "10 kΩ"` goes with `value_num = 10000`. NULL when the value is not a single number (a package code, a temperature range) or the parser refused it. `Numeric`, not float, because a femtofarad and a petaohm both have to be exact and in range. |
+
+`ix_custom_fields_ws_key_value_num` on `(workspace_id, key, value_num) WHERE value_num IS NOT NULL` supports sorting and range-filtering a spec in the database. It is partial, so a query that does not repeat `value_num IS NOT NULL` cannot use it.
+
+Over the wire both appear on every custom-field response; `value_num` is serialised as a **string** so an exact `Numeric` does not become a JS double. Sort and filter on it server-side.
 
 ## `Tag` vs `TagLink`
 
