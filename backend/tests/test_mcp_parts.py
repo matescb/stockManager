@@ -65,6 +65,10 @@ def _audit_rows(db, action: str) -> list[AuditLog]:
 
 
 def _fields(db, part_id: str) -> dict[str, CustomField]:
+    # Expired first: the tool ran on its own session, and SQLAlchemy would
+    # otherwise hand back whatever this session last loaded rather than
+    # what is on disk — which is the half of the assertion that matters.
+    db.expire_all()
     rows = (
         db.query(CustomField)
         .filter(CustomField.object_type == "part")
@@ -418,6 +422,36 @@ async def test_set_part_specs_leaves_provider_rows_alone(authed_client, full_tok
     row = _fields(db, part_id)["Resistance"]
     assert row.value == "10 kOhms"
     assert row.source == "provider"
+
+
+async def test_set_part_specs_updates_an_override_without_moving_its_source(
+    authed_client, full_token, db
+):
+    """An `override` is a row a person already took ownership of.
+
+    Writing to it changes the value and nothing else. Nothing on this
+    surface moves a row between sources, so the saved upstream value
+    survives and "restore the provider value" in the UI still works
+    after an agent has been through.
+    """
+    part_id = create_part(authed_client, "Overridden", mpn="SPEC-10")
+    _seed_provider_field(db, authed_client, part_id, "Tolerance", "1 %")
+    row = _fields(db, part_id)["Tolerance"]
+    row.source = "override"
+    row.original_value = "1 %"
+    row.value = "1%"
+    db.flush()
+
+    async with mcp_session(full_token) as s:
+        out = await call(
+            s, "set_part_specs", part_id_or_mpn=part_id, specs={"Tolerance": "5%"}
+        )
+
+    assert out["updated"] == ["Tolerance"]
+    after = _fields(db, part_id)["Tolerance"]
+    assert after.value == "5%"
+    assert after.source == "override"
+    assert after.original_value == "1 %"
 
 
 async def test_set_part_specs_refuses_a_reserved_key(authed_client, full_token, db):
