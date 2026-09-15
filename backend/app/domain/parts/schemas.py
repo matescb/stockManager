@@ -35,6 +35,19 @@ __all__ = [
 ]
 
 
+# Mirrors of the column widths in `domain/parts/models.py`. They are
+# stated here because a value longer than its column reaches Postgres as
+# a `DataError` — a 500 for what is plainly a bad request — and because
+# the MCP `create_part` tool builds `PartIn` by hand, so the schema is
+# the only place the cap can be enforced for both doors. Keep them equal
+# to the columns: a cap SHORTER than the column silently rejects data
+# the database would have taken.
+_NAME_MAX = 300
+_MPN_MAX = 200
+_MANUFACTURER_MAX = 200
+_IPN_MAX = 120
+
+
 class PartIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -42,10 +55,10 @@ class PartIn(BaseModel):
     # Optional — defaults to mpn server-side when blank, so the operator can
     # paste an MPN and skip the name field. At least one of name/mpn must be
     # set; the create endpoint enforces that explicitly.
-    name: str | None = Field(default=None, max_length=300)
-    manufacturer: str | None = None
-    mpn: str | None = None
-    internal_part_number: str | None = None
+    name: str | None = Field(default=None, max_length=_NAME_MAX)
+    manufacturer: str | None = Field(default=None, max_length=_MANUFACTURER_MAX)
+    mpn: str | None = Field(default=None, max_length=_MPN_MAX)
+    internal_part_number: str | None = Field(default=None, max_length=_IPN_MAX)
     description: str | None = None
     notes_markdown: str | None = None
     footprint: str | None = None
@@ -61,10 +74,13 @@ class PartIn(BaseModel):
 class PartPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    name: str | None = None
-    manufacturer: str | None = None
-    mpn: str | None = None
-    internal_part_number: str | None = None
+    # Same caps as `PartIn` — PATCH writes the same columns, so leaving
+    # them off here left the identical DataError reachable through the
+    # edit form.
+    name: str | None = Field(default=None, max_length=_NAME_MAX)
+    manufacturer: str | None = Field(default=None, max_length=_MANUFACTURER_MAX)
+    mpn: str | None = Field(default=None, max_length=_MPN_MAX)
+    internal_part_number: str | None = Field(default=None, max_length=_IPN_MAX)
     description: str | None = None
     notes_markdown: str | None = None
     footprint: str | None = None

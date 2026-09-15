@@ -431,6 +431,9 @@ _EXPECTED_WRITE_TOOLS = {
     "consume_stock",
     "move_stock",
     "create_category",
+    "create_part",
+    "set_part_category",
+    "set_part_specs",
 }
 
 

@@ -23,6 +23,8 @@ this way. Don't restate either here.
 | `tools/sourcing.py` | `sourcing_offers` — a read-shaped tool declared as a write |
 | `tools/write.py` | The 4 KiCad-library write tools |
 | `tools/write_inventory.py` | The 4 inventory write tools (stock, categories) |
+| `tools/write_parts.py` | The 3 part-authoring write tools (create, category, specs) |
+| `tools/_spec_fields.py` | The spec-batch rules behind `set_part_specs`: caps, key validation, and who owns a `custom_fields` row |
 
 ## Public surface
 
@@ -57,7 +59,15 @@ this way. Don't restate either here.
   them rather than querying directly.
 - **Every mutation writes the audit row its REST twin writes** — same action
   name, same comment grammar, attributed to the token owner. Stock movements
-  write none, because the routes write none.
+  write none, because the routes write none. A tool with no REST twin
+  (`set_part_specs` writes many rows in one call) writes one row for the call
+  and names the keys, never the values.
+- **A tool never re-implements a rule a route already enforces.** `create_part`
+  calls `domain/parts/services/create_part.py`, which is where the route's
+  name/MPN defaulting, MPN pre-check and workspace checks moved so the two
+  doors cannot drift. Where the surfaces deliberately differ — a duplicate MPN
+  is a success here and a 409 there — say so in the docstring, because that
+  docstring is the only thing the model reads.
 - **Stateless transport is a correctness constraint, not a preference.** The
   principal contextvar only reaches the tool because the request is handled
   inline. See ADR-0030.

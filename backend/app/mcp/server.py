@@ -68,12 +68,19 @@ def _build_server() -> MCPServer:
         title="Parts Inventory & Production Manager",
         version=SERVER_VERSION,
         instructions=(
-            "Tools for an electronics parts inventory: look up parts and "
-            "their stock, inspect and maintain their KiCad CAD data "
+            "Tools for an electronics parts inventory: create parts and "
+            "maintain their categories and specifications, look up parts "
+            "and their stock, inspect and maintain their KiCad CAD data "
             "(symbols, footprints, 3D models, SPICE), and check project "
             "BOMs for shortages. Every tool acts on the single workspace "
             "the access token belongs to. Ids are opaque strings; most "
-            "part arguments also accept a manufacturer part number."
+            "part arguments also accept a manufacturer part number. "
+            "Creating a part needs at least one of name or mpn, and the "
+            "name defaults to the mpn; an mpn is unique per workspace, so "
+            "create_part on one that already exists succeeds and returns "
+            "that part with found_existing set rather than failing. "
+            "set_part_specs writes your own specifications and never "
+            "overwrites ones a parts provider supplied."
         ),
     )
     for spec in load_tools():

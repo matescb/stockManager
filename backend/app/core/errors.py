@@ -243,6 +243,11 @@ class ErrorCodes:
     PART_HAS_RESERVED_STOCK = "part.has_reserved_stock"
     PART_MPN_CONFLICT = "part.mpn_conflict"
     PART_NAME_OR_MPN_REQUIRED = "part.name_or_mpn_required"
+    # A field failed `PartIn`/`PartPatch` validation somewhere that
+    # builds the model by hand rather than letting FastAPI do it — the
+    # MCP `create_part` tool. FastAPI answers its own 422 for the
+    # routes, so no route raises this.
+    PART_INVALID_FIELD = "part.invalid_field"
     PART_LINKED_PROVIDER_OWNED_FIELD = "part.linked_provider_owned_field"
     PART_NOT_META = "part.not_meta"
     PART_META_SELF_MEMBER = "part.meta_self_member"
@@ -346,6 +351,17 @@ class ErrorCodes:
     # Custom fields router.
     CUSTOM_FIELD_RESERVED_KEY = "custom_field.reserved_key"
     CUSTOM_FIELD_NOT_OVERRIDE = "custom_field.not_override"
+    # Raised by the bulk spec writer on the MCP surface, which accepts a
+    # whole dict in one call and so has caps the single-row REST route
+    # never needed.
+    CUSTOM_FIELD_TOO_MANY = "custom_field.too_many"
+    CUSTOM_FIELD_TOO_LONG = "custom_field.too_long"
+    # Leading or trailing whitespace on a key. Its own code because it is
+    # the one that closes the reserved-key bypass: the reserved and
+    # namespaced checks compare the key exactly, so `"image_url "` was
+    # neither, and a model that gets told "too long" for a stray space
+    # will retry with the same space.
+    CUSTOM_FIELD_KEY_WHITESPACE = "custom_field.key_whitespace"
 
     # Legacy parts-provider lookup route.
     PROVIDER_UPSTREAM_ERROR = "provider.upstream_error"

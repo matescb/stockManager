@@ -55,7 +55,7 @@ slowapi, per-process bucket store, per-IP. The reverse proxy must set `X-Forward
 | [label-templates](label-templates.md) | `/api/label-templates` | Label layouts, the JScript render engine, and test printing |
 | [tokens](tokens.md) | `/api/tokens` | Personal access tokens for KiCad / agent access |
 | [agents](agents.md) | — | Cross-cutting guide for non-browser clients: token auth, error codes, curl quickstart |
-| [mcp](mcp.md) | `/mcp` | MCP server for AI assistants: connecting, the 19 tools, rate limits, read-only semantics |
+| [mcp](mcp.md) | `/mcp` | MCP server for AI assistants: connecting, the 22 tools, rate limits, read-only semantics |
 | [audit](audit.md) | `/api/audit` | Activity log query |
 | [search](search.md) | `/api/search` | Cross-entity search |
 | [catalog](catalog.md) | `/catalog` | Public token-gated read-only catalog |

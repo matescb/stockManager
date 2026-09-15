@@ -11,7 +11,6 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy import or_, select
-from sqlalchemy.exc import IntegrityError
 
 from app.api._helpers import assert_in_workspace, require_resource_access
 from app.api.routes._activity import (
@@ -30,9 +29,6 @@ from app.api.routes._parts_shared import (
 )
 from app.api.routes._parts_shared import (
     provider_links_for as _provider_links_for,
-)
-from app.api.routes._parts_shared import (
-    raise_mpn_conflict as _raise_mpn_conflict,
 )
 from app.api.routes._parts_shared import (
     serialize_part as _serialize,
@@ -63,10 +59,9 @@ from app.domain.parts.schemas import (
     PartIn,
     PartPatch,
 )
-from app.domain.parts.services.mpn_unique import (
-    active_part_by_mpn as _active_part_by_mpn,
+from app.domain.parts.services.create_part import (
+    create_part as _create_part,
 )
-from app.domain.parts.services.mpn_unique import is_mpn_unique_violation
 from app.domain.stock.models import StockEntry
 from app.domain.stock.service import (
     reserved_quantity,
@@ -186,81 +181,17 @@ def create_part(
     ws: CurrentWorkspace,
     user: CurrentUser,
 ) -> Envelope[dict]:
-    # Name defaults to MPN when blank — paste-an-MPN-and-go workflow.
-    # At least one of the two has to be set; the partial unique index on
-    # (workspace_id, mpn) enforces no-duplicate-MPN at the DB level, but
-    # we pre-check here so the response can name the existing part.
-    name = (payload.name or "").strip()
-    mpn = (payload.mpn or "").strip()
-    if not name and not mpn:
-        raise_http(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            code=ErrorCodes.PART_NAME_OR_MPN_REQUIRED,
-            message="provide at least one of `name` or `mpn`",
-        )
-    if not name:
-        name = mpn
+    """Create a part.
 
-    if mpn:
-        existing = _active_part_by_mpn(db, workspace_id=ws.id, mpn=mpn)
-        if existing:
-            _raise_mpn_conflict(existing)
-
-    # default_storage_location_id is caller-supplied; it must point at a
-    # storage row in this workspace. Without this guard a caller in
-    # workspace B can persist a foreign storage UUID as the default for one
-    # of their parts (existence-oracle + foot-gun for downstream lookups).
-    if payload.default_storage_location_id is not None:
-        assert_in_workspace(
-            db, StorageLocation, payload.default_storage_location_id, ws.id,
-            label="storage location",
-        )
-
-    # Same guard for the caller-supplied category — a foreign category_id
-    # would otherwise persist as a cross-workspace FK. Archived categories
-    # are hidden from every picker, so accepting one here could only come
-    # from a stale or hand-crafted request.
-    if payload.category_id is not None:
-        category = assert_in_workspace(
-            db, PartCategory, payload.category_id, ws.id, label="category",
-        )
-        if category.archived_at is not None:
-            raise_http(409, ErrorCodes.CATEGORY_ARCHIVED, "Category is archived")
-
-    p = Part(
-        workspace_id=ws.id,
-        part_type=payload.part_type,
-        name=name,
-        manufacturer=payload.manufacturer,
-        mpn=mpn or None,
-        internal_part_number=payload.internal_part_number,
-        description=payload.description,
-        notes_markdown=payload.notes_markdown,
-        footprint=payload.footprint,
-        low_stock_report_quantity=payload.low_stock_report_quantity,
-        attrition_percentage=payload.attrition_percentage,
-        attrition_min_quantity=payload.attrition_min_quantity,
-        default_storage_location_id=payload.default_storage_location_id,
-        default_storage_mandatory=payload.default_storage_mandatory,
-        serialized=payload.serialized,
-        category_id=payload.category_id,
-        created_by=user.id,
-        updated_by=user.id,
-    )
-    try:
-        with db.begin_nested():
-            db.add(p)
-            # `get_db` commits on clean route exit (BE2-010). No explicit
-            # db.commit() here — a route-local commit would split the
-            # transaction boundary and partial state could outlive a later
-            # raise.
-            db.flush()
-    except IntegrityError as exc:
-        if mpn and is_mpn_unique_violation(exc):
-            existing = _active_part_by_mpn(db, workspace_id=ws.id, mpn=mpn)
-            if existing is not None:
-                _raise_mpn_conflict(existing)
-        raise
+    Every rule — name defaults to MPN, at least one of the two, the 409
+    naming the MPN's existing owner, the workspace checks on the
+    caller-supplied category and storage FKs — lives in
+    `domain/parts/services/create_part.py`, because the MCP
+    `create_part` tool has to apply exactly the same ones. Audit and
+    serialisation stay here: `get_db` commits on clean route exit
+    (BE2-010), so there is no route-local commit either.
+    """
+    p = _create_part(db, ws=ws, user_id=user.id, payload=payload)
     _audit_log(
         db,
         ws=ws,
