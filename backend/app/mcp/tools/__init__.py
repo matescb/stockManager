@@ -18,6 +18,7 @@ def load_tools() -> list[ToolSpec]:
         sourcing,
         write,
         write_inventory,
+        write_parts,
     )
 
     return list(REGISTRY)

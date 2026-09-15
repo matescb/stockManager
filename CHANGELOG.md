@@ -15,6 +15,22 @@ the canonical record.
 
 ## Unreleased
 
+- **MCP: an assistant can now create a part.** Three write tools —
+  `create_part`, `set_part_category`, `set_part_specs` — close the gap
+  that made the server read-mostly for anything starting from a
+  schematic: there was no way to add a part, file it, or record what it
+  is. `create_part` turns the REST surface's duplicate-MPN 409 into a
+  success carrying the part that already holds the MPN, because "it is
+  already there" and "your call was wrong" have to be distinguishable to
+  a model. `set_part_specs` writes `manual` custom-field rows and never
+  touches ones a parts provider owns, reporting those back under
+  `skipped_provider_owned`; reserved and `digikey:`/`mouser:`-prefixed
+  keys are refused (ADR-0031). The create rules moved out of
+  `api/routes/parts_core.py` into
+  `domain/parts/services/create_part.py` so the route and the tool
+  cannot drift on the name/MPN defaulting, the MPN pre-check or the
+  workspace checks on the supplied category and storage ids.
+
 - **PCM package: 3D models linked on the CAD tab now ship in the
   footprint.** Linking a STEP or WRL to a footprint wrote a join row
   only, so the packaged `.kicad_mod` carried no `(model …)` node and

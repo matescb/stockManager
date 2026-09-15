@@ -285,7 +285,7 @@ for the values to write into it.
 ## MCP
 
 If the client is an AI assistant rather than a script, there is a second door:
-an MCP server at `/mcp`, authenticated by the same token, exposing 19 named
+an MCP server at `/mcp`, authenticated by the same token, exposing 22 named
 tools over the same services these routes call. It exists because a general
 REST surface makes an assistant spend its context re-deriving the domain model.
 Prefer it for assistants; prefer the routes above for anything scripted. See

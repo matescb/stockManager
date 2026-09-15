@@ -24,9 +24,12 @@ def authed_owner():
 
 
 def test_concurrent_create_same_mpn(authed_owner, monkeypatch):
-    import app.api.routes.parts_core as parts_core
+    # Patched on the domain service, which is where the pre-check lives
+    # for every door that creates a part — the route and the MCP
+    # `create_part` tool both call through it.
+    import app.domain.parts.services.create_part as create_part_service
 
-    original_lookup = parts_core._active_part_by_mpn
+    original_lookup = create_part_service.active_part_by_mpn
     barrier = threading.Barrier(2)
     lock = threading.Lock()
     precheck_calls = 0
@@ -42,7 +45,7 @@ def test_concurrent_create_same_mpn(authed_owner, monkeypatch):
             barrier.wait(timeout=10)
         return existing
 
-    monkeypatch.setattr(parts_core, "_active_part_by_mpn", racing_lookup)
+    monkeypatch.setattr(create_part_service, "active_part_by_mpn", racing_lookup)
 
     cookie = _session_cookie(authed_owner)
     mpn = f"RACE-{uuid.uuid4().hex[:8]}"

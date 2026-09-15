@@ -190,6 +190,92 @@ def resolve_category(caller: Caller, slug: str) -> PartCategory:
     return row
 
 
+
+# How many existing names a "no such category" refusal carries. Enough
+# for the model to recognise the one it meant in a normal workspace, few
+# enough that a 200-category library does not flood the answer.
+CATEGORY_CANDIDATE_LIMIT = 10
+
+
+def resolve_category_ref(caller: Caller, ref: str) -> PartCategory:
+    """A category by id, exact name, case-insensitive name, or slug.
+
+    `resolve_category` above takes a slug and nothing else, because its
+    callers are asking a KiCad question. This one is for an agent that
+    has read "R_0402" off a schematic and knows the category as
+    "Resistors" — the only identifier it holds is the one a human would
+    say out loud.
+
+    The order is deliberate. A value that parses as a UUID is an id and
+    is NOT retried as a name: falling through would make "not found"
+    mean two different things. Then an exact name (at most one, the
+    partial unique index sees to that), then a case-insensitive one,
+    then the library slug.
+
+    Both refusals are written to be acted on rather than retried blind:
+    a miss lists the categories that DO exist, and a case-insensitive
+    tie names the rows it could not choose between and asks for an id.
+    Archived categories match nothing — every picker hides them, and
+    filing a part under one is not something an agent should discover
+    by accident.
+    """
+    rows = list(
+        caller.db.execute(
+            select(PartCategory)
+            .where(PartCategory.workspace_id == caller.ws.id)
+            .where(PartCategory.archived_at.is_(None))
+            .order_by(PartCategory.name)
+        ).scalars()
+    )
+
+    parsed = _as_uuid(ref)
+    if parsed is not None:
+        for row in rows:
+            if row.id == parsed:
+                return row
+        _no_such_category(ref, rows)
+
+    for row in rows:
+        if row.name == ref:
+            return row
+
+    folded = [row for row in rows if row.name.casefold() == ref.casefold()]
+    if len(folded) == 1:
+        return folded[0]
+    if len(folded) > 1:
+        raise_http(
+            status.HTTP_409_CONFLICT,
+            ErrorCodes.CATEGORY_NAME_CONFLICT,
+            f"{ref!r} matches more than one category "
+            f"({_names(folded)}); pass the category id instead",
+        )
+
+    for row in rows:
+        if row.library_slug == ref:
+            return row
+    _no_such_category(ref, rows)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _no_such_category(ref: str, rows: Sequence[PartCategory]) -> None:
+    listed = (
+        f"; categories in this workspace: {_names(rows)}"
+        if rows
+        else "; this workspace has no categories yet — create one first"
+    )
+    raise_http(
+        status.HTTP_404_NOT_FOUND,
+        ErrorCodes.CATEGORY_NOT_FOUND,
+        f"no category matching {ref!r} in this workspace{listed}",
+    )
+
+
+def _names(rows: Sequence[PartCategory]) -> str:
+    shown = ", ".join(row.name for row in rows[:CATEGORY_CANDIDATE_LIMIT])
+    extra = len(rows) - CATEGORY_CANDIDATE_LIMIT
+    return f"{shown} (+{extra} more)" if extra > 0 else shown
+
+
 def resolve_storage(caller: Caller, storage_id: str) -> StorageLocation:
     parsed = _as_uuid(storage_id)
     row = (

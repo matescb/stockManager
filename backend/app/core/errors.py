@@ -346,6 +346,11 @@ class ErrorCodes:
     # Custom fields router.
     CUSTOM_FIELD_RESERVED_KEY = "custom_field.reserved_key"
     CUSTOM_FIELD_NOT_OVERRIDE = "custom_field.not_override"
+    # Raised by the bulk spec writer on the MCP surface, which accepts a
+    # whole dict in one call and so has caps the single-row REST route
+    # never needed.
+    CUSTOM_FIELD_TOO_MANY = "custom_field.too_many"
+    CUSTOM_FIELD_TOO_LONG = "custom_field.too_long"
 
     # Legacy parts-provider lookup route.
     PROVIDER_UPSTREAM_ERROR = "provider.upstream_error"
