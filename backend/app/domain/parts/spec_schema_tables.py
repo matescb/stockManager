@@ -65,15 +65,14 @@ COMMON_SPECS: tuple[SpecKey, ...] = (
 _RESISTOR: tuple[SpecKey, ...] = (
     SpecKey("resistance", "Ω", "Resistance", True, ("Resistance",), ("Resistance",)),
     SpecKey("tolerance", "%", "Tolerance", True, ("Tolerance",), ("Tolerance",)),
-    SpecKey(
-        "power", "W", "Power", True,
-        ("Power (Watts)",), ("Power", "Power Rating"),
-    ),
+    SpecKey("power", "W", "Power", True, ("Power (Watts)",), ("Power", "Power Rating")),
     SpecKey(
         "temp_coefficient", "ppm/°C", "Temperature coefficient", True,
         ("Temperature Coefficient",), ("Temperature Coefficient",),
     ),
 )
+
+_ESR_DIGIKEY = ("ESR (Equivalent Series Resistance)",)
 
 _CAPACITANCE = SpecKey(
     "capacitance", "F", "Capacitance", True, ("Capacitance",), ("Capacitance",)
@@ -103,10 +102,7 @@ _CAPACITOR_CERAMIC: tuple[SpecKey, ...] = (
 _CAPACITOR_ELECTROLYTIC: tuple[SpecKey, ...] = (
     _CAPACITANCE,
     _CAP_VOLTAGE,
-    SpecKey(
-        "esr", "Ω", "ESR", True,
-        ("ESR (Equivalent Series Resistance)",), ("ESR",),
-    ),
+    SpecKey("esr", "Ω", "ESR", True, _ESR_DIGIKEY, ("ESR",)),
     SpecKey(
         "ripple_current", "A", "Ripple current", True,
         ("Ripple Current @ Low Frequency", "Ripple Current @ High Frequency"),
@@ -119,10 +115,7 @@ _CAPACITOR_TANTALUM: tuple[SpecKey, ...] = (
     _CAPACITANCE,
     _CAP_VOLTAGE,
     _CAP_TOLERANCE,
-    SpecKey(
-        "esr", "Ω", "ESR", False,
-        ("ESR (Equivalent Series Resistance)",), ("ESR",),
-    ),
+    SpecKey("esr", "Ω", "ESR", False, _ESR_DIGIKEY, ("ESR",)),
 )
 
 _CAPACITOR_FILM: tuple[SpecKey, ...] = (
@@ -166,7 +159,7 @@ _DIODE: tuple[SpecKey, ...] = (
     ),
     SpecKey(
         "vf", "V", "Forward voltage", True,
-        ("Voltage - Forward (Vf) (Max) @ If",), ("Forward Voltage",),
+        ("Voltage - Forward (Vf) (Max) @ If",), ("Forward Voltage",)
     ),
 )
 
@@ -175,10 +168,7 @@ _DIODE_ZENER: tuple[SpecKey, ...] = (
         "vz", "V", "Zener voltage", True,
         ("Voltage - Zener (Nom) (Vz)",), ("Zener Voltage", "Voltage"),
     ),
-    SpecKey(
-        "power", "W", "Power", True,
-        ("Power - Max",), ("Power", "Power Dissipation"),
-    ),
+    SpecKey("power", "W", "Power", True, ("Power - Max",), ("Power", "Power Dissipation")),
 )
 
 _DIODE_TVS: tuple[SpecKey, ...] = (
@@ -232,10 +222,7 @@ _TRANSISTOR_BJT: tuple[SpecKey, ...] = (
         ("Current - Collector (Ic) (Max)",),
         ("Collector Current", "Continuous Collector Current"),
     ),
-    SpecKey(
-        "power", "W", "Power", True,
-        ("Power - Max",), ("Power Dissipation", "Power"),
-    ),
+    SpecKey("power", "W", "Power", True, ("Power - Max",), ("Power Dissipation", "Power")),
     SpecKey(
         "hfe", None, "hFE", True,
         ("DC Current Gain (hFE) @ Ic, Vce",), ("DC Current Gain hFE", "Current Gain"),
