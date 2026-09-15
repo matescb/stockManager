@@ -119,7 +119,14 @@ the display string.
 - **A4** maps provider category strings to our category tree. This ADR only
   maps *our* category names to schema slugs (`category_slug_for`).
 - **A5** is the `spec-normalize` backfill that re-keys the 9,377 existing rows.
-- **A7** renders mandatory-but-missing keys on the Specs tab.
+- **A7** renders mandatory-but-missing keys on the Specs tab. It should also
+  close a sharp edge this ADR widens: `isCatalogKey` classifies by key name
+  alone, so a user who types `MOQ` or `Availability` as a manual spec gets a
+  row that renders on the read-only Sourcing tab and can no longer be edited
+  or deleted from the UI. The catalog list grew by nine ordinary commercial
+  words here, which raises the odds of hitting it. Gating the classification
+  on `source !== "manual"`, or refusing a catalog key in the add-spec form,
+  fixes it — both are Specs-tab behaviour changes and belong with A7.
 - **B1/B2** add `part_categories.value_template` and render the KiCad `Value`
   from canonical specs.
 

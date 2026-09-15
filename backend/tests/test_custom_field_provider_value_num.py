@@ -10,6 +10,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
@@ -83,8 +84,49 @@ def test_value_num_round_trips_exactly(authed_client, db) -> None:
         f"/api/custom-fields/by-object/part/{part_id}"
     ).json()["data"]
     assert served[0]["provider"] == "digikey"
-    # Sent as a string so the exactness survives JSON.
-    assert Decimal(served[0]["value_num"]) == Decimal("0.000000000001")
+    # Sent as a string so the exactness survives JSON, and WITHOUT the
+    # column's declared scale padded on: Postgres returns the full
+    # NUMERIC(36,18), which `str()` would render as eighteen trailing zeros.
+    assert served[0]["value_num"] == "0.000000000001"
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        (Decimal("10000"), "10000"),
+        (Decimal("0.000000000001"), "0.000000000001"),
+        (Decimal("0"), "0"),
+        (Decimal("-0.026"), "-0.026"),
+        (None, None),
+    ],
+)
+def test_value_num_is_served_fixed_point_without_padding(
+    authed_client, db, stored: Decimal | None, expected: str | None
+) -> None:
+    # Arrange
+    part_id = _make_part(authed_client)
+    authed_client.post(
+        "/api/custom-fields",
+        json={
+            "object_type": "part",
+            "object_id": part_id,
+            "key": "Resistance",
+            "value": "10 kΩ",
+        },
+    )
+    row = db.execute(
+        select(CustomField).where(CustomField.object_id == uuid.UUID(part_id))
+    ).scalar_one()
+    row.value_num = stored
+    db.commit()
+
+    # Act
+    served = authed_client.get(
+        f"/api/custom-fields/by-object/part/{part_id}"
+    ).json()["data"]
+
+    # Assert — never "1E+4", never "10000.000000000000000000".
+    assert served[0]["value_num"] == expected
 
 
 def test_the_partial_index_exists_and_is_scoped_to_parsed_rows(db) -> None:
