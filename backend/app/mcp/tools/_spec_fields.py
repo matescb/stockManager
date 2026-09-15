@@ -17,6 +17,12 @@ A `custom_fields` row's `source` says who may write it:
   place. Nothing here changes a row's `source`, so provenance is only
   ever set by the path that earned it: a `manual` row stays manual, and
   an `override` a person made in the UI stays an override.
+
+Writing and deleting are not the same permission. `replace_missing`
+removes only `manual` rows; an override is updatable but never
+deletable, because deleting it would also throw away the
+`original_value` that is the sole copy of what the provider said. See
+`_remove_absent`.
 """
 from __future__ import annotations
 
@@ -122,8 +128,22 @@ def validate_specs(specs: dict[str, str]) -> None:
         if not key.strip():
             raise_http(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
-                ErrorCodes.CUSTOM_FIELD_TOO_LONG,
+                ErrorCodes.CUSTOM_FIELD_KEY_WHITESPACE,
                 "a specification key cannot be blank",
+            )
+        # Refused rather than silently stripped, and this is the check
+        # that makes the two below sound. Both compare the key EXACTLY,
+        # so `"image_url "` is not reserved and `"mouser: x"` is not
+        # namespaced — a single space walked past either one. Stripping
+        # instead would have to answer what happens when the stripped
+        # form collides with another key in the same payload; refusing
+        # says which key is wrong and needs no such answer.
+        if key != key.strip():
+            raise_http(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                ErrorCodes.CUSTOM_FIELD_KEY_WHITESPACE,
+                f"key {key!r} has leading or trailing whitespace; send "
+                f"{key.strip()!r}",
             )
         if is_provider_reserved_custom_field_key(key) or is_provider_namespaced_key(key):
             raise_http(
@@ -192,16 +212,24 @@ def _new_field(caller: Caller, part_id: UUID, key: str, value: str) -> CustomFie
 def _remove_absent(
     caller: Caller, specs: dict[str, str], existing: dict[str, CustomField]
 ) -> list[str]:
-    """Delete the rows this tool owns that the new payload does not name.
+    """Delete the plain `manual` rows the new payload does not name.
 
-    Scoped exactly the way `apply_specs` writes: provider rows and the
-    reserved / namespaced keys are not this tool's to remove, so
-    `replace_missing` cannot be turned into a way to strip a part's
-    provider data.
+    NARROWER than the set `apply_specs` may write, and deliberately so.
+    Updating an `override` changes a value; deleting one destroys a
+    person's decision — the row is the record that somebody looked at a
+    provider value and replaced it, and `original_value` is the only
+    copy of what upstream said. Throw both away and the next provider
+    refresh restores the upstream value as though the disagreement had
+    never happened. So an override is updatable and never deletable, and
+    `replace_missing` means "replace what I wrote", not "replace
+    everything I am allowed to touch".
+
+    Provider rows and the reserved / namespaced keys are not this tool's
+    at all, so `replace_missing` can never strip a part's provider data.
     """
     removed: list[str] = []
     for key, row in existing.items():
-        if key in specs or row.source not in _WRITABLE_SOURCES:
+        if key in specs or row.source != "manual":
             continue
         if is_provider_reserved_custom_field_key(key) or is_provider_namespaced_key(key):
             continue

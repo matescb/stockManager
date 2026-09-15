@@ -172,6 +172,44 @@ async def test_duplicate_mpn_writes_no_audit_row(authed_client, full_token, db):
     assert len(_audit_rows(db, "part.created")) == before
 
 
+async def test_a_padded_mpn_still_finds_the_existing_part(
+    authed_client, full_token, db
+):
+    """Whitespace around an MPN must not turn "found it" into a failure.
+
+    The create service strips before its uniqueness pre-check, so a
+    padded MPN raises the conflict on the stripped value. Looking the
+    existing part back up by the RAW argument found nothing and the tool
+    re-raised the conflict as a hard error — the one outcome this tool
+    exists to avoid. An MPN copied out of a schematic or a BOM cell
+    carries trailing space more often than not.
+    """
+    existing = create_part(authed_client, "Already here", mpn="PAD-1")
+
+    async with mcp_session(full_token) as s:
+        out = await call(s, "create_part", mpn="  PAD-1  ")
+
+    assert out["found_existing"] is True
+    assert out["part"]["id"] == existing
+    assert db.query(Part).filter(Part.mpn == "PAD-1").count() == 1
+
+
+async def test_create_part_refuses_an_over_long_field(authed_client, full_token, db):
+    """A 201-character MPN is a bad argument, not a server error.
+
+    `mpn` is `varchar(200)`. Without a length on the schema this reached
+    the database and came back as a DataError — a 500 on the REST side
+    and an opaque "Error executing tool" here, neither of which tells
+    the caller what to do differently.
+    """
+    async with mcp_session(full_token) as s:
+        error = await call_error(s, "create_part", mpn="X" * 201)
+
+    assert "part.invalid_field" in error
+    assert "mpn" in error
+    assert db.query(Part).count() == 0
+
+
 async def test_create_part_files_it_under_a_category(authed_client, full_token):
     category = _category(authed_client, "Amplifiers")
     async with mcp_session(full_token) as s:
@@ -452,6 +490,125 @@ async def test_set_part_specs_updates_an_override_without_moving_its_source(
     assert after.value == "5%"
     assert after.source == "override"
     assert after.original_value == "1 %"
+
+
+async def test_set_part_specs_refuses_a_key_with_surrounding_whitespace(
+    authed_client, full_token, db
+):
+    """`"Tolerance "` is not a second field, it is a typo.
+
+    Accepting it wrote a new manual row beside the provider's
+    `"Tolerance"`, so the part carried two spellings of one
+    specification and the tool's own provider-skip never fired.
+    """
+    part_id = create_part(authed_client, "Padded", mpn="SPEC-11")
+    _seed_provider_field(db, authed_client, part_id, "Tolerance", "1 %")
+
+    async with mcp_session(full_token) as s:
+        error = await call_error(
+            s, "set_part_specs", part_id_or_mpn=part_id, specs={"Tolerance ": "5%"}
+        )
+
+    assert "custom_field.key_whitespace" in error
+    assert set(_fields(db, part_id)) == {"Tolerance"}
+    assert _fields(db, part_id)["Tolerance"].value == "1 %"
+
+
+async def test_a_padded_reserved_key_is_still_reserved(authed_client, full_token, db):
+    """The whitespace check is what closes the reserved-key bypass.
+
+    `is_provider_reserved_custom_field_key` compares the key exactly, so
+    `"image_url "` was not reserved and landed as an ordinary spec —
+    a provider-owned name, written by an agent, one space away from the
+    real one.
+    """
+    part_id = create_part(authed_client, "Padded reserved", mpn="SPEC-12")
+
+    async with mcp_session(full_token) as s:
+        error = await call_error(
+            s,
+            "set_part_specs",
+            part_id_or_mpn=part_id,
+            specs={"image_url ": "http://evil/x.png"},
+        )
+
+    assert "custom_field" in error
+    assert _fields(db, part_id) == {}
+
+
+async def test_set_part_specs_refuses_a_provider_namespaced_key(
+    authed_client, full_token, db
+):
+    """`mouser:` and `digikey:` belong to a secondary provider's refresh.
+
+    A row written there would be deleted by that provider's next
+    "remove what is absent from my payload" pass, so writing one is a
+    silent data-loss bug rather than a permission question (ADR-0031).
+    """
+    part_id = create_part(authed_client, "Namespaced", mpn="SPEC-13")
+
+    async with mcp_session(full_token) as s:
+        for key in ("mouser:Resistance", "digikey:Resistance"):
+            error = await call_error(
+                s, "set_part_specs", part_id_or_mpn=part_id, specs={key: "10k"}
+            )
+            assert "custom_field.reserved_key" in error, key
+
+    assert _fields(db, part_id) == {}
+
+
+async def test_set_part_specs_caps_the_key_length(authed_client, full_token):
+    """`custom_fields.key` is varchar(256); 257 is a refusal, not a DataError."""
+    part_id = create_part(authed_client, "Long key", mpn="SPEC-14")
+
+    async with mcp_session(full_token) as s:
+        error = await call_error(
+            s, "set_part_specs", part_id_or_mpn=part_id, specs={"k" * 257: "v"}
+        )
+
+    assert "custom_field.too_long" in error
+
+
+async def test_replace_missing_never_deletes_an_override(
+    authed_client, full_token, db
+):
+    """An override is a person's decision; `replace_missing` may not undo it.
+
+    The row records that someone looked at a provider value and replaced
+    it, and `original_value` is the only copy of what upstream said.
+    Deleting it on an agent's say-so throws both away, and the next
+    provider refresh would quietly restore the upstream value as if the
+    person had never disagreed. Overrides stay updatable — see
+    `test_set_part_specs_updates_an_override_without_moving_its_source`
+    — they are only undeletable.
+    """
+    part_id = create_part(authed_client, "Overridden", mpn="SPEC-15")
+    _seed_provider_field(db, authed_client, part_id, "Tolerance", "1 %")
+    row = _fields(db, part_id)["Tolerance"]
+    row.source = "override"
+    row.original_value = "1 %"
+    row.value = "5%"
+    db.flush()
+
+    async with mcp_session(full_token) as s:
+        await call(
+            s, "set_part_specs", part_id_or_mpn=part_id, specs={"power": "0.1W"}
+        )
+        out = await call(
+            s,
+            "set_part_specs",
+            part_id_or_mpn=part_id,
+            specs={"package": "0402"},
+            replace_missing=True,
+        )
+
+    # The manual row goes; the override does not.
+    assert out["removed"] == ["power"]
+    after = _fields(db, part_id)
+    assert set(after) == {"Tolerance", "package"}
+    assert after["Tolerance"].source == "override"
+    assert after["Tolerance"].value == "5%"
+    assert after["Tolerance"].original_value == "1 %"
 
 
 async def test_set_part_specs_refuses_a_reserved_key(authed_client, full_token, db):

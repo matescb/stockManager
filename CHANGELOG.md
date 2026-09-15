@@ -30,6 +30,11 @@ the canonical record.
   `domain/parts/services/create_part.py` so the route and the tool
   cannot drift on the name/MPN defaulting, the MPN pre-check or the
   workspace checks on the supplied category and storage ids.
+- **`parts.mpn`, `manufacturer` and `internal_part_number` are now
+  length-checked by the schema**, on create and on patch, at the column
+  widths (200 / 200 / 120; `name` was already capped on create but not
+  on patch). An over-long value used to reach Postgres and come back a
+  `DataError` — a 500 for what is plainly a bad request.
 
 - **PCM package: 3D models linked on the CAD tab now ship in the
   footprint.** Linking a STEP or WRL to a footprint wrote a join row

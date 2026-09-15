@@ -32,9 +32,10 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from fastapi import HTTPException
+from fastapi import HTTPException, status
+from pydantic import ValidationError
 
-from app.core.errors import ErrorCodes
+from app.core.errors import ErrorCodes, raise_http
 from app.domain.parts.models import Part
 from app.domain.parts.schemas import PartIn
 from app.domain.parts.services.create_part import create_part as _create_part
@@ -114,13 +115,21 @@ def create_part(
     if category_id is not None:
         supplied["category_id"] = resolve_category_ref(caller, category_id).id
 
-    payload = PartIn(**supplied)
+    payload = _payload(supplied)
     try:
         part = _create_part(
             caller.db, ws=caller.ws, user_id=caller.user.id, payload=payload
         )
     except HTTPException as exc:
-        existing = _existing_for_conflict(caller, exc, payload.mpn)
+        # STRIPPED, matching what the service pre-checked against. An MPN
+        # copied out of a schematic or a BOM cell carries trailing space
+        # more often than not, and looking the existing part back up by
+        # the raw argument found nothing — so the tool re-raised the
+        # conflict as a hard error, which is the single outcome this
+        # tool exists to avoid.
+        existing = _existing_for_conflict(
+            caller, exc, (payload.mpn or "").strip() or None
+        )
         if existing is None:
             raise
         return {"found_existing": True, "part": part_summary(existing)}
@@ -133,6 +142,32 @@ def create_part(
         comment="fields=" + ",".join(sorted(set(payload.model_fields_set) | {"name"})),
     )
     return {"found_existing": False, "part": part_summary(part)}
+
+
+def _payload(supplied: dict[str, Any]) -> PartIn:
+    """`PartIn` from the tool's arguments, or a refusal naming the field.
+
+    The routes let FastAPI build this model and answer their own 422;
+    here it is built by hand, so a `ValidationError` would otherwise
+    escape as an unhandled exception and reach the client as
+    `Error executing tool create_part` with nothing it could act on.
+    The field caps themselves live on the schema next to the column
+    widths they mirror.
+    """
+    try:
+        return PartIn(**supplied)
+    except ValidationError as exc:
+        fields = ", ".join(
+            ".".join(str(part) for part in error["loc"]) or "?"
+            for error in exc.errors()
+        )
+        raise_http(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            ErrorCodes.PART_INVALID_FIELD,
+            f"invalid value for {fields}: {exc.error_count()} field(s) "
+            "failed validation; check the lengths",
+        )
+        raise AssertionError("unreachable")  # pragma: no cover
 
 
 def _existing_for_conflict(
@@ -212,16 +247,21 @@ def set_part_specs(
             `{"resistance": "10k", "tolerance": "1%", "package": "0402"}`.
             Values are stored verbatim, units included. At most 50 keys,
             256 characters per key and 1024 per value.
-        replace_missing: When true, the part's own specifications end up
-            exactly what `specs` says — any earlier ones you wrote and
-            did not repeat are deleted. Defaults to false, which only
-            adds and updates.
+        replace_missing: When true, specifications YOU wrote earlier and
+            did not repeat here are deleted. Only plain manual rows go:
+            provider-supplied values stay, and so does any value a
+            person edited by hand in the app, which you can update but
+            not remove. Defaults to false, which only adds and updates.
 
     Specifications supplied by a parts provider are NEVER changed, and
     come back under `skipped_provider_owned` so you can see which values
     the tool refused to touch; `replace_missing` leaves them alone too.
     To change one of those, edit it in the app, which records that a
     person took ownership of it.
+
+    Keys must not have leading or trailing whitespace — `"Tolerance "`
+    is refused rather than stored as a second field beside
+    `"Tolerance"`.
 
     Keys a provider reserves (`image_url`, `datasheet_url`,
     `source_url`, and anything prefixed `digikey:` or `mouser:`) are

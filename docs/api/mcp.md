@@ -107,16 +107,17 @@ earlier result has the other.
 
 | Tool | Arguments | Refusals |
 |---|---|---|
-| `create_part` | `name?`, `mpn?`, `manufacturer?`, `description?`, `category_id?`, `part_type?` (`local`\|`linked`), `internal_part_number?` | `part.name_or_mpn_required` with neither `name` nor `mpn`; `category.not_found` for a category id, name or slug that is not in this workspace |
+| `create_part` | `name?`, `mpn?`, `manufacturer?`, `description?`, `category_id?`, `part_type?` (`local`\|`linked`), `internal_part_number?` | `part.name_or_mpn_required` with neither `name` nor `mpn`; `category.not_found` for a category id, name or slug that is not in this workspace; `part.invalid_field` for an over-long value |
 | `set_part_category` | `part_id_or_mpn`, `category_id_or_name` | `category.not_found` (lists up to 10 existing names), `category.name_conflict` when two categories differ only in case, `part.not_found` |
-| `set_part_specs` | `part_id_or_mpn`, `specs` (key → value), `replace_missing?` | `custom_field.reserved_key`, `custom_field.too_many` (> 50 keys), `custom_field.too_long` (key > 256 or value > 1024 characters) |
+| `set_part_specs` | `part_id_or_mpn`, `specs` (key → value), `replace_missing?` | `custom_field.reserved_key`, `custom_field.key_whitespace`, `custom_field.too_many` (> 50 keys), `custom_field.too_long` (key > 256 or value > 1024 characters) |
 
 **A duplicate MPN is a success, not an error.** `POST /api/parts` answers 409
 with `existing_id`; `create_part` answers `{"found_existing": true, "part":
 {…}}` and writes nothing. An MPN names one part, so finding it is the right
 answer — and a tool error would be indistinguishable, to a model, from a
 malformed call. Read `found_existing` before telling the user you added
-something.
+something. The MPN is stripped first, so `"  LM358DR "` finds the same part
+`"LM358DR"` does.
 
 **`set_part_specs` never overwrites provider-supplied values.** Rows a parts
 provider owns come back under `skipped_provider_owned` and are left as they
@@ -126,9 +127,20 @@ of it and the row becomes an `override`. A bulk agent write is not deliberate
 about any single row. Nothing on this surface changes a row's `source` —
 `manual` rows stay manual, `override` rows stay overrides.
 
-`replace_missing` deletes only the rows this tool could have written: your own
-`manual` and `override` spec rows that the new payload does not name. Provider
-rows and the reserved keys below are never removed by it.
+`replace_missing` deletes only plain `manual` rows the new payload does not
+name — narrower than the set the tool may *write*, and deliberately so. An
+`override` is the record that a person looked at a provider value and replaced
+it, and its `original_value` is the only copy of what upstream said; deleting
+it would throw away both, and the next provider refresh would restore the
+upstream value as though the disagreement had never happened. So an override is
+updatable and never deletable. Provider rows and the reserved keys below are
+not the tool's at all.
+
+Keys are compared exactly, so a key with leading or trailing whitespace is
+refused rather than stored: `"Tolerance "` would otherwise sit beside the
+provider's `"Tolerance"` as a second spelling of one specification, and
+`"image_url "` would slip past the reserved list below, which is a literal
+match.
 
 Reserved keys — `image_url`, `datasheet_url`, `source_url`, and anything
 prefixed `digikey:` or `mouser:` — are refused outright, and one bad key
@@ -201,6 +213,7 @@ the REST surface ([ADR-0002](../adr/0002-code-enforced-workspace-isolation.md)).
 | `find_parts_missing_eda` results | 100 |
 | `set_part_specs` keys per call | 50 |
 | `set_part_specs` key / value length | 256 / 1024 characters |
+| `create_part` `mpn` / `manufacturer` / `internal_part_number` | 200 / 200 / 120 characters |
 
 Listings that hit their cap return `truncated: true`. Narrow the query rather
 than raising the limit — a hundred parts of context makes an assistant worse at

@@ -78,3 +78,51 @@ def test_substitute_and_member_mutations_write_one_audit_row(authed_client, db):
     r = authed_client.delete(f"/api/parts/{meta_id}/members/{member_id}")
     assert r.status_code == 200, r.text
     assert _audit_count(db) == before + 1
+
+
+def test_over_long_text_fields_are_422_not_a_database_error(authed_client):
+    """`mpn`, `manufacturer` and `internal_part_number` are bounded columns.
+
+    Without a length on the schema these reached Postgres as-is and came
+    back as a `DataError` — a 500 for what is plainly a bad request. The
+    caps mirror the column widths in `domain/parts/models.py` exactly, so
+    anything the schema accepts the column can store.
+    """
+    for field, over in (
+        ("mpn", 201),
+        ("manufacturer", 201),
+        ("internal_part_number", 121),
+        ("name", 301),
+    ):
+        r = authed_client.post(
+            "/api/parts", json={"name": "Bounded", field: "X" * over}
+        )
+        assert r.status_code == 422, f"{field}: {r.status_code} {r.text}"
+
+    created = authed_client.post(
+        "/api/parts",
+        json={
+            "name": "At the limit",
+            "mpn": "M" * 200,
+            "manufacturer": "F" * 200,
+            "internal_part_number": "I" * 120,
+        },
+    )
+    assert created.status_code == 201, created.text
+
+
+def test_patch_is_bounded_the_same_way_as_create(authed_client):
+    """PATCH writes the same columns, so it needs the same caps.
+
+    `PartIn` capped `name` and `PartPatch` did not, which left the
+    identical DataError reachable through the edit form.
+    """
+    part_id = _create_part(authed_client, "Patch bounds")
+    for field, over in (
+        ("mpn", 201),
+        ("manufacturer", 201),
+        ("internal_part_number", 121),
+        ("name", 301),
+    ):
+        r = authed_client.patch(f"/api/parts/{part_id}", json={field: "X" * over})
+        assert r.status_code == 422, f"{field}: {r.status_code} {r.text}"
