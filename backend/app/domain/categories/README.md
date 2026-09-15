@@ -11,7 +11,7 @@ Owns `PartCategory` — the workspace-scoped bucket a part belongs to (resistors
 | `models.py` | `PartCategory` |
 | `schemas.py` | `PartCategoryIn` / `PartCategoryPatch` / `PartCategoryOut` |
 | `service.py` | List / create / update / archive / restore + `slugify` |
-| `tree.py` | Hierarchy walks — cycle guard, depth cap, descendant expansion |
+| `tree.py` | Hierarchy walks — cycle guard, depth cap, descendant expansion, path names |
 
 ## Public surface
 
@@ -24,6 +24,7 @@ Owns `PartCategory` — the workspace-scoped bucket a part belongs to (resistors
 | Derive a library slug from free text | `service.py::slugify` |
 | Validate a create/reparent (cycle, depth, workspace, archived) | `tree.py::validate_parent` |
 | Expand a category to its subtree (for `GET /parts?category_id=`) | `tree.py::descendant_ids` |
+| Order the tree depth-first with `A / B` path names | `tree.py::tree_paths` |
 
 REST surface: `backend/app/api/routes/categories.py` (`/api/categories`).
 
@@ -36,6 +37,8 @@ REST surface: `backend/app/api/routes/categories.py` (`/api/categories`).
 5. **`parent_id` is `ON DELETE SET NULL` too (alembic 0078), so a delete promotes children to root rather than cascading a subtree away.** `archive_category` replicates that explicitly — a soft archive does not fire the FK action, and without it the active tree would contain children whose parent is not in it. Only *direct* children move.
 6. **Cycles and depth are guarded in Python, never in SQL.** `tree.py` loads one workspace's `(id, parent_id)` map and walks it. This repo has no recursive CTE anywhere and this module is not the place to introduce one — a category tree is a listing-sized set of rows, and every question falls out of a dict. Depth cap is `tree.MAX_DEPTH` (6); a reparent must count the moved subtree's height, not just the moved node.
 7. **Slug and name uniqueness stay workspace-global, not sibling-scoped.** `library_slug` becomes the `SM_{slug}.kicad_sym` filename (`kicad_refs.py`), so sibling-scoping it would silently merge two branches' same-named leaves into one KiCad library. The cost — `Passives/Resistors` and `Actives/Resistors` cannot coexist — is accepted.
+
+8. **`value_template` and `kicad_fields` are NULL-means-inherit (alembic 0082).** Both resolve up `parent_id` to the nearest ancestor that sets them, independently of each other, so a template on *Capacitors* covers *Capacitors / Ceramic*. An explicit `[]` on `kicad_fields` means "emit none" and stops the walk; so does an archived ancestor. They are validated in `schemas.py` rather than by a CHECK constraint — the vocabulary of legal keys is application data. Nothing outside `domain/eda/` reads them.
 
 ## See also
 

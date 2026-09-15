@@ -56,6 +56,8 @@ For the one-line domain table (which router serves which tables), see [`ARCHITEC
 
 Workspace-scoped part grouping with per-category EDA defaults (KiCad symbol/footprint refs, refdes prefix, footprint filters). `name` and `library_slug` are partial-unique per workspace among active rows; `parts.category_id` references it `SET NULL` — see [categories API](../api/categories.md).
 
+Migration `0082` adds two more KiCad columns, both nullable and both meaning *inherit from the nearest ancestor that sets them*: `value_template` (`String(200)`) renders a part's schematic `Value` from its canonical specs — `{resistance} {tolerance} {package}` → `10 kΩ 1% 0603` — and `kicad_fields` (JSONB list) names the spec keys emitted as hidden symbol fields. Shape is validated in Pydantic rather than by a CHECK, because the vocabulary of legal keys is application data. Read only by `domain/eda/` — see [KiCad API § Value derivation](../api/kicad.md#value-derivation).
+
 ### eda
 
 | Model | Table | Source |
@@ -319,6 +321,6 @@ Schema evolves forward-only. The chain runs `0001_initial.py` → the current he
 - `0013_stock_nonneg_trigger.py` — ledger non-negative trigger.
 - `0036_parts_default_storage_ws_trigger.py` — workspace-isolation trigger on `parts.default_storage_location_id`.
 
-Other notable ones cross-referenced from this doc set: `0011` (MPN unique index), `0012` + `0020` (`bag_signature` column + partial index), `0018` (cross-domain SET NULL FKs + partial unique on storage/tag names + pg_trgm GIN), `0030` (`audit_log`), `0031` (poly-orphan-cleanup indexes), `0032` (integer-quantity CHECKs), `0034` (`bulk_import_idempotency`), `0035` (`workspace_catalog_tokens`), `0042` (`workspaces.active_*` JSONB lists), `0067` (`part_categories` + the `parts.category_id` workspace trigger), `0068` (all five `eda_*` / `part_eda` tables), `0069` (`api_tokens`), `0078` (`part_categories.parent_id` + its workspace trigger).
+Other notable ones cross-referenced from this doc set: `0011` (MPN unique index), `0012` + `0020` (`bag_signature` column + partial index), `0018` (cross-domain SET NULL FKs + partial unique on storage/tag names + pg_trgm GIN), `0030` (`audit_log`), `0031` (poly-orphan-cleanup indexes), `0032` (integer-quantity CHECKs), `0034` (`bulk_import_idempotency`), `0035` (`workspace_catalog_tokens`), `0042` (`workspaces.active_*` JSONB lists), `0067` (`part_categories` + the `parts.category_id` workspace trigger), `0068` (all five `eda_*` / `part_eda` tables), `0069` (`api_tokens`), `0078` (`part_categories.parent_id` + its workspace trigger), `0082` (`part_categories.value_template` + `kicad_fields`).
 
 Don't edit a merged migration — add a new one. (`CLAUDE.md` Migrations section.)

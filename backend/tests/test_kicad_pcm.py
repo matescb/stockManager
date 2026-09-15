@@ -401,6 +401,34 @@ def test_member_layout_is_exactly_what_the_pcm_extracts(ws: Tenant):
     ]
 
 
+def test_a_category_value_template_does_not_touch_the_packaged_symbol(ws: Tenant):
+    """The package is symbol-scoped; `Value` per part is not in it.
+
+    `value_template` / `kicad_fields` (alembic 0082) drive the HTTP
+    library's per-part document, where one part has one Value. A
+    packaged `.kicad_sym` entry is a LIBRARY entry — N parts can link
+    the same row, and the passive categories the templates target mostly
+    resolve `Device:R`-style external refs that ship no bytes at all —
+    so there is no part whose Value it could carry. The stored bytes go
+    out verbatim but for the `Footprint` re-point, and this pins that:
+    setting the rules must leave the archive byte-identical, which is
+    also why `PACKAGE_FORMAT` was NOT bumped for that change.
+    """
+    before = ws.pcm.get(_archive(ws.token)).content
+    categories = ws.session.get("/api/categories").json()["data"]
+    passives = next(c for c in categories if c["name"] == "Passives")
+    patched = ws.session.patch(
+        f"/api/categories/{passives['id']}",
+        json={
+            "value_template": "{resistance} {tolerance} {package}",
+            "kicad_fields": ["resistance", "tolerance"],
+        },
+    )
+    assert patched.status_code == 200, patched.text
+
+    assert ws.pcm.get(_archive(ws.token)).content == before
+
+
 def test_symbol_libraries_parse_and_carry_their_entries(ws: Tenant):
     """The library file is a concatenation of stored canonical entries,
     so nothing re-parses it on the way out — which is exactly why the

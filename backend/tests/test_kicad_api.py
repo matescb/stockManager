@@ -632,14 +632,19 @@ def test_archived_part_is_invisible(ws: Tenant):
 
 
 def test_categories_are_ordered_and_described(ws: Tenant):
-    ws.category("Second", sort_order=2, description="two")
+    """Depth-first by `(sort_order, name)`, each subcategory named by
+    its full path — the document has no other field to nest in."""
+    second = ws.category("Second", sort_order=2, description="two")
     ws.category("First", sort_order=1)
+    ws.category("Leaf", parent_id=second["id"], description="under two")
 
     rows = ws.kicad.get(CATEGORIES).json()
-    assert [row["name"] for row in rows] == ["First", "Second"]
+    assert [row["name"] for row in rows] == ["First", "Second", "Second / Leaf"]
     # A category with no description still carries the key, empty.
     assert rows[0]["description"] == ""
     assert rows[1]["description"] == "two"
+    # The path is in `name` only — `description` stays the row's own.
+    assert rows[2]["description"] == "under two"
 
 
 def test_uncategorized_appears_only_when_an_eligible_part_needs_it(ws: Tenant):
@@ -1192,3 +1197,320 @@ def test_kicad_setup_omits_the_mcp_url_when_the_server_is_off(
     monkeypatch.setattr(settings(), "MCP_ENABLED", False)
     setup = ws.session.get("/api/eda/kicad-setup").json()["data"]
     assert setup["mcp_url"] is None
+
+
+# ---------------------------------------------------------------------
+# Value from the category template
+# ---------------------------------------------------------------------
+
+
+def _set_spec(ws: Tenant, part_id: str, key: str, value: str) -> None:
+    """Write one canonical spec as a manual custom field.
+
+    Through the HTTP API, unlike `_set_datasheet` — canonical spec keys
+    are not provider-reserved, so this is the path a user takes.
+    """
+    r = ws.session.post(
+        "/api/custom-fields",
+        json={
+            "object_type": "part",
+            "object_id": part_id,
+            "key": key,
+            "value": value,
+        },
+    )
+    assert r.status_code in (200, 201), r.text
+
+
+def _resistor(ws: Tenant, category_id: str, **specs: str) -> str:
+    part_id = create_part(ws.session, "RES SMD 10K OHM 1% 1/16W 0402", category_id=category_id)
+    ws.configure(part_id, symbol_ref_external="Device:R")
+    for key, value in specs.items():
+        _set_spec(ws, part_id, key, value)
+    return part_id
+
+
+def test_value_is_rendered_from_the_category_template(ws: Tenant):
+    """The whole point: an imported part is named after the provider's
+    marketing copy, and the schematic has to show `10 kΩ 1% 0603`."""
+    category = ws.category(
+        "Resistors", value_template="{resistance} {tolerance} {package}"
+    )
+    part_id = _resistor(
+        ws, category["id"], resistance="10 kΩ", tolerance="1%", package="0603"
+    )
+
+    document = ws.kicad.get(_part(part_id)).json()
+    assert document["fields"]["value"] == {"value": "10 kΩ 1% 0603"}
+    # `name` is untouched — the template drives the symbol, not the row.
+    assert document["name"] == "RES SMD 10K OHM 1% 1/16W 0402"
+
+
+def test_an_explicit_part_value_still_outranks_the_template(ws: Tenant):
+    category = ws.category("Resistors", value_template="{resistance} {package}")
+    part_id = _resistor(ws, category["id"], resistance="10 kΩ", package="0603")
+    ws.configure(part_id, symbol_ref_external="Device:R", value="R10K")
+
+    assert ws.kicad.get(_part(part_id)).json()["fields"]["value"] == {"value": "R10K"}
+
+
+def test_the_part_name_is_the_last_resort(ws: Tenant):
+    """A template whose placeholders all resolve to nothing must not
+    leave the symbol with an empty Value."""
+    category = ws.category("Resistors", value_template="{resistance} {package}")
+    part_id = create_part(ws.session, "Mystery", category_id=category["id"])
+    ws.configure(part_id, symbol_ref_external="Device:R")
+
+    assert ws.kicad.get(_part(part_id)).json()["fields"]["value"] == {"value": "Mystery"}
+
+
+def test_a_category_with_no_template_is_unchanged(ws: Tenant):
+    category = ws.category("Resistors")
+    part_id = _resistor(ws, category["id"], resistance="10 kΩ")
+    assert ws.kicad.get(_part(part_id)).json()["fields"]["value"] == {
+        "value": "RES SMD 10K OHM 1% 1/16W 0402"
+    }
+
+
+def test_mpn_is_the_default_template_for_everything_else(ws: Tenant):
+    category = ws.category("Microcontrollers", value_template="{mpn}")
+    mpn = f"STM32-{uuid.uuid4().hex[:6]}"
+    part_id = create_part(
+        ws.session, "MCU 32BIT ARM 256KB", mpn=mpn, category_id=category["id"]
+    )
+    ws.configure(part_id, symbol_ref_external="Device:R")
+
+    assert ws.kicad.get(_part(part_id)).json()["fields"]["value"] == {"value": mpn}
+
+
+def test_kicad_fields_are_emitted_as_hidden_symbol_fields(ws: Tenant):
+    category = ws.category(
+        "Resistors", kicad_fields=["resistance", "tolerance", "voltage_rating"]
+    )
+    part_id = _resistor(ws, category["id"], resistance="10 kΩ", tolerance="1%")
+
+    fields = ws.kicad.get(_part(part_id)).json()["fields"]
+    assert fields["Resistance"] == {"value": "10 kΩ", "visible": "False"}
+    assert fields["Tolerance"] == {"value": "1%", "visible": "False"}
+    # A listed key the part has no spec for is omitted, not blanked.
+    assert "Voltage Rating" not in fields
+
+
+def test_a_spec_field_cannot_shadow_a_built_in_one(ws: Tenant):
+    """KiCad matches its mandatory fields case-insensitively, so a spec
+    key called `value` would give the symbol two Values."""
+    category = ws.category("Resistors", kicad_fields=["value", "description", "package"])
+    part_id = create_part(
+        ws.session, "R10K", description="ten k", category_id=category["id"]
+    )
+    ws.configure(part_id, symbol_ref_external="Device:R")
+    for key in ("value", "description"):
+        _set_spec(ws, part_id, key, "SHADOW")
+    _set_spec(ws, part_id, "package", "0603")
+
+    fields = ws.kicad.get(_part(part_id)).json()["fields"]
+    assert fields["value"] == {"value": "R10K"}
+    assert fields["description"]["value"] == "ten k"
+    assert "Value" not in fields
+    assert "Description" not in fields
+    # The key that collides with nothing is still emitted.
+    assert fields["Package"]["value"] == "0603"
+
+
+def test_the_rendered_value_joins_the_keywords(ws: Tenant):
+    """The symbol chooser searches keywords. A part named after the
+    provider description is otherwise unfindable by what it is."""
+    category = ws.category("Resistors", value_template="{resistance} {package}")
+    part_id = _resistor(ws, category["id"], resistance="10 kΩ", package="0603")
+    ws.configure(part_id, symbol_ref_external="Device:R", keywords="resistor smd")
+
+    document = ws.kicad.get(_part(part_id)).json()
+    assert document["keywords"] == "resistor smd 10 kΩ 0603"
+    assert document["fields"]["keywords"]["value"] == document["keywords"]
+
+
+def test_keywords_are_untouched_when_nothing_renders(ws: Tenant):
+    category = ws.category("Resistors")
+    part_id = _resistor(ws, category["id"])
+    ws.configure(part_id, symbol_ref_external="Device:R", keywords="resistor")
+
+    assert ws.kicad.get(_part(part_id)).json()["keywords"] == "resistor"
+
+
+def test_the_template_is_inherited_from_an_ancestor_category(ws: Tenant):
+    """A template set on *Capacitors* covers *Capacitors / Ceramic*
+    without being repeated on every leaf."""
+    parent = ws.category(
+        "Capacitors",
+        value_template="{capacitance} {voltage_rating}",
+        kicad_fields=["capacitance"],
+    )
+    child = ws.category("Ceramic", parent_id=parent["id"])
+    part_id = create_part(ws.session, "CAP CER 1UF 50V X7R", category_id=child["id"])
+    ws.configure(part_id, symbol_ref_external="Device:C")
+    _set_spec(ws, part_id, "capacitance", "1 µF")
+    _set_spec(ws, part_id, "voltage_rating", "50 V")
+
+    fields = ws.kicad.get(_part(part_id)).json()["fields"]
+    assert fields["value"] == {"value": "1 µF 50 V"}
+    assert fields["Capacitance"]["value"] == "1 µF"
+
+
+def test_a_childs_own_template_wins_over_its_parents(ws: Tenant):
+    parent = ws.category("Capacitors", value_template="{capacitance}")
+    child = ws.category(
+        "Electrolytic", parent_id=parent["id"], value_template="{capacitance} elyt"
+    )
+    part_id = create_part(ws.session, "CAP", category_id=child["id"])
+    ws.configure(part_id, symbol_ref_external="Device:C")
+    _set_spec(ws, part_id, "capacitance", "1000 µF")
+
+    assert ws.kicad.get(_part(part_id)).json()["fields"]["value"] == {
+        "value": "1000 µF elyt"
+    }
+
+
+def test_template_and_fields_inherit_independently(ws: Tenant):
+    """A child may override the template while still taking its
+    parent's field list, and vice versa."""
+    parent = ws.category(
+        "Capacitors", value_template="{capacitance}", kicad_fields=["dielectric"]
+    )
+    child = ws.category(
+        "Ceramic", parent_id=parent["id"], value_template="C {capacitance}"
+    )
+    part_id = create_part(ws.session, "CAP", category_id=child["id"])
+    ws.configure(part_id, symbol_ref_external="Device:C")
+    _set_spec(ws, part_id, "capacitance", "1 µF")
+    _set_spec(ws, part_id, "dielectric", "X7R")
+
+    fields = ws.kicad.get(_part(part_id)).json()["fields"]
+    assert fields["value"] == {"value": "C 1 µF"}
+    assert fields["Dielectric"]["value"] == "X7R"
+
+
+def test_an_empty_field_list_stops_the_walk(ws: Tenant):
+    """Null inherits; `[]` is an explicit "emit nothing here"."""
+    parent = ws.category("Capacitors", kicad_fields=["dielectric"])
+    child = ws.category("Ceramic", parent_id=parent["id"], kicad_fields=[])
+    part_id = create_part(ws.session, "CAP", category_id=child["id"])
+    ws.configure(part_id, symbol_ref_external="Device:C")
+    _set_spec(ws, part_id, "dielectric", "X7R")
+
+    assert "Dielectric" not in ws.kicad.get(_part(part_id)).json()["fields"]
+
+
+def test_an_archived_ancestor_stops_the_walk(ws: Tenant):
+    """Archiving a category promotes its direct children to root, and
+    the walk only reads ACTIVE rows — so a template stops applying to
+    the subtree the moment the category carrying it is archived."""
+    parent = ws.category("Capacitors", value_template="{capacitance}")
+    child = ws.category("Ceramic", parent_id=parent["id"])
+    part_id = create_part(ws.session, "CAP", category_id=child["id"])
+    ws.configure(part_id, symbol_ref_external="Device:C")
+    _set_spec(ws, part_id, "capacitance", "1 µF")
+    assert ws.kicad.get(_part(part_id)).json()["fields"]["value"] == {"value": "1 µF"}
+
+    assert ws.session.post(f"/api/categories/{parent['id']}/archive").status_code == 200
+    assert ws.kicad.get(_part(part_id)).json()["fields"]["value"] == {"value": "CAP"}
+
+
+def test_specs_do_not_leak_across_workspaces(ws: Tenant, other: Tenant):
+    """The spec join is workspace-filtered like every other read here."""
+    category = ws.category("Resistors", value_template="{resistance}")
+    part_id = _resistor(ws, category["id"], resistance="10 kΩ")
+
+    assert ws.kicad.get(_part(part_id)).json()["fields"]["value"]["value"] == "10 kΩ"
+    assert other.kicad.get(_part(part_id)).status_code == 404
+
+
+def test_the_listing_renders_the_same_value_as_the_detail(ws: Tenant):
+    category = ws.category(
+        "Resistors",
+        value_template="{resistance} {package}",
+        kicad_fields=["resistance"],
+    )
+    part_id = _resistor(ws, category["id"], resistance="10 kΩ", package="0603")
+
+    listed = ws.kicad.get(_parts_in(category["id"])).json()[0]
+    assert listed == ws.kicad.get(_part(part_id)).json()
+
+
+def test_templated_listing_does_not_scale_with_part_count(ws: Tenant, engine):
+    """The specs join replaced the datasheet join; a template that reads
+    four keys must not turn it back into a per-row lookup."""
+    category = ws.category(
+        "Passives",
+        value_template="{resistance} {tolerance} {package}",
+        kicad_fields=["resistance", "tolerance", "package", "power"],
+    )
+    ws.kicad.get(_parts_in(category["id"]))
+
+    small = _listing_query_count(ws, engine, category["id"], add=2, expect=2)
+    large = _listing_query_count(ws, engine, category["id"], add=18, expect=20)
+    assert large <= small + 1, (
+        f"listing issued {large} queries for 20 parts vs {small} for 2 — "
+        "the spec join has regressed into an N+1"
+    )
+
+
+def test_an_inherited_template_does_not_add_a_query_per_part(ws: Tenant, engine):
+    """Walking `parent_id` costs one lookup for the page, not one per
+    row — the whole reason the ancestors are loaded in a batch."""
+    parent = ws.category("Passives", value_template="{resistance} {package}")
+    category = ws.category("Resistors", parent_id=parent["id"])
+    ws.kicad.get(_parts_in(category["id"]))
+
+    small = _listing_query_count(ws, engine, category["id"], add=2, expect=2)
+    large = _listing_query_count(ws, engine, category["id"], add=18, expect=20)
+    assert large <= small + 1
+
+
+# ---------------------------------------------------------------------
+# Category tree names (B5)
+# ---------------------------------------------------------------------
+
+
+def test_a_subcategory_is_named_by_its_full_path(ws: Tenant):
+    """The httplib category document is `{id,name,description}` — there
+    is nowhere else to convey nesting, so the name carries it."""
+    parent = ws.category("Capacitors")
+    child = ws.category("Ceramic", parent_id=parent["id"])
+    grandchild = ws.category("X7R", parent_id=child["id"])
+
+    rows = {row["id"]: row["name"] for row in ws.kicad.get(CATEGORIES).json()}
+    assert rows[parent["id"]] == "Capacitors"
+    assert rows[child["id"]] == "Capacitors / Ceramic"
+    assert rows[grandchild["id"]] == "Capacitors / Ceramic / X7R"
+
+
+def test_the_tree_is_listed_parent_first(ws: Tenant):
+    """Depth-first: a child sits directly under its parent, and siblings
+    are ordered by `(sort_order, name)` within it."""
+    caps = ws.category("Capacitors", sort_order=1)
+    ws.category("Tantalum", parent_id=caps["id"], sort_order=2)
+    ws.category("Ceramic", parent_id=caps["id"], sort_order=1)
+    diodes = ws.category("Diodes", sort_order=2)
+    ws.category("Zener", parent_id=diodes["id"])
+
+    assert _names(ws.kicad.get(CATEGORIES).json()) == [
+        "Capacitors",
+        "Capacitors / Ceramic",
+        "Capacitors / Tantalum",
+        "Diodes",
+        "Diodes / Zener",
+    ]
+
+
+def test_a_child_of_an_archived_parent_lists_as_a_root(ws: Tenant):
+    """An archived category is absent from this document, so nothing may
+    be named through it. `archive_category` promotes direct children to
+    root, and the path builder treats any parent it cannot see the same
+    way — belt and braces, since only raw SQL can produce the second."""
+    parent = ws.category("Capacitors")
+    child = ws.category("Ceramic", parent_id=parent["id"])
+    assert ws.session.post(f"/api/categories/{parent['id']}/archive").status_code == 200
+
+    rows = ws.kicad.get(CATEGORIES).json()
+    assert _names(rows) == ["Ceramic"]
+    assert rows[0]["id"] == child["id"]

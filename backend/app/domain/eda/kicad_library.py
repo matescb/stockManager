@@ -57,13 +57,18 @@ Query budget
 
 The category chooser fires a burst of listings, so nothing here may
 scale with the number of parts. A listing is three queries whatever the
-page size: the joined row query, one batched datasheet lookup and one
+page size: the joined row query, one batched custom-field lookup and one
 batched SPICE-model lookup. `part_detail` runs the same three for its
 single row.
+
+A fourth is issued only when a category on the page inherits part of its
+Value rules from an ancestor (`kicad_specs.rules_by_category`) — one lookup for the
+whole page, never one per row. A flat category tree, which is what every
+workspace has until somebody nests one, never pays it.
 """
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -73,9 +78,17 @@ from sqlalchemy.orm import Session, aliased
 
 from app.core.config import settings
 from app.domain.categories.models import PartCategory
-from app.domain.custom_fields.models import CustomField
+from app.domain.categories.tree import tree_paths
 from app.domain.eda import kicad_refs
+from app.domain.eda.kicad_specs import (
+    NO_RULES,
+    CategoryRules,
+    custom_fields_by_part,
+    rules_by_category,
+    wanted_custom_field_keys,
+)
 from app.domain.eda.models import EdaDatafile, EdaFootprint, EdaSymbol, PartEda
+from app.domain.eda.value_template import render_value, spec_field_label
 from app.domain.parts.models import Part
 
 __all__ = [
@@ -133,6 +146,30 @@ _DATASHEET_SCHEMES = ("http://", "https://")
 # KiCad shows a symbol field unless it is told not to. Everything except
 # `value` is metadata that would clutter the schematic if drawn.
 _HIDDEN = {"visible": "False"}
+
+# Separates the levels of a category's path in `categories.json`. The
+# document is `{id, name, description}` and nothing else, so the name is
+# the only place nesting can be conveyed — "Capacitors / Ceramic".
+_CATEGORY_PATH_SEPARATOR = " / "
+
+# Every field name `_document` may emit for itself, lower-cased. A
+# category's `kicad_fields` are matched against this before they are
+# emitted: KiCad resolves its mandatory fields case-insensitively, so a
+# spec key called `value` would give the symbol two Values, and one
+# called `mpn` would give it two MPNs with no way to tell which wins.
+_BUILT_IN_FIELD_NAMES = frozenset(
+    {
+        "footprint",
+        "datasheet",
+        "value",
+        "description",
+        "keywords",
+        "mpn",
+        "manufacturer",
+        "ipn",
+        "stockmanager",
+    }
+)
 
 # Aliases at module scope so the filters in `list_parts` and
 # `_has_uncategorized_parts` can name the same joined category the
@@ -285,40 +322,21 @@ def _base_url() -> str:
     return settings().APP_BASE_URL.rstrip("/")
 
 
-def _datasheet_urls(
-    db: Session, *, workspace_id: UUID, part_ids: Sequence[UUID]
-) -> dict[UUID, str]:
-    """Datasheet URL per part, as an absolute `http(s)` URL KiCad can open.
+def _datasheet_url(value: str | None) -> str | None:
+    """A stored `datasheet_url` as an absolute `http(s)` URL KiCad can open.
 
-    Batched: the listing needs one of these per row and a per-row query
-    would be the N+1 this surface must not have.
-
-    A stored value is app-relative when the provider import downloaded a
-    local copy (`/api/parts/assets/…`); KiCad opens the value with no
-    notion of our origin, so those are made absolute. Anything that is
-    neither relative nor `http(s)` is dropped rather than passed to the
-    OS handler.
+    The value is app-relative when the provider import downloaded a local
+    copy (`/api/parts/assets/…`); KiCad opens it with no notion of our
+    origin, so those are made absolute. Anything that is neither relative
+    nor `http(s)` is dropped rather than passed to the OS handler.
     """
-    if not part_ids:
-        return {}
-    rows = db.execute(
-        select(CustomField.object_id, CustomField.value)
-        .where(CustomField.workspace_id == workspace_id)
-        .where(CustomField.object_type == "part")
-        .where(CustomField.object_id.in_(part_ids))
-        .where(CustomField.key == _DATASHEET_FIELD_KEY)
-        .where(CustomField.archived_at.is_(None))
-    ).all()
-
-    out: dict[UUID, str] = {}
-    for part_id, value in rows:
-        if not value:
-            continue
-        if value.startswith("/"):
-            out[part_id] = f"{_base_url()}{value}"
-        elif value.lower().startswith(_DATASHEET_SCHEMES):
-            out[part_id] = value
-    return out
+    if not value:
+        return None
+    if value.startswith("/"):
+        return f"{_base_url()}{value}"
+    if value.lower().startswith(_DATASHEET_SCHEMES):
+        return value
+    return None
 
 
 def _spice_library_names(
@@ -352,6 +370,33 @@ def _put(fields: dict[str, dict[str, str]], key: str, value: str | None) -> None
         fields[key] = {"value": value, **_HIDDEN}
 
 
+def _put_spec_fields(
+    fields: dict[str, dict[str, str]],
+    *,
+    keys: Iterable[str],
+    specs: Mapping[str, str],
+) -> None:
+    """Emit the category's `kicad_fields` as hidden symbol fields.
+
+    `voltage_rating` becomes `Voltage Rating`, which is what makes a
+    spec greppable in the schematic editor and present in a BOM export.
+    A listed key the part has no value for is omitted rather than
+    blanked, same rule as every other field here.
+
+    Called last, and a label that collides with one of ours is skipped:
+    KiCad resolves its mandatory fields case-insensitively, so a spec key
+    called `value` would give the symbol two Values with no way to say
+    which one the schematic draws.
+    """
+    taken = set(_BUILT_IN_FIELD_NAMES) | {key.lower() for key in fields}
+    for key in keys:
+        label = spec_field_label(key)
+        if label.lower() in taken:
+            continue
+        taken.add(label.lower())
+        _put(fields, label, specs.get(key))
+
+
 # ---------------------------------------------------------------------
 # Documents
 # ---------------------------------------------------------------------
@@ -373,6 +418,13 @@ def list_categories(db: Session, *, workspace_id: UUID) -> list[dict[str, str]]:
     Categories are listed whether or not they hold eligible parts; an
     empty category in the chooser is a hint that something needs a
     symbol, whereas a missing one looks like data loss.
+
+    **Nesting travels in the name.** The document KiCad parses is
+    `{id, name, description}` and nothing else, so a subcategory is named
+    by its full path — `Capacitors / Ceramic` — and the rows come back
+    depth-first, each child directly under its parent. Without it a
+    three-level library is a flat list of leaf names with no way to tell
+    *Capacitors / Film* from *Resistors / Film*.
     """
     rows = db.execute(
         select(PartCategory)
@@ -384,10 +436,12 @@ def list_categories(db: Session, *, workspace_id: UUID) -> list[dict[str, str]]:
     out = [
         {
             "id": str(category.id),
-            "name": category.name,
+            "name": name,
             "description": category.description or "",
         }
-        for category in rows
+        for category, name in tree_paths(
+            list(rows), separator=_CATEGORY_PATH_SEPARATOR
+        )
     ]
 
     if _has_uncategorized_parts(db, workspace_id=workspace_id):
@@ -436,17 +490,36 @@ def _has_uncategorized_parts(db: Session, *, workspace_id: UUID) -> bool:
     return any(_symbol_id_str(row) is not None for row in rows)
 
 
+def _keywords(config: PartEda | None, rendered: str | None) -> str:
+    """The part's keywords, with the rendered Value appended.
+
+    KiCad's symbol chooser searches keywords. A part imported from a
+    provider is named after the provider's description, so without this
+    the 10 kΩ resistor is not findable by typing `10 kΩ` — which is the
+    only thing anyone looks for it by.
+
+    Appended even when an explicit `part_eda.value` overrode the render:
+    the two are different spellings of the same part and both are worth
+    matching on.
+    """
+    stored = (config.keywords if config else None) or ""
+    if not rendered or rendered in stored:
+        return stored
+    return f"{stored} {rendered}".strip()
+
+
 def _document(
     row: _PartRow,
     *,
-    datasheets: Mapping[UUID, str],
+    specs: Mapping[UUID, Mapping[str, str]],
     spice_names: Mapping[UUID, str],
+    rules: Mapping[UUID, CategoryRules],
 ) -> dict[str, Any] | None:
     """The full KiCad part document, or None when the part has no symbol.
 
     Served by BOTH `list_parts` and `part_detail` — see the module
-    docstring. The two lookup maps are passed in rather than queried
-    here so a listing can batch them.
+    docstring. The lookup maps are passed in rather than queried here so
+    a listing can batch them.
     """
     symbol_id_str = _symbol_id_str(row)
     if symbol_id_str is None:
@@ -454,14 +527,24 @@ def _document(
 
     part = row.part
     config = row.config
-    keywords = (config.keywords if config else None) or ""
+    part_specs = specs.get(part.id, {})
+    rule = rules.get(row.category.id, NO_RULES) if row.category else NO_RULES
+    rendered = render_value(rule.value_template, part_specs, part.mpn)
+    keywords = _keywords(config, rendered)
 
     fields: dict[str, dict[str, str]] = {}
     _put(fields, "footprint", _footprint_ref(row))
-    _put(fields, "datasheet", datasheets.get(part.id))
+    _put(fields, "datasheet", _datasheet_url(part_specs.get(_DATASHEET_FIELD_KEY)))
     # The one field KiCad draws by default — the schematic value. No
     # `visible` key, so the symbol's own default wins.
-    fields["value"] = {"value": (config.value if config else None) or part.name}
+    #
+    # A hand-typed override outranks the category template, which
+    # outranks the part name: the template exists because `name` is the
+    # provider's marketing copy for most of the library, but a human who
+    # typed a value meant it.
+    fields["value"] = {
+        "value": (config.value if config else None) or rendered or part.name
+    }
     _put(fields, "description", part.description)
     _put(fields, "keywords", keywords)
     _put(fields, "MPN", part.mpn)
@@ -472,6 +555,7 @@ def _document(
         **_HIDDEN,
     }
     _add_sim_fields(fields, config=config, spice_names=spice_names)
+    _put_spec_fields(fields, keys=rule.kicad_fields or (), specs=part_specs)
 
     document: dict[str, Any] = {
         "id": str(part.id),
@@ -519,9 +603,21 @@ def _add_sim_fields(
 def _documents(
     db: Session, *, workspace_id: UUID, rows: list[_PartRow]
 ) -> list[dict[str, Any]]:
-    """Build documents for `rows`, batching the two per-part lookups."""
-    datasheets = _datasheet_urls(
-        db, workspace_id=workspace_id, part_ids=[row.part.id for row in rows]
+    """Build documents for `rows`, batching every per-part lookup.
+
+    The category rules come first because they decide which custom-field
+    keys the next query has to ask for.
+    """
+    rules = rules_by_category(
+        db,
+        workspace_id=workspace_id,
+        categories=[row.category for row in rows if row.category is not None],
+    )
+    specs = custom_fields_by_part(
+        db,
+        workspace_id=workspace_id,
+        part_ids=[row.part.id for row in rows],
+        keys={_DATASHEET_FIELD_KEY} | wanted_custom_field_keys(rules.values()),
     )
     spice_names = _spice_library_names(
         db,
@@ -533,7 +629,8 @@ def _documents(
         ],
     )
     documents = (
-        _document(row, datasheets=datasheets, spice_names=spice_names) for row in rows
+        _document(row, specs=specs, spice_names=spice_names, rules=rules)
+        for row in rows
     )
     return [document for document in documents if document is not None]
 

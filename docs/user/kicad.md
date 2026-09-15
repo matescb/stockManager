@@ -30,7 +30,9 @@ Choose read-only. The token ends up in a file on your computer, and read-only me
 4. Set **Library Path** to the file you saved, and **Library Format** to **Database/HTTP**. The nickname is yours to choose.
 5. Click OK, then open the symbol chooser.
 
-Your categories appear as sub-trees. Parts with no category land under **Uncategorized**.
+Your categories appear as sub-trees. A subcategory shows its full path — *Capacitors / Ceramic* — because KiCad's chooser has nowhere else to put the nesting. Parts with no category land under **Uncategorized**.
+
+**What the schematic shows for a part** is its value template, set per category in **Settings → Categories**. Type something like `{resistance} {tolerance} {package}` on your Resistors category and every resistor in it draws as `10 kΩ 1% 0603` instead of whatever the supplier called it. The words in braces are the part's own specs; one the part is missing is simply left out. For chips, connectors and anything else without a headline value, use `{mpn}` and the schematic shows the manufacturer part number. A value you typed on a part's CAD tab always wins, and a category with no template falls back to the part name, exactly as before.
 
 ### 3. Install the symbol files
 

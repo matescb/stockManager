@@ -13,7 +13,7 @@ These pages are the exception to [API conventions](./README.md). What differs, a
 - **One 404 for everything.** Bad token, unknown category, ineligible part, malformed UUID — all `404` `kicad.not_found`, so nothing on the surface is an oracle (`backend/app/core/errors.py:293-296`). The error *body* is still the app envelope, produced by the global handler.
 - **`GET` only.** There is no write surface here.
 
-Both routers mount under one prefix, `API_PREFIX = "/kicad-api"` (`backend/app/domain/eda/kicad_library.py:99`, mounted `backend/app/main.py:643` and `main.py:649`). The constant is shared with `GET /api/eda/kicad-setup` so the advertised `root_url` and the path actually answered cannot drift.
+Both routers mount under one prefix, `API_PREFIX = "/kicad-api"` (`backend/app/domain/eda/kicad_library.py:112`, mounted `backend/app/main.py:643` and `main.py:649`). The constant is shared with `GET /api/eda/kicad-setup` so the advertised `root_url` and the path actually answered cannot drift.
 
 The one deliberate exception to the flattened 404 is **429**: it is raised by the limiter before any router code runs, needs no valid credential to reach, and flattening it would cost the caller its `Retry-After` header.
 
@@ -55,7 +55,7 @@ Two buckets are checked on **every** request, valid credential or not, so rotati
 
 KiCad's `kicad_httplib` protocol (KiCad 8/9/10). The client is configured by a `.kicad_httplib` file — see [tokens § Using a token with KiCad](tokens.md#using-a-token-with-kicad) for the format and [eda § client configuration](eda.md#client-configuration) for the endpoint that generates it.
 
-Client-side cache lifetimes are advertised in that file, not enforced here: `PARTS_TTL_SECONDS = 60`, `CATEGORIES_TTL_SECONDS = 600` (`kicad_library.py:107-108`). KiCad's own defaults are 30 s and 600 s; parts is lifted to 60 s and both are written explicitly, because the numbers in the file are what a user reads when asking why an edit has not shown up.
+Client-side cache lifetimes are advertised in that file, not enforced here: `PARTS_TTL_SECONDS = 60`, `CATEGORIES_TTL_SECONDS = 600` (`kicad_library.py:120-121`). KiCad's own defaults are 30 s and 600 s; parts is lifted to 60 s and both are written explicitly, because the numbers in the file are what a user reads when asking why an edit has not shown up.
 
 No `Cache-Control`, `ETag` or `Last-Modified` is set on any `/v1` route. The only response header is `X-Content-Type-Options: nosniff` (`kicad.py:73`).
 
@@ -69,11 +69,16 @@ The protocol handshake. The client only checks that the keys exist.
 
 ### `GET /kicad-api/v1/categories.json`
 
-Active categories, ordered by `(sort_order, name)`.
+Active categories, depth-first: each child directly under its parent, siblings ordered by `(sort_order, name)` within it.
 
 ```json
-[{ "id": "…uuid…", "name": "Resistors", "description": "" }]
+[{ "id": "…uuid…", "name": "Capacitors", "description": "" },
+ { "id": "…uuid…", "name": "Capacitors / Ceramic", "description": "" }]
 ```
+
+**Nesting travels in the name.** The document KiCad parses is `{id, name, description}` and has no field for a parent, so a subcategory is named by its full path joined with ` / `. Without it a three-level library is a flat list of leaf names with no way to tell *Capacitors / Film* from *Resistors / Film*. `description` stays the row's own text.
+
+A category whose parent is not in this document — archived, so absent — is listed as a root. `archive_category` has already promoted direct children to root, so only raw SQL can produce that; a category the walk cannot reach at all (a cycle, which `validate_parent` refuses to write) is appended flat rather than dropped, because a missing bucket is a bucket its parts are unreachable through (`categories/tree.py::tree_paths`).
 
 A synthetic bucket is appended last when the workspace has parts with no category:
 
@@ -83,7 +88,7 @@ A synthetic bucket is appended last when the workspace has parts with no categor
 | `name` | `"Uncategorized"` |
 | `description` | `"Parts without a category"` |
 
-**Notes** — source `backend/app/api/routes/kicad.py:153-158`, document `kicad_library.py:369-401`.
+**Notes** — source `backend/app/api/routes/kicad.py:153-158`, document `kicad_library.py:414-476`.
 
 ### `GET /kicad-api/v1/parts/category/{category_id}.json`
 
@@ -93,7 +98,7 @@ Every eligible part in a category, ordered by `(name, id)`. `category_id` is a c
 
 One part. **The same document shape** the category listing emits — there is no second copy of it to drift (`kicad_library.py:12-22`).
 
-A part is eligible only if it is active **and** its `symbolIdStr` resolves. Resolution order for both symbol and footprint: the external ref on `part_eda`, then the hosted row, then the category default, then nothing (`kicad_library.py:255-273`). A part that loses its symbol vanishes from the listing and its detail becomes a 404 — deliberate, because a chooser entry that cannot be placed is worse than a missing one.
+A part is eligible only if it is active **and** its `symbolIdStr` resolves. Resolution order for both symbol and footprint: the external ref on `part_eda`, then the hosted row, then the category default, then nothing (`kicad_library.py:292-320`). A part that loses its symbol vanishes from the listing and its detail becomes a 404 — deliberate, because a chooser entry that cannot be placed is worse than a missing one.
 
 **Top level**
 
@@ -103,14 +108,14 @@ A part is eligible only if it is active **and** its `symbolIdStr` resolves. Reso
 | `name` | string | `part.name` |
 | `symbolIdStr` | string | `PCM_SM_<slug>:<entry>` |
 | `description` | string | `part.description` or `""` |
-| `keywords` | string | `part_eda.keywords` or `""` |
+| `keywords` | string | `part_eda.keywords`, plus the rendered Value — see below |
 | `exclude_from_bom` | **string** `"True"` / `"False"` | `part_eda`, default `"False"` |
 | `exclude_from_board` | **string** | `part_eda`, default `"False"` |
 | `exclude_from_sim` | **string** | `part_eda`, default **`"True"`** — no config means no simulation model, and KiCad treats a symbol claiming simulability it lacks as an error |
 | `fields` | object of objects | see below |
 | `footprint_filters` | array of strings | **key omitted entirely** when empty |
 
-**`fields`** — each entry is `{"value": "…", "visible": "False"}`, in this insertion order. An empty value is skipped rather than emitted: an empty KiCad field is not nothing, it is a property drawn on every instance of the symbol with no content in it (`kicad_library.py:345-352`).
+**`fields`** — each entry is `{"value": "…", "visible": "False"}`, in this insertion order. An empty value is skipped rather than emitted: an empty KiCad field is not nothing, it is a property drawn on every instance of the symbol with no content in it (`kicad_library.py:363-370`).
 
 | Key | Present when |
 |---|---|
@@ -120,12 +125,29 @@ A part is eligible only if it is active **and** its `symbolIdStr` resolves. Reso
 | `description`, `keywords`, `MPN`, `Manufacturer`, `IPN` | the underlying value is non-empty |
 | `StockManager` | **always** — `<APP_BASE_URL>/parts/<part_id>` |
 | `Sim.Device`, `Sim.Pins`, `Sim.Params`, `Sim.Library` | the part has a non-archived SPICE data file **and** `exclude_from_sim` is false |
+| `Resistance`, `Voltage Rating`, … | the part's category lists the spec in `kicad_fields` **and** the part has a value for it |
 
 `Sim.Library` is `${STOCKMGR_SPICE}/<name>` — the one reference the PCM package cannot fix up for itself, because it is served as JSON here rather than stored in bytes the packager rewrites. The user sets that path variable by hand; `GET /api/eda/kicad-setup` supplies the value.
 
-The datasheet URL comes from the `datasheet_url` custom field. A value starting `/` is made absolute against `APP_BASE_URL`; anything not `http://` or `https://` is **dropped**, because `file:`, `javascript:` or a bare Windows path is a request to open something local on the engineer's machine, sourced from provider data we do not control (`kicad_library.py:126-131`).
+The datasheet URL comes from the `datasheet_url` custom field. A value starting `/` is made absolute against `APP_BASE_URL`; anything not `http://` or `https://` is **dropped**, because `file:`, `javascript:` or a bare Windows path is a request to open something local on the engineer's machine, sourced from provider data we do not control (`kicad_library.py:325-339`).
 
-**Notes** — source `kicad.py:161-205`, document `kicad_library.py:439-492`.
+#### Value derivation
+
+Three sources, first non-empty wins (`kicad_library.py::_document`):
+
+1. `part_eda.value` — a human typed it, so it stands.
+2. the category's `value_template`, rendered against the part's canonical specs.
+3. `parts.name`.
+
+The template exists because step 3 is wrong for most of the library: a part imported from a provider is named after the provider's description, so the schematic showed `RES SMD 10K OHM 1% 1/16W 0402` instead of `10 kΩ 1% 0603`. `{resistance} {tolerance} {package}` renders the latter from `custom_fields` rows the part already carries. A placeholder with no value is dropped along with its whitespace, `{mpn}` resolves from the part column rather than from a spec of that name, and a render that comes out empty or over 200 characters falls through to step 3 rather than drawing a blank or a truncated unit (`domain/eda/value_template.py`).
+
+`value_template` and `kicad_fields` (`part_categories`, migration `0082`) are both **nullable meaning inherit**: the nearest ancestor that sets one wins, they inherit independently, and an archived ancestor stops the walk. An explicit `[]` on `kicad_fields` means "emit none" and stops it too. Resolution is `domain/eda/kicad_specs.py`; see [Categories API § KiCad Value rules](categories.md#kicad-value-rules) for the write side.
+
+Spec fields are emitted last, named by title-casing the canonical key (`voltage_rating` → `Voltage Rating`), and one whose label collides case-insensitively with a built-in (`value`, `datasheet`, `mpn`, …) is **skipped** — KiCad resolves its mandatory fields without regard to case, so a spec key called `value` would give the symbol two Values.
+
+The rendered Value is also appended to `keywords`, because the symbol chooser searches those and a part named after a provider description is otherwise unfindable by what it is. It is appended even when step 1 overrode the Value: the two are different spellings of the same part.
+
+**Notes** — source `kicad.py:161-205`, document `kicad_library.py:511-601`.
 
 ## The PCM repository
 
@@ -179,6 +201,8 @@ Member layout:
 | `resources/spice/<name>` | SPICE decks |
 
 Stored bytes ship verbatim with two exceptions, both references that can only be resolved once the install location is known. A footprint's `(model …)` paths become the installed `3dmodels/` path, and a 3D model linked on the CAD tab that the bytes don't already name is appended as a new `(model …)` node at the origin, unscaled — the link is a join row and nothing else, so the package is the only place it can become a node. A symbol's `Footprint` field is re-pointed at the packaged footprint it names: a vendor library's symbols say `NSW:USB_A_Molex`, a nickname registered on nobody's machine once the footprint ships as `PCM_SM_<slug>`, so the field becomes `PCM_SM_<slug>:USB_A_Molex`. The entry name is the match key and the original nickname is not consulted: a hosted `R_0603` also claims a `Resistor_SMD:R_0603` reference, the same name-wins rule the importer applies when wiring a part. A field naming an entry we do not host is left exactly as stored (`pcm.py::_symbol_for_package`).
+
+The package is **symbol-scoped, and carries no part's `Value`.** A packaged `.kicad_sym` entry is a library entry that any number of parts may link, and the passive categories a `value_template` targets mostly resolve stock `Device:*` references that ship no bytes at all — so per-part Value and spec fields live only in the HTTP library's documents above. Setting a category's Value rules leaves this archive byte-identical, which is why migration `0082` did not move `PACKAGE_FORMAT` (`tests/test_kicad_pcm.py::test_a_category_value_template_does_not_touch_the_packaged_symbol`).
 
 Archives are **byte-deterministic**: fixed member order, fixed zip timestamps, fixed create-system — so `download_sha256` is stable for identical content (`pcm.py:53-58`). The version's major is `pcm.PACKAGE_FORMAT`, bumped whenever the build emits different bytes for unchanged content, so installed copies are offered an update after such a deploy even though no timestamp moved.
 
