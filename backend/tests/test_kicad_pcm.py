@@ -401,7 +401,25 @@ def test_member_layout_is_exactly_what_the_pcm_extracts(ws: Tenant):
     ]
 
 
-def test_a_category_value_template_does_not_touch_the_packaged_symbol(ws: Tenant):
+def _library_members(tenant: Tenant) -> dict[str, bytes]:
+    """Every packaged member except `metadata.json` — the library CONTENT.
+
+    `metadata.json` is excluded because it carries the package version,
+    and the version is derived from `max(updated_at)` across a set that
+    includes `part_categories` (`pcm.py:430`). So ANY category write
+    moves it, which is correct — the PCM compares version strings and
+    nothing else — but makes the whole archive the wrong thing to
+    compare when the question is "did the library files change".
+    """
+    archive = _open_zip(tenant.pcm.get(_archive(tenant.token)))
+    return {
+        name: archive.read(name)
+        for name in archive.namelist()
+        if name != "metadata.json"
+    }
+
+
+def test_a_category_value_template_does_not_touch_the_packaged_library(ws: Tenant):
     """The package is symbol-scoped; `Value` per part is not in it.
 
     `value_template` / `kicad_fields` (alembic 0082) drive the HTTP
@@ -411,10 +429,14 @@ def test_a_category_value_template_does_not_touch_the_packaged_symbol(ws: Tenant
     resolve `Device:R`-style external refs that ship no bytes at all —
     so there is no part whose Value it could carry. The stored bytes go
     out verbatim but for the `Footprint` re-point, and this pins that:
-    setting the rules must leave the archive byte-identical, which is
-    also why `PACKAGE_FORMAT` was NOT bumped for that change.
+    setting the rules must leave every library member identical, which
+    is also why `PACKAGE_FORMAT` was NOT bumped for that change.
+
+    The package VERSION does move, because `part_categories.updated_at`
+    is one of the stamps it is derived from. That is the existing
+    contract, not a consequence of these columns.
     """
-    before = ws.pcm.get(_archive(ws.token)).content
+    before = _library_members(ws)
     categories = ws.session.get("/api/categories").json()["data"]
     passives = next(c for c in categories if c["name"] == "Passives")
     patched = ws.session.patch(
@@ -426,7 +448,7 @@ def test_a_category_value_template_does_not_touch_the_packaged_symbol(ws: Tenant
     )
     assert patched.status_code == 200, patched.text
 
-    assert ws.pcm.get(_archive(ws.token)).content == before
+    assert _library_members(ws) == before
 
 
 def test_symbol_libraries_parse_and_carry_their_entries(ws: Tenant):

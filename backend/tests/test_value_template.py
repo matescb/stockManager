@@ -13,10 +13,13 @@ worth pinning are the ones a user will hit on their first template:
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from app.domain.eda.value_template import (
     MAX_VALUE_LENGTH,
+    PLACEHOLDER_PATTERN,
     placeholder_keys,
     render_value,
     spec_field_label,
@@ -164,3 +167,39 @@ def test_placeholder_keys_of_nothing_is_empty(template: str | None):
 )
 def test_spec_field_label_title_cases_the_canonical_key(key: str, label: str):
     assert spec_field_label(key) == label
+
+
+# ---------------------------------------------------------------------
+# The duplicated grammar
+# ---------------------------------------------------------------------
+
+
+def test_the_two_placeholder_patterns_agree():
+    """`categories/schemas.py` carries its own copy of the placeholder
+    regex so that module — which `domain/eda` imports — does not import
+    `domain/eda` back. A copy is only safe while it is pinned."""
+    from app.domain.categories.schemas import (
+        PLACEHOLDER_PATTERN as schema_pattern,
+        SPEC_KEY_PATTERN,
+    )
+
+    assert schema_pattern.pattern == PLACEHOLDER_PATTERN.pattern
+    # And the two spellings of "a canonical key" have to agree too: a
+    # key legal in `kicad_fields` must be legal inside braces.
+    assert re.fullmatch(SPEC_KEY_PATTERN, "voltage_rating")
+    assert PLACEHOLDER_PATTERN.fullmatch("{voltage_rating}")
+    for bad in ("Resistance", "resistance-1", "voltage rating", ""):
+        assert not re.fullmatch(SPEC_KEY_PATTERN, bad), bad
+        assert not PLACEHOLDER_PATTERN.fullmatch(f"{{{bad}}}"), bad
+
+
+def test_a_malformed_kicad_fields_column_reads_as_unset():
+    """`kicad_specs._field_list` tolerates JSONB that isn't a list of
+    strings; `PartCategoryOut` has to agree, or the same restored row is
+    a 500 on the settings page instead of a blank field list."""
+    from app.domain.categories.schemas import PartCategoryOut
+
+    for raw in ({"a": 1}, "abc", ["a", 1], 7):
+        assert PartCategoryOut._tolerate_malformed_kicad_fields(raw) is None, raw
+    assert PartCategoryOut._tolerate_malformed_kicad_fields(None) is None
+    assert PartCategoryOut._tolerate_malformed_kicad_fields(["a"]) == ["a"]

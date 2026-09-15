@@ -99,7 +99,10 @@ function commaList(value: string): string[] {
     .filter(Boolean);
 }
 
-function bodyFrom(form: FormState, { includeSlug }: { includeSlug: boolean }): CategoryBody {
+function bodyFrom(
+  form: FormState,
+  { includeSlug, original }: { includeSlug: boolean; original: PartCategory | null },
+): CategoryBody {
   const filters = commaList(form.footprint_filters);
   const specKeys = commaList(form.kicad_fields);
   const body: CategoryBody = {
@@ -111,11 +114,21 @@ function bodyFrom(form: FormState, { includeSlug }: { includeSlug: boolean }): C
     default_footprint_ref: trimmedOrNull(form.default_footprint_ref),
     footprint_filters: filters.length > 0 ? filters : null,
     value_template: trimmedOrNull(form.value_template),
-    // A blank box clears the override (null = inherit). An explicit
-    // empty list is not reachable from this form, and does not need to
-    // be: leaving it blank and letting the parent supply the fields is
-    // what a user typing here means.
-    kicad_fields: specKeys.length > 0 ? specKeys : null,
+    // A blank box means "inherit" (null) — EXCEPT when the stored value
+    // was already an explicit empty list, which renders as the same
+    // blank box. The two are different things to the server: `[]` is
+    // "emit no fields" and stops the inheritance walk, null hands the
+    // category back to its parent. Without this, opening a category
+    // that had `[]` and pressing Save would silently switch the whole
+    // subtree's fields back on. An empty list is not reachable from
+    // this form, but it is reachable through the API, and a form must
+    // not destroy what it cannot express.
+    kicad_fields:
+      specKeys.length > 0
+        ? specKeys
+        : original?.kicad_fields?.length === 0
+          ? []
+          : null,
     parent_id: form.parent_id || null,
   };
   // Blank means "derive from the name" on create. On edit the field is
@@ -241,9 +254,12 @@ export default function CategoriesSettings() {
       return;
     }
     if (editing) {
-      updateMutation.mutate({ id: editing.id, body: bodyFrom(form, { includeSlug: true }) });
+      updateMutation.mutate({
+        id: editing.id,
+        body: bodyFrom(form, { includeSlug: true, original: editing }),
+      });
     } else {
-      createMutation.mutate(bodyFrom(form, { includeSlug: true }));
+      createMutation.mutate(bodyFrom(form, { includeSlug: true, original: null }));
     }
   }
 
@@ -549,6 +565,7 @@ export default function CategoriesSettings() {
               Comma-separated spec keys, up to 20, also carried into the KiCad
               symbol as hidden fields — <code>voltage_rating</code> becomes{" "}
               <code>Voltage Rating</code>. Blank inherits from the parent.
+              Keys must match the spec exactly as it is stored on the part.
             </div>
           </div>
           <div className="flex gap-2">

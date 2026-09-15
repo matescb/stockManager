@@ -7,15 +7,15 @@ a hand-maintained list that does NOT cover this router).
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
-
-from app.domain.eda.value_template import PLACEHOLDER_PATTERN
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
 
 __all__ = [
+    "PLACEHOLDER_PATTERN",
     "PartCategoryIn",
     "PartCategoryPatch",
     "PartCategoryOut",
@@ -37,9 +37,18 @@ LibrarySlug = Annotated[
     Field(min_length=1, max_length=60, pattern=LIBRARY_SLUG_PATTERN),
 ]
 
-# A canonical spec key — the same shape `value_template.py` accepts
-# inside braces, so a key that is legal in `kicad_fields` is legal in a
-# template and vice versa.
+# A `value_template` placeholder. A COPY of
+# `domain/eda/value_template.py::PLACEHOLDER_PATTERN`, duplicated rather
+# than imported so this module — which `domain/eda` imports — does not
+# import `domain/eda` back. Fourteen characters is a cheaper coupling
+# than a cycle waiting to happen;
+# `tests/test_value_template.py::test_the_two_placeholder_patterns_agree`
+# fails if they drift.
+PLACEHOLDER_PATTERN = re.compile(r"\{([a-z_]+)\}")
+
+# A canonical spec key — the same shape a placeholder accepts inside
+# braces, so a key that is legal in `kicad_fields` is legal in a template
+# and vice versa.
 SPEC_KEY_PATTERN = r"^[a-z_]+$"
 
 # Caps `kicad_fields`, and the number of placeholders one template may
@@ -159,3 +168,21 @@ class PartCategoryOut(BaseModel):
     library_slug: str
     parent_id: UUID | None
     archived_at: datetime | None
+
+    @field_validator("kicad_fields", mode="before")
+    @classmethod
+    def _tolerate_malformed_kicad_fields(cls, value: Any) -> Any:
+        """Read a JSONB column that isn't a list of strings as unset.
+
+        Nothing this API accepts can write one — but the column is JSONB
+        and a raw-SQL fix or a restored backup can, and
+        `domain/eda/kicad_specs.py::_field_list` already survives it.
+        Without the same tolerance here the row is a `ValidationError`,
+        i.e. a 500 on `GET /api/categories` and a blank settings page,
+        for exactly the data the read path was hardened against.
+        """
+        if value is None or (
+            isinstance(value, list) and all(isinstance(item, str) for item in value)
+        ):
+            return value
+        return None

@@ -47,10 +47,18 @@ __all__ = [
     "spec_field_label",
 ]
 
-# A canonical spec key in braces. Lower-case and underscores only, which
-# is exactly the shape `spec_schema.py` mints — so a template can never
-# name a provider's verbatim key (`Power (Watts)`) by accident and get a
-# silent empty render for it.
+# A canonical spec key in braces. Lower-case and underscores only.
+#
+# Deliberately narrow: a provider's verbatim attribute name is whatever
+# the vendor typed (`Power (Watts)`, `Voltage - Rated`) and is not
+# expressible here. Canonical keys are what the spec-normalisation work
+# writes; until a workspace's rows carry them, a template renders
+# nothing for those parts and the `Value` falls back to `parts.name` —
+# the behaviour this feature replaces, not a regression.
+#
+# `domain/categories/schemas.py::PLACEHOLDER_PATTERN` is a copy, so the
+# column's validator can refuse a malformed template without `categories`
+# importing `eda`. `tests/test_value_template.py` pins them equal.
 PLACEHOLDER_PATTERN = re.compile(r"\{([a-z_]+)\}")
 
 # The one placeholder resolved from the part rather than from its specs.
@@ -58,9 +66,9 @@ MPN_PLACEHOLDER = "mpn"
 
 # A rendered `Value` past this is refused rather than truncated: the
 # string is drawn on the schematic, and half a unit (`4.7 µ`) is worse
-# than falling back to the part name. Matches the column width of
-# `part_categories.value_template`, which is the longest template that
-# can produce it.
+# than falling back to the part name. Reachable — `custom_fields.value`
+# is `String(1024)`, so a single placeholder can blow past this on its
+# own — which is why the check is here and not an assertion.
 MAX_VALUE_LENGTH = 200
 
 

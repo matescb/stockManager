@@ -154,6 +154,28 @@ describe("CategoriesSettings", () => {
     );
   });
 
+  it("keeps a stored empty field list rather than turning inheritance back on", async () => {
+    // `[]` and null render as the same blank box but mean opposite
+    // things to the server: "emit no fields" vs "take the parent's".
+    // Saving an untouched form must not flip one into the other.
+    const emptyList = { ...categories[0], kicad_fields: [] };
+    vi.spyOn(api.parsed, "get").mockResolvedValue([emptyList]);
+    const patch = vi.spyOn(api, "patch").mockResolvedValue(emptyList);
+
+    renderCategories();
+
+    const table = await screen.findByRole("table");
+    const row = within(table).getByText("Resistors").closest("tr");
+    fireEvent.click(within(row as HTMLElement).getByRole("button", { name: "Edit" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch).toHaveBeenCalledWith(
+      `/categories/${emptyList.id}`,
+      expect.objectContaining({ kicad_fields: [] }),
+    );
+  });
+
   it("prefills the value rules and clears them when the boxes are emptied", async () => {
     vi.spyOn(api.parsed, "get").mockResolvedValue(categories);
     const patch = vi.spyOn(api, "patch").mockResolvedValue(categories[0]);

@@ -89,7 +89,10 @@ archived ancestor. A `PATCH` with an explicit `null` clears the override —
 it is not in `_NON_NULLABLE_PATCH_FIELDS`.
 
 Nothing seeds these. A category with both unset behaves exactly as it did
-before `0082`.
+before `0082`, and a template naming a key the part does not carry renders
+nothing and falls back to `parts.name` — so a workspace whose specs still
+hold the provider's verbatim attribute names (`Resistance`, not
+`resistance`) sees no change until those rows are re-keyed.
 
 ## Routes
 
