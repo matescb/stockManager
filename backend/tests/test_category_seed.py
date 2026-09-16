@@ -588,6 +588,20 @@ def test_the_cli_dry_run_prints_csv_and_writes_nothing(db, owned, capsys, tmp_pa
     assert _rows_for(db, workspace_id) == {}
 
 
+def test_the_cli_reports_an_unknown_workspace_as_a_usage_error(
+    db, owned, capsys, tmp_path
+):
+    """Exit 2 with the id on stderr, not exit 0 with an empty report."""
+    code = run_job_main(
+        ["category-seed", "--workspace", str(uuid.uuid4())],
+        session_factory=lambda: db,
+        heartbeat_dir=tmp_path,
+    )
+
+    assert code == 2
+    assert "no workspace with id" in capsys.readouterr().err
+
+
 def test_the_cli_apply_creates_the_tree(db, owned, capsys, tmp_path):
     ws, _client = owned
     workspace_id = ws.id
