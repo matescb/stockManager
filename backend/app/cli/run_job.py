@@ -11,24 +11,29 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
 from uuid import UUID, uuid4
 
-from sqlalchemy import text
-from sqlalchemy.orm import Session
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
-from app.core.advisory_locks import RUN_JOB_LOCK_CLASSID
+# Nothing from sqlalchemy or app.core is imported at module level on purpose.
+# The compose healthchecks for backend-cron-sessions and backend-cron-datasheets
+# run `python -m app.cli.run_job --check-all-heartbeats ...` on a 0.5-CPU
+# sidecar with a short timeout; the probe only stats heartbeat files, and a
+# cold `import sqlalchemy` there was measured at tens of seconds under host
+# load. `tests/test_run_job_probe_imports.py` pins this.
 
 logger = logging.getLogger(__name__)
 
-SessionFactory = Callable[[], Session]
+SessionFactory = Callable[[], "Session"]
 # A scheduled job takes the session alone; an operator-run job takes the
 # session and its flags. Spelling both out rather than `Callable[..., int]`
 # keeps the two shapes checkable — `tests/test_run_job_options.py::
 # test_every_job_signature_matches_its_takes_options_flag` reads the real
 # signature off each registered job and fails if the flag lies about it.
-ScheduledJob = Callable[[Session], int]
-OperatorJob = Callable[[Session, "JobOptions"], int]
+ScheduledJob = Callable[["Session"], int]
+OperatorJob = Callable[["Session", "JobOptions"], int]
 JobCallable = ScheduledJob | OperatorJob
 HEARTBEAT_DIR = Path("/tmp/stockmanager-job-heartbeats")
 HEARTBEAT_MAX_AGE_SECONDS = 90 * 60
@@ -104,6 +109,10 @@ class JobConfigError(ValueError):
 
 
 def _acquire_job_lock(db: Session, job_name: str) -> bool:
+    from sqlalchemy import text
+
+    from app.core.advisory_locks import RUN_JOB_LOCK_CLASSID
+
     # Class ID namespaces this feature from other hashtext-backed locks.
     # hashtext() still returns int4, so job names can theoretically collide
     # within the run-job namespace.

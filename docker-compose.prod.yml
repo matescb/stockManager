@@ -273,7 +273,10 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "python -m app.cli.run_job --check-all-heartbeats session-purge password-reset-purge --heartbeat-max-age-seconds 5400"]
       interval: 60s
-      timeout: 5s
+      # A Python cold start on a 0.5-CPU sidecar: measured at 4s+ for the
+      # interpreter alone when the host is loaded, so 5s produced a permanent
+      # "Health check exceeded timeout". The probe itself only stats files.
+      timeout: 30s
       retries: 3
       start_period: 11m
     # Runs auth-retention purges through the shared backend CLI.
@@ -378,7 +381,10 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "python -m app.cli.run_job --check-all-heartbeats datasheet-backfill --heartbeat-max-age-seconds 5400"]
       interval: 60s
-      timeout: 5s
+      # A Python cold start on a 0.5-CPU sidecar: measured at 4s+ for the
+      # interpreter alone when the host is loaded, so 5s produced a permanent
+      # "Health check exceeded timeout". The probe itself only stats files.
+      timeout: 30s
       retries: 3
       start_period: 11m
     # Local datasheet backfill (ADR-0033). A new cadence means a new sidecar,
