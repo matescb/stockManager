@@ -21,7 +21,7 @@ from sqlalchemy import select
 from app.api._helpers import assert_in_workspace
 from app.core.errors import ErrorCodes, raise_http
 from app.domain._quantity import quantity_out
-from app.domain.categories.models import PartCategory
+from app.domain.categories.service import category_name_paths
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part, PartProviderLink
 from app.domain.parts.provider_links import serialize_link
@@ -86,7 +86,12 @@ def missing_specs_for_parts(db, ws_id, parts: list) -> dict:
     part_ids = [p.id for p in parts]
     if not part_ids:
         return {}
-    slug_by_category = _category_slugs(db, ws_id, {p.category_id for p in parts})
+    slug_by_category = {
+        category_id: category_slug_for(path)
+        for category_id, path in category_name_paths(
+            db, ws_id=ws_id, category_ids={p.category_id for p in parts}
+        ).items()
+    }
     present: dict = {pid: set() for pid in part_ids}
     rows = db.execute(
         select(CustomField.object_id, CustomField.key)
@@ -102,36 +107,6 @@ def missing_specs_for_parts(db, ws_id, parts: list) -> dict:
         p.id: missing_mandatory(slug_by_category.get(p.category_id), present.get(p.id, ()))
         for p in parts
     }
-
-
-def _category_slugs(db, ws_id, category_ids: set) -> dict:
-    """`category_id -> schema slug`, walking the name path in Python.
-
-    Archived categories are included: a part can still point at one, and
-    it should keep the schema its category implies rather than silently
-    drop to the common keys.
-    """
-    if not any(cid is not None for cid in category_ids):
-        return {}
-    rows = {
-        row.id: row
-        for row in db.execute(
-            select(PartCategory).where(PartCategory.workspace_id == ws_id)
-        ).scalars()
-    }
-    slugs: dict = {}
-    for category_id in category_ids:
-        node = rows.get(category_id) if category_id else None
-        if node is None:
-            continue
-        names: list[str] = []
-        seen: set = set()
-        while node is not None and node.id not in seen:
-            seen.add(node.id)
-            names.append(node.name)
-            node = rows.get(node.parent_id) if node.parent_id else None
-        slugs[category_id] = category_slug_for(" / ".join(reversed(names)))
-    return slugs
 
 
 def serialize_part(

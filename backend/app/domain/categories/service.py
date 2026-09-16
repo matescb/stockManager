@@ -8,7 +8,7 @@ dependency owns the commit.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Iterable
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -416,32 +416,58 @@ def category_name_path(
     """The reverse: a category id -> `"Capacitors / Ceramic"`.
 
     Feeds `spec_schema.category_slug_for`, which is how a part's category
-    picks its spec schema. Archived rows are INCLUDED here — a part can
-    still point at one, and it should keep the schema its category
-    implies rather than silently fall back to the common keys.
-
-    ``None`` for an unknown id and for an id in another workspace; the
-    workspace predicate is what keeps this from being a cross-tenant name
-    oracle (CLAUDE.md: isolation is enforced in code, not the DB).
+    picks its spec schema. ``None`` for an unknown id and for an id in
+    another workspace.
     """
     if category_id is None:
         return None
+    return category_name_paths(db, ws_id=ws_id, category_ids=[category_id]).get(
+        category_id
+    )
+
+
+def category_name_paths(
+    db: Session, *, ws_id: UUID, category_ids: Iterable[UUID | None]
+) -> dict[UUID, str]:
+    """`category_name_path` for a whole page, off ONE query.
+
+    The parts list needs a path per row to pick each part's spec schema,
+    and one query per row is the N+1 that
+    `test_the_list_flag_does_not_scale_with_row_count` exists to catch.
+    Ids that name nothing in this workspace are simply absent from the
+    result — the workspace predicate is what keeps this from being a
+    cross-tenant name oracle (CLAUDE.md: isolation is enforced in code,
+    not the DB).
+
+    Archived rows are INCLUDED. A part can still point at one, and it
+    should keep the schema its category implies rather than silently fall
+    back to the common keys.
+    """
+    wanted = {cid for cid in category_ids if cid is not None}
+    if not wanted:
+        return {}
     rows = {
         row.id: row
         for row in db.execute(
             select(PartCategory).where(PartCategory.workspace_id == ws_id)
         ).scalars()
     }
-    node = rows.get(category_id)
-    if node is None:
-        return None
-    names: list[str] = []
-    seen: set[UUID] = set()
-    while node is not None and node.id not in seen:
-        seen.add(node.id)
-        names.append(node.name)
-        node = rows.get(node.parent_id) if node.parent_id else None
-    return PATH_SEPARATOR.join(reversed(names))
+    paths: dict[UUID, str] = {}
+    for category_id in wanted:
+        node = rows.get(category_id)
+        if node is None:
+            continue
+        names: list[str] = []
+        # A visited-set for the same reason `tree.py` carries one: nothing
+        # should be able to write a cycle, but a walk that hangs the
+        # request thread on malformed data is not worth the line it saves.
+        seen: set[UUID] = set()
+        while node is not None and node.id not in seen:
+            seen.add(node.id)
+            names.append(node.name)
+            node = rows.get(node.parent_id) if node.parent_id else None
+        paths[category_id] = PATH_SEPARATOR.join(reversed(names))
+    return paths
 
 
 def _children_by_parent(
