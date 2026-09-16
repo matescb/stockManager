@@ -36,6 +36,10 @@ Jobs using this scheduler:
 - `print-job-reconcile` — stale `sent` print-job reconciliation in `backend-cron-printing`, every 5 minutes, matching `_STALE_SENT_THRESHOLD`. Not gated on `PRINT_HOST`: it is pure database bookkeeping and must keep resolving orphaned jobs after printing is switched off.
 - `datasheet-backfill` — local datasheet fetch/attach sweep in `backend-cron-datasheets`; hourly by default, configurable via `DATASHEET_BACKFILL_INTERVAL_SECONDS`, set to `0` to disable. The only cron sidecar that mounts the `uploads` volume, because it is the only one that writes files. See ADR-0033.
 
+Jobs in the same registry that are **not** scheduled:
+
+- `category-seed` and `symbol-collapse` — operator-run. They take `--dry-run` (the default), `--apply` and `--workspace`, and a dry run ends in ROLLBACK. They are here rather than in a one-off script so they inherit the allow-list, the advisory lock and the heartbeat plumbing this ADR chose, but they must never be given a sidecar: both change data on a judgement call, and a timer that re-created categories a user deleted would be a bug. `run_job` refuses `--apply` on a scheduled job (exit 2) so the two modes cannot be confused. See `docs/deployment.md` — "Operator-run jobs".
+
 ## Consequences
 
 - **Good**:

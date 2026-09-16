@@ -21,6 +21,7 @@ Owns the workspace's KiCad library — schematic symbols, PCB footprints, 3D mod
 | `kicad_specs.py` | Which custom fields a page reads, and the per-category `value_template` / `kicad_fields` rules behind that (inheritance up `parent_id`) |
 | `value_template.py` | Pure renderer: `{resistance} {tolerance} {package}` + a part's specs → `10 kΩ 1% 0603` |
 | `pcm.py` | The PCM package: the zip, `repository.json` / `packages.json`, stateless versioning |
+| `symbol_collapse.py` | The `symbol-collapse` job: drop a vendor-zip `symbol_id` so the category's `Device:*` default applies |
 | `render.py` | kicad-cli SVG rendering (via the `kicad-render` sidecar) + content-addressed SVG cache for the 2D preview |
 | `preview3d.py` | STEP→GLB conversion (cascadio/OCC) + content-addressed GLB cache for the 3D preview |
 
