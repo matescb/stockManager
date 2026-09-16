@@ -317,11 +317,12 @@ def _file_part(
     # and a cron-shaped job has none. Writing NULL would erase whoever
     # last edited the part, which is worse than leaving the column alone.
     part.updated_by = previous_editor
+    # `apply_provider_category` writes `part.category_id` in place and no
+    # longer returns a copy of it, so the part is the one place to read it
+    # from — the two could only disagree.
     return outcome.slug, Change(
         action=ACTION_CATEGORY,
-        category_path=index.paths.get(outcome.category_id, "")
-        if outcome.category_id
-        else "",
+        category_path=index.paths.get(part.category_id, "") if part.category_id else "",
     )
 
 
