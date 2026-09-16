@@ -341,6 +341,16 @@ them, that's the bug.
   the local datasheet backfill (`datasheet-backfill`, hourly by default).
   They share the same `run_job` registry per ADR-0021; adding another
   cadence means another sidecar, not a parallel scheduler.
+- **Operator-run jobs never get a sidecar.** `spec-normalize`,
+  `category-seed`, `symbol-collapse` and `part-rename` are registered with
+  `takes_options=True`: they are `--dry-run` by default, `--apply` is
+  explicit, a dry run ends in ROLLBACK inside `run_job`, they write no
+  heartbeat, and the ones that rewrite values in place
+  (`requires_report=True`) refuse `--apply` without `--report`. Passing
+  `--apply` to a scheduled job exits 2. A human runs them from
+  `docs/deployment.md` → "Operator-run jobs" (dry run → read the CSV →
+  `pg_dump` → `--apply`); don't add them to a compose loop or a cron
+  sidecar, and don't make a scheduled job take options.
 - **`backend-cron-datasheets` is the only cron sidecar that mounts the
   `uploads` volume.** It writes fetched PDFs into
   `{UPLOAD_DIR}/parts/{ws_id}/`. Don't drop the volume from that service,
