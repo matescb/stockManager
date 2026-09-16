@@ -222,15 +222,18 @@ them, that's the bug.
   since parametric data under a prefix nothing reads is not "loading the
   specs from both". Ownership for the refresh's trailing "delete rows
   absent from my payload" pass is therefore per ROW, through
-  `provider_fields.py::provider_owns_custom_field_row`: the
-  `custom_fields.provider` column for a canonical key, the namespace rule
-  for everything else (applying provenance to non-canonical keys is the
-  mirror-image bug — a switched-over workspace could never prune the old
-  primary's bare rows). A contested canonical key goes to the higher
-  `spec_schema.PROVIDER_PRECEDENCE` (DigiKey > Mouser), not to whoever
-  refreshed last. Unlink asks the narrower
-  `provider_wrote_custom_field_row`, which reads an unstamped row as
-  somebody else's. `services/spec_reconcile.py` is the ONLY writer, for
+  `provider_fields.py::provider_wrote_custom_field_row` — the ONE
+  ownership predicate, asked by both things that remove data (the delete
+  pass and unlink). A canonical key is the stamped writer's and nobody
+  else's; every other key goes by namespace and tier. Both halves are
+  load-bearing: provenance on a non-canonical key would let unlinking a
+  demoted primary take the part's `image_url` and `datasheet_url`, and a
+  claim on an UNSTAMPED canonical row would let a secondary delete the
+  rows the A5 backfill has not stamped yet. WRITING is the looser rule
+  and lives in `spec_schema.provider_outranks`, which treats a NULL
+  `provider` as claimable and sends a contested key to the higher
+  `PROVIDER_PRECEDENCE` (DigiKey > Mouser) rather than to whoever
+  refreshed last. `services/spec_reconcile.py` is the ONLY writer, for
   the create path and the refresh path alike. The primary's credentials
   live in the legacy `workspaces.parts_provider_api_*` columns, NOT in
   `workspace_provider_credentials` — that table holds secondaries only,

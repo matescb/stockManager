@@ -127,9 +127,11 @@ reconciler of its own. Three decisions landed with it:
   - **Don't infer provenance from the key prefix.** A3 has landed: a secondary
     writes canonical keys, so the prefix no longer identifies the writer.
     `custom_fields.provider` does, through
-    `provider_fields.py::provider_owns_custom_field_row`. Applying the same
+    `provider_fields.py::provider_wrote_custom_field_row`. Applying the same
     provenance test to NON-canonical keys is the mirror-image bug — it would
-    leave a switched-over workspace unable to prune the old primary's bare rows.
+    leave a switched-over workspace unable to prune the old primary's bare rows,
+    and would let unlinking a demoted primary delete the part's `image_url`.
+    Claiming an UNSTAMPED canonical row is a write rule, never a delete rule.
   - **Don't let a lower-precedence provider overwrite a canonical value.**
     Mouser's parametric values are mined out of prose by nine regexes;
     DigiKey's come from a real attribute table. Refresh order must not decide

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from app.core.time import utcnow
+from app.domain.categories.service import CategoryIndex
 from app.domain.parts.models import Part
 from app.domain.parts.provider_fields import PROVIDER_ASSET_CUSTOM_FIELD_KINDS
 from app.domain.parts.services.assets import fetch_provider_asset
@@ -64,6 +65,7 @@ def create_from_provider_lookup(
     default_storage_location_id: UUID | None = None,
     is_primary: bool = True,
     request_id: str | None = None,
+    category_index: CategoryIndex | None = None,
 ) -> ProviderImportOutcome:
     """Create a linked Part from an existing provider lookup result.
 
@@ -74,7 +76,11 @@ def create_from_provider_lookup(
     `is_primary` defaults to True because every caller creates from the
     workspace's own `parts_provider`. It is a parameter rather than an
     assumption so a future create-from-a-secondary path cannot silently
-    write un-namespaced catalog keys into the primary's namespace.
+    write un-namespaced catalog keys into the primary's namespace — and
+    it is why the asset download is gated on it below.
+
+    `category_index` lets a caller in a loop (bulk-import-from-scan, up
+    to 50 parts) pay for the workspace's category rows once.
     """
     r = lookup_result
     name = (r.get("description") or "").strip() or mpn
@@ -115,6 +121,7 @@ def create_from_provider_lookup(
         provider_category=r.get("category"),
         description=r.get("description"),
         user_id=user_id,
+        index=category_index,
     )
     report = reconcile_provider_specs(
         db,
@@ -128,12 +135,27 @@ def create_from_provider_lookup(
         is_primary=is_primary,
         user_id=user_id,
         description=r.get("description"),
-        extra_fields=_asset_fields(r, workspace_id),
+        # A SECONDARY downloads no assets (ADR-0031): the primary already
+        # owns the part's image and datasheet, and a second
+        # content-addressed copy would cost a request per import to
+        # produce a field nothing renders. It would also land under a
+        # `"{provider}:"` prefix, which is not where `PartInfo` looks.
+        extra_fields=_asset_fields(r, workspace_id) if is_primary else _link_fields(r),
         request_id=request_id,
+        category_assigned=category.assigned,
     )
     return ProviderImportOutcome(
         part=p, report=report, category_suggestion=category.suggestion
     )
+
+
+def _link_fields(r: dict) -> dict[str, str]:
+    """What a SECONDARY records instead of assets: the upstream URLs, as-is."""
+    return {
+        key: str(r[key])
+        for key in ("source_url", "datasheet_url", "category")
+        if r.get(key)
+    }
 
 
 def _asset_fields(r: dict, workspace_id: UUID) -> dict[str, str]:

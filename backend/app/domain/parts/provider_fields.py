@@ -15,7 +15,7 @@ below are that boundary — `provider_owns_custom_field_key` is the single
 place the rule is written down.
 
 **Canonical keys are the one exception, and they are why
-`provider_owns_custom_field_row` exists.** Since A3 (ADR-0034) both
+`provider_wrote_custom_field_row` exists.** Since A3 (ADR-0034) both
 tiers write the same un-namespaced canonical key — `resistance`, not
 `mouser:Resistance` — because "load the specs from both DigiKey and
 Mouser" is meaningless while a secondary's parametric data sits under a
@@ -90,54 +90,38 @@ def provider_owns_custom_field_key(provider: str, key: str, *, is_primary: bool)
     return key.startswith(f"{provider}{_NAMESPACE_SEPARATOR}")
 
 
-def provider_owns_custom_field_row(provider: str, row, *, is_primary: bool) -> bool:
-    """Is *row* inside the scope this refresh may reconcile and delete?
+def provider_wrote_custom_field_row(provider: str, row, *, is_primary: bool) -> bool:
+    """Is this row *provider*'s to delete? The only ownership test that runs.
 
-    `row` needs a `.key` and a `.provider` (`custom_fields`, alembic
-    0081). For a CANONICAL key the answer is provenance: the row is
-    yours if you wrote it, or if nobody did — `provider` is NULL on every
-    row predating the column, and on the 9,377 prod rows A5 has not
-    re-keyed yet, so the first provider to answer a canonical key claims
-    it. For every other key the answer is the namespace rule above,
-    unchanged.
+    Asked by the two operations that remove data — the reconcile's
+    trailing "delete rows absent from my payload" pass, and unlink. Both
+    need the same answer, and it is per ROW, not per key, because A3
+    (ADR-0034) made both provider tiers write the same un-namespaced
+    CANONICAL keys.
 
-    Splitting the two matters in both directions. Without the provenance
-    branch a DigiKey refresh would delete the `resistance` row Mouser
-    wrote, because it is un-namespaced and absent from DigiKey's payload
-    — ADR-0031's original bug, reintroduced one level down. With the
-    provenance branch applied to NON-canonical keys, a workspace that
-    switched primary could never prune the old primary's bare rows, and
-    a payload containing one would collide with it on `uq_cf_unique`.
+    Two branches, and each one is load-bearing in a direction the other
+    is not:
+
+    * a **canonical** key is the writer's, and only the writer's —
+      `row.provider == provider`, with no claim on an unstamped row. An
+      unstamped canonical row is nobody's: "no one recorded who wrote
+      this" is not evidence that I did, and a secondary acting on that
+      reading would hard-delete the rows the A5 backfill has not stamped
+      yet. (WRITING to one is different and stays allowed: precedence,
+      in `spec_schema.provider_outranks`, treats a NULL as claimable, so
+      the first provider to answer a key takes it.)
+    * every **other** key goes by namespace and tier, exactly as ADR-0031
+      wrote it. It must NOT go by provenance: a row stamped `digikey`
+      holding a bare `image_url` belongs to whoever is primary NOW, so
+      after an admin switches the primary to Mouser,
+      `DELETE /provider-links/digikey` would otherwise take the part's
+      image and datasheet with it. It is also what still lets a primary
+      prune the un-normalised bare rows every prod part carries.
     """
-    # Imported lazily: `spec_schema` imports this module for
-    # `PROVIDER_RESERVED_CUSTOM_FIELD_KEYS`, so a module-level import back
-    # into it would be circular.
+    # Imported lazily: `spec_schema` imports this module, so a
+    # module-level import back into it would be circular.
     from app.domain.parts.spec_schema import all_canonical_keys
 
     if row.key in all_canonical_keys():
-        return row.provider is None or row.provider == provider
-    return provider_owns_custom_field_key(provider, row.key, is_primary=is_primary)
-
-
-def provider_wrote_custom_field_row(provider: str, row) -> bool:
-    """Did *provider* contribute this row? The question UNLINK asks.
-
-    Deliberately not the same question as
-    `provider_owns_custom_field_row`, which asks what a refresh may
-    reconcile. The difference is a row whose `provider` is NULL:
-
-    * a refresh treats an unclaimed CANONICAL row as claimable, so the
-      first provider to answer that key takes it, and a primary still
-      prunes the un-normalised bare rows every prod part carries;
-    * an unlink must treat it as somebody else's, because "nobody
-      recorded who wrote this" is not evidence that *I* did. Deleting on
-      that reading would let unlinking a secondary take the primary's
-      legacy rows with it.
-
-    So: a stamped row belongs to whoever is stamped, and an unstamped one
-    belongs to this provider only if it sits in its namespace (which is
-    how every pre-0081 secondary row looks).
-    """
-    if row.provider is not None:
         return row.provider == provider
-    return row.key.startswith(f"{provider}{_NAMESPACE_SEPARATOR}")
+    return provider_owns_custom_field_key(provider, row.key, is_primary=is_primary)

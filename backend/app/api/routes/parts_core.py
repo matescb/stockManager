@@ -315,11 +315,18 @@ def patch_part(
                 .where(CustomField.object_type == "part")
                 .where(CustomField.object_id == p.id)
                 .where(CustomField.source.in_(["provider", "override"]))
+                # Retired junk stays retired. Promoting an archived row to
+                # `manual` would leave an invisible row holding its
+                # `uq_cf_unique` slot for good (A3 / ADR-0034).
+                .where(CustomField.archived_at.is_(None))
             ).scalars()
         )
         for r in rows:
             r.source = "manual"
             r.original_value = None
+            # The row is the user's now; a later refresh must not read the
+            # stamp and treat it as the provider's own.
+            r.provider = None
             r.updated_by = user.id
         # Releasing the link makes the part locally owned — the type has
         # to follow, or the pill keeps claiming a provider backs it.

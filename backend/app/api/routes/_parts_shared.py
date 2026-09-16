@@ -56,6 +56,9 @@ def image_urls_for_parts(db, ws_id, part_ids: list) -> dict:
         .where(CustomField.object_type == "part")
         .where(CustomField.object_id.in_(part_ids))
         .where(CustomField.key == "image_url")
+        # A retired row is not an image. `archived_at` became live on this
+        # table with the spec reconcile (A3); every reader filters it.
+        .where(CustomField.archived_at.is_(None))
     ).all()
     return {pid: val for pid, val in rows}
 

@@ -458,7 +458,7 @@ The two tiers differ in what they may write — see ADR-0031.
   - existing `source='manual'` → leave alone (user owns it).
   - existing `source='override'` → leave value, refresh `original_value` so Restore reverts to current upstream.
   - junk key (TARIC, ECCN, MSL, HTS…) or a `-` / empty value → never written; an existing row for one is **archived**, not deleted, and counted in `summary.archived`.
-- **Non-interference:** the trailing "delete rows absent from my payload" pass is bounded by `provider_fields.py::provider_owns_custom_field_row`. For a canonical key ownership is `custom_fields.provider` (the prefix no longer identifies the writer); for every other key it is the ADR-0031 namespace rule, so a new primary still prunes the old one's bare rows.
+- **Non-interference:** the trailing "delete rows absent from my payload" pass is bounded by `provider_fields.py::provider_wrote_custom_field_row`. For a canonical key ownership is `custom_fields.provider`, strictly — an unstamped row is nobody's, so a secondary cannot delete what the A5 backfill has not stamped. For every other key it is the ADR-0031 namespace rule, so a new primary still prunes the old one's bare rows and unlinking a demoted one leaves the part's image and datasheet alone.
 - `summary.skipped` counts secondary fields dropped because the namespaced key would overflow `custom_fields.key` (varchar 256) — the prefix adds characters to an upstream name we don't control, and truncating a key would collide two attributes onto one row. Always `0` on the primary path, which writes bare keys.
 - **Category.** A part whose `category_id` is NULL is filed from the provider's category string via `spec_schema.category_for_provider` → `categories/service.py::resolve_category_path_or_root`. A category the user chose is never overruled. Nothing is created: when the full path ("Capacitors / Ceramic") does not exist the root ("Capacitors") is used, and when even that is absent the part stays uncategorized and the path comes back as `category_suggestion`. `category_suggestion` is `null` whenever the part was filed or the taxonomy said nothing we recognise.
 - Provider assets (`image_url`, `datasheet_url`) are downloaded locally via `fetch_provider_asset` on the primary path only; failure leaves the upstream URL.
@@ -469,7 +469,7 @@ The two tiers differ in what they may write — see ADR-0031.
 
 Unlink a **secondary** provider from a part. Drops its `part_provider_links` row, deletes the `source='provider'` fields it wrote, and demotes its `override` rows to plain `manual` (the user edited those, so they survive as their own).
 
-"Wrote" is `custom_fields.provider` plus its `"{provider}:"` namespace (`provider_fields.py::provider_wrote_custom_field_row`), not the namespace alone: a secondary also writes un-namespaced canonical keys. An unstamped row outside the namespace stays — "nobody recorded who wrote this" is not evidence that this provider did.
+"Wrote" is `custom_fields.provider` for a canonical key, and the `"{provider}:"` namespace for every other key (`provider_fields.py::provider_wrote_custom_field_row`). Both halves matter: a secondary also writes un-namespaced canonical keys, and a BARE `image_url` stamped with this provider's name belongs to whoever is primary now, so unlinking a demoted primary must not take it. An unstamped canonical row stays too — "nobody recorded who wrote this" is not evidence that this provider did.
 
 **Response** — `200 OK`
 

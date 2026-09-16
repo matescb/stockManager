@@ -249,6 +249,7 @@ def refresh_from_provider(
         description=r.get("description"),
         extra_fields=extra_fields,
         request_id=getattr(request.state, "request_id", None),
+        category_assigned=category.assigned,
     )
 
     link = upsert_link(
@@ -266,9 +267,12 @@ def refresh_from_provider(
         {
             "found": True,
             "provider": client.name,
-            # `summary.skipped` counts fields whose namespaced key wouldn't
-            # fit the column — always 0 on the primary path, which writes
-            # bare keys. `archived` counts junk rows retired from the part.
+            # `summary` counts what the reconcile did: `skipped` is fields
+            # this payload could not be written under (a key too wide for
+            # the column, or a bare key that spells a canonical one),
+            # `archived` junk rows retired from the part, `restored` rows
+            # brought back because upstream answered their key again, and
+            # `dropped` payload keys refused outright as junk.
             "summary": report.summary(),
             # The category the provider's taxonomy named when this
             # workspace has nowhere to file the part. Null when the part
@@ -355,7 +359,7 @@ def delete_provider_link(
             .where(CustomField.object_id == p.id)
             .where(CustomField.source.in_(["provider", "override"]))
         ).scalars()
-        if provider_wrote_custom_field_row(name, cf)
+        if provider_wrote_custom_field_row(name, cf, is_primary=False)
     ]
     removed = 0
     for cf in field_rows:
@@ -365,6 +369,9 @@ def delete_provider_link(
         else:
             cf.source = "manual"
             cf.original_value = None
+            # The row is the user's now. Leaving the stamp on would let a
+            # later refresh from the same provider treat it as its own.
+            cf.provider = None
             cf.updated_by = user.id
 
     _audit_log(

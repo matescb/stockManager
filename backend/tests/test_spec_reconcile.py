@@ -841,3 +841,343 @@ def test_a_bare_upstream_key_that_spells_a_canonical_one_is_not_a_second_row(
 
     rows = _fields(authed, part_id)
     assert rows["package"]["value"] == "0402 (1005 Metric)"
+
+
+# ---------------------------------------------------------------------------
+# Archived canonical rows, precedence, and the counters
+# ---------------------------------------------------------------------------
+
+
+def test_a_junk_archived_canonical_row_does_not_lock_out_a_weaker_provider(
+    authed, db, monkeypatch
+):
+    """Precedence decides who holds a LIVE answer to a key. An archived
+    row holds no answer at all, and `uq_cf_unique` forbids a second row
+    beside it — so if the stamp still won here, a canonical key archived
+    while stamped `digikey` would be unwritable by Mouser forever."""
+    from app.domain.custom_fields.models import CustomField
+
+    _enable_digikey_primary(authed)
+    _configure_mouser_secondary(authed)
+    _category(authed, "Resistors")
+    part_id = _part(authed)
+    ws_id = uuid.UUID(authed.get("/api/workspaces/current").json()["data"]["id"])
+    db.add(
+        CustomField(
+            workspace_id=ws_id,
+            object_type="part",
+            object_id=uuid.UUID(part_id),
+            key="tolerance",
+            value="-",
+            source="provider",
+            provider="digikey",
+        )
+    )
+    db.flush()
+
+    # A DigiKey payload with no Tolerance: the `-` row is retired.
+    thin = dict(DIGIKEY_RESISTOR)
+    thin["Parameters"] = [{"ParameterText": "Resistance", "ValueText": "10 kOhms"}]
+    _stub_digikey(monkeypatch, thin)
+    body = _refresh(authed, part_id)
+    assert body["summary"]["archived"] == 1
+    assert "tolerance" not in _fields(authed, part_id)
+
+    # Mouser loses to DigiKey on a live row — but there is no live row.
+    _stub_mouser(monkeypatch, MOUSER_RESISTOR)
+    body = _refresh(authed, part_id, "mouser")
+    assert body["summary"]["restored"] == 1
+
+    row = _fields(authed, part_id)["tolerance"]
+    assert row["value"] == "5%"
+    assert row["provider"] == "mouser"
+
+
+def test_an_already_archived_row_is_not_re_archived_or_deleted(
+    authed, db, monkeypatch
+):
+    """`_retire` must skip what it retired last time: otherwise the
+    `archived` count re-reports the same rows on every refresh, and a
+    row deliberately archived once gets hard-deleted on the next pass.
+
+    Junk only needs archiving on a part that ALREADY carries it — every
+    prod part does, a new one never will, because junk is simply never
+    written.
+    """
+    from app.domain.custom_fields.models import CustomField
+
+    _enable_digikey_primary(authed)
+    part_id = _part(authed)
+    ws_id = uuid.UUID(authed.get("/api/workspaces/current").json()["data"]["id"])
+    for key, value in (("ECCN", "EAR99"), ("MSL", "1 (Unlimited)"), ("TARIC", "853321")):
+        db.add(
+            CustomField(
+                workspace_id=ws_id,
+                object_type="part",
+                object_id=uuid.UUID(part_id),
+                key=key,
+                value=value,
+                source="provider",
+            )
+        )
+    db.flush()
+
+    _stub_digikey(monkeypatch, DIGIKEY_RESISTOR)
+    first = _refresh(authed, part_id)
+    assert first["summary"]["archived"] == 3
+
+    second = _refresh(authed, part_id)
+    assert second["summary"]["archived"] == 0
+    assert second["summary"]["removed"] == 0
+    # Still there, still retired — not hard-deleted by the second pass.
+    assert (
+        db.query(CustomField)
+        .filter_by(object_id=uuid.UUID(part_id), key="ECCN")
+        .count()
+        == 1
+    )
+
+
+def test_the_summary_counts_a_restore_apart_from_an_update(authed, db, monkeypatch):
+    """A row coming back onto the Specs tab is the change the operator
+    sees, even when its value never moved."""
+    from app.domain.custom_fields.models import CustomField
+
+    _enable_digikey_primary(authed)
+    part_id = _part(authed)
+    ws_id = uuid.UUID(authed.get("/api/workspaces/current").json()["data"]["id"])
+    db.add(
+        CustomField(
+            workspace_id=ws_id,
+            object_type="part",
+            object_id=uuid.UUID(part_id),
+            key="Packaging",
+            value="-",
+            source="provider",
+        )
+    )
+    db.flush()
+
+    without = dict(DIGIKEY_RESISTOR)
+    without["Parameters"] = [
+        p for p in DIGIKEY_RESISTOR["Parameters"] if p["ParameterText"] != "Packaging"
+    ]
+    _stub_digikey(monkeypatch, without)
+    _refresh(authed, part_id)
+
+    _stub_digikey(monkeypatch, DIGIKEY_RESISTOR)
+    body = _refresh(authed, part_id)
+    assert body["summary"]["restored"] == 1
+    assert _fields(authed, part_id)["Packaging"]["value"] == "Tape & Reel (TR)"
+
+
+def test_the_summary_reports_what_the_payload_dropped(authed, monkeypatch):
+    _enable_digikey_primary(authed)
+    part_id = _part(authed)
+    _stub_digikey(monkeypatch, DIGIKEY_RESISTOR)
+
+    body = _refresh(authed, part_id)
+    # ECCN, HTS code, MSL and the `-` value.
+    assert body["summary"]["dropped"] >= 4
+
+
+def test_a_bare_key_spelling_any_canonical_key_is_skipped_and_counted(
+    authed, monkeypatch
+):
+    """The exclusion is tested against the whole schema, not just the keys
+    this payload filled: a part's category decides which keys are
+    canonical, and a row left by an earlier category still owns its slot."""
+    _enable_digikey_primary(authed)
+    part_id = _part(authed)
+    odd = dict(DIGIKEY_RESISTOR)
+    odd["Parameters"] = [
+        {"ParameterText": "Resistance", "ValueText": "10 kOhms"},
+        {"ParameterText": "capacitance", "ValueText": "not a capacitor"},
+    ]
+    _stub_digikey(monkeypatch, odd)
+
+    body = _refresh(authed, part_id)
+    assert body["summary"]["skipped"] == 1
+    assert "capacitance" not in _fields(authed, part_id)
+
+
+def test_a_user_edited_namespaced_row_is_reported_not_silently_kept(
+    authed, monkeypatch
+):
+    _enable_digikey_primary(authed)
+    _configure_mouser_secondary(authed)
+    part_id = _part(authed)
+    _stub_mouser(monkeypatch, MOUSER_RESISTOR)
+    _refresh(authed, part_id, "mouser")
+    r = authed.post(
+        "/api/custom-fields",
+        json={
+            "object_type": "part",
+            "object_id": part_id,
+            "key": "mouser:Packaging",
+            "value": "my own note",
+        },
+    )
+    assert r.status_code in (200, 201), r.text
+
+    _refresh(authed, part_id, "mouser")
+
+    row = _fields(authed, part_id)["mouser:Packaging"]
+    assert row["value"] == "my own note"
+    assert row["source"] == "override"
+
+
+# ---------------------------------------------------------------------------
+# The schema slug when the category is coarser than the part
+# ---------------------------------------------------------------------------
+
+
+def test_a_capacitor_under_a_bare_root_still_gets_the_ceramic_schema(
+    authed, monkeypatch
+):
+    """The state of every real workspace: the sub-category seed has not
+    run, so "Capacitors / Ceramic" falls back to the "Capacitors" root —
+    and a bare "Capacitors" classifies to nothing. Taking the slug from
+    the row it landed on left every capacitor with the common keys."""
+    _enable_digikey_primary(authed)
+    root = _category(authed, "Capacitors")
+    part_id = _part(authed, mpn="CL05B104KO5NNNC")
+    ceramic = dict(DIGIKEY_RESISTOR)
+    ceramic["ManufacturerProductNumber"] = "CL05B104KO5NNNC"
+    ceramic["Category"] = {"Name": "Ceramic Capacitors"}
+    ceramic["Parameters"] = [
+        {"ParameterText": "Capacitance", "ValueText": "0.1µF"},
+        {"ParameterText": "Voltage - Rated", "ValueText": "50V"},
+        {"ParameterText": "Temperature Coefficient", "ValueText": "X7R"},
+    ]
+    _stub_digikey(monkeypatch, ceramic)
+
+    body = _refresh(authed, part_id)
+    assert body["part"]["category_id"] == root
+    rows = _fields(authed, part_id)
+    assert rows["capacitance"]["value"] == "100 nF"
+    assert rows["voltage_rating"]["value"] == "50 V"
+    assert rows["dielectric"]["value"] == "X7R"
+
+
+def test_a_part_the_user_filed_elsewhere_still_gets_the_provider_schema(
+    authed, monkeypatch
+):
+    """A category the user chose is never overruled — but "Bias network"
+    classifies to nothing, and the provider's taxonomy still knows the
+    part is a resistor."""
+    _enable_digikey_primary(authed)
+    mine = _category(authed, "Bias network")
+    part_id = _part(authed, category_id=mine)
+    _stub_digikey(monkeypatch, DIGIKEY_RESISTOR)
+
+    body = _refresh(authed, part_id)
+    assert body["part"]["category_id"] == mine
+    assert _fields(authed, part_id)["resistance"]["value"] == "10 kΩ"
+
+
+def test_the_audit_comment_records_that_a_category_was_assigned(
+    authed, db, monkeypatch
+):
+    from sqlalchemy import select
+
+    from app.domain.audit.models import AuditLog
+
+    _enable_digikey_primary(authed)
+    _category(authed, "Resistors")
+    part_id = _part(authed)
+    _stub_digikey(monkeypatch, DIGIKEY_RESISTOR)
+    _refresh(authed, part_id)
+
+    row = db.execute(
+        select(AuditLog).where(AuditLog.action == "part.specs_reconciled")
+    ).scalars().first()
+    assert "category_assigned=1" in row.comment
+    # The category NAME is not in there — only that one was assigned.
+    assert "Resistors" not in row.comment
+
+
+# ---------------------------------------------------------------------------
+# Workspace isolation for the spec-completeness lookup
+# ---------------------------------------------------------------------------
+
+
+def test_a_foreign_category_id_does_not_leak_its_spec_schema(db):
+    """`missing_specs_for_parts` turns `category_id` into a name path, so
+    the workspace predicate on that lookup is what stops one workspace's
+    tree from selecting another's spec schema.
+
+    Asserted against the lookup rather than end-to-end, because a part
+    cannot actually hold a foreign `category_id`: the
+    `check_parts_category_workspace` trigger (alembic 0056) refuses the
+    UPDATE. Two layers, and this test pins the code one — the trigger is
+    covered in `test_workspace_isolation.py`.
+    """
+    from app.domain.categories.service import category_name_paths
+
+    other = TestClient(app)
+    _ws(other, "spec-foreign-other@example.com")
+    foreign = uuid.UUID(_category(other, "Resistors"))
+
+    mine = TestClient(app)
+    my_ws = _ws(mine, "spec-foreign-mine@example.com")
+
+    assert category_name_paths(db, ws_id=my_ws, category_ids=[foreign]) == {}
+    # ...and the owning workspace does resolve it, so the empty result
+    # above is the predicate doing its job, not a broken lookup.
+    other_ws = uuid.UUID(other.get("/api/workspaces/current").json()["data"]["id"])
+    assert category_name_paths(db, ws_id=other_ws, category_ids=[foreign]) == {
+        foreign: "Resistors"
+    }
+
+
+def test_bulk_import_loads_the_category_tree_once_for_the_batch(
+    authed, db, engine, monkeypatch
+):
+    """MEDIUM-1. Each created part resolves a category path and a schema
+    slug; building the index per part made a 50-row import scan
+    `part_categories` about twice per row. One snapshot per request is
+    safe because nothing in the loop writes a category."""
+    from sqlalchemy import event
+
+    _enable_digikey_primary(authed)
+    _category(authed, "Resistors")
+    _stub_digikey(monkeypatch, DIGIKEY_RESISTOR)
+
+    scans = 0
+
+    def _on_execute(conn, cursor, statement, parameters, context, executemany):
+        nonlocal scans
+        if "FROM part_categories" in statement:
+            scans += 1
+
+    rows = [
+        {"mpn": f"BULK-CAT-{i}", "quantity": 0}
+        for i in range(5)
+    ]
+
+    def _payload_for(mpn: str) -> dict:
+        out = dict(DIGIKEY_RESISTOR)
+        out["ManufacturerProductNumber"] = mpn
+        return out
+
+    monkeypatch.setattr(
+        "app.domain.parts.providers.digikey._get_product_details",
+        lambda token, client_id, mpn: (200, {"Product": _payload_for(mpn)}),
+    )
+
+    event.listen(engine, "before_cursor_execute", _on_execute)
+    try:
+        r = authed.post(
+            "/api/parts/bulk-import-from-scan",
+            json={"rows": rows, "idempotency_key": uuid.uuid4().hex},
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", _on_execute)
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["summary"]["created"] == 5
+    # One snapshot for the batch. The tolerance absorbs an unrelated
+    # category read (the create path validates nothing here), not a
+    # per-row one — five rows would be five or ten.
+    assert scans <= 2, f"{scans} part_categories reads for a 5-row import"

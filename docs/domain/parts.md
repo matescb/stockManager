@@ -84,9 +84,12 @@ Two rules follow from canonical keys being shared:
   value for the same key is mined out of prose by nine regexes in
   `providers/mouser.py`.
 - **Ownership for the delete pass is per row, not per key prefix.**
-  `provider_fields.py::provider_owns_custom_field_row` reads
-  `custom_fields.provider` for a canonical key and falls back to the
-  ADR-0031 namespace rule for everything else.
+  `provider_fields.py::provider_wrote_custom_field_row` reads
+  `custom_fields.provider` for a canonical key — strictly, so an unstamped
+  row is nobody's — and falls back to the ADR-0031 namespace rule for
+  everything else, so unlinking a demoted primary cannot take the part's
+  bare `image_url` with it. Writing is looser: `provider_outranks` treats
+  an unstamped row, and an archived one, as claimable.
 
 Junk rows already on a part are **archived** rather than deleted, and the
 read paths (`GET /api/custom-fields/by-object/...`, the MCP part-detail tool)

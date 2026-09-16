@@ -49,6 +49,7 @@ from sqlalchemy import select
 from app.core.time import utcnow
 from app.domain.audit.service import log_ids as _audit_log_ids
 from app.domain.categories.service import (
+    CategoryIndex,
     category_name_path,
     resolve_category_path_or_root,
 )
@@ -57,12 +58,13 @@ from app.domain.parts.provider_fields import (
     CUSTOM_FIELD_KEY_MAX,
     is_provider_namespaced_key,
     namespaced_custom_field_key,
-    provider_owns_custom_field_row,
+    provider_wrote_custom_field_row,
 )
 from app.domain.parts.services.provider_field_values import (
     truncate_provider_field_value,
 )
 from app.domain.parts.spec_schema import (
+    all_canonical_keys,
     category_for_provider,
     category_slug_for,
     is_junk_key,
@@ -111,10 +113,16 @@ class ReconcileReport:
     added: int = 0
     updated: int = 0
     removed: int = 0
-    #: Fields whose namespaced key would not fit `custom_fields.key`.
+    #: Fields this payload could not be written under: a namespaced key
+    #: that would not fit `custom_fields.key`, and a bare key that spells
+    #: something the payload already answered canonically.
     skipped: int = 0
     #: Junk keys and `-` values retired from a part that already had them.
     archived: int = 0
+    #: Rows brought back out of `archived_at` because upstream answered
+    #: their key again. Counted apart from `updated`: the value may not
+    #: have moved at all, but the row reappearing IS the change.
+    restored: int = 0
     #: Canonical keys this provider now owns on the part.
     canonical: tuple[str, ...] = ()
     #: Canonical keys left to a `manual` / `override` row.
@@ -122,6 +130,8 @@ class ReconcileReport:
     #: Canonical keys a higher-precedence provider already answered.
     kept_other_provider: tuple[str, ...] = ()
     #: Raw payload keys refused: junk, placeholder values, losing aliases.
+    #: Surfaced in the refresh response so "the vendor sent it and we did
+    #: not store it" is visible rather than merely absent.
     dropped: tuple[str, ...] = ()
 
     def summary(self) -> dict[str, int]:
@@ -133,15 +143,18 @@ class ReconcileReport:
             "removed": self.removed,
             "skipped": self.skipped,
             "archived": self.archived,
+            "restored": self.restored,
+            "dropped": len(self.dropped),
         }
 
-    def audit_comment(self, provider_name: str) -> str:
+    def audit_comment(self, provider_name: str, *, category_assigned: bool = False) -> str:
         parts = [
             f"provider={provider_name}",
             f"added={self.added}",
             f"updated={self.updated}",
             f"removed={self.removed}",
             f"archived={self.archived}",
+            f"restored={self.restored}",
             f"skipped={self.skipped}",
         ]
         if self.canonical:
@@ -150,6 +163,10 @@ class ReconcileReport:
             parts.append("kept_manual=" + _key_list(self.kept_manual))
         if self.kept_other_provider:
             parts.append("kept_other=" + _key_list(self.kept_other_provider))
+        if category_assigned:
+            # Field name only, never the category — an audit comment is a
+            # summary of what moved, not a copy of it.
+            parts.append("category_assigned=1")
         return " ".join(parts)
 
 
@@ -162,49 +179,71 @@ def apply_provider_category(
     provider_category: str | None,
     description: str | None = None,
     user_id: UUID | None = None,
+    index: CategoryIndex | None = None,
 ) -> CategoryOutcome:
     """File an uncategorized part from the provider's own taxonomy.
 
     Only ever fills a NULL `category_id`. A category the user picked is a
-    decision, and a vendor taxonomy is not allowed to overrule it — which
-    is also why the part keeps its own category's schema when it has one.
+    decision, and a vendor taxonomy is not allowed to overrule it.
 
     Returns the schema slug to hand `reconcile_provider_specs`, and the
     path we could not resolve so the caller can surface it as a
     suggestion rather than silently doing nothing.
+
+    **The slug is not simply "the part's category".** The category says
+    where the part is filed; the slug says which spec schema reads its
+    payload, and the two come apart constantly:
+
+    * the sub-category seed (A6) has not run anywhere, so
+      "Capacitors / Ceramic" falls back to the "Capacitors" ROOT — and a
+      bare "Capacitors" classifies to nothing, because the dielectric
+      changes the whole spec set. Taking the slug from the row it landed
+      on would leave every capacitor and every transistor in every real
+      workspace with the common keys only.
+    * a part the user filed under "Bias network" has a category that
+      classifies to nothing either, while the provider's taxonomy still
+      knows it is a resistor.
+
+    So the provider's path is consulted in both branches, and the part's
+    own category only wins when it actually classifies.
+
+    `index` lets a caller in a loop (bulk-import-from-scan, up to 50
+    parts) pay for the workspace's category rows once.
     """
+    own_slug = category_slug_for(
+        category_name_path(db, ws_id=ws_id, category_id=part.category_id, index=index)
+    )
+    path = category_for_provider(provider_name, provider_category, description)
+    provider_slug = category_slug_for(path)
+
     if part.category_id is not None:
         return CategoryOutcome(
             category_id=part.category_id,
             assigned=False,
             suggestion=None,
-            slug=category_slug_for(
-                category_name_path(db, ws_id=ws_id, category_id=part.category_id)
-            ),
+            slug=own_slug or provider_slug,
         )
-
-    path = category_for_provider(provider_name, provider_category, description)
     if path is None:
         return CategoryOutcome(None, False, None, None)
 
-    category = resolve_category_path_or_root(db, ws_id=ws_id, path=path)
+    category = resolve_category_path_or_root(db, ws_id=ws_id, path=path, index=index)
     if category is None:
         # Nothing to file it under. The part keeps a NULL category and the
-        # caller reports the path; the schema slug still comes from the
-        # path, so the specs are normalised even though the tree has no
-        # home for the part yet.
-        return CategoryOutcome(None, False, path, category_slug_for(path))
+        # caller reports the path; the specs are still normalised.
+        return CategoryOutcome(None, False, path, provider_slug)
 
     part.category_id = category.id
     part.updated_by = user_id
-    # The slug comes from the PATH, not from the row we filed under. When
-    # only the root resolved, the part is filed under "Capacitors" but it
-    # IS a ceramic capacitor, and the ceramic schema is the one that reads
-    # its dielectric. Deriving the slug from the coarser row would throw
-    # that away — and cost a second query to do it.
+    filed_slug = category_slug_for(
+        category_name_path(db, ws_id=ws_id, category_id=category.id, index=index)
+    )
     return CategoryOutcome(
-        category_id=category.id, assigned=True, suggestion=None,
-        slug=category_slug_for(path),
+        category_id=category.id,
+        assigned=True,
+        suggestion=None,
+        # The provider's path first: it is the finer of the two whenever
+        # they differ, and they differ exactly when the root fallback fired.
+        slug=provider_slug or filed_slug,
     )
 
 
@@ -221,6 +260,7 @@ def reconcile_provider_specs(
     description: str | None = None,
     extra_fields: Mapping[str, str] | None = None,
     request_id: str | None = None,
+    category_assigned: bool = False,
 ) -> ReconcileReport:
     """Write one provider payload onto one part, and audit it.
 
@@ -247,20 +287,21 @@ def reconcile_provider_specs(
     rows = _rows_for(db, ws_id=ws_id, part_id=part.id)
     by_key = {row.key: row for row in rows}
 
-    added = updated = 0
+    added = updated = restored = 0
     canonical: list[str] = []
     kept_manual: list[str] = []
     kept_other: list[str] = []
 
     for key, value in norm.canonical.items():
         row = by_key.get(key)
+        display = truncate_provider_field_value(value.display)
         if row is None:
             db.add(
                 _new_row(
                     ws_id=ws_id,
                     part_id=part.id,
                     key=key,
-                    value=truncate_provider_field_value(value.display),
+                    value=display,
                     provider=provider_name,
                     user_id=user_id,
                     value_num=value.value_num,
@@ -268,7 +309,8 @@ def reconcile_provider_specs(
             )
             added += 1
             canonical.append(key)
-        elif row.source != "provider":
+            continue
+        if row.source != "provider":
             # `manual` and `override` are the user's, and so is anything a
             # future `source` value might mean — the fail-safe branch is the
             # one that changes nothing. An override's remembered upstream
@@ -277,24 +319,36 @@ def reconcile_provider_specs(
             if row.source == "override" and provider_outranks(
                 provider_name, row.provider
             ):
-                row.original_value = truncate_provider_field_value(value.display)
+                if row.original_value != display:
+                    row.original_value = display
+                    updated += 1
                 row.provider = provider_name
                 row.updated_by = user_id
+                # An override the user made on a row that was later archived
+                # is still the user's row; bring it back with the rest.
+                restored += _unarchive(row, user_id)
             kept_manual.append(key)
-        elif not provider_outranks(provider_name, row.provider):
+            continue
+        # An ARCHIVED provider row is unowned, whoever is stamped on it.
+        # Precedence decides who holds a LIVE answer to a key; a retired
+        # one holds no answer at all, and `uq_cf_unique` forbids writing a
+        # second row beside it — so letting the stamp win here would lock
+        # every lower-precedence provider out of that key permanently.
+        if row.archived_at is None and not provider_outranks(
+            provider_name, row.provider
+        ):
             kept_other.append(key)
-        else:
-            display = truncate_provider_field_value(value.display)
-            if row.value != display or row.value_num != value.value_num:
-                row.value = display
-                row.value_num = value.value_num
-                row.updated_by = user_id
-                updated += 1
-            # Claiming provenance is not a change the operator did
-            # anything to see, so it is not counted as an update.
-            row.provider = provider_name
-            _unarchive(row, user_id)
-            canonical.append(key)
+            continue
+        if row.value != display or row.value_num != value.value_num:
+            row.value = display
+            row.value_num = value.value_num
+            row.updated_by = user_id
+            updated += 1
+        # Claiming provenance is not a change the operator did anything to
+        # see, so it is not counted as an update. A resurrection is.
+        row.provider = provider_name
+        restored += _unarchive(row, user_id)
+        canonical.append(key)
 
     desired, skipped = _namespaced_desired(
         norm, provider_name, is_primary=is_primary, extra_fields=extra_fields
@@ -318,12 +372,26 @@ def reconcile_provider_specs(
                 row.value = value
                 row.updated_by = user_id
                 updated += 1
+            # These keys are never parsed, so a number left behind by a
+            # previous life of this key (an A5-backfilled row, a key that
+            # was canonical under the part's old category) would sort a
+            # catalog row against real quantities. Clear it.
+            row.value_num = None
             row.provider = provider_name
-            _unarchive(row, user_id)
+            restored += _unarchive(row, user_id)
         elif row.source == "override":
             if row.original_value != value:
                 row.original_value = value
                 row.updated_by = user_id
+                updated += 1
+            row.provider = provider_name
+            restored += _unarchive(row, user_id)
+            kept_manual.append(key)
+        else:
+            # `manual` — the user's row, in this provider's namespace.
+            # Reported for the same reason the canonical pass reports one:
+            # "we had a value and did not write it" is not silence.
+            kept_manual.append(key)
 
     touched = set(norm.canonical) | set(desired)
     archived, removed = _retire(
@@ -341,6 +409,7 @@ def reconcile_provider_specs(
         removed=removed,
         skipped=skipped,
         archived=archived,
+        restored=restored,
         canonical=tuple(canonical),
         kept_manual=tuple(kept_manual),
         kept_other_provider=tuple(kept_other),
@@ -353,7 +422,9 @@ def reconcile_provider_specs(
         action=AUDIT_ACTION,
         target_type="part",
         target_ids=[part.id],
-        comment=report.audit_comment(provider_name),
+        comment=report.audit_comment(
+            provider_name, category_assigned=category_assigned
+        ),
         request_id=request_id,
     )
     return report
@@ -374,16 +445,20 @@ def _rows_for(db, *, ws_id: UUID, part_id: UUID) -> list[CustomField]:
     )
 
 
-def _unarchive(row: CustomField, user_id: UUID | None) -> None:
+def _unarchive(row: CustomField, user_id: UUID | None) -> int:
     """A retired key that upstream answers again is live data once more.
 
     Restoring beats inserting alongside: `uq_cf_unique` would refuse the
     insert, and it keeps one row per key rather than a live one shadowing
-    a retired one nothing can reach.
+    a retired one nothing can reach. Returns 1 when it actually revived a
+    row, so the caller can report it — the value may not have moved, but
+    the row reappearing on the Specs tab is the change the operator sees.
     """
-    if row.archived_at is not None:
-        row.archived_at = None
-        row.updated_by = user_id
+    if row.archived_at is None:
+        return 0
+    row.archived_at = None
+    row.updated_by = user_id
+    return 1
 
 
 def _new_row(
@@ -419,12 +494,18 @@ def _namespaced_desired(
 ) -> tuple[dict[str, str], int]:
     """Catalog + optional + caller-supplied rows, under the ADR-0031 rule.
 
-    Unchanged behaviour on both tiers. A secondary SKIPS a field whose
-    namespaced key would overflow `custom_fields.key` rather than
-    truncating the key and colliding two attributes onto one row; the
-    primary skips a bare key that already looks namespaced, which would
-    otherwise be written outside its own reconcile scope and later
-    deleted by whichever secondary owns that prefix.
+    A field is SKIPPED, and counted, rather than dropped silently:
+
+    * its key would overflow `custom_fields.key` — on either tier.
+      Truncating the KEY would collide two different attributes onto one
+      row, so the field goes instead. The prefix is what usually causes
+      this, but an upstream name longer than 256 characters does it to
+      the primary too.
+    * (primary only) the bare key already looks namespaced, which would
+      write it outside its own reconcile scope for whichever secondary
+      owns that prefix to delete later.
+    * (primary only) the bare key spells a canonical one, which
+      `uq_cf_unique` has no room for beside the canonical row.
     """
     desired: dict[str, str] = {}
     skipped = 0
@@ -433,14 +514,19 @@ def _namespaced_desired(
     ):
         if is_primary:
             if is_provider_namespaced_key(key):
+                skipped += 1
                 continue
-            # A bare upstream key that happens to spell a canonical one
-            # (`package`, `mounting`) would be a SECOND row for a key the
-            # canonical pass just wrote — impossible under `uq_cf_unique`,
-            # so the insert would be a 500 rather than a duplicate. The
-            # canonical row is the better answer anyway; drop the other.
+            # A bare upstream key that spells a CANONICAL one (`package`,
+            # `mounting`) cannot be a second row: `uq_cf_unique` allows one
+            # row per key, so the insert would be a 500 rather than a
+            # duplicate. Tested against the whole schema, not just the keys
+            # this payload happened to fill — the part's category decides
+            # which keys are canonical, and a payload that answers
+            # `Package / Case` for an IC still must not write a bare
+            # `package` beside a row some other category's refresh left.
             # A secondary is safe by construction: its keys are prefixed.
-            if key in norm.canonical:
+            if key in all_canonical_keys():
+                skipped += 1
                 continue
             stored = key
         else:
@@ -448,6 +534,12 @@ def _namespaced_desired(
             if len(stored) > CUSTOM_FIELD_KEY_MAX:
                 skipped += 1
                 continue
+        if len(stored) > CUSTOM_FIELD_KEY_MAX:
+            # The primary writes bare keys, so this is an upstream name
+            # longer than the column on its own. Rare, and still not a
+            # reason to 500.
+            skipped += 1
+            continue
         desired[stored] = truncate_provider_field_value(value)
     return desired, skipped
 
@@ -463,15 +555,25 @@ def _retire(
 ) -> tuple[int, int]:
     """Archive the junk, delete the merely stale. Returns `(archived, removed)`.
 
-    Only rows this provider owns are in scope
-    (`provider_owns_custom_field_row`), and only `source='provider'` ones:
-    a `manual` or `override` row is the user's, whatever its key says.
+    Scoped by `provider_wrote_custom_field_row` — the STRICT test, not
+    the one the write pass uses. A write may claim an unstamped canonical
+    row, because somebody has to own the 9,377 rows that predate the
+    `provider` column. A delete may not: "no one recorded who wrote this"
+    is not evidence that I did, and a secondary refresh acting on that
+    reading would hard-delete the primary's un-backfilled rows.
+
+    Only `source='provider'` rows are in scope: a `manual` or `override`
+    row is the user's, whatever its key says. Already-archived rows are
+    skipped outright, so a row retired once is never hard-deleted later
+    and never counted as newly archived on the next refresh.
 
     Junk is archived rather than deleted because it is the one class of
     row this change removes from parts that have carried it for months —
     277 ECCN rows, ~1,000 `-` values — and an archived row can be read
     back and counted. A row the provider merely stopped sending keeps the
-    hard delete it has always had.
+    hard delete it has always had. `value_num` goes with it: the partial
+    index on that column exists to sort live specs, and a retired row has
+    no business in it.
     """
     archived = removed = 0
     for row in rows:
@@ -481,12 +583,13 @@ def _retire(
             # Already retired by an earlier pass. Leave it archived rather
             # than hard-deleting it now — the record is the point.
             continue
-        if not provider_owns_custom_field_row(
+        if not provider_wrote_custom_field_row(
             provider_name, row, is_primary=is_primary
         ):
             continue
         if is_junk_key(_bare_key(row.key, provider_name)) or is_junk_value(row.value):
             row.archived_at = utcnow()
+            row.value_num = None
             row.updated_by = user_id
             archived += 1
         else:

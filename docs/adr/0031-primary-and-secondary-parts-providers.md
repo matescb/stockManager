@@ -77,28 +77,40 @@ to the Sourcing tab and the Specs tab never reads. Namespacing catalog data was
 always right, because price and stock ARE per-distributor; namespacing a
 resistance is not, because a resistor has one.
 
-So ownership is now decided per ROW, by
-`provider_fields.py::provider_owns_custom_field_row(provider, row, is_primary)`:
+So DELETING is now decided per ROW, by
+`provider_fields.py::provider_wrote_custom_field_row(provider, row, is_primary)`
+— one predicate, asked by both operations that remove data (the reconcile's
+delete pass and unlink):
 
-- for a **canonical** key — `custom_fields.provider` (alembic 0081). The row is
-  yours if you wrote it, or if nobody did: `provider` is NULL on every row
-  predating the column and on the 9,377 prod rows the backfill (A5) has not
-  re-keyed, so the first provider to answer a canonical key claims it. A
-  contested key is resolved by `spec_schema.PROVIDER_PRECEDENCE`
-  (`digikey` > `mouser` > unranked), not by who refreshed last.
+- for a **canonical** key — `custom_fields.provider` (alembic 0081), strictly.
+  The row is yours only if you are stamped on it. An unstamped canonical row is
+  nobody's: `provider` is NULL on every row predating the column and on the
+  9,377 prod rows the backfill (A5) has not re-keyed, and a secondary acting on
+  "nobody recorded who wrote this, so it must be mine" would hard-delete the
+  primary's un-backfilled rows.
 - for **every other** key — the namespace rule above, unchanged. Applying
-  provenance here too would be worse, not better: a workspace that switched
-  primary could never prune the old primary's bare rows, and a payload
-  containing one would collide with it on `uq_cf_unique`.
+  provenance here too would be worse, not better, in two ways: a workspace that
+  switched primary could never prune the old primary's bare rows, and
+  `DELETE /provider-links/{demoted-primary}` would take the part's bare
+  `image_url` and `datasheet_url` with it — keys that belong to whoever is
+  primary *now*.
 
-`spec_reconcile.py::reconcile_provider_specs` is where both branches are
-applied, for the create path and the refresh path alike; the refresh route no
-longer has a reconciler of its own. Unlink asks a third, narrower question —
-`provider_wrote_custom_field_row`, which treats an unstamped row as somebody
-else's, because "nobody recorded who wrote this" is not evidence that the
-provider being unlinked did.
+WRITING is the looser rule, and deliberately so: `spec_schema.provider_outranks`
+treats a NULL `provider` as claimable, which is how the first provider to answer
+a canonical key takes ownership of it and how the un-backfilled rows get a
+writer at all. A contested key goes to the higher `PROVIDER_PRECEDENCE`
+(`digikey` > `mouser` > unranked), not to who refreshed last. An ARCHIVED
+canonical row is unowned for this purpose whatever its stamp says — it holds no
+answer, and `uq_cf_unique` has no room for a second row beside it, so letting
+the stamp win would lock every weaker provider out of that key permanently.
 
-One more thing moved with it: a secondary may now fill a **NULL** `category_id`
+`spec_reconcile.py::reconcile_provider_specs` is where all of it is applied, for
+the create path and the refresh path alike; the refresh route no longer has a
+reconciler of its own.
+
+The primary still owns the part columns and `parts.linked_*`, and a secondary
+still writes only `"{provider}:"`-prefixed keys — EXCEPT canonical spec keys,
+above, and one part column. A secondary may now fill a **NULL** `category_id`
 (A4 files an uncategorized part from the provider's own taxonomy). That is the
 single exception to "a secondary writes no part column", and it is narrow on
 purpose — filling a category nobody chose is not a claim on the part's identity,

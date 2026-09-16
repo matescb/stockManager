@@ -1016,3 +1016,80 @@ def test_a_secondary_never_overrules_a_category_already_set(authed, monkeypatch)
     authed.post(f"/api/parts/{part_id}/refresh-from-provider?provider=mouser")
 
     assert authed.get(f"/api/parts/{part_id}").json()["data"]["category_id"] == mine
+
+
+def test_unlinking_a_demoted_primary_keeps_the_parts_image_and_datasheet(
+    authed, monkeypatch, db
+):
+    """HIGH-2. `image_url` / `datasheet_url` / catalog keys are BARE, and
+    a bare key belongs to whoever is primary NOW — not to the provider
+    stamped on it. DigiKey writes them as primary, an admin switches the
+    primary to Mouser, and DigiKey becomes an ordinary secondary. Its
+    unlink must take its `digikey:` namespace and its canonical rows, and
+    nothing else: those two keys are what the part's media card renders.
+    """
+    _enable_digikey_primary(authed)
+    part_id = _create_part(authed)
+    _stub_digikey(monkeypatch)
+    authed.post(f"/api/parts/{part_id}/refresh-from-provider")
+    before = _fields(authed, part_id)
+    assert before["image_url"]["provider"] == "digikey"
+    assert before["resistance"]["provider"] == "digikey"
+
+    # The admin switches the workspace primary. DigiKey is a secondary now.
+    r = authed.patch(
+        "/api/workspaces/current",
+        json={"parts_provider": "mouser", "parts_provider_api_key": "fake-key"},
+    )
+    assert r.status_code == 200, r.text
+    authed.put(
+        "/api/workspaces/current/provider-credentials",
+        json={"provider": "digikey", "api_key": "id", "api_secret": "secret"},
+    )
+
+    r = authed.delete(f"/api/parts/{part_id}/provider-links/digikey")
+    assert r.status_code == 200, r.text
+
+    after = _fields(authed, part_id)
+    assert after["image_url"]["value"] == "https://example.com/dk.jpg"
+    assert after["datasheet_url"]["value"] == "https://example.com/dk-ds.pdf"
+    assert after["source_url"]["value"] == "https://www.digikey.com/p/1"
+    # The canonical row IS DigiKey's, wherever the primary sits now.
+    assert "resistance" not in after
+
+
+def test_a_secondary_does_not_delete_an_unstamped_canonical_row(
+    authed, monkeypatch, db
+):
+    """MEDIUM-2. Until the A5 backfill runs, a canonical row can exist
+    with a NULL `provider`. Writing to one is allowed — somebody has to
+    claim the 9,377 rows that predate the column — but DELETING on that
+    reading lets a secondary take the primary's un-backfilled rows."""
+    import uuid as _uuid
+
+    from app.domain.custom_fields.models import CustomField
+
+    _enable_digikey_primary(authed)
+    _configure_mouser_secondary(authed)
+    part_id = _create_part(authed)
+    ws_id = _uuid.UUID(authed.get("/api/workspaces/current").json()["data"]["id"])
+    db.add(
+        CustomField(
+            workspace_id=ws_id,
+            object_type="part",
+            object_id=_uuid.UUID(part_id),
+            key="capacitance",
+            value="100 nF",
+            source="provider",
+        )
+    )
+    db.flush()
+
+    # A Mouser payload that says nothing about capacitance.
+    _stub_mouser(monkeypatch)
+    r = authed.post(f"/api/parts/{part_id}/refresh-from-provider?provider=mouser")
+    assert r.status_code == 200, r.text
+
+    rows = _fields(authed, part_id)
+    assert rows["capacitance"]["value"] == "100 nF"
+    assert rows["capacitance"]["provider"] is None
