@@ -134,6 +134,13 @@ export const PartCategorySchema = z.object({
   default_symbol_ref: nullableString,
   default_footprint_ref: nullableString,
   footprint_filters: z.array(z.string()).nullable(),
+  // What a part in this category shows as its KiCad schematic `Value`,
+  // rendered from the part's specs — "{resistance} {tolerance}
+  // {package}". Null inherits from the nearest ancestor that sets one.
+  value_template: nullableString,
+  // Spec keys emitted as hidden KiCad symbol fields. Null inherits; an
+  // empty array is an explicit "emit none".
+  kicad_fields: z.array(z.string()).nullable(),
   library_slug: z.string(),
   // Adjacency-list parent; null is a root of the tree. Cycles and depth
   // are the server's problem (`domain/categories/tree.py`), but

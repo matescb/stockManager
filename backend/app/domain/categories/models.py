@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import Column, ForeignKey, Index, Integer, String, text
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 
 from app.domain._mixins import WorkspaceOwned
 from app.infra.db import Base
@@ -11,9 +11,9 @@ class PartCategory(WorkspaceOwned, Base):
     """A workspace-scoped bucket for parts (resistors, MCUs, connectors…).
 
     The KiCad-facing columns (`refdes_prefix`, `default_symbol_ref`,
-    `default_footprint_ref`, `footprint_filters`, `library_slug`) carry the
-    metadata a later phase serves over the KiCad HTTP-library protocol; they
-    are inert for every other consumer.
+    `default_footprint_ref`, `footprint_filters`, `library_slug`,
+    `value_template`, `kicad_fields`) carry the metadata served over the
+    KiCad HTTP-library protocol; they are inert for every other consumer.
     """
 
     __tablename__ = "part_categories"
@@ -53,6 +53,25 @@ class PartCategory(WorkspaceOwned, Base):
     default_footprint_ref = Column(String(200), nullable=True)
     # KiCad footprint-chooser filter globs, e.g. ["R_*", "*_0402_*"].
     footprint_filters = Column(ARRAY(String(100)), nullable=True)
+
+    # What a part in this category shows as its schematic `Value`, built
+    # from the part's canonical specs — "{resistance} {tolerance}
+    # {package}" renders "10 kΩ 1% 0603". Rendering rules and the
+    # placeholder grammar live in `domain/eda/value_template.py`; the
+    # shape is validated in `schemas.py`, not by a CHECK constraint (the
+    # vocabulary of legal keys is application data). Alembic 0082.
+    #
+    # NULL means "inherit": `kicad_library.py` walks `parent_id` for the
+    # nearest ancestor that has one, so a template set on *Capacitors*
+    # covers *Capacitors / Ceramic* without being repeated.
+    value_template = Column(String(200), nullable=True)
+    # Canonical spec keys to emit as hidden KiCad symbol fields, in
+    # order — ["resistance", "tolerance"] becomes `Resistance` and
+    # `Tolerance` on every symbol in the category. JSONB rather than a
+    # text array so a later phase can carry per-key options without a
+    # migration. Inherits through `parent_id` the same way, and
+    # independently of `value_template`.
+    kicad_fields = Column(JSONB, nullable=True)
     # URL- and library-safe identifier, derived from `name` when the caller
     # doesn't supply one. Unique per workspace among active rows.
     #

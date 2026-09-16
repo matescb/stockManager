@@ -28,6 +28,12 @@ type CategoryBody = {
   default_symbol_ref: string | null;
   default_footprint_ref: string | null;
   footprint_filters: string[] | null;
+  /** KiCad `Value` template, e.g. `{resistance} {tolerance} {package}`.
+   * Null inherits from the nearest ancestor category that sets one. */
+  value_template: string | null;
+  /** Spec keys emitted as hidden KiCad symbol fields. Null inherits; an
+   * empty array is an explicit "emit none". */
+  kicad_fields: string[] | null;
   library_slug?: string;
   /** Null is meaningful on PATCH: it moves the category back to the root
    * of the tree. Unlike the NOT NULL fields, the server honours it. */
@@ -42,6 +48,9 @@ type FormState = {
   default_symbol_ref: string;
   default_footprint_ref: string;
   footprint_filters: string;
+  value_template: string;
+  /** Comma-separated spec keys. */
+  kicad_fields: string;
   library_slug: string;
   /** "" means root. */
   parent_id: string;
@@ -55,6 +64,8 @@ const EMPTY_FORM: FormState = {
   default_symbol_ref: "",
   default_footprint_ref: "",
   footprint_filters: "",
+  value_template: "",
+  kicad_fields: "",
   library_slug: "",
   parent_id: "",
 };
@@ -69,6 +80,8 @@ function formFor(category: PartCategory): FormState {
     default_symbol_ref: category.default_symbol_ref ?? "",
     default_footprint_ref: category.default_footprint_ref ?? "",
     footprint_filters: (category.footprint_filters ?? []).join(", "),
+    value_template: category.value_template ?? "",
+    kicad_fields: (category.kicad_fields ?? []).join(", "),
     library_slug: category.library_slug,
   };
 }
@@ -78,11 +91,20 @@ function trimmedOrNull(value: string): string | null {
   return trimmed === "" ? null : trimmed;
 }
 
-function bodyFrom(form: FormState, { includeSlug }: { includeSlug: boolean }): CategoryBody {
-  const filters = form.footprint_filters
+/** Split a comma-separated field into trimmed, non-empty entries. */
+function commaList(value: string): string[] {
+  return value
     .split(",")
-    .map(f => f.trim())
+    .map(entry => entry.trim())
     .filter(Boolean);
+}
+
+function bodyFrom(
+  form: FormState,
+  { includeSlug, original }: { includeSlug: boolean; original: PartCategory | null },
+): CategoryBody {
+  const filters = commaList(form.footprint_filters);
+  const specKeys = commaList(form.kicad_fields);
   const body: CategoryBody = {
     name: form.name.trim(),
     description: trimmedOrNull(form.description),
@@ -91,6 +113,22 @@ function bodyFrom(form: FormState, { includeSlug }: { includeSlug: boolean }): C
     default_symbol_ref: trimmedOrNull(form.default_symbol_ref),
     default_footprint_ref: trimmedOrNull(form.default_footprint_ref),
     footprint_filters: filters.length > 0 ? filters : null,
+    value_template: trimmedOrNull(form.value_template),
+    // A blank box means "inherit" (null) — EXCEPT when the stored value
+    // was already an explicit empty list, which renders as the same
+    // blank box. The two are different things to the server: `[]` is
+    // "emit no fields" and stops the inheritance walk, null hands the
+    // category back to its parent. Without this, opening a category
+    // that had `[]` and pressing Save would silently switch the whole
+    // subtree's fields back on. An empty list is not reachable from
+    // this form, but it is reachable through the API, and a form must
+    // not destroy what it cannot express.
+    kicad_fields:
+      specKeys.length > 0
+        ? specKeys
+        : original?.kicad_fields?.length === 0
+          ? []
+          : null,
     parent_id: form.parent_id || null,
   };
   // Blank means "derive from the name" on create. On edit the field is
@@ -216,9 +254,12 @@ export default function CategoriesSettings() {
       return;
     }
     if (editing) {
-      updateMutation.mutate({ id: editing.id, body: bodyFrom(form, { includeSlug: true }) });
+      updateMutation.mutate({
+        id: editing.id,
+        body: bodyFrom(form, { includeSlug: true, original: editing }),
+      });
     } else {
-      createMutation.mutate(bodyFrom(form, { includeSlug: true }));
+      createMutation.mutate(bodyFrom(form, { includeSlug: true, original: null }));
     }
   }
 
@@ -271,9 +312,9 @@ export default function CategoriesSettings() {
       <h1 className="page-title mb-4">Categories</h1>
       <p className="text-sm text-muted mb-4">
         Buckets for the parts library, arranged as a tree the way a KiCad
-        library is. The reference-designator prefix and the default symbol /
-        footprint references are the metadata a KiCad library is generated
-        from; everything else is optional.
+        library is. The reference-designator prefix, the default symbol /
+        footprint references and the value template are the metadata a KiCad
+        library is generated from; everything else is optional.
       </p>
 
       <InlineQueryError query={categoriesQuery} label="categories" className="mb-3" />
@@ -308,6 +349,7 @@ export default function CategoriesSettings() {
                 <th>Ref</th>
                 <th>Symbol</th>
                 <th>Footprint</th>
+                <th>Value</th>
                 <th>Order</th>
                 <th></th>
               </tr>
@@ -338,6 +380,7 @@ export default function CategoriesSettings() {
                   <td className="font-mono text-xs">{category.refdes_prefix ?? "—"}</td>
                   <td className="font-mono text-xs">{category.default_symbol_ref ?? "—"}</td>
                   <td className="font-mono text-xs">{category.default_footprint_ref ?? "—"}</td>
+                  <td className="font-mono text-xs">{category.value_template ?? "—"}</td>
                   <td>{category.sort_order}</td>
                   <td className="whitespace-nowrap">
                     <button
@@ -483,6 +526,46 @@ export default function CategoriesSettings() {
             />
             <div className="text-xs text-muted mt-1">
               Comma-separated globs offered in KiCad&apos;s footprint chooser.
+            </div>
+          </div>
+          <div>
+            <label className="label" htmlFor="category-value-template">
+              Value template
+            </label>
+            <input
+              id="category-value-template"
+              className="input font-mono"
+              maxLength={200}
+              placeholder="{resistance} {tolerance} {package}"
+              value={form.value_template}
+              onChange={e => setForm(f => ({ ...f, value_template: e.target.value }))}
+            />
+            <div className="text-xs text-muted mt-1">
+              What the schematic shows for a part in this category.
+              Placeholders are spec keys in braces, lower-case:{" "}
+              <code>{"{resistance} {tolerance} {package}"}</code> renders{" "}
+              <code>10 kΩ 1% 0603</code>. Use <code>{"{mpn}"}</code> for
+              anything that is not a passive. A spec the part doesn&apos;t have
+              is dropped. Leave blank to inherit from the parent category, and
+              fall back to the part name.
+            </div>
+          </div>
+          <div>
+            <label className="label" htmlFor="category-kicad-fields">
+              Symbol fields
+            </label>
+            <input
+              id="category-kicad-fields"
+              className="input font-mono"
+              placeholder="resistance, tolerance, power"
+              value={form.kicad_fields}
+              onChange={e => setForm(f => ({ ...f, kicad_fields: e.target.value }))}
+            />
+            <div className="text-xs text-muted mt-1">
+              Comma-separated spec keys, up to 20, also carried into the KiCad
+              symbol as hidden fields — <code>voltage_rating</code> becomes{" "}
+              <code>Voltage Rating</code>. Blank inherits from the parent.
+              Keys must match the spec exactly as it is stored on the part.
             </div>
           </div>
           <div className="flex gap-2">

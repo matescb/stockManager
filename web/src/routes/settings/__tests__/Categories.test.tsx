@@ -26,6 +26,8 @@ const categories: PartCategory[] = [
     default_symbol_ref: "Device:R",
     default_footprint_ref: "Resistor_SMD:R_0402_1005Metric",
     footprint_filters: ["R_*"],
+    value_template: "{resistance} {tolerance} {package}",
+    kicad_fields: ["resistance", "tolerance"],
     library_slug: "resistors",
     parent_id: null,
     archived_at: null,
@@ -39,6 +41,8 @@ const categories: PartCategory[] = [
     default_symbol_ref: null,
     default_footprint_ref: null,
     footprint_filters: null,
+    value_template: null,
+    kicad_fields: null,
     library_slug: "capacitors",
     parent_id: "11111111-1111-4111-8111-111111111111",
     archived_at: "2026-08-01T10:00:00+00:00",
@@ -77,6 +81,10 @@ describe("CategoriesSettings", () => {
     expect(within(table).getByText("Resistors")).toBeDefined();
     expect(within(table).getByText("resistors")).toBeDefined();
     expect(within(table).getByText("Device:R")).toBeDefined();
+    // The value template is visible in the row, not only in the editor.
+    expect(
+      within(table).getByText("{resistance} {tolerance} {package}"),
+    ).toBeDefined();
     expect(within(table).getByText("Fixed-value resistors")).toBeDefined();
     // The archived row carries the pill and a Restore action instead of Archive.
     expect(within(table).getByText("Archived")).toBeDefined();
@@ -112,8 +120,88 @@ describe("CategoriesSettings", () => {
       default_symbol_ref: "Device:Q_NMOS_GDS",
       default_footprint_ref: null,
       footprint_filters: ["SOT-23*", "TO-220*"],
+      value_template: null,
+      kicad_fields: null,
       parent_id: null,
     });
+  });
+
+  it("posts the value template and splits the symbol fields on commas", async () => {
+    vi.spyOn(api.parsed, "get").mockResolvedValue([]);
+    const post = vi.spyOn(api, "post").mockResolvedValue(categories[0]);
+
+    renderCategories();
+
+    fireEvent.click(await screen.findByRole("button", { name: "+ Category" }));
+    fireEvent.change(await screen.findByLabelText("Name"), {
+      target: { value: "Resistors" },
+    });
+    fireEvent.change(screen.getByLabelText("Value template"), {
+      target: { value: "{resistance} {tolerance} {package}" },
+    });
+    fireEvent.change(screen.getByLabelText("Symbol fields"), {
+      target: { value: "resistance, tolerance , power" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(post).toHaveBeenCalledWith(
+      "/categories",
+      expect.objectContaining({
+        value_template: "{resistance} {tolerance} {package}",
+        kicad_fields: ["resistance", "tolerance", "power"],
+      }),
+    );
+  });
+
+  it("keeps a stored empty field list rather than turning inheritance back on", async () => {
+    // `[]` and null render as the same blank box but mean opposite
+    // things to the server: "emit no fields" vs "take the parent's".
+    // Saving an untouched form must not flip one into the other.
+    const emptyList = { ...categories[0], kicad_fields: [] };
+    vi.spyOn(api.parsed, "get").mockResolvedValue([emptyList]);
+    const patch = vi.spyOn(api, "patch").mockResolvedValue(emptyList);
+
+    renderCategories();
+
+    const table = await screen.findByRole("table");
+    const row = within(table).getByText("Resistors").closest("tr");
+    fireEvent.click(within(row as HTMLElement).getByRole("button", { name: "Edit" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch).toHaveBeenCalledWith(
+      `/categories/${emptyList.id}`,
+      expect.objectContaining({ kicad_fields: [] }),
+    );
+  });
+
+  it("prefills the value rules and clears them when the boxes are emptied", async () => {
+    vi.spyOn(api.parsed, "get").mockResolvedValue(categories);
+    const patch = vi.spyOn(api, "patch").mockResolvedValue(categories[0]);
+
+    renderCategories();
+
+    const table = await screen.findByRole("table");
+    const row = within(table).getByText("Resistors").closest("tr");
+    fireEvent.click(within(row as HTMLElement).getByRole("button", { name: "Edit" }));
+
+    const template = (await screen.findByLabelText("Value template")) as HTMLInputElement;
+    expect(template.value).toBe("{resistance} {tolerance} {package}");
+    const fields = screen.getByLabelText("Symbol fields") as HTMLInputElement;
+    expect(fields.value).toBe("resistance, tolerance");
+
+    // Blank means "inherit from the parent", which the server stores as
+    // null — not as an empty string or an empty list.
+    fireEvent.change(template, { target: { value: "  " } });
+    fireEvent.change(fields, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch).toHaveBeenCalledWith(
+      `/categories/${categories[0].id}`,
+      expect.objectContaining({ value_template: null, kicad_fields: null }),
+    );
   });
 
   it("refuses to submit without a name and never calls the API", async () => {

@@ -65,6 +65,25 @@ the canonical record.
   `custom_fields.provider` and `custom_fields.value_num`. Nothing calls
   the new code yet — import and refresh are wired up in a follow-up.
   ADR-0034.
+- **A KiCad symbol's `Value` can now come from the part's specs.** Most of
+  the library is imported, and an imported part is named after the
+  provider's description — so the schematic drew
+  `RES SMD 10K OHM 1% 1/16W 0402` where an engineer expects `10 kΩ 1% 0603`.
+  Part categories gain `value_template` and `kicad_fields` (migration
+  `0082`): `{resistance} {tolerance} {package}` renders the Value from the
+  part's own custom fields, and listed spec keys are also emitted as hidden
+  symbol fields (`voltage_rating` → `Voltage Rating`). A hand-typed
+  `part_eda.value` still wins, and a category with neither column set
+  behaves exactly as before. The rendered value joins `keywords`, so the
+  symbol chooser finds the part by what it is. Both columns are
+  NULL-means-inherit up `parent_id`. Set them in Settings → Categories.
+  Nothing is seeded; the PCM package is unchanged (it ships library
+  entries, not parts, so `PACKAGE_FORMAT` did not move).
+- **KiCad's category list now shows the tree.** A subcategory is named by
+  its full path — `Capacitors / Ceramic` — and the rows come back
+  depth-first. The httplib category document is `{id, name, description}`
+  with no field for a parent, so a nested library was previously a flat
+  list of leaf names.
 - **PCM package: 3D models linked on the CAD tab now ship in the
   footprint.** Linking a STEP or WRL to a footprint wrote a join row
   only, so the packaged `.kicad_mod` carried no `(model …)` node and

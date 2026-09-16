@@ -491,3 +491,114 @@ def test_patch_null_on_non_nullable_field_is_422(authed_client):
         )
         assert r.status_code == 422, (field, r.text)
         assert r.json()["code"] == "category.field_not_nullable"
+
+
+# ---------------------------------------------------------------------
+# KiCad Value rules — `value_template` / `kicad_fields` (alembic 0082)
+# ---------------------------------------------------------------------
+
+
+def test_create_stores_the_value_rules(authed_client):
+    row = _create(
+        authed_client,
+        value_template="{resistance} {tolerance} {package}",
+        kicad_fields=["resistance", "tolerance"],
+    )
+    assert row["value_template"] == "{resistance} {tolerance} {package}"
+    assert row["kicad_fields"] == ["resistance", "tolerance"]
+
+
+def test_the_value_rules_default_to_null(authed_client):
+    row = _create(authed_client)
+    assert row["value_template"] is None
+    assert row["kicad_fields"] is None
+
+
+def test_patch_sets_and_clears_the_value_rules(authed_client):
+    row = _create(authed_client)
+    patched = authed_client.patch(
+        f"/api/categories/{row['id']}",
+        json={"value_template": "{mpn}", "kicad_fields": ["package"]},
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["data"]["value_template"] == "{mpn}"
+
+    # Null is meaningful on both: it hands the category back to whatever
+    # its ancestors say, which is not the same as an empty list.
+    cleared = authed_client.patch(
+        f"/api/categories/{row['id']}",
+        json={"value_template": None, "kicad_fields": None},
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["data"]["value_template"] is None
+    assert cleared.json()["data"]["kicad_fields"] is None
+
+
+def test_an_empty_field_list_is_stored_as_an_empty_list(authed_client):
+    row = _create(authed_client, kicad_fields=[])
+    assert row["kicad_fields"] == []
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "{Resistance}",
+        "{ resistance }",
+        "{resistance",
+        "resistance}",
+        "{resistance-1}",
+        "{resistance} {",
+    ],
+)
+def test_a_template_whose_braces_are_not_placeholders_is_refused(
+    authed_client, template: str
+):
+    """Rendering leaves them as literal text, which would be drawn on
+    every symbol in the category with no hint as to why."""
+    r = authed_client.post(
+        "/api/categories", json={"name": "Resistors", "value_template": template}
+    )
+    assert r.status_code == 422, r.text
+
+
+def test_a_template_past_the_placeholder_cap_is_refused(authed_client):
+    """Twenty-one placeholders, short enough that the length limit is
+    not what refuses it."""
+    template = "".join(f"{{{letter}}}" for letter in "abcdefghijklmnopqrstu")
+    assert len(template) < 200
+    r = authed_client.post(
+        "/api/categories", json={"name": "Resistors", "value_template": template}
+    )
+    assert r.status_code == 422, r.text
+
+
+@pytest.mark.parametrize("key", ["Resistance", "resistance-1", "voltage rating", ""])
+def test_a_field_key_that_is_not_canonical_is_refused(authed_client, key: str):
+    r = authed_client.post(
+        "/api/categories", json={"name": "Resistors", "kicad_fields": [key]}
+    )
+    assert r.status_code == 422, r.text
+
+
+def test_more_than_twenty_fields_are_refused(authed_client):
+    keys = [f"key{'x' * index}" for index in range(21)]
+    r = authed_client.post(
+        "/api/categories", json={"name": "Resistors", "kicad_fields": keys}
+    )
+    assert r.status_code == 422, r.text
+
+
+def test_a_repeated_field_key_is_stored_once(authed_client):
+    """One key emits one symbol field either way — storing it twice only
+    makes the stored list disagree with the output."""
+    row = _create(authed_client, kicad_fields=["package", "resistance", "package"])
+    assert row["kicad_fields"] == ["package", "resistance"]
+
+
+def test_changing_the_value_rules_is_audited(authed_client, db):
+    row = _create(authed_client)
+    authed_client.patch(
+        f"/api/categories/{row['id']}", json={"value_template": "{mpn}"}
+    )
+    comments = [r.comment for r in _audit_rows(db, "category.updated")]
+    assert any(c and "value_template" in c for c in comments)

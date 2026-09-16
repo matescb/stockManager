@@ -19,9 +19,10 @@ writes need member+, GETs pass for viewers). Writes are rate-limited
 (≤120), `description` (≤500, nullable), `sort_order` (0–1 000 000),
 `refdes_prefix` (≤10, nullable), `default_symbol_ref` / `default_footprint_ref`
 (≤200, nullable — KiCad `LibNick:Entry` refs), `footprint_filters`
-(≤50 globs, nullable), `library_slug` (lowercase `[a-z0-9-]`, ≤60,
-derived from `name` when omitted, stable across renames), `parent_id`
-(nullable — see below), `archived_at`.
+(≤50 globs, nullable), `value_template` / `kicad_fields` (nullable —
+see below), `library_slug` (lowercase `[a-z0-9-]`, ≤60, derived from
+`name` when omitted, stable across renames), `parent_id` (nullable —
+see below), `archived_at`.
 
 Uniqueness: `name` and `library_slug` are each unique per workspace among
 **active** rows (partial unique indexes, migration `0067`) — archiving frees
@@ -58,6 +59,40 @@ cascade.** That is what `ON DELETE SET NULL` does on a hard delete, and
 fire the FK action), so the two paths agree and the active tree never
 contains a child whose parent is missing from it. Only **direct** children
 move; grandchildren stay with their own parent.
+
+## KiCad Value rules
+
+Two columns (migration `0082`) decide what a part in this category shows on
+a KiCad schematic. Neither has any effect outside
+[the KiCad API](kicad.md#value-derivation).
+
+| Column | Type | Meaning |
+|---|---|---|
+| `value_template` | `String(200)`, nullable | `"{resistance} {tolerance} {package}"` renders `10 kΩ 1% 0603` from the part's canonical specs. `{mpn}` resolves from the part column. |
+| `kicad_fields` | JSONB list, nullable | Canonical spec keys also emitted as hidden symbol fields — `voltage_rating` becomes `Voltage Rating`. |
+
+Validation is Pydantic, not a CHECK constraint: the vocabulary of legal keys
+is application data, and a constraint would need a migration every time it
+grew. A placeholder is `{[a-z_]+}` and nothing else — `{Resistance}` and
+`{ resistance }` are `422`, because rendering leaves unrecognised braces as
+literal text and drawing `{Resistance}` on every symbol in a category is not
+a failure a user can diagnose. At most 20 placeholders and 20 `kicad_fields`
+entries, each matching `^[a-z_]+$` (≤64); a repeated key is stored once,
+since one key emits one field either way.
+
+**Null means inherit, `[]` does not.** Both columns resolve up `parent_id` to
+the nearest ancestor that sets them, independently of each other, so a
+template on *Capacitors* covers *Capacitors / Ceramic* without being
+repeated. An explicit `[]` on `kicad_fields` is a child saying "emit none"
+against a parent that emits something, and stops the walk. So does an
+archived ancestor. A `PATCH` with an explicit `null` clears the override —
+it is not in `_NON_NULLABLE_PATCH_FIELDS`.
+
+Nothing seeds these. A category with both unset behaves exactly as it did
+before `0082`, and a template naming a key the part does not carry renders
+nothing and falls back to `parts.name` — so a workspace whose specs still
+hold the provider's verbatim attribute names (`Resistance`, not
+`resistance`) sees no change until those rows are re-keyed.
 
 ## Routes
 

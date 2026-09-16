@@ -56,6 +56,7 @@ is both cheap and deadlock-free (one lock, always acquired first).
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
@@ -76,6 +77,7 @@ __all__ = [
     "depth_of",
     "subtree_height",
     "descendant_ids",
+    "tree_paths",
     "validate_parent",
 ]
 
@@ -200,6 +202,66 @@ def category_filter_ids(
     if not include_descendants:
         return {category_id}
     return descendant_ids(load_parent_map(db, workspace_id=ws.id), category_id)
+
+
+def tree_paths(
+    categories: Sequence[PartCategory], *, separator: str
+) -> list[tuple[PartCategory, str]]:
+    """The given categories in depth-first order, each with its path name.
+
+    `[(Capacitors, "Capacitors"), (Ceramic, "Capacitors / Ceramic"), …]`.
+    Siblings are ordered by `(sort_order, name)` within their parent, so
+    a child always follows its parent directly — the same shape
+    `web/src/lib/categoryTree.ts::flattenTree` renders.
+
+    Written for a consumer that has no second field to put the hierarchy
+    in (KiCad's `categories.json` is `{id, name, description}`), which is
+    why the nesting ends up inside the name.
+
+    `categories` is whatever the caller selected, and the walk never
+    looks outside it: a `parent_id` naming a row that is not in the list
+    — archived, or filtered out — makes that row a root rather than
+    dropping it. Anything the walk still cannot reach (only a cycle can
+    do that, and `validate_parent` refuses to write one) is appended flat
+    afterwards, because a category missing from this list is a bucket its
+    parts are unreachable through.
+    """
+    by_id = {category.id: category for category in categories}
+    children: dict[UUID | None, list[PartCategory]] = {}
+    for category in categories:
+        parent = category.parent_id if category.parent_id in by_id else None
+        children.setdefault(parent, []).append(category)
+    for siblings in children.values():
+        siblings.sort(key=lambda c: (c.sort_order, c.name))
+
+    out: list[tuple[PartCategory, str]] = []
+    seen: set[UUID] = set()
+    # An explicit stack rather than recursion: `MAX_DEPTH` caps what the
+    # API can write, but a restored backup is not bound by it and a
+    # RecursionError here would be a 500 on the category listing.
+    stack: list[tuple[PartCategory, str]] = [
+        (category, "") for category in reversed(children.get(None, []))
+    ]
+    while stack:
+        category, prefix = stack.pop()
+        if category.id in seen:
+            continue
+        seen.add(category.id)
+        name = f"{prefix}{category.name}"
+        out.append((category, name))
+        child_prefix = f"{name}{separator}"
+        stack.extend(
+            (child, child_prefix) for child in reversed(children.get(category.id, []))
+        )
+
+    out.extend(
+        (category, category.name)
+        for category in sorted(
+            (c for c in categories if c.id not in seen),
+            key=lambda c: (c.sort_order, c.name),
+        )
+    )
+    return out
 
 
 def subtree_height(parent_map: ParentMap, category_id: UUID) -> int:

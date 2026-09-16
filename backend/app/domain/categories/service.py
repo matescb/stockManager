@@ -186,6 +186,8 @@ def create_category(
         default_symbol_ref=payload.default_symbol_ref,
         default_footprint_ref=payload.default_footprint_ref,
         footprint_filters=payload.footprint_filters,
+        value_template=payload.value_template,
+        kicad_fields=payload.kicad_fields,
         library_slug=library_slug,
         parent_id=payload.parent_id,
         created_by=user_id,
