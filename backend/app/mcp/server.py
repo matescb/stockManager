@@ -61,27 +61,77 @@ _MAX_BODY_BYTES = MAX_DECODED_BYTES * 2
 # version numbers for it would only ever confuse a bug report.
 SERVER_VERSION = "0.1.0"
 
+# Sent to the model once per session, before it has called anything. It
+# carries what a tool docstring cannot: the ORDER calls go in, and the
+# handful of rules that are invisible until a call is refused (the
+# workspace pin, the duplicate-MPN success, mandatory storage, the
+# read-before-replace on set_part_eda). Kept to the shape of a briefing
+# rather than a manual — every line here is paid for on every session,
+# and the per-tool detail is already in the docstrings the client
+# receives alongside it. `docs/api/mcp.md` is the long form;
+# `tests/test_mcp.py::test_instructions_name_every_write_tool` pins the
+# tool names so a renamed or added write tool cannot silently drop out.
+INSTRUCTIONS = (
+    "Tools for an electronics parts inventory: parts and their "
+    "specifications, stock by storage location, KiCad CAD data "
+    "(symbols, footprints, 3D models, SPICE), and project BOMs.\n"
+    "\n"
+    "SCOPE. Every tool acts on the one workspace the access token "
+    "belongs to. Nothing switches workspaces, and an id belonging to "
+    "another one reads as not-found rather than forbidden. Ids are "
+    "opaque strings. Most part arguments also accept an exact "
+    "manufacturer part number; the argument is spelled id_or_mpn, "
+    "part_id or part_id_or_mpn depending on the tool.\n"
+    "\n"
+    "ADDING A PART: create_part, then set_part_category, then "
+    "set_part_specs. create_part needs at least one of name and mpn, "
+    "and name defaults to the mpn. There is no provider lookup on this "
+    "surface — the mpn, manufacturer and specifications come from you. "
+    "create_part on an mpn this workspace already holds SUCCEEDS, "
+    "writes nothing, and returns that part with found_existing true; "
+    "check that flag before reporting that you added anything. Call "
+    "list_categories for a category, and create_category if the one "
+    "you want is missing. create_part never sets stock.\n"
+    "\n"
+    "ADDING STOCK: find or create the part, call "
+    "list_storage_locations, then add_stock with a location id. A part "
+    "configured with a mandatory default location refuses any other "
+    "location, and refuses a call that names none. consume_stock "
+    "without a location takes from the unassigned pool only, NOT from "
+    "wherever the stock happens to sit — read get_part first. "
+    "move_stock needs both from_location_id and to_location_id.\n"
+    "\n"
+    "CAD DATA: find_parts_missing_eda finds the work. Call get_part_eda "
+    "BEFORE set_part_eda: set_part_eda replaces the whole "
+    "configuration and writes every omitted argument as its default, so "
+    "pass back what you want to keep. import_vendor_zip, fetch_lcsc and "
+    "upload_eda_asset bring files in and fill a part's empty slots "
+    "themselves, which often makes set_part_eda unnecessary.\n"
+    "\n"
+    "BUILDS: list_projects, then bom_shortages for what is short, "
+    "get_project_bom for the lines themselves, stock_levels for the "
+    "on-hand / reserved / available split, and sourcing_offers for "
+    "distributor price. sourcing_offers spends metered quota — call it "
+    "for the shortages, not for every BOM line.\n"
+    "\n"
+    "set_part_specs writes your own values and never overwrites ones a "
+    "parts provider supplied; those come back under "
+    "skipped_provider_owned. Reserved keys (image_url, datasheet_url, "
+    "source_url, and anything prefixed digikey: or mouser:) refuse the "
+    "whole call.\n"
+    "\n"
+    "Every refusal begins with a stable error code. A read-only token "
+    "lists the write tools and is refused only when it calls one, with "
+    "auth.token_read_only."
+)
+
 
 def _build_server() -> MCPServer:
     server = MCPServer(
         name="stockmanager",
         title="Parts Inventory & Production Manager",
         version=SERVER_VERSION,
-        instructions=(
-            "Tools for an electronics parts inventory: create parts and "
-            "maintain their categories and specifications, look up parts "
-            "and their stock, inspect and maintain their KiCad CAD data "
-            "(symbols, footprints, 3D models, SPICE), and check project "
-            "BOMs for shortages. Every tool acts on the single workspace "
-            "the access token belongs to. Ids are opaque strings; most "
-            "part arguments also accept a manufacturer part number. "
-            "Creating a part needs at least one of name or mpn, and the "
-            "name defaults to the mpn; an mpn is unique per workspace, so "
-            "create_part on one that already exists succeeds and returns "
-            "that part with found_existing set rather than failing. "
-            "set_part_specs writes your own specifications and never "
-            "overwrites ones a parts provider supplied."
-        ),
+        instructions=INSTRUCTIONS,
     )
     for spec in load_tools():
         server.add_tool(spec.fn, name=spec.name)
