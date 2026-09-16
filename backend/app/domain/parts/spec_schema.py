@@ -62,6 +62,7 @@ __all__ = [
     "SpecKey",
     "SpecValue",
     "all_canonical_keys",
+    "canonical_value",
     "category_for_provider",
     "category_slug_for",
     "is_catalog_key",
@@ -148,6 +149,28 @@ def all_canonical_keys() -> frozenset[str]:
     these can answer "is a mandatory key missing".
     """
     return _ALL_CANONICAL_KEYS
+
+
+def canonical_value(
+    category_slug: str | None, key: str, raw_value: str
+) -> SpecValue | None:
+    """Parse a value that is ALREADY stored under its canonical key.
+
+    `normalise()` recognises a value by the provider's spelling of its
+    key, so it cannot see a row this schema has already re-keyed —
+    `resistance` is not one of `Resistance`'s aliases, and never will be.
+    The `spec-normalize` backfill (A5) re-reads its own output on every
+    run and needs the same parse for it, which is what makes a second run
+    a no-op rather than a rewrite.
+
+    ``None`` when `key` is not canonical for this category, including the
+    case where it is canonical for a DIFFERENT one — an `esr` row on a
+    resistor is somebody else's key and is left alone.
+    """
+    spec = next((s for s in spec_keys_for(category_slug) if s.key == key), None)
+    if spec is None:
+        return None
+    return _to_spec_value(spec, key, raw_value)
 
 
 def spec_keys_for(category_slug: str | None) -> tuple[SpecKey, ...]:

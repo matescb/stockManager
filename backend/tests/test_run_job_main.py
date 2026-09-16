@@ -209,3 +209,163 @@ def test_check_heartbeat_sentinel(
     assert heartbeat_path.read_text(encoding="utf-8") == "ok\n"
     assert output.out == ""
     assert output.err == ""
+
+
+# ---------------------------------------------------------------------------
+# Backfill flags (A5) — `--dry-run` / `--apply` / `--workspace` / `--report`
+#
+# A one-off backfill is reviewed before it runs, so its flags are part of the
+# runner rather than a second entry point. They are accepted for exactly the
+# jobs that declare them: a flag that is silently ignored on a job that cannot
+# honour it reads, from the shell, like a job that did what you asked.
+# ---------------------------------------------------------------------------
+class _NoopSession:
+    def execute(self, statement, params=None):
+        class _Result:
+            @staticmethod
+            def scalar() -> bool:
+                return True
+
+        return _Result()
+
+    def commit(self) -> None:
+        pass
+
+    def rollback(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+@pytest.fixture
+def backfill_job() -> tuple[JobSpec, list[run_job_cli.BackfillOptions]]:
+    seen: list[run_job_cli.BackfillOptions] = []
+
+    def _run(db, options: run_job_cli.BackfillOptions) -> int:
+        seen.append(options)
+        return 7
+
+    return (
+        JobSpec(
+            name="test-backfill",
+            owner="tests",
+            cadence="manual",
+            idempotency="test-only",
+            run=_run,
+            takes_backfill_options=True,
+        ),
+        seen,
+    )
+
+
+def _run_backfill(
+    monkeypatch: pytest.MonkeyPatch, job: JobSpec, *args: str
+) -> int:
+    monkeypatch.setattr(sys, "argv", ["python -m app.cli.run_job", job.name, *args])
+    return run_job_cli.main(
+        jobs={job.name: job},
+        session_factory=_NoopSession,
+        heartbeat_dir=run_job_cli.HEARTBEAT_DIR,
+    )
+
+
+def test_a_backfill_defaults_to_a_dry_run(
+    monkeypatch: pytest.MonkeyPatch,
+    backfill_job: tuple[JobSpec, list[run_job_cli.BackfillOptions]],
+) -> None:
+    job, seen = backfill_job
+
+    assert _run_backfill(monkeypatch, job) == 0
+
+    assert seen == [run_job_cli.BackfillOptions()]
+    assert seen[0].apply is False
+
+
+def test_a_backfill_passes_every_flag_through(
+    monkeypatch: pytest.MonkeyPatch,
+    backfill_job: tuple[JobSpec, list[run_job_cli.BackfillOptions]],
+    tmp_path: Path,
+) -> None:
+    job, seen = backfill_job
+    workspace_id = uuid.uuid4()
+    report = tmp_path / "report.csv"
+
+    exit_code = _run_backfill(
+        monkeypatch,
+        job,
+        "--apply",
+        "--workspace",
+        str(workspace_id),
+        "--report",
+        str(report),
+    )
+
+    assert exit_code == 0
+    assert seen == [
+        run_job_cli.BackfillOptions(
+            apply=True, workspace_id=workspace_id, report_path=report
+        )
+    ]
+
+
+def test_dry_run_and_apply_are_mutually_exclusive(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    backfill_job: tuple[JobSpec, list[run_job_cli.BackfillOptions]],
+) -> None:
+    job, seen = backfill_job
+
+    exit_code = _run_backfill(monkeypatch, job, "--dry-run", "--apply")
+
+    assert exit_code == 2
+    assert seen == []
+    assert "not allowed with argument" in capsys.readouterr().err
+
+
+def test_a_bad_workspace_id_is_refused_before_anything_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    backfill_job: tuple[JobSpec, list[run_job_cli.BackfillOptions]],
+) -> None:
+    job, seen = backfill_job
+
+    exit_code = _run_backfill(monkeypatch, job, "--workspace", "not-a-uuid")
+
+    assert exit_code == 2
+    assert seen == []
+    assert "--workspace is not a uuid" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "flag", [("--apply",), ("--dry-run",), ("--workspace", "x"), ("--report", "x")]
+)
+def test_a_periodic_job_refuses_backfill_flags(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    flag: tuple[str, ...],
+) -> None:
+    ran: list[str] = []
+    job = JobSpec(
+        name="test-periodic",
+        owner="tests",
+        cadence="hourly",
+        idempotency="test-only",
+        run=lambda db: ran.append("ran") or 0,
+    )
+
+    exit_code = _run_backfill(monkeypatch, job, *flag)
+
+    assert exit_code == 2
+    assert ran == []
+    assert f"not accepted by job {job.name!r}" in capsys.readouterr().err
+
+
+def test_spec_normalize_is_registered_as_a_backfill() -> None:
+    """The sidecars pass no flags, so a job that took them without saying
+    so would run its apply path from a cron loop."""
+    assert JOBS["spec-normalize"].takes_backfill_options is True
+    assert JOBS["spec-normalize"].interval_setting is None
+    assert [
+        name for name, job in JOBS.items() if job.takes_backfill_options
+    ] == ["spec-normalize"]

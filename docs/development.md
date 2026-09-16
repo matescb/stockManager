@@ -177,6 +177,7 @@ before adding a new hashtext-backed advisory lock.
 | `1` | `run_job` | `hashtext(job_name)` for allow-listed maintenance jobs. |
 | `2` | `password_reset_throttle` | `hashtext("reset:" || email_hash)` for password-reset request throttling. |
 | `3` | `datasheet_backfill` | `hashtext("datasheet-backfill")`. SESSION-scoped, not xact-scoped: the job commits per candidate and must keep the lock across those commits (ADR-0033). |
+| `4` | `spec_normalize` | `hashtext("spec-normalize")`. SESSION-scoped for the same reason: the backfill commits once per batch of parts (ADR-0034). |
 
 ### Polymorphic cleanup
 
