@@ -165,7 +165,9 @@ reconciler of its own. Three decisions landed with it:
   [the runbook](../runbooks/spec-normalize.md). Until it is APPLIED on a given
   database, a part's rows are still normalised only by its next refresh, and
   every legacy row has a NULL `provider` — which is exactly the "unclaimed"
-  case the ownership rule is written for. Three decisions it added:
+  case `provider_outranks` is written for, and exactly what
+  `provider_wrote_custom_field_row` refuses to let anyone DELETE. Three
+  decisions it added:
 
   - **It is not `reconcile_provider_specs`.** That function's last pass
     deletes every row an upstream payload did not mention. Here the payload IS
@@ -180,9 +182,9 @@ reconciler of its own. Three decisions landed with it:
     answers is left exactly where it is.
   - **A canonical row is never written without a provider.** A row with
     `provider IS NULL` is claimable by whoever refreshes next
-    (`provider_outranks` treats an unstamped row as claimable), so a
-    backfill that left one behind
-    would hand a normalised value to the first provider through the door. The
+    (`provider_outranks` treats an unstamped row as claimable), so a backfill
+    that left one behind would hand a normalised value to whoever comes
+    through the door first. The
     name comes from the key namespace, else `parts.linked_provider`, else the
     workspace primary; when none of the three answers, the canonical rewrite
     is skipped for that part and counted. Junk is still retired — a customs

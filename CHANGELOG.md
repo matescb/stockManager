@@ -26,8 +26,10 @@ the canonical record.
   workspace, and the raw keys the schema had no alias for) is the review
   step before `--apply`. Nothing is ever deleted, `manual` and `override`
   rows are invisible to it, a category a user chose is never overridden,
-  and a second run reports zero changes. `--workspace` narrows it to one
-  tenant. Runbook: `docs/runbooks/spec-normalize.md`; ADR-0034.
+  and a second run reports zero changes. `--apply` requires `--report`,
+  because the CSV is the only record of the values it replaces.
+  `--workspace` narrows it to one tenant. Runbook:
+  `docs/runbooks/spec-normalize.md`; ADR-0034.
 - **Provider specs are normalised on import and refresh, and imported
   parts get a category.** `domain/parts/services/spec_reconcile.py` is now
   the single writer for a provider payload, used by both the create path
