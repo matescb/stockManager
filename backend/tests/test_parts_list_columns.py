@@ -49,6 +49,10 @@ ROW_FIELDS = [
     "serialized",
     "low_stock_report_quantity",
     "image_url",
+    # A3/ADR-0034 — the "specs incomplete" badge reads both of these, and
+    # `spec_incomplete` is derived from `missing_specs` rather than stored.
+    "missing_specs",
+    "spec_incomplete",
 ]
 
 

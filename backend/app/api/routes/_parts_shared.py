@@ -21,6 +21,7 @@ from sqlalchemy import select
 from app.api._helpers import assert_in_workspace
 from app.core.errors import ErrorCodes, raise_http
 from app.domain._quantity import quantity_out
+from app.domain.categories.models import PartCategory
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part, PartProviderLink
 from app.domain.parts.provider_links import serialize_link
@@ -28,6 +29,11 @@ from app.domain.parts.provider_links import serialize_link
 # Re-export request schemas from the canonical domain location (CQ-006).
 # Kept importable here for back-compat with split files (#118 step 2-4).
 from app.domain.parts.schemas import BulkDeleteIn, PartIn, PartPatch  # noqa: F401
+from app.domain.parts.spec_schema import (
+    all_canonical_keys,
+    category_slug_for,
+    missing_mandatory,
+)
 from app.domain.stock.service import bulk_current_quantities
 
 
@@ -54,6 +60,80 @@ def image_urls_for_parts(db, ws_id, part_ids: list) -> dict:
     return {pid: val for pid, val in rows}
 
 
+def missing_specs_for_parts(db, ws_id, parts: list) -> dict:
+    """`part_id -> mandatory canonical spec keys nobody supplied`.
+
+    TWO statements for the whole page, never one per row — this runs on
+    the busiest listing in the app (`serialize_part_rows`), where a
+    per-row lookup is 200 round-trips to render one badge:
+
+      1. the workspace's categories, to turn each part's `category_id`
+         into the name path `spec_schema.category_slug_for` reads. Skipped
+         entirely when no part on the page has a category.
+      2. the parts' `custom_fields` rows, narrowed to
+         `all_canonical_keys()`. A page of 200 parts has thousands of
+         provider rows and only these can answer the question.
+
+    "Supplied" means a row exists, whatever wrote it: a value the user
+    typed is still the value, so `manual` and `override` rows count. An
+    archived row does not — it is retired data.
+
+    A part with no category gets the common schema, whose only mandatory
+    key is `package`. That is the schema's own statement, and it is what
+    makes an uncategorized part visibly unfinished rather than silently
+    complete.
+    """
+    part_ids = [p.id for p in parts]
+    if not part_ids:
+        return {}
+    slug_by_category = _category_slugs(db, ws_id, {p.category_id for p in parts})
+    present: dict = {pid: set() for pid in part_ids}
+    rows = db.execute(
+        select(CustomField.object_id, CustomField.key)
+        .where(CustomField.workspace_id == ws_id)
+        .where(CustomField.object_type == "part")
+        .where(CustomField.object_id.in_(part_ids))
+        .where(CustomField.key.in_(all_canonical_keys()))
+        .where(CustomField.archived_at.is_(None))
+    ).all()
+    for object_id, key in rows:
+        present.setdefault(object_id, set()).add(key)
+    return {
+        p.id: missing_mandatory(slug_by_category.get(p.category_id), present.get(p.id, ()))
+        for p in parts
+    }
+
+
+def _category_slugs(db, ws_id, category_ids: set) -> dict:
+    """`category_id -> schema slug`, walking the name path in Python.
+
+    Archived categories are included: a part can still point at one, and
+    it should keep the schema its category implies rather than silently
+    drop to the common keys.
+    """
+    if not any(cid is not None for cid in category_ids):
+        return {}
+    rows = {
+        row.id: row
+        for row in db.execute(
+            select(PartCategory).where(PartCategory.workspace_id == ws_id)
+        ).scalars()
+    }
+    slugs: dict = {}
+    for category_id in category_ids:
+        node = rows.get(category_id) if category_id else None
+        if node is None:
+            continue
+        names: list[str] = []
+        seen: set = set()
+        while node is not None and node.id not in seen:
+            seen.add(node.id)
+            names.append(node.name)
+            node = rows.get(node.parent_id) if node.parent_id else None
+        slugs[category_id] = category_slug_for(" / ".join(reversed(names)))
+    return slugs
+
+
 def serialize_part(
     p: Part,
     *,
@@ -62,17 +142,20 @@ def serialize_part(
     available: Decimal | None = None,
     image_url: str | None = None,
     provider_links: list[dict] | None = None,
+    missing_specs: list[str] | None = None,
 ) -> dict:
     """Serialize a Part for API responses.
 
-    `provider_links` is emitted only when the caller loaded it, and the
-    key is *absent* — not `[]` — when it wasn't: an empty array reads as
-    "this part has no links", which is a different fact from "this
-    response didn't look". Lists load them in one batched query per page
-    (`provider_links_for_parts`); detail-shaped responses load the one
-    part's rows (`provider_links_for`). Responses that echo a part
-    without touching the link table — create-part, for one — still pass
-    nothing and still omit the key.
+    `provider_links` and `missing_specs` are emitted only when the caller
+    loaded them, and the key is *absent* — not `[]` — when it wasn't: an
+    empty array reads as "this part has no links" / "this part is
+    complete", which is a different fact from "this response didn't
+    look". Lists load them in one batched query per page
+    (`provider_links_for_parts`, `missing_specs_for_parts`);
+    detail-shaped responses load the one part's rows
+    (`provider_links_for`). Responses that echo a part without touching
+    either — create-part, for one — still pass nothing and still omit the
+    keys.
     """
     if reserved is None:
         reserved = 0
@@ -120,6 +203,12 @@ def serialize_part(
     }
     if provider_links is not None:
         out["provider_links"] = provider_links
+    if missing_specs is not None:
+        # The canonical keys this part's category says it must have and
+        # nobody supplied (ADR-0034). The boolean is derived rather than
+        # stored so the two can never disagree.
+        out["missing_specs"] = missing_specs
+        out["spec_incomplete"] = bool(missing_specs)
     return out
 
 
@@ -181,6 +270,7 @@ def serialize_part_rows(db, *, ws_id, parts: list) -> list[dict]:
         db, workspace_id=ws_id, part_ids=part_ids, status="reserved"
     )
     links_map = provider_links_for_parts(db, ws_id, part_ids)
+    missing_map = missing_specs_for_parts(db, ws_id, parts)
     return [
         serialize_part(
             p,
@@ -188,6 +278,7 @@ def serialize_part_rows(db, *, ws_id, parts: list) -> list[dict]:
             reserved=reserved_map.get(p.id, 0),
             image_url=image_urls.get(p.id),
             provider_links=links_map.get(p.id, []),
+            missing_specs=missing_map.get(p.id, []),
         )
         for p in parts
     ]

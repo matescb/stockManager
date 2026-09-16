@@ -374,6 +374,9 @@ def custom_fields_for(caller: Caller, part: Part) -> tuple[dict, dict]:
             .where(CustomField.workspace_id == caller.ws.id)
             .where(CustomField.object_type == "part")
             .where(CustomField.object_id == part.id)
+            # Archived rows are retired junk (A3) — an agent reading specs
+            # must see what the Specs tab sees.
+            .where(CustomField.archived_at.is_(None))
             .order_by(CustomField.key)
         )
         .scalars()

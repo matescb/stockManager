@@ -42,20 +42,22 @@ List parts. Two response shapes selected by query (not by route):
 { "data": { "items": [ <PartOut>, … ], "next_cursor": "…" | null }, "status": { … } }
 ```
 
-`PartOut` is built by `serialize_part` (`backend/app/api/routes/_parts_shared.py:69-136`); includes `id`, `part_type`, `name`, `manufacturer`, `mpn`, `internal_part_number`, `description`, `footprint`, `notes_markdown`, `low_stock_report_quantity`, `attrition_percentage`, `attrition_min_quantity`, `default_storage_location_id`, `default_storage_mandatory`, `serialized`, `published`, `linked_provider`, `linked_external_id`, `last_refresh_at`, `updated_at`, `description_locally_edited`, `archived_at`, `on_hand`, `reserved`, `available`, `image_url`.
+`PartOut` is built by `serialize_part` (`backend/app/api/routes/_parts_shared.py`); includes `id`, `part_type`, `name`, `manufacturer`, `mpn`, `internal_part_number`, `description`, `footprint`, `notes_markdown`, `low_stock_report_quantity`, `attrition_percentage`, `attrition_min_quantity`, `default_storage_location_id`, `default_storage_mandatory`, `serialized`, `published`, `linked_provider`, `linked_external_id`, `last_refresh_at`, `updated_at`, `description_locally_edited`, `archived_at`, `on_hand`, `reserved`, `available`, `image_url`.
 
-List rows additionally carry `provider_links` — see the note below. `updated_at` is the mixin-maintained "last change" timestamp; it needs no column of its own and is what the parts table's *Last change* column sorts on.
+List rows additionally carry `provider_links`, `missing_specs` and `spec_incomplete` — see the notes below. `updated_at` is the mixin-maintained "last change" timestamp; it needs no column of its own and is what the parts table's *Last change* column sorts on.
 
 **Notes**
 
 - Sort order: `name ASC, id ASC` (consistent across paged and bare paths) (`parts_core.py:107-118`).
 - **Descendants are included by default** because clicking a branch node (`Passives`) and getting nothing back because every part is filed on a leaf (`Passives / Resistors`) is what makes a category tree feel broken. The descendant id set is resolved in Python from this workspace's `(id, parent_id)` rows — see [Categories API — Hierarchy](./categories.md#hierarchy). Because it is resolved per request, a reparent is reflected immediately with no denormalised path to rebuild.
 - **The category predicate is applied to the statement *before* `paginate()`.** The cursor is an HMAC-signed `(name, id)` seek position over whatever statement produced the page, so filtering the returned rows instead would yield short pages and — once a page's worth of rows all failed the filter — an empty page carrying a non-null `next_cursor`, which clients read as end-of-list. Pinned by `backend/tests/test_parts_category_filter.py::test_category_filter_survives_a_page_boundary`, which asserts page *shape* (every page but the last is exactly `limit` rows) rather than mere completeness — a post-filter still reaches every row eventually.
-- `image_url` comes from each part's `custom_fields(key="image_url")` row, batched via `image_urls_for_parts` (`_parts_shared.py:28-41`).
+- `image_url` comes from each part's `custom_fields(key="image_url")` row, batched via `image_urls_for_parts` (`_parts_shared.py`).
 - `on_hand` / `reserved` are roll-ups via `bulk_current_quantities`; never compute outside `domain/stock/service.py` (CLAUDE.md, ledger invariant — see [ADR-0001](../adr/0001-append-only-stock-ledger.md)).
-- **`provider_links` is on list rows, batched.** One `SELECT … WHERE part_id IN (…)` per page via `provider_links_for_parts` (`_parts_shared.py:148-175`), not the per-part `provider_links_for` in a loop — that would be an N+1 on the busiest endpoint in the app, and a 200-row page would fire 200 extra round-trips to render one column. `backend/tests/test_parts_list_columns.py::test_provider_links_do_not_scale_with_row_count` compares the query count for a 2-row page against a 20-row one, so any per-row query fails it.
-- **`[]` and *absent* mean different things.** A list row that has no links carries `"provider_links": []` — "looked, found none". A response that never loaded them (create-part, for one) omits the key entirely. `PartSchema` on the frontend keeps the field optional so both parse.
-- Every per-row extra is assembled by `serialize_part_rows` (`_parts_shared.py:178-205`): one query each for image URLs, on-hand, reserved and provider links, for the whole page.
+- **`provider_links` is on list rows, batched.** One `SELECT … WHERE part_id IN (…)` per page via `provider_links_for_parts` (`_parts_shared.py`), not the per-part `provider_links_for` in a loop — that would be an N+1 on the busiest endpoint in the app, and a 200-row page would fire 200 extra round-trips to render one column. `backend/tests/test_parts_list_columns.py::test_provider_links_do_not_scale_with_row_count` compares the query count for a 2-row page against a 20-row one, so any per-row query fails it.
+- **`missing_specs` / `spec_incomplete` are on list rows and on detail, batched.** `missing_specs` lists the canonical spec keys this part's category says it must have and nobody supplied, in schema order; `spec_incomplete` is `missing_specs != []` and is derived rather than stored, so the two cannot disagree. The whole page costs two statements (`missing_specs_for_parts`): one for the workspace's categories, to turn `category_id` into the name path `spec_schema.category_slug_for` reads, and one for the parts' `custom_fields` narrowed to the canonical key set. Pinned by `backend/tests/test_spec_reconcile.py::test_the_list_flag_does_not_scale_with_row_count`. See [ADR-0034](../adr/0034-spec-schema.md).
+- **"Supplied" means a row exists, whoever wrote it.** A `manual` or `override` value counts — the flag answers "does this part have the data", not "did a provider send it". An archived row does not. A part with **no** category gets the common schema, whose only mandatory key is `package`, so an uncategorized part reads as incomplete until it is filed.
+- **`[]` and *absent* mean different things.** A list row that has no links carries `"provider_links": []` — "looked, found none". A response that never loaded them (create-part, for one) omits the key entirely; the same rule governs `missing_specs` / `spec_incomplete`, which only the list, the detail and the refresh responses carry. `PartSchema` on the frontend keeps these fields optional so both parse.
+- Every per-row extra is assembled by `serialize_part_rows` (`_parts_shared.py`): one query each for image URLs, on-hand, reserved, provider links, and two for spec completeness, for the whole page.
 - Source: `backend/app/api/routes/parts_core.py:55-135`.
 
 ### `POST /api/parts`
@@ -410,7 +412,7 @@ Serve a content-addressed provider asset. Served with `Cache-Control: public, ma
 
 ### `POST /api/parts/{part_id}/refresh-from-provider`
 
-Re-run an MPN lookup against this part and reconcile its `source='provider'` custom_fields (insert / update / delete).
+Re-run an MPN lookup against this part, normalise the payload onto the per-category spec schema, and reconcile its `source='provider'` custom_fields (insert / update / archive / delete). Also files an **uncategorized** part from the provider's own taxonomy.
 
 **Query params**
 
@@ -420,8 +422,9 @@ Re-run an MPN lookup against this part and reconcile its `source='provider'` cus
 
 The two tiers differ in what they may write — see ADR-0031.
 
-- **Primary** — always touches `manufacturer`, `mpn`, `footprint` (and `description` when not locally edited), sets `parts.linked_*`, and owns the un-namespaced custom fields. A hit also re-derives `part_type`: a `local` part becomes `linked` and gets a `part.type_synced` audit row. `meta` and `sub_assembly` are left alone.
-- **Secondary** — writes **no part column at all**. It records a `part_provider_links` row and custom fields under its own `"{provider}:"` prefix: `{provider}:source_url`, `{provider}:datasheet_url`, `{provider}:category`, and one `{provider}:{key}` per upstream spec. Assets are not downloaded; the upstream URL is stored as-is.
+- **Primary** — always touches `manufacturer`, `mpn`, `footprint` (and `description` when not locally edited), sets `parts.linked_*`, and owns the un-namespaced catalog and optional custom fields. A hit also re-derives `part_type`: a `local` part becomes `linked` and gets a `part.type_synced` audit row. `meta` and `sub_assembly` are left alone.
+- **Secondary** — writes **no part column at all** except a NULL `category_id` (see below). It records a `part_provider_links` row and its catalog / optional custom fields under its own `"{provider}:"` prefix: `{provider}:source_url`, `{provider}:datasheet_url`, `{provider}:category`, and one `{provider}:{key}` per unrecognised upstream spec. Assets are not downloaded; the upstream URL is stored as-is.
+- **Both tiers write CANONICAL spec keys un-namespaced** (`resistance`, not `mouser:Resistance`), with a parsed display value and a `value_num` sidecar, and stamp `custom_fields.provider` with who wrote them. This is the A3 change: "load the specs from DigiKey and Mouser" is meaningless while a secondary's parametric data sits under a prefix nothing reads. See [ADR-0034](../adr/0034-spec-schema.md).
 
 **Response — found** — `200 OK`
 
@@ -429,7 +432,8 @@ The two tiers differ in what they may write — see ADR-0031.
 { "data": {
     "found": true,
     "provider": "mouser",
-    "summary": { "added": 3, "updated": 2, "removed": 1, "skipped": 0 },
+    "summary": { "added": 3, "updated": 2, "removed": 1, "skipped": 0, "archived": 4 },
+    "category_suggestion": "Capacitors / Ceramic",
     "link": { "provider": "mouser", "external_id": "…", "source_url": "…", "last_refresh_at": "…" },
     "part": <PartOut>
 }, "status": { … } }
@@ -447,19 +451,25 @@ The two tiers differ in what they may write — see ADR-0031.
 
 - Rate limit: `60/minute` per workspace.
 - Uses `lookup_fresh` (not the cache) because the operator explicitly asked.
-- Reconciliation rules per spec key:
-  - existing `source='provider'` → update value.
+- Every upstream key lands in exactly one of four buckets (`spec_schema.normalise`): **canonical** (the per-category schema — parsed, un-namespaced, `provider`-stamped), **catalog** (price / stock / packaging — Sourcing tab, key and namespace unchanged), **optional** (anything else parametric — kept verbatim under its upstream name, so ICs and connectors lose nothing) and **dropped** (junk).
+- Reconciliation rules per key:
+  - absent → insert as `source='provider'`.
+  - existing `source='provider'` → update value, **if** this provider outranks the one recorded on the row. Precedence is `digikey` > `mouser` > anything else; a NULL `provider` is unclaimed and any provider may take it. So a Mouser refresh never overwrites a DigiKey value, whichever ran last.
   - existing `source='manual'` → leave alone (user owns it).
   - existing `source='override'` → leave value, refresh `original_value` so Restore reverts to current upstream.
-  - absent → insert as `source='provider'`.
-- **Non-interference:** each reconciliation is scoped to its own namespace — the primary sees only un-namespaced keys, a secondary only its own prefix — so the trailing "delete rows absent from my payload" pass can never touch another provider's rows (`provider_fields.py::provider_owns_custom_field_key`).
+  - junk key (TARIC, ECCN, MSL, HTS…) or a `-` / empty value → never written; an existing row for one is **archived**, not deleted, and counted in `summary.archived`.
+- **Non-interference:** the trailing "delete rows absent from my payload" pass is bounded by `provider_fields.py::provider_owns_custom_field_row`. For a canonical key ownership is `custom_fields.provider` (the prefix no longer identifies the writer); for every other key it is the ADR-0031 namespace rule, so a new primary still prunes the old one's bare rows.
 - `summary.skipped` counts secondary fields dropped because the namespaced key would overflow `custom_fields.key` (varchar 256) — the prefix adds characters to an upstream name we don't control, and truncating a key would collide two attributes onto one row. Always `0` on the primary path, which writes bare keys.
+- **Category.** A part whose `category_id` is NULL is filed from the provider's category string via `spec_schema.category_for_provider` → `categories/service.py::resolve_category_path_or_root`. A category the user chose is never overruled. Nothing is created: when the full path ("Capacitors / Ceramic") does not exist the root ("Capacitors") is used, and when even that is absent the part stays uncategorized and the path comes back as `category_suggestion`. `category_suggestion` is `null` whenever the part was filed or the taxonomy said nothing we recognise.
 - Provider assets (`image_url`, `datasheet_url`) are downloaded locally via `fetch_provider_asset` on the primary path only; failure leaves the upstream URL.
-- Source: `backend/app/api/routes/parts_refresh.py`.
+- Audit: one `part.specs_reconciled` row per refresh, carrying counts and key **names** only.
+- Source: `backend/app/api/routes/parts_refresh.py`, `backend/app/domain/parts/services/spec_reconcile.py`.
 
 ### `DELETE /api/parts/{part_id}/provider-links/{provider}`
 
-Unlink a **secondary** provider from a part. Drops its `part_provider_links` row, deletes its namespaced `source='provider'` fields, and demotes its `override` rows to plain `manual` (the user edited those, so they survive as their own).
+Unlink a **secondary** provider from a part. Drops its `part_provider_links` row, deletes the `source='provider'` fields it wrote, and demotes its `override` rows to plain `manual` (the user edited those, so they survive as their own).
+
+"Wrote" is `custom_fields.provider` plus its `"{provider}:"` namespace (`provider_fields.py::provider_wrote_custom_field_row`), not the namespace alone: a secondary also writes un-namespaced canonical keys. An unstamped row outside the namespace stays — "nobody recorded who wrote this" is not evidence that this provider did.
 
 **Response** — `200 OK`
 
@@ -480,7 +490,7 @@ Unlink a **secondary** provider from a part. Drops its `part_provider_links` row
 
 - Rate limit: `60/minute` per workspace. Member+ (router gate).
 - Audit: `part.provider_unlinked`, comment `provider=<name>`.
-- Nothing outside the `"{provider}:"` namespace is touched.
+- No row another provider stamped is touched, and no unstamped row outside the `"{provider}:"` namespace.
 - Source: `backend/app/api/routes/parts_refresh.py`.
 
 ## Provider lookup
@@ -535,7 +545,7 @@ Materialise a batch of scanned bag rows into Parts (and optional initial stock).
 ```
 
 Per-row extras:
-- `created` → `part_id`, `quantity_added`, `stock_error?` (`parts_scan.py:367-373`).
+- `created` → `part_id`, `quantity_added`, `stock_error?`, `category_suggestion` (the category path the provider named when this workspace has nowhere to file the part; `null` when it was filed).
 - `duplicate` → `part_id` of the existing live part (`parts_scan.py:275-281`).
 - `bag_rescan` → `part_id`, `lot_id`, `storage_location_id`, `quantity` from the prior entry (`parts_scan.py:253-264`).
 - `lookup_failed`, `invalid`, `row_failed`, `deadline_exceeded`, `bag_signature_mismatch` → `error: string`.

@@ -28,6 +28,9 @@ from app.api.routes._parts_shared import (
     image_urls_for_parts as _image_urls_for_parts,
 )
 from app.api.routes._parts_shared import (
+    missing_specs_for_parts as _missing_specs_for_parts,
+)
+from app.api.routes._parts_shared import (
     provider_links_for as _provider_links_for,
 )
 from app.api.routes._parts_shared import (
@@ -221,6 +224,7 @@ def get_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
             reserved=reserved,
             image_url=image_url,
             provider_links=_provider_links_for(db, ws.id, p.id),
+            missing_specs=_missing_specs_for_parts(db, ws.id, [p]).get(p.id, []),
         )
     )
 

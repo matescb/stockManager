@@ -1,17 +1,56 @@
+"""Create a linked Part from a provider lookup result.
+
+Three callers: bulk-import-from-scan (`api/routes/parts_scan.py`),
+BOM provider import (`domain/projects/bom_import_provider.py`) and their
+tests. All three create from the workspace's PRIMARY provider.
+
+Since A3 the spec rows are not written here: `services/spec_reconcile.py`
+owns that for both the create and the refresh path, so there is one
+statement of what a provider payload means rather than two that drifted.
+What stays here is what is specific to *creating* — the part columns, the
+asset downloads, and the category the new part is filed under.
+"""
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from uuid import UUID
 
 from app.core.time import utcnow
-from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part
+from app.domain.parts.provider_fields import PROVIDER_ASSET_CUSTOM_FIELD_KINDS
 from app.domain.parts.services.assets import fetch_provider_asset
+from app.domain.parts.services.provider_field_values import (
+    truncate_provider_field_value,
+)
+from app.domain.parts.services.spec_reconcile import (
+    ReconcileReport,
+    apply_provider_category,
+    reconcile_provider_specs,
+)
 
 logger = logging.getLogger(__name__)
 
-_CUSTOM_FIELD_VALUE_MAX = 1024
-_TRUNCATION_SENTINEL = "\n[truncated by provider import]"
+__all__ = [
+    "ProviderImportOutcome",
+    "create_from_provider_lookup",
+    "truncate_provider_field_value",
+]
+
+
+@dataclass(frozen=True)
+class ProviderImportOutcome:
+    """The new part, plus what the import could not decide for it.
+
+    `category_suggestion` is the category path the provider's taxonomy
+    named when this workspace has no category to file it under. Surfaced
+    per row by the callers, because "we know what this is and you have
+    nowhere to put it" is actionable and silence is not.
+    """
+
+    part: Part
+    report: ReconcileReport
+    category_suggestion: str | None
 
 
 def create_from_provider_lookup(
@@ -23,12 +62,19 @@ def create_from_provider_lookup(
     mpn: str,
     lookup_result: dict,
     default_storage_location_id: UUID | None = None,
-) -> Part:
+    is_primary: bool = True,
+    request_id: str | None = None,
+) -> ProviderImportOutcome:
     """Create a linked Part from an existing provider lookup result.
 
-    Caller owns transaction/savepoint boundaries. This helper writes only the
-    Part and provider-backed custom fields; stock movements remain with stock
-    services.
+    Caller owns transaction/savepoint boundaries. This helper writes only
+    the Part and its provider-backed custom fields; stock movements remain
+    with stock services.
+
+    `is_primary` defaults to True because every caller creates from the
+    workspace's own `parts_provider`. It is a parameter rather than an
+    assumption so a future create-from-a-secondary path cannot silently
+    write un-namespaced catalog keys into the primary's namespace.
     """
     r = lookup_result
     name = (r.get("description") or "").strip() or mpn
@@ -58,99 +104,49 @@ def create_from_provider_lookup(
     db.add(p)
     db.flush()
 
-    truncated_fields: list[str] = []
-    for s in (r.get("specs") or []):
-        key = (s.get("key") or "").strip()
-        value = (s.get("value") or "").strip()
-        if not key or not value:
-            continue
-        if _add_provider_field(
-            db,
-            workspace_id=workspace_id,
-            user_id=user_id,
-            part_id=p.id,
-            key=key,
-            value=value,
-        ):
-            truncated_fields.append(key)
-
-    if r.get("image_url"):
-        local = fetch_provider_asset(r["image_url"], str(workspace_id), "image")
-        if _add_provider_field(
-            db,
-            workspace_id=workspace_id,
-            user_id=user_id,
-            part_id=p.id,
-            key="image_url",
-            value=local or r["image_url"],
-        ):
-            truncated_fields.append("image_url")
-    if r.get("datasheet_url"):
-        local = fetch_provider_asset(r["datasheet_url"], str(workspace_id), "datasheet")
-        if _add_provider_field(
-            db,
-            workspace_id=workspace_id,
-            user_id=user_id,
-            part_id=p.id,
-            key="datasheet_url",
-            value=local or r["datasheet_url"],
-        ):
-            truncated_fields.append("datasheet_url")
-    if r.get("source_url"):
-        if _add_provider_field(
-            db,
-            workspace_id=workspace_id,
-            user_id=user_id,
-            part_id=p.id,
-            key="source_url",
-            value=str(r["source_url"]),
-        ):
-            truncated_fields.append("source_url")
-
-    if truncated_fields:
-        logger.warning(
-            "Truncated provider custom field values for part %s from %s: %s",
-            p.id,
-            provider_name,
-            ", ".join(truncated_fields),
-        )
-
-    return p
-
-
-def _add_provider_field(
-    db,
-    *,
-    workspace_id: UUID,
-    user_id: UUID | None,
-    part_id: UUID,
-    key: str,
-    value: str,
-) -> bool:
-    stored_value = truncate_provider_field_value(value)
-    db.add(
-        CustomField(
-            workspace_id=workspace_id,
-            object_type="part",
-            object_id=part_id,
-            key=key,
-            value=stored_value,
-            source="provider",
-            created_by=user_id,
-            updated_by=user_id,
-        )
+    # Category first: it picks the spec schema, and the schema is what
+    # tells a resistor's `Temperature Coefficient` (ppm/°C) apart from a
+    # ceramic capacitor's (a dielectric name) under the same vendor key.
+    category = apply_provider_category(
+        db,
+        ws_id=workspace_id,
+        part=p,
+        provider_name=provider_name,
+        provider_category=r.get("category"),
+        description=r.get("description"),
+        user_id=user_id,
     )
-    return stored_value != value
+    report = reconcile_provider_specs(
+        db,
+        ws_id=workspace_id,
+        part=p,
+        provider_name=provider_name,
+        raw_specs=[
+            ((s.get("key") or ""), (s.get("value") or "")) for s in (r.get("specs") or [])
+        ],
+        category_slug=category.slug,
+        is_primary=is_primary,
+        user_id=user_id,
+        description=r.get("description"),
+        extra_fields=_asset_fields(r, workspace_id),
+        request_id=request_id,
+    )
+    return ProviderImportOutcome(
+        part=p, report=report, category_suggestion=category.suggestion
+    )
 
 
-def truncate_provider_field_value(value: str) -> str:
-    """Cap a provider-supplied value at the `custom_fields.value` width.
+def _asset_fields(r: dict, workspace_id: UUID) -> dict[str, str]:
+    """`image_url` / `datasheet_url` / `source_url`, downloaded locally.
 
-    Public because the secondary-provider refresh in
-    `api/routes/parts_refresh.py` writes the same kind of upstream string
-    and must apply the same cap and sentinel.
+    Same fallback semantics the refresh path uses: a failed download
+    keeps the upstream URL, because a link that works beats no row.
     """
-    if len(value) <= _CUSTOM_FIELD_VALUE_MAX:
-        return value
-    keep = _CUSTOM_FIELD_VALUE_MAX - len(_TRUNCATION_SENTINEL)
-    return value[:keep] + _TRUNCATION_SENTINEL
+    fields: dict[str, str] = {}
+    for key, asset_kind in PROVIDER_ASSET_CUSTOM_FIELD_KINDS.items():
+        if r.get(key):
+            local = fetch_provider_asset(r[key], str(workspace_id), asset_kind)
+            fields[key] = local or r[key]
+    if r.get("source_url"):
+        fields["source_url"] = str(r["source_url"])
+    return fields

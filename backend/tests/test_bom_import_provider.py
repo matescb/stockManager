@@ -126,12 +126,15 @@ def test_bulk_import_creates_real_parts_with_specs(authed, monkeypatch):
     assert part["linked_provider"] != "none"
     assert part["linked_provider"] == "mouser"
 
+    # The spec lands under its CANONICAL key with a parsed value (A3) —
+    # `Resistance` is the vendor's spelling, not ours.
     cfs = authed.get(f"/api/custom-fields/by-object/part/{part['id']}").json()["data"]
     provider_specs = [
         row for row in cfs
-        if row["source"] == "provider" and row["key"] == "Resistance"
+        if row["source"] == "provider" and row["key"] == "resistance"
     ]
-    assert len(provider_specs) >= 1
+    assert len(provider_specs) == 1
+    assert provider_specs[0]["provider"] == "mouser"
 
 
 def test_bulk_import_skips_already_matched_rows(authed, monkeypatch):

@@ -356,7 +356,7 @@ def bulk_import_from_scan(
         # back. Other rows in the batch keep their writes.
         try:
             with db.begin_nested():
-                p, qty_added, stock_error = _import_one_scan_row(
+                p, qty_added, stock_error, category_suggestion = _import_one_scan_row(
                     db, ws=ws, user=user, row=row, mpn=mpn,
                     provider_name=provider.name, lookup_result=r,
                 )
@@ -400,6 +400,9 @@ def bulk_import_from_scan(
             "part_id": str(p.id),
             "quantity_added": qty_added,
             "stock_error": stock_error,
+            # The category the provider named when this workspace has
+            # nowhere to file the part (A4). Null when it was filed.
+            "category_suggestion": category_suggestion,
         }
         if needs_disambiguation:
             created_row["needs_disambiguation"] = True
@@ -481,11 +484,11 @@ def _import_one_scan_row(
 ):
     """Write the Part + provider custom_fields + initial stock for a
     single bulk-import row, INSIDE a caller-managed savepoint. Returns
-    (part, qty_added, stock_error). Raises on any unanticipated DB
-    failure — the caller's `with db.begin_nested():` rolls back this
-    row only.
+    (part, qty_added, stock_error, category_suggestion). Raises on any
+    unanticipated DB failure — the caller's `with db.begin_nested():`
+    rolls back this row only.
     """
-    p = create_from_provider_lookup(
+    outcome = create_from_provider_lookup(
         db,
         workspace_id=ws.id,
         user_id=user.id,
@@ -494,6 +497,7 @@ def _import_one_scan_row(
         lookup_result=lookup_result,
         default_storage_location_id=row.storage_location_id,
     )
+    p = outcome.part
 
     # Initial stock entry — when the bag's Q field carries a count
     # (or the operator entered one), the part lands on-hand right
@@ -536,7 +540,7 @@ def _import_one_scan_row(
             # the StockEntry fails.
             stock_error = str(exc)
 
-    return p, qty_added, stock_error
+    return p, qty_added, stock_error, outcome.category_suggestion
 
 
 @router.post("/{part_id}/quick-remove-bag")

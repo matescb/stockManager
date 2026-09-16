@@ -1,3 +1,12 @@
+"""Provider-row lifecycle on the PRIMARY path: write, override, restore, unlink.
+
+Since A3 a provider payload is normalised before it is stored, so the
+rows here are the canonical schema keys (`resistance`, `tolerance`,
+`package`) carrying parsed values (`0 Ω`, `5%`) rather than the vendor's
+own spellings. The lifecycle each test pins — who may overwrite what,
+what `override` remembers, what unlink leaves behind — is unchanged; see
+`test_spec_reconcile.py` for the normalisation itself.
+"""
 from __future__ import annotations
 
 import uuid
@@ -94,7 +103,9 @@ def test_refresh_writes_provider_rows_and_links_part(authed, monkeypatch):
 
     rows = authed.get(f"/api/custom-fields/by-object/part/{part_id}").json()["data"]
     by_key = {r["key"]: r for r in rows}
-    assert by_key["Resistance"]["source"] == "provider"
+    assert by_key["resistance"]["source"] == "provider"
+    assert by_key["resistance"]["value"] == "0 Ω"
+    assert by_key["resistance"]["provider"] == "mouser"
     assert by_key["image_url"]["source"] == "provider"
     assert by_key["datasheet_url"]["source"] == "provider"
 
@@ -124,22 +135,20 @@ def test_refresh_preserves_overrides_manuals_and_localedit(authed, monkeypatch):
     )
     authed.post(f"/api/parts/{part_id}/refresh-from-provider")
 
-    # Override the Resistance row (source becomes 'override').
-    rows = authed.get(f"/api/custom-fields/by-object/part/{part_id}").json()["data"]
-    res_row = next(r for r in rows if r["key"] == "Resistance")
+    # Override the resistance row (source becomes 'override').
     authed.post(
         "/api/custom-fields",
         json={
             "object_type": "part",
             "object_id": part_id,
-            "key": "Resistance",
+            "key": "resistance",
             "value": "0.0 Ohms (verified)",
         },
     )
     rows = authed.get(f"/api/custom-fields/by-object/part/{part_id}").json()["data"]
-    res_row = next(r for r in rows if r["key"] == "Resistance")
+    res_row = next(r for r in rows if r["key"] == "resistance")
     assert res_row["source"] == "override"
-    assert res_row["original_value"] == "0 Ohms"
+    assert res_row["original_value"] == "0 Ω"
 
     # Add a manual spec.
     authed.post(
@@ -161,10 +170,10 @@ def test_refresh_preserves_overrides_manuals_and_localedit(authed, monkeypatch):
 
     rows = authed.get(f"/api/custom-fields/by-object/part/{part_id}").json()["data"]
     by_key = {r["key"]: r for r in rows}
-    assert by_key["Resistance"]["source"] == "override"
-    assert by_key["Resistance"]["value"] == "0.0 Ohms (verified)"
+    assert by_key["resistance"]["source"] == "override"
+    assert by_key["resistance"]["value"] == "0.0 Ohms (verified)"
     # original_value is the *latest* upstream value (so Restore reflects current upstream)
-    assert by_key["Resistance"]["original_value"] == "0 Ohms"
+    assert by_key["resistance"]["original_value"] == "0 Ω"
     assert by_key["Internal QA"]["source"] == "manual"
     p = authed.get(f"/api/parts/{part_id}").json()["data"]
     assert p["description"] == "MY EDIT"
@@ -182,7 +191,7 @@ def test_refresh_drops_stale_provider_rows(authed, monkeypatch):
     authed.post(f"/api/parts/{part_id}/refresh-from-provider")
     rows = authed.get(f"/api/custom-fields/by-object/part/{part_id}").json()["data"]
     keys_before = {r["key"] for r in rows}
-    assert "Tolerance" in keys_before
+    assert "tolerance" in keys_before
 
     # Upstream stops returning Tolerance.
     leaner = dict(_FAKE_PART)
@@ -196,8 +205,8 @@ def test_refresh_drops_stale_provider_rows(authed, monkeypatch):
     authed.post(f"/api/parts/{part_id}/refresh-from-provider")
     rows = authed.get(f"/api/custom-fields/by-object/part/{part_id}").json()["data"]
     keys_after = {r["key"] for r in rows}
-    assert "Tolerance" not in keys_after
-    assert "Resistance" in keys_after
+    assert "tolerance" not in keys_after
+    assert "resistance" in keys_after
 
 
 # ---------------------------------------------------------------------------
@@ -224,27 +233,27 @@ def test_restore_override_endpoint(authed, monkeypatch):
     )
     authed.post(f"/api/parts/{part_id}/refresh-from-provider")
 
-    # Override Tolerance.
+    # Override tolerance.
     authed.post(
         "/api/custom-fields",
         json={
             "object_type": "part",
             "object_id": part_id,
-            "key": "Tolerance",
+            "key": "tolerance",
             "value": "1 %",
         },
     )
     rows = authed.get(f"/api/custom-fields/by-object/part/{part_id}").json()["data"]
-    tol = next(r for r in rows if r["key"] == "Tolerance")
+    tol = next(r for r in rows if r["key"] == "tolerance")
     assert tol["source"] == "override"
-    assert tol["original_value"] == "5 %"
+    assert tol["original_value"] == "5%"
 
     # Restore.
     r = authed.delete(f"/api/custom-fields/{tol['id']}/override")
     assert r.status_code == 200, r.text
     body = r.json()["data"]
     assert body["source"] == "provider"
-    assert body["value"] == "5 %"
+    assert body["value"] == "5%"
     assert body["original_value"] is None
 
 
@@ -270,7 +279,7 @@ def test_unlink_provider_converts_rows_and_clears_metadata(authed, monkeypatch):
     # Override one row so we can verify it loses original_value too.
     authed.post(
         "/api/custom-fields",
-        json={"object_type": "part", "object_id": part_id, "key": "Tolerance", "value": "1 %"},
+        json={"object_type": "part", "object_id": part_id, "key": "tolerance", "value": "1 %"},
     )
 
     r = authed.patch(f"/api/parts/{part_id}", json={"unlink_provider": True})
