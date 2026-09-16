@@ -1181,3 +1181,41 @@ def test_bulk_import_loads_the_category_tree_once_for_the_batch(
     # category read (the create path validates nothing here), not a
     # per-row one — five rows would be five or ten.
     assert scans <= 2, f"{scans} part_categories reads for a 5-row import"
+
+
+def test_a_refresh_loads_the_category_tree_once(authed, db, engine, monkeypatch):
+    """MEDIUM-1, the other half. `apply_provider_category` asks the tree
+    three questions — the part's own name path, where the provider's path
+    resolves, and the name path of the row it filed into — and the refresh
+    route has no loop to hang a shared snapshot off. Built per question,
+    that is three full scans of `part_categories` on every single refresh.
+
+    Pinned at the route rather than the service so the assertion covers
+    whatever else the request touches: this is the number an operator
+    pays, not the number one helper costs.
+    """
+    from sqlalchemy import event
+
+    _enable_digikey_primary(authed)
+    _category(authed, "Resistors")
+    part_id = _part(authed, "CAT-SCAN-1")
+    _stub_digikey(monkeypatch, DIGIKEY_RESISTOR)
+
+    scans = 0
+
+    def _on_execute(conn, cursor, statement, parameters, context, executemany):
+        nonlocal scans
+        if "FROM part_categories" in statement:
+            scans += 1
+
+    event.listen(engine, "before_cursor_execute", _on_execute)
+    try:
+        r = authed.post(f"/api/parts/{part_id}/refresh-from-provider")
+    finally:
+        event.remove(engine, "before_cursor_execute", _on_execute)
+
+    assert r.status_code == 200, r.text
+    # It did file the part — a refresh that resolved nothing would read
+    # the tree once too, and would pass this for the wrong reason.
+    assert _detail(authed, part_id)["category_id"] is not None
+    assert scans <= 1, f"{scans} part_categories reads for one refresh"

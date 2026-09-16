@@ -21,7 +21,7 @@ from sqlalchemy import select
 from app.api._helpers import assert_in_workspace
 from app.core.errors import ErrorCodes, raise_http
 from app.domain._quantity import quantity_out
-from app.domain.categories.service import category_name_paths
+from app.domain.categories.service import CategoryIndex, category_name_paths
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part, PartProviderLink
 from app.domain.parts.provider_links import serialize_link
@@ -63,7 +63,9 @@ def image_urls_for_parts(db, ws_id, part_ids: list) -> dict:
     return {pid: val for pid, val in rows}
 
 
-def missing_specs_for_parts(db, ws_id, parts: list) -> dict:
+def missing_specs_for_parts(
+    db, ws_id, parts: list, *, index: CategoryIndex | None = None
+) -> dict:
     """`part_id -> mandatory canonical spec keys nobody supplied`.
 
     TWO statements for the whole page, never one per row — this runs on
@@ -72,7 +74,10 @@ def missing_specs_for_parts(db, ws_id, parts: list) -> dict:
 
       1. the workspace's categories, to turn each part's `category_id`
          into the name path `spec_schema.category_slug_for` reads. Skipped
-         entirely when no part on the page has a category.
+         entirely when no part on the page has a category, and skipped
+         again when the caller already holds the workspace's tree and
+         passes it as `index` (the refresh route resolves a category
+         moments earlier and would otherwise load it twice).
       2. the parts' `custom_fields` rows, narrowed to
          `all_canonical_keys()`. A page of 200 parts has thousands of
          provider rows and only these can answer the question.
@@ -92,7 +97,7 @@ def missing_specs_for_parts(db, ws_id, parts: list) -> dict:
     slug_by_category = {
         category_id: category_slug_for(path)
         for category_id, path in category_name_paths(
-            db, ws_id=ws_id, category_ids={p.category_id for p in parts}
+            db, ws_id=ws_id, category_ids={p.category_id for p in parts}, index=index
         ).items()
     }
     present: dict = {pid: set() for pid in part_ids}

@@ -34,6 +34,7 @@ from app.core.responses import ok
 from app.core.secrets import decrypt
 from app.core.time import utcnow
 from app.domain.audit.service import log as _audit_log
+from app.domain.categories.service import category_index
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.part_type import sync_part_type_and_log
 from app.domain.parts.provider_credentials import credentials_for
@@ -223,6 +224,14 @@ def refresh_from_provider(
         # of them is touched here.
         extra_fields = _secondary_fields(r)
 
+    # One snapshot of the workspace's tree for the whole request. Both
+    # readers below need it — `apply_provider_category` asks it three
+    # questions, and the `missing_specs` badge on the response asks it a
+    # fourth — and building it per caller made a plain refresh scan
+    # `part_categories` three times over. Nothing here creates a category,
+    # so the snapshot cannot go stale under itself.
+    categories = category_index(db, ws_id=ws.id)
+
     # Category before specs — it selects the spec schema, and both tiers
     # may fill a category the part does not have yet. One the user chose
     # is never overruled.
@@ -234,6 +243,7 @@ def refresh_from_provider(
         provider_category=r.get("category"),
         description=r.get("description"),
         user_id=user.id,
+        index=categories,
     )
     report = reconcile_provider_specs(
         db,
@@ -287,7 +297,9 @@ def refresh_from_provider(
                     serialize_link(row)
                     for row in links_for_part(db, workspace_id=ws.id, part_id=p.id)
                 ],
-                missing_specs=_missing_specs_for_parts(db, ws.id, [p]).get(p.id, []),
+                missing_specs=_missing_specs_for_parts(
+                    db, ws.id, [p], index=categories
+                ).get(p.id, []),
             ),
         }
     )

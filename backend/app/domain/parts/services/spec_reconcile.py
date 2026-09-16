@@ -50,6 +50,7 @@ from app.core.time import utcnow
 from app.domain.audit.service import log_ids as _audit_log_ids
 from app.domain.categories.service import (
     CategoryIndex,
+    category_index,
     category_name_path,
     resolve_category_path_or_root,
 )
@@ -208,13 +209,25 @@ def apply_provider_category(
     own category only wins when it actually classifies.
 
     `index` lets a caller in a loop (bulk-import-from-scan, up to 50
-    parts) pay for the workspace's category rows once.
+    parts) pay for the workspace's category rows once. A caller that
+    passes nothing still pays only once: the snapshot below is shared by
+    all three lookups this function makes.
     """
+    path = category_for_provider(provider_name, provider_category, description)
+    provider_slug = category_slug_for(path)
+    # Three questions, one tree: the part's own name path, where the
+    # provider's path resolves, and the name path of the row we filed it
+    # into. Asked separately they were three full scans of
+    # `part_categories` on every refresh — the route has no loop to hang a
+    # shared snapshot off, so the sharing has to live here. Built lazily,
+    # so an uncategorized part whose provider names nothing costs no query
+    # at all.
+    if index is None and (part.category_id is not None or path is not None):
+        index = category_index(db, ws_id=ws_id)
+
     own_slug = category_slug_for(
         category_name_path(db, ws_id=ws_id, category_id=part.category_id, index=index)
     )
-    path = category_for_provider(provider_name, provider_category, description)
-    provider_slug = category_slug_for(path)
 
     if part.category_id is not None:
         return CategoryOutcome(
