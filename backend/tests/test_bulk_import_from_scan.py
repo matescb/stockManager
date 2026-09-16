@@ -97,11 +97,16 @@ def test_bulk_import_creates_part_with_provider_specs(authed, monkeypatch):
     assert p["linked_provider"] == "mouser"
     assert p["part_type"] == "linked"
 
-    # Provider specs land as source='provider' custom_fields.
+    # Provider specs land as source='provider' custom_fields, under their
+    # CANONICAL key with a parsed value and a numeric sidecar (A3).
     cfs = authed.get(f"/api/custom-fields/by-object/part/{part_id}").json()["data"]
     by_key = {row["key"]: row for row in cfs}
-    assert by_key["Resistance"]["source"] == "provider"
-    assert by_key["Tolerance"]["source"] == "provider"
+    assert by_key["resistance"]["source"] == "provider"
+    assert by_key["resistance"]["provider"] == "mouser"
+    assert by_key["resistance"]["value"] == "0 Ω"
+    assert by_key["resistance"]["value_num"] == "0"
+    assert by_key["tolerance"]["source"] == "provider"
+    assert by_key["package"]["value"] == "0402"
     # image_url and datasheet_url stored too (consumed by PartInfo's media card).
     assert by_key["image_url"]["value"] == "https://example.com/img.jpg"
     assert by_key["datasheet_url"]["value"] == "https://example.com/ds.pdf"

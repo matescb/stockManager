@@ -731,3 +731,29 @@ async def test_set_part_specs_refuses_a_cross_workspace_part(db):
 
     assert "part.not_found" in error
     assert _fields(db, part_a) == {}
+
+
+async def test_set_part_specs_restores_a_retired_row(authed_client, full_token, db):
+    """`uq_cf_unique` has no partial WHERE, so a key the spec reconcile
+    archived (a customs code, a `-` placeholder) still owns its slot. An
+    agent writing that key must get its row back, not a success report for
+    a row no reader returns (ADR-0034)."""
+    part_id = create_part(authed_client, "Imported", mpn="SPEC-ARCHIVED")
+    _seed_provider_field(db, authed_client, part_id, "ECCN", "EAR99")
+    from app.core.time import utcnow
+
+    row = _fields(db, part_id)["ECCN"]
+    row.archived_at = utcnow()
+    row.source = "manual"
+    db.flush()
+
+    async with mcp_session(full_token) as s:
+        out = await call(
+            s, "set_part_specs", part_id_or_mpn=part_id, specs={"ECCN": "mine"}
+        )
+
+    assert out["updated"] == ["ECCN"]
+    back = _fields(db, part_id)["ECCN"]
+    assert back.value == "mine"
+    assert back.archived_at is None
+    assert db.query(CustomField).filter(CustomField.key == "ECCN").count() == 1

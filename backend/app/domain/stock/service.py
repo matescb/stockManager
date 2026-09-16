@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Iterable
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.core.time import utcnow

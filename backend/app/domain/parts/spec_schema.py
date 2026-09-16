@@ -31,6 +31,7 @@ from typing import Iterable, Sequence
 
 from app.domain.parts.provider_fields import PROVIDER_RESERVED_CUSTOM_FIELD_KEYS
 from app.domain.parts.providers.mouser import parse_description_specs
+from app.domain.parts.spec_category_map import category_for_provider
 from app.domain.parts.spec_schema_tables import (
     CANONICAL_SPECS,
     CATALOG_KEY_PATTERNS,
@@ -56,17 +57,37 @@ __all__ = [
     "CATALOG_KEY_PATTERNS",
     "CATALOG_LITERAL_KEYS",
     "DROP_KEY_PATTERNS",
+    "PROVIDER_PRECEDENCE",
     "NormalisedSpecs",
     "SpecKey",
     "SpecValue",
+    "all_canonical_keys",
+    "category_for_provider",
     "category_slug_for",
     "is_catalog_key",
     "is_junk_key",
     "is_junk_value",
     "missing_mandatory",
     "normalise",
+    "provider_outranks",
     "spec_keys_for",
 ]
+
+# Who wins when two providers answer the same canonical key, best first.
+#
+# DigiKey is the only real parametric source we have: its `Parameters[]`
+# is a per-category attribute table, while Mouser's `ProductAttributes`
+# is packaging metadata and its parametric values are mined out of prose
+# by nine regexes in `providers/mouser.py`. So DigiKey overwrites any
+# provider-written value and Mouser overwrites only its own (or a row
+# from before `custom_fields.provider` existed, which is nobody's).
+#
+# A provider not in this table ranks last and can only fill an empty key
+# or replace its own row — a new adapter never silently outranks the two
+# whose data we have measured.
+PROVIDER_PRECEDENCE: tuple[str, ...] = ("digikey", "mouser")
+
+_UNRANKED = len(PROVIDER_PRECEDENCE)
 
 
 @dataclass(frozen=True)
@@ -97,6 +118,36 @@ class NormalisedSpecs:
     #: Raw keys not surfaced verbatim: junk keys, junk values, and aliases
     #: superseded by a canonical key that a higher-precedence alias filled.
     dropped: list[str]
+
+
+def provider_outranks(new_provider: str, existing_provider: str | None) -> bool:
+    """May `new_provider` overwrite a canonical row `existing_provider` wrote?
+
+    `existing_provider` is ``None`` for a row written before the column
+    existed (or by a caller that did not set it); nobody owns it, so any
+    provider may claim it. A provider always wins against itself — that
+    is an ordinary refresh of its own value.
+    """
+    if existing_provider is None or existing_provider == new_provider:
+        return True
+    return _rank(new_provider) < _rank(existing_provider)
+
+
+def _rank(provider: str) -> int:
+    try:
+        return PROVIDER_PRECEDENCE.index(provider)
+    except ValueError:
+        return _UNRANKED
+
+
+def all_canonical_keys() -> frozenset[str]:
+    """Every canonical key in the schema, across every category.
+
+    The batched `spec_incomplete` query narrows `custom_fields` to this
+    set: a page of 200 parts has thousands of provider rows and only
+    these can answer "is a mandatory key missing".
+    """
+    return _ALL_CANONICAL_KEYS
 
 
 def spec_keys_for(category_slug: str | None) -> tuple[SpecKey, ...]:
@@ -284,3 +335,10 @@ def _to_spec_value(spec: SpecKey, raw_key: str, raw_value: str) -> SpecValue:
     return SpecValue(
         spec.key, parsed.display, parsed.value_num, parsed.unit, raw_key, raw_value
     )
+
+
+_ALL_CANONICAL_KEYS: frozenset[str] = frozenset(
+    spec.key
+    for specs in (COMMON_SPECS, *CANONICAL_SPECS.values())
+    for spec in specs
+)

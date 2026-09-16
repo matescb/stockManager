@@ -22,6 +22,9 @@ from app.api.routes._parts_shared import (
     get_part as _get_part,
 )
 from app.api.routes._parts_shared import (
+    missing_specs_for_parts as _missing_specs_for_parts,
+)
+from app.api.routes._parts_shared import (
     serialize_part as _serialize,
 )
 from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
@@ -35,12 +38,9 @@ from app.domain.custom_fields.models import CustomField
 from app.domain.parts.part_type import sync_part_type_and_log
 from app.domain.parts.provider_credentials import credentials_for
 from app.domain.parts.provider_fields import (
-    CUSTOM_FIELD_KEY_MAX,
     KNOWN_PROVIDER_NAMES,
     PROVIDER_ASSET_CUSTOM_FIELD_KINDS,
-    is_provider_namespaced_key,
-    namespaced_custom_field_key,
-    provider_owns_custom_field_key,
+    provider_wrote_custom_field_row,
 )
 from app.domain.parts.provider_links import (
     delete_link,
@@ -53,145 +53,42 @@ from app.domain.parts.providers import make_provider
 from app.domain.parts.providers.base import ProviderUpstreamError
 from app.domain.parts.services.assets import fetch_provider_asset
 from app.domain.parts.services.provider_cache import lookup_fresh
-from app.domain.parts.services.provider_import import truncate_provider_field_value
+from app.domain.parts.services.spec_reconcile import (
+    apply_provider_category,
+    reconcile_provider_specs,
+)
 from app.domain.stock.service import reserved_quantity, total_for_part
 
 router = APIRouter()
 
 
-def _reconcile_provider_fields(
-    db,
-    *,
-    ws,
-    part,
-    user,
-    desired: dict[str, str],
-    owns_key,
-) -> tuple[int, int, int]:
-    """Reconcile one provider's `source='provider'` custom_field rows.
+def _asset_fields(r: dict, ws) -> dict[str, str]:
+    """The primary's non-spec rows: image, datasheet, source URL.
 
-    For each provider-supplied (key, value):
-      • existing row, source='provider'  → update value
-      • existing row, source='manual'    → leave alone (user owns it)
-      • existing row, source='override'  → leave alone, but remember the
-        new upstream value as the new `original_value` so a Restore
-        reflects current upstream, not historical.
-      • absent                           → insert with source='provider'
-    After processing, any source='provider' row whose key isn't in the
-    upstream payload is deleted.
-
-    `owns_key(key)` bounds all of that to this provider's namespace. It
-    is the load-bearing argument: without it the delete pass at the end
-    would treat every OTHER provider's rows as "absent from my payload"
-    and drop them on each refresh. Returns (added, updated, removed).
+    Assets are downloaded locally with the same fallback bulk-import
+    uses — a failed download keeps the upstream URL. A SECONDARY gets
+    none of this on purpose (ADR-0031): the primary already owns the
+    part's image and datasheet, so a second content-addressed copy would
+    cost a request per refresh to produce a field nothing renders.
     """
-    scoped_rows = [
-        row
-        for row in db.execute(
-            select(CustomField)
-            .where(CustomField.workspace_id == ws.id)
-            .where(CustomField.object_type == "part")
-            .where(CustomField.object_id == part.id)
-        ).scalars()
-        if owns_key(row.key)
-    ]
-    by_key = {row.key: row for row in scoped_rows}
-
-    added = updated = removed = 0
-    for key, value in desired.items():
-        row = by_key.get(key)
-        if row is None:
-            db.add(
-                CustomField(
-                    workspace_id=ws.id,
-                    object_type="part",
-                    object_id=part.id,
-                    key=key,
-                    value=value,
-                    source="provider",
-                    created_by=user.id,
-                    updated_by=user.id,
-                )
-            )
-            added += 1
-        elif row.source == "provider":
-            if row.value != value:
-                row.value = value
-                row.updated_by = user.id
-                updated += 1
-        elif row.source == "override":
-            if row.original_value != value:
-                row.original_value = value
-                row.updated_by = user.id
-
-    upstream_keys = set(desired.keys())
-    for row in scoped_rows:
-        if row.source == "provider" and row.key not in upstream_keys:
-            db.delete(row)
-            removed += 1
-    return added, updated, removed
-
-
-def _primary_desired_fields(r: dict, ws) -> dict[str, str]:
-    """The primary provider's un-namespaced payload — unchanged behaviour.
-
-    Assets are downloaded locally with the same fallback semantics as
-    bulk-import: a failed download keeps the upstream URL.
-    """
-    desired: dict[str, str] = {}
-    for s in r.get("specs") or []:
-        key = (s.get("key") or "").strip()
-        value = (s.get("value") or "").strip()
-        # A spec whose name collides with a provider namespace would be
-        # written by the primary and then be outside its own reconcile
-        # scope — an orphan a secondary refresh would later delete. No
-        # real payload has one; skip rather than create the hazard.
-        if key and not is_provider_namespaced_key(key):
-            desired[key] = value
+    fields: dict[str, str] = {}
     for key, asset_kind in PROVIDER_ASSET_CUSTOM_FIELD_KINDS.items():
         if r.get(key):
             local = fetch_provider_asset(r[key], str(ws.id), asset_kind)
-            desired[key] = local or r[key]
+            fields[key] = local or r[key]
     if r.get("source_url"):
-        desired["source_url"] = str(r["source_url"])
-    return desired
+        fields["source_url"] = str(r["source_url"])
+    return fields
 
 
-def _secondary_desired_fields(r: dict, provider_name: str) -> tuple[dict[str, str], int]:
-    """A secondary provider's payload, every key under its own prefix.
-
-    Returns `(desired, skipped)`. A field is SKIPPED when its namespaced
-    key would exceed the `custom_fields.key` width: the prefix adds
-    characters to an upstream name we don't control, and truncating the
-    key instead would silently collide two different attributes onto one
-    row. The count is reported in the response so a dropped field is
-    visible rather than merely absent.
-
-    Assets are NOT downloaded: the primary already owns the part's image
-    and datasheet, so a second copy would burn storage and a request per
-    refresh to produce a field nothing renders as an image. The upstream
-    URL is stored as-is and the Sourcing tab links to it.
-    """
-    desired: dict[str, str] = {}
-    skipped = 0
-
-    def put(key: str, value: str) -> None:
-        nonlocal skipped
-        namespaced = namespaced_custom_field_key(provider_name, key)
-        if len(namespaced) > CUSTOM_FIELD_KEY_MAX:
-            skipped += 1
-            return
-        desired[namespaced] = truncate_provider_field_value(value)
-
-    for s in r.get("specs") or []:
-        key = (s.get("key") or "").strip()
-        value = (s.get("value") or "").strip()
-        if key:
-            put(key, value)
-    for key in ("source_url", "datasheet_url", "category"):
-        if r.get(key):
-            put(key, str(r[key]))
-    return desired, skipped
+def _secondary_fields(r: dict) -> dict[str, str]:
+    """A secondary's non-spec rows, still bare here — `reconcile_provider_specs`
+    applies the `"{provider}:"` prefix and the key-width guard."""
+    return {
+        key: str(r[key])
+        for key in ("source_url", "datasheet_url", "category")
+        if r.get(key)
+    }
 
 
 @router.post("/{part_id}/refresh-from-provider")
@@ -305,16 +202,15 @@ def refresh_from_provider(
         p.linked_external_id = r.get("mpn") or p.linked_external_id
         p.last_refresh_at = utcnow()
         p.updated_by = user.id
-        desired = _primary_desired_fields(r, ws)
-        skipped = 0
+        extra_fields = _asset_fields(r, ws)
         # A part created `local` that the primary now owns IS linked;
         # leaving the column behind is what put 160 prod parts in the
         # wrong bucket. `meta` / `sub_assembly` are left alone.
         #
-        # AFTER `_primary_desired_fields`, not before: the audit write
-        # flushes, and flushing here would hold the row lock on this
-        # `parts` row across that call's two remote asset downloads
-        # (image + datasheet, up to 45s each).
+        # AFTER `_asset_fields`, not before: the audit write flushes, and
+        # flushing here would hold the row lock on this `parts` row across
+        # that call's two remote asset downloads (image + datasheet, up to
+        # 45s each).
         sync_part_type_and_log(
             db,
             ws=ws,
@@ -325,17 +221,35 @@ def refresh_from_provider(
     else:
         # Secondary: the part's own columns belong to the primary. Not one
         # of them is touched here.
-        desired, skipped = _secondary_desired_fields(r, client.name)
+        extra_fields = _secondary_fields(r)
 
-    added, updated, removed = _reconcile_provider_fields(
+    # Category before specs — it selects the spec schema, and both tiers
+    # may fill a category the part does not have yet. One the user chose
+    # is never overruled.
+    category = apply_provider_category(
         db,
-        ws=ws,
+        ws_id=ws.id,
         part=p,
-        user=user,
-        desired=desired,
-        owns_key=lambda key: provider_owns_custom_field_key(
-            client.name, key, is_primary=is_primary
-        ),
+        provider_name=client.name,
+        provider_category=r.get("category"),
+        description=r.get("description"),
+        user_id=user.id,
+    )
+    report = reconcile_provider_specs(
+        db,
+        ws_id=ws.id,
+        part=p,
+        provider_name=client.name,
+        raw_specs=[
+            ((s.get("key") or ""), (s.get("value") or "")) for s in (r.get("specs") or [])
+        ],
+        category_slug=category.slug,
+        is_primary=is_primary,
+        user_id=user.id,
+        description=r.get("description"),
+        extra_fields=extra_fields,
+        request_id=getattr(request.state, "request_id", None),
+        category_assigned=category.assigned,
     )
 
     link = upsert_link(
@@ -353,14 +267,17 @@ def refresh_from_provider(
         {
             "found": True,
             "provider": client.name,
-            "summary": {
-                "added": added,
-                "updated": updated,
-                "removed": removed,
-                # Fields whose namespaced key wouldn't fit the column.
-                # Always 0 on the primary path, which writes bare keys.
-                "skipped": skipped,
-            },
+            # `summary` counts what the reconcile did: `skipped` is fields
+            # this payload could not be written under (a key too wide for
+            # the column, or a bare key that spells a canonical one),
+            # `archived` junk rows retired from the part, `restored` rows
+            # brought back because upstream answered their key again, and
+            # `dropped` payload keys refused outright as junk.
+            "summary": report.summary(),
+            # The category the provider's taxonomy named when this
+            # workspace has nowhere to file the part. Null when the part
+            # was filed, or when the taxonomy said nothing we recognise.
+            "category_suggestion": category.suggestion,
             "link": serialize_link(link),
             "part": _serialize(
                 p,
@@ -370,6 +287,7 @@ def refresh_from_provider(
                     serialize_link(row)
                     for row in links_for_part(db, workspace_id=ws.id, part_id=p.id)
                 ],
+                missing_specs=_missing_specs_for_parts(db, ws.id, [p]).get(p.id, []),
             ),
         }
     )
@@ -387,11 +305,16 @@ def delete_provider_link(
 ):
     """Unlink a SECONDARY provider from this part.
 
-    Drops the link row, deletes that provider's namespaced
-    `source='provider'` fields, and demotes its `override` rows to plain
-    `manual` — the user edited those, so they survive as their own.
-    Nothing outside the `"{provider}:"` namespace is touched, so the
-    primary link and its fields are unaffected.
+    Drops the link row, deletes the `source='provider'` fields this
+    provider wrote, and demotes its `override` rows to plain `manual` —
+    the user edited those, so they survive as their own.
+
+    "Wrote" is `custom_fields.provider` plus its `"{provider}:"`
+    namespace, not the namespace alone: since A3 a secondary also writes
+    un-namespaced CANONICAL keys (`resistance`), and leaving those behind
+    would make an unlinked provider's data permanently unattributable.
+    A row another provider stamped, and an unstamped row outside this
+    namespace, are both left exactly as they are.
 
     The primary is not unlinkable here: that is `PATCH /api/parts/{id}`
     with `unlink_provider=true`, which also releases the part columns.
@@ -436,7 +359,7 @@ def delete_provider_link(
             .where(CustomField.object_id == p.id)
             .where(CustomField.source.in_(["provider", "override"]))
         ).scalars()
-        if provider_owns_custom_field_key(name, cf.key, is_primary=False)
+        if provider_wrote_custom_field_row(name, cf, is_primary=False)
     ]
     removed = 0
     for cf in field_rows:
@@ -446,6 +369,9 @@ def delete_provider_link(
         else:
             cf.source = "manual"
             cf.original_value = None
+            # The row is the user's now. Leaving the stamp on would let a
+            # later refresh from the same provider treat it as its own.
+            cf.provider = None
             cf.updated_by = user.id
 
     _audit_log(

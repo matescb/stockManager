@@ -28,6 +28,9 @@ from app.api.routes._parts_shared import (
     image_urls_for_parts as _image_urls_for_parts,
 )
 from app.api.routes._parts_shared import (
+    missing_specs_for_parts as _missing_specs_for_parts,
+)
+from app.api.routes._parts_shared import (
     provider_links_for as _provider_links_for,
 )
 from app.api.routes._parts_shared import (
@@ -221,6 +224,7 @@ def get_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
             reserved=reserved,
             image_url=image_url,
             provider_links=_provider_links_for(db, ws.id, p.id),
+            missing_specs=_missing_specs_for_parts(db, ws.id, [p]).get(p.id, []),
         )
     )
 
@@ -311,11 +315,18 @@ def patch_part(
                 .where(CustomField.object_type == "part")
                 .where(CustomField.object_id == p.id)
                 .where(CustomField.source.in_(["provider", "override"]))
+                # Retired junk stays retired. Promoting an archived row to
+                # `manual` would leave an invisible row holding its
+                # `uq_cf_unique` slot for good (A3 / ADR-0034).
+                .where(CustomField.archived_at.is_(None))
             ).scalars()
         )
         for r in rows:
             r.source = "manual"
             r.original_value = None
+            # The row is the user's now; a later refresh must not read the
+            # stamp and treat it as the provider's own.
+            r.provider = None
             r.updated_by = user.id
         # Releasing the link makes the part locally owned — the type has
         # to follow, or the pill keeps claiming a provider backs it.

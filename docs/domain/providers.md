@@ -16,11 +16,14 @@ A workspace configures **one primary** provider and any number of **secondaries*
 | Credentials | legacy `parts_provider_api_*` columns (or a `workspace_provider_credentials` row) | `workspace_provider_credentials` row |
 | Part columns (`manufacturer`, `mpn`, `footprint`, `description`) | owns them | writes none |
 | `parts.linked_*` | owns them | writes none |
-| Custom fields | un-namespaced (`Resistance`, `source_url`) | `"{provider}:"` prefixed (`mouser:Resistance`) |
+| Catalog / optional custom fields | un-namespaced (`Packaging`, `source_url`) | `"{provider}:"` prefixed (`mouser:Packaging`) |
+| Canonical spec custom fields | un-namespaced (`resistance`) | **also un-namespaced** (`resistance`), stamped with `custom_fields.provider` |
 | Link row | `part_provider_links` | `part_provider_links` |
 | Scan-import, lookup-mpn | yes | no |
 
-Each refresh reconciles only its own namespace — `backend/app/domain/parts/provider_fields.py::provider_owns_custom_field_key` is the boundary, and the reason a DigiKey refresh cannot delete the `mouser:` rows. See [ADR-0031](../adr/0031-primary-and-secondary-parts-providers.md).
+Each refresh reconciles only what it owns — `backend/app/domain/parts/provider_fields.py::provider_wrote_custom_field_row` is the boundary, and the reason a DigiKey refresh cannot delete the `mouser:` rows. It reads the key prefix for catalog and optional keys, and `custom_fields.provider` for canonical spec keys, which both tiers write un-namespaced (A3). A contested canonical key goes to the higher `spec_schema.PROVIDER_PRECEDENCE` — DigiKey, whose `Parameters[]` is a real attribute table, beats Mouser, whose values for the same keys are mined out of prose. See [ADR-0031](../adr/0031-primary-and-secondary-parts-providers.md) and [ADR-0034](../adr/0034-spec-schema.md).
+
+The only part column a secondary may write is a NULL `category_id`: provider import files an uncategorized part from the provider's own taxonomy (A4). It never overrules a category that is already set, from either tier.
 
 **The two credential stores are separate, and no provider is in both.** The primary's key is in the legacy `workspaces.parts_provider_api_*` columns; `workspace_provider_credentials` holds secondaries only. Migration 0070 backfills nothing into it, and `PUT /api/workspaces/current/provider-credentials` returns `400 workspace.provider_is_primary` for the workspace's own `parts_provider`.
 
@@ -102,7 +105,7 @@ The canonical `result` shape (`backend/app/domain/parts/providers/base.py:19-34`
 }
 ```
 
-`specs` is an ordered list; the names come straight from the upstream provider (Mouser's `ProductAttributes`, DigiKey's `Parameters[]`). The frontend persists each row as a `custom_fields(source='provider')` entry on the new part.
+`specs` is an ordered list; the names come straight from the upstream provider (Mouser's `ProductAttributes`, DigiKey's `Parameters[]`). `backend/app/domain/parts/services/spec_reconcile.py` is the single writer that turns them into `custom_fields(source='provider')` rows, for the create path and the refresh path alike: canonical keys are normalised and parsed, catalog and optional keys keep their upstream names, and junk (customs codes, `-` values) is never written.
 
 ## Mouser
 
@@ -198,5 +201,6 @@ The content-addressed asset URL contract (`{UPLOAD_DIR}/parts/{ws_id}/{sha}.{ext
 - **Never change `_HIT_TTL_SEC` to be workspace-aware.** Two workspaces share cache hits because the upstream payload is public catalog data; making the key workspace-scoped would burn quota for no gain.
 - **Never bypass `lookup_with_cache` in scan-import flows.** Bulk-import does N MPN lookups under a wall-clock deadline; without the cache + breaker, a flaky upstream takes the whole batch down.
 - **Never log decrypted credentials.** The audit-log invariant explicitly forbids passing key material through `comment` (`backend/app/domain/audit/service.py:38-40`).
-- **Never reconcile provider custom fields without a namespace scope.** The delete pass drops every `source='provider'` row absent from the payload; unscoped, one provider's refresh wipes every other provider's rows. `provider_owns_custom_field_key` is the only place that boundary is expressed (ADR-0031).
-- **Never let a secondary provider write a part column.** `manufacturer` / `mpn` / `footprint` / `description` and `parts.linked_*` belong to the primary. A second claimant on them is exactly the ambiguity the namespace model exists to avoid.
+- **Never reconcile provider custom fields without an ownership scope.** The delete pass drops every `source='provider'` row absent from the payload; unscoped, one provider's refresh wipes every other provider's rows. `provider_wrote_custom_field_row` is the only place that boundary is expressed (ADR-0031). Do not apply its `custom_fields.provider` branch to non-canonical keys — that would leave a workspace that switched primary unable to prune the old primary's bare rows, and would let unlinking a demoted primary delete the part's `image_url` and `datasheet_url`. Do not let it claim an UNSTAMPED canonical row either: that is a write rule (`provider_outranks`), and as a delete rule it lets a secondary take the rows the A5 backfill has not stamped.
+- **Never let a secondary provider write a part column, except a NULL `category_id`.** `manufacturer` / `mpn` / `footprint` / `description` and `parts.linked_*` belong to the primary. A second claimant on them is exactly the ambiguity the namespace model exists to avoid; filling a category nobody chose is not a claim on any of them.
+- **Never write provider specs from a route.** `services/spec_reconcile.py` is the only writer, so there is one statement of what a provider payload means. There used to be two, and they drifted.

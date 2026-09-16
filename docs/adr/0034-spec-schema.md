@@ -57,6 +57,29 @@ refresh can scope its delete pass by *who wrote the row* rather than by key
 prefix, and `value_num` (`NUMERIC(36,18)`), the SI base-unit number behind
 the display string.
 
+**A3 (2026-09-16) wired it in.** `services/spec_reconcile.py` is the single
+writer for both ingest paths — the create path (`services/provider_import.py`)
+and the refresh route (`api/routes/parts_refresh.py`), which no longer has a
+reconciler of its own. Three decisions landed with it:
+
+- **Canonical keys are un-namespaced from both provider tiers**, so ownership
+  for the delete pass moved from the key prefix to `custom_fields.provider`.
+  See the A3 amendment in [ADR-0031](0031-primary-and-secondary-parts-providers.md).
+- **`uq_cf_unique` was NOT widened.** The ADR left the choice open between
+  widening the constraint and picking a per-key winner before writing; the
+  winner is what shipped, because the alternative stores two answers to a
+  question with one answer and makes every reader — the Specs tab, the KiCad
+  `Value` template, a future spec sort — pick between them at read time. One
+  row per canonical key, stamped with who won.
+- **Junk is archived, not deleted.** A customs code or a `-` value is never
+  written, and an existing row for one gets `archived_at` rather than a hard
+  delete: it is the one class of row this change removes from parts that have
+  carried it for months, and an archived row can be read back and counted. The
+  read paths (`GET /api/custom-fields/by-object/...`, the MCP part-detail tool)
+  gained the `archived_at IS NULL` predicate that made the column mean
+  something, and a manual upsert un-archives rather than writing into a row the
+  user can no longer see — `uq_cf_unique` does not exclude archived rows.
+
 ## Consequences
 
 - **Good**: one place answers "what is a resistor supposed to have", so
@@ -101,24 +124,38 @@ the display string.
     The winner would depend on tuple order. Across categories it is fine and
     necessary: DigiKey files a ceramic capacitor's `X7R` under the same
     `Temperature Coefficient` name a resistor uses for its ppm/°C figure.
-  - **Don't infer provenance from the key prefix once A3 lands.** After a
-    secondary starts writing canonical keys, the prefix no longer identifies
-    the writer; `custom_fields.provider` does.
+  - **Don't infer provenance from the key prefix.** A3 has landed: a secondary
+    writes canonical keys, so the prefix no longer identifies the writer.
+    `custom_fields.provider` does, through
+    `provider_fields.py::provider_wrote_custom_field_row`. Applying the same
+    provenance test to NON-canonical keys is the mirror-image bug — it would
+    leave a switched-over workspace unable to prune the old primary's bare rows,
+    and would let unlinking a demoted primary delete the part's `image_url`.
+    Claiming an UNSTAMPED canonical row is a write rule, never a delete rule.
+  - **Don't let a lower-precedence provider overwrite a canonical value.**
+    Mouser's parametric values are mined out of prose by nine regexes;
+    DigiKey's come from a real attribute table. Refresh order must not decide
+    which one a part keeps, which is what `provider_outranks` is for.
+  - **Don't assign a category over one the user chose.** `apply_provider_category`
+    only ever fills a NULL `category_id`, and resolves paths without creating
+    anything — a vendor taxonomy we do not control must not grow a curated tree.
   - **Don't sort on `value_num` without `value_num IS NOT NULL` in the query.**
     The supporting index is partial; without the predicate Postgres seq-scans.
 
 ## Follow-ups this ADR does not cover
 
-- **A3** wires `normalise()` into `services/provider_import.py` and
-  `api/routes/parts_refresh.py`, and updates
-  `provider_fields.py::provider_owns_custom_field_key` and the ADR-0031
-  contract. It must also widen `uq_cf_unique`
-  (`workspace_id, object_type, object_id, key`) or pick a per-key winner before
-  writing: two providers writing the same canonical key collide on that
-  constraint today.
-- **A4** maps provider category strings to our category tree. This ADR only
-  maps *our* category names to schema slugs (`category_slug_for`).
+- ~~**A3**~~ — landed 2026-09-16; see the Decision section above.
+- ~~**A4**~~ — landed with A3. `spec_category_map.py::category_for_provider` maps
+  a DigiKey or Mouser category string to one of our category name paths, and
+  `categories/service.py::resolve_category_path_or_root` resolves that path
+  against a workspace's own tree without creating anything. It stops at the
+  class for MOSFETs and BJTs (`Transistors / MOSFET`, not `… / MOSFET N`):
+  N- vs P-channel is in the `fet_type` SPEC, not in the vendor's category
+  string, and a wrong category is worse than a coarse one.
 - **A5** is the `spec-normalize` backfill that re-keys the 9,377 existing rows.
+  Until it runs, a part's rows are normalised by its next refresh and not
+  before, and every legacy row has a NULL `provider` — which is exactly the
+  "unclaimed" case the ownership rule is written for.
 - **A7** renders mandatory-but-missing keys on the Specs tab. It should also
   close a sharp edge this ADR widens: `isCatalogKey` classifies by key name
   alone, so a user who types `MOQ` or `Availability` as a manual spec gets a
@@ -156,11 +193,16 @@ the display string.
 
 - Source: `backend/app/domain/parts/spec_schema.py`,
   `backend/app/domain/parts/spec_schema_tables.py`,
-  `backend/app/domain/parts/spec_values.py`
+  `backend/app/domain/parts/spec_values.py`,
+  `backend/app/domain/parts/spec_category_map.py`,
+  `backend/app/domain/parts/services/spec_reconcile.py`
 - Migration: `backend/alembic/versions/0081_custom_field_provider_value_num.py`
 - Tests: `backend/tests/test_spec_schema.py`,
   `backend/tests/test_spec_values.py`,
-  `backend/tests/test_custom_field_provider_value_num.py`
+  `backend/tests/test_custom_field_provider_value_num.py`,
+  `backend/tests/test_spec_reconcile.py`,
+  `backend/tests/test_category_for_provider.py`,
+  `backend/tests/test_category_path_resolution.py`
 - Related: `backend/app/domain/parts/provider_fields.py`,
   `web/src/lib/providerCatalog.ts`,
   `backend/app/domain/parts/providers/mouser.py`

@@ -57,6 +57,55 @@ Three fields cooperate (`backend/app/domain/parts/models.py:78-88`):
 
 The provider lookup pipeline lives in `backend/app/domain/parts/providers/`; see [providers](providers.md).
 
+## Specs and category on a provider payload
+
+A provider lookup result becomes `custom_fields` rows through exactly one
+writer, `backend/app/domain/parts/services/spec_reconcile.py`, used by the
+create path (`services/provider_import.py`) and the refresh route
+(`api/routes/parts_refresh.py`) alike. Before that there were two copies of
+"write the specs" and neither normalised anything, which is why prod carries
+9,377 provider rows including 277 ECCN codes and about a thousand whose value
+is literally `-`.
+
+`spec_schema.normalise` sorts every upstream key into one of four buckets:
+
+| Bucket | Key written | Notes |
+|---|---|---|
+| canonical | the schema key (`resistance`) | Un-namespaced from BOTH tiers, parsed into a display string plus a `value_num` sidecar, and stamped with `custom_fields.provider`. |
+| catalog | the upstream key, namespaced per ADR-0031 | Price / stock / packaging. Unchanged by A3 — `web/src/lib/providerCatalog.ts` keys off these exact names. |
+| optional | the upstream key, namespaced per ADR-0031 | Anything else parametric, kept verbatim, so ICs and connectors lose nothing. |
+| dropped | nothing | Customs codes, `-` values, and aliases a higher-precedence alias already answered. |
+
+Two rules follow from canonical keys being shared:
+
+- **Precedence, not recency, decides a contested key.** `digikey` >
+  `mouser` > an unranked adapter; a NULL `provider` is unclaimed.
+  DigiKey's `Parameters[]` is a real attribute table, while Mouser's
+  value for the same key is mined out of prose by nine regexes in
+  `providers/mouser.py`.
+- **Ownership for the delete pass is per row, not per key prefix.**
+  `provider_fields.py::provider_wrote_custom_field_row` reads
+  `custom_fields.provider` for a canonical key — strictly, so an unstamped
+  row is nobody's — and falls back to the ADR-0031 namespace rule for
+  everything else, so unlinking a demoted primary cannot take the part's
+  bare `image_url` with it. Writing is looser: `provider_outranks` treats
+  an unstamped row, and an archived one, as claimable.
+
+Junk rows already on a part are **archived** rather than deleted, and the
+read paths (`GET /api/custom-fields/by-object/...`, the MCP part-detail tool)
+filter `archived_at IS NULL`. A stale-but-real row keeps the hard delete it
+has always had.
+
+`parts.category_id` is filled on the same pass when it is NULL, from the
+provider's own taxonomy (`spec_schema.category_for_provider` →
+`categories/service.py::resolve_category_path_or_root`). Nothing is created:
+an unresolvable path comes back as `category_suggestion` on the response. A
+category the user picked is never overruled — which is also why the part
+keeps its own category's spec schema.
+
+See [ADR-0034](../adr/0034-spec-schema.md) and
+[ADR-0031](../adr/0031-primary-and-secondary-parts-providers.md).
+
 ## Default storage
 
 Two columns govern where stock for a part lands by default:
@@ -104,5 +153,8 @@ There is no dedicated `parts/service.py`. Logic for parts splits across the rout
 | Provider MPN lookup with cache | `domain/parts/services/provider_cache.py::lookup_with_cache` | TTL cache + per-provider circuit breaker. |
 | Force-fresh provider lookup | `domain/parts/services/provider_cache.py::lookup_fresh` | Skips cache read; still applies circuit breaker. |
 | Download provider asset | `domain/parts/services/assets.py::fetch_provider_asset` | SSRF-hardened download to UPLOAD_DIR. |
+| Create a linked part from a lookup | `domain/parts/services/provider_import.py::create_from_provider_lookup` | Returns `ProviderImportOutcome(part, report, category_suggestion)`. |
+| Write a provider payload onto a part | `domain/parts/services/spec_reconcile.py::reconcile_provider_specs` | The single writer for create AND refresh. |
+| File an uncategorized part | `domain/parts/services/spec_reconcile.py::apply_provider_category` | Never overrules a category the user chose; creates nothing. |
 | Build a configured provider | `domain/parts/providers/base.py::make_provider` | Factory keyed on `workspaces.parts_provider`. |
 | Archive / restore / bulk-archive | `api/routes/parts_core.py::archive_part`, `unarchive_part`, `bulk_archive_parts` | Inline; no dedicated service. |

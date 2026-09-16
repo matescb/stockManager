@@ -97,6 +97,11 @@ def load_part_fields(caller: Caller, part_id: UUID) -> dict[str, CustomField]:
 
     One query rather than one per key: a fifty-key batch would otherwise
     be fifty round trips before the first write.
+
+    ARCHIVED rows are included, and must stay included: `uq_cf_unique` has
+    no partial WHERE, so a row the spec reconcile retired still owns its
+    key and an insert past it would be an IntegrityError. `apply_specs`
+    restores such a row instead (ADR-0034).
     """
     return {
         row.key: row
@@ -184,10 +189,14 @@ def apply_specs(
             written.created.append(key)
         elif row.source not in _WRITABLE_SOURCES:
             written.skipped_provider_owned.append(key)
-        elif row.value == value:
+        elif row.value == value and row.archived_at is None:
             written.unchanged.append(key)
         else:
             row.value = value
+            # A retired key the caller writes again is live data once more.
+            # Without this the write lands on a row no reader returns, and
+            # the tool reports success for something nobody can see.
+            row.archived_at = None
             row.updated_by = caller.user.id
             written.updated.append(key)
 

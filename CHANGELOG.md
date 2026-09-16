@@ -15,6 +15,30 @@ the canonical record.
 
 ## Unreleased
 
+- **Provider specs are normalised on import and refresh, and imported
+  parts get a category.** `domain/parts/services/spec_reconcile.py` is now
+  the single writer for a provider payload, used by both the create path
+  and the refresh route. Specs land under their canonical key with a
+  parsed value and a numeric sidecar (`Resistance: "10 kOhms"` becomes
+  `resistance: "10 kΩ"`, `value_num = 10000`); customs codes and `-`
+  placeholders are never written and existing ones are archived; price,
+  stock and packaging keep the exact keys and namespaces the Sourcing tab
+  reads. **Both DigiKey and Mouser now write canonical specs**, so a
+  workspace with two providers gets both their parametric data on one
+  Specs tab — a contested key is resolved by precedence (DigiKey beats
+  Mouser) recorded in `custom_fields.provider`, not by whoever refreshed
+  last. A part with no category is filed from the provider's own
+  taxonomy: `Chip Resistor - Surface Mount` → `Resistors`,
+  `Ceramic Capacitors` → `Capacitors / Ceramic`, falling back to the root
+  of the path and never creating a category. When nothing resolves, the
+  response carries `category_suggestion`. Part detail and list rows gain
+  `spec_incomplete` / `missing_specs` — the mandatory keys the part's
+  category says it should have and nobody supplied. The refresh summary
+  also reports `archived`, `restored` and `dropped`, so "the vendor sent
+  it and we did not store it" is visible rather than merely absent. See
+  ADR-0034 and the A3 amendment to ADR-0031. The 9,377 existing rows are re-keyed by a
+  part's next refresh, or in bulk by the `spec-normalize` backfill in a
+  follow-up.
 - **The manual now has a page on connecting an AI assistant.**
   `docs/user/agents.md` ships in `/help` and covers what an assistant can
   do with a workspace, minting the token, the client config snippet, the

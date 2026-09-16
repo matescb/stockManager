@@ -1,6 +1,11 @@
 """Audit-log service (BE2-024).
 
-Single entry point: ``log()``. Callers pass the workspace, the acting
+Two entry points onto one row builder: ``log()`` for routes, which hold
+the ``Workspace`` and ``User`` objects, and ``log_ids()`` for domain
+services that were handed ids instead (``provider_import`` and the spec
+reconcile are called from three routes and a CLI job, and none of them
+would gain anything from threading two ORM objects through for the sake
+of reading ``.id`` off them). Callers pass the workspace, the acting
 user, the action string, and an optional list of affected object IDs.
 Auth/system events that have no workspace context may pass ``ws=None``.
 The row is flushed (not committed) so it rides the route's own
@@ -45,9 +50,37 @@ def log(
     BE2-024): callers that log credential rotation MUST NOT pass the
     key material as ``comment``.
     """
-    row = AuditLog(
+    return log_ids(
+        db,
         workspace_id=ws.id if ws else None,
         user_id=user.id if user else None,
+        action=action,
+        target_type=target_type,
+        target_ids=target_ids,
+        comment=comment,
+        request_id=request_id,
+    )
+
+
+def log_ids(
+    db: Session,
+    *,
+    workspace_id: UUID | None,
+    user_id: UUID | None,
+    action: str,
+    target_type: str | None = None,
+    target_ids: list[UUID] | None = None,
+    comment: str | None = None,
+    request_id: str | None = None,
+) -> AuditLog:
+    """``log()`` for a caller that holds ids rather than ORM objects.
+
+    Same row, same transaction, same rules — including the one about
+    credentials never reaching ``comment``.
+    """
+    row = AuditLog(
+        workspace_id=workspace_id,
+        user_id=user_id,
         action=action,
         target_type=target_type,
         target_ids=target_ids or None,

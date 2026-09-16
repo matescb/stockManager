@@ -8,7 +8,8 @@ dependency owns the commit.
 from __future__ import annotations
 
 import re
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Iterable
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -21,7 +22,11 @@ from app.core.errors import ErrorCodes, raise_http
 from app.core.time import utcnow
 from app.domain.categories.models import PartCategory
 from app.domain.categories.schemas import PartCategoryIn, PartCategoryPatch
-from app.domain.categories.tree import lock_workspace_tree, validate_parent
+from app.domain.categories.tree import (
+    lock_workspace_tree,
+    tree_paths,
+    validate_parent,
+)
 
 UQ_PART_CATEGORIES_WS_NAME = "uq_part_categories_ws_name"
 UQ_PART_CATEGORIES_WS_SLUG = "uq_part_categories_ws_slug"
@@ -337,3 +342,205 @@ def restore_category(
         )
         raise
     return category
+
+
+# ---------------------------------------------------------------------------
+# Name paths — "Capacitors / Ceramic" <-> a row of this workspace's tree.
+#
+# Provider import (A4) decides a category as a NAME PATH, because the rule
+# table is shared by every workspace and ids are not. The functions below
+# are the only translation between the two, and none of them writes: a
+# workspace's tree is curated, and a vendor taxonomy we do not control
+# must never grow it. A path that names nothing leaves the part
+# uncategorized and comes back as a suggestion instead.
+#
+# All of it runs off ONE query, held in a `CategoryIndex`. That matters
+# because the callers are loops: bulk-import-from-scan resolves a path
+# and a slug for up to 50 parts in one request, and the parts list needs
+# a path per row. Building the index per call made that ~100 full scans
+# of `part_categories`; building it once per request makes it one.
+#
+# Everything walks in Python for the reason `tree.py` gives at length: a
+# category tree is a few hundred rows of two columns, and a dict lookup
+# per level beats a recursive CTE nobody here can review.
+# ---------------------------------------------------------------------------
+
+PATH_SEPARATOR = " / "
+_PATH_SPLIT = "/"
+
+
+@dataclass(frozen=True)
+class CategoryIndex:
+    """One workspace's tree, loaded once and answered from memory.
+
+    `active_children` holds only unarchived rows, because filing a new
+    part into an archived category would be invisible — it is hidden from
+    every picker. `paths` covers EVERY row including archived ones,
+    because a part can still point at one and should keep the schema its
+    category implies rather than silently dropping to the common keys.
+    """
+
+    #: Every row, archived included, by id.
+    rows_by_id: dict[UUID, PartCategory]
+    #: Active rows only, grouped by `parent_id`, in listing order.
+    active_children: dict[UUID | None, list[PartCategory]]
+    #: Every row's ` / `-joined name path.
+    paths: dict[UUID, str]
+
+
+def category_index(db: Session, *, ws_id: UUID) -> CategoryIndex:
+    """Load one workspace's categories and pre-compute both lookups.
+
+    Workspace-scoped like every other read in this domain — the index is
+    the only thing the walks below can see, so a row from another
+    workspace can never be reached (CLAUDE.md: isolation is enforced in
+    code, not the DB).
+    """
+    rows = list(
+        db.execute(
+            select(PartCategory)
+            .where(PartCategory.workspace_id == ws_id)
+            .order_by(
+                PartCategory.sort_order.asc(),
+                PartCategory.name.asc(),
+                PartCategory.id.asc(),
+            )
+        ).scalars()
+    )
+    active_children: dict[UUID | None, list[PartCategory]] = {}
+    for row in rows:
+        if row.archived_at is None:
+            active_children.setdefault(row.parent_id, []).append(row)
+    # `tree.py::tree_paths` already knows how to turn an adjacency list
+    # into per-row path names — the KiCad category document is built from
+    # it (#921). Reused rather than re-walked so the two consumers cannot
+    # disagree about what "Capacitors / Ceramic" means.
+    paths = {row.id: path for row, path in tree_paths(rows, separator=PATH_SEPARATOR)}
+    return CategoryIndex(
+        rows_by_id={row.id: row for row in rows},
+        active_children=active_children,
+        paths=paths,
+    )
+
+
+def _index(db: Session, ws_id: UUID, index: CategoryIndex | None) -> CategoryIndex:
+    return index if index is not None else category_index(db, ws_id=ws_id)
+
+
+def split_category_path(path: str | None) -> list[str]:
+    """`"Capacitors / Ceramic"` -> `["Capacitors", "Ceramic"]`; junk -> `[]`."""
+    if not path:
+        return []
+    return [segment.strip() for segment in path.split(_PATH_SPLIT) if segment.strip()]
+
+
+def resolve_category_path(
+    db: Session,
+    *,
+    ws_id: UUID,
+    path: str | None,
+    index: CategoryIndex | None = None,
+) -> PartCategory | None:
+    """The active category one name path names, or ``None``.
+
+    Each segment is matched case-insensitively against the *children of
+    the previous segment*, so "Capacitors / Ceramic" does not match a
+    root-level "Ceramic" — the path is a claim about the shape of the
+    tree, not a name search. Archived rows never match.
+
+    Case-insensitive uniqueness is deliberately not enforced on
+    `part_categories` (see `models.py`), so two siblings can differ only
+    in case. An exact-case match wins; otherwise the first in
+    `(sort_order, name, id)` order does, which is the order every other
+    category listing uses.
+    """
+    segments = split_category_path(path)
+    if not segments:
+        return None
+    return _walk(_index(db, ws_id, index).active_children, segments)
+
+
+def resolve_category_path_or_root(
+    db: Session,
+    *,
+    ws_id: UUID,
+    path: str | None,
+    index: CategoryIndex | None = None,
+) -> PartCategory | None:
+    """`resolve_category_path`, falling back to the path's first segment.
+
+    The sub-category seed (A6) has not run anywhere, so
+    "Capacitors / Ceramic" exists on no workspace yet while "Capacitors"
+    exists on most. Filing the part one level up is strictly better than
+    leaving it uncategorized — the root still carries a KiCad refdes
+    prefix and still groups the part. Returns ``None`` when even the root
+    is absent.
+    """
+    segments = split_category_path(path)
+    if not segments:
+        return None
+    children = _index(db, ws_id, index).active_children
+    return _walk(children, segments) or (
+        _walk(children, segments[:1]) if len(segments) > 1 else None
+    )
+
+
+def category_name_path(
+    db: Session,
+    *,
+    ws_id: UUID,
+    category_id: UUID | None,
+    index: CategoryIndex | None = None,
+) -> str | None:
+    """The reverse: a category id -> `"Capacitors / Ceramic"`.
+
+    Feeds `spec_schema.category_slug_for`, which is how a part's category
+    picks its spec schema. ``None`` for an unknown id and for an id in
+    another workspace.
+    """
+    if category_id is None:
+        return None
+    return _index(db, ws_id, index).paths.get(category_id)
+
+
+def category_name_paths(
+    db: Session,
+    *,
+    ws_id: UUID,
+    category_ids: Iterable[UUID | None],
+    index: CategoryIndex | None = None,
+) -> dict[UUID, str]:
+    """`category_name_path` for a whole page, off one query.
+
+    Ids that name nothing in this workspace are simply absent from the
+    result.
+    """
+    wanted = {cid for cid in category_ids if cid is not None}
+    if not wanted:
+        return {}
+    paths = _index(db, ws_id, index).paths
+    return {cid: paths[cid] for cid in wanted if cid in paths}
+
+
+def _walk(
+    children: dict[UUID | None, list[PartCategory]], segments: list[str]
+) -> PartCategory | None:
+    parent_id: UUID | None = None
+    node: PartCategory | None = None
+    for segment in segments:
+        node = _match(children.get(parent_id, ()), segment)
+        if node is None:
+            return None
+        parent_id = node.id
+    return node
+
+
+def _match(siblings, segment: str) -> PartCategory | None:
+    wanted = segment.casefold()
+    fallback: PartCategory | None = None
+    for row in siblings:
+        if row.name == segment:
+            return row
+        if fallback is None and row.name.casefold() == wanted:
+            fallback = row
+    return fallback

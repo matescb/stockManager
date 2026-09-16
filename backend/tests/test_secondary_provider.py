@@ -6,6 +6,14 @@ exactly as it found them. Before the namespace scoping in
 `parts_assets._reconcile_provider_fields`, the primary's "delete every
 source='provider' row not in my payload" pass ate the secondary's rows
 on every DigiKey refresh.
+
+A3 (ADR-0034) narrowed the namespace rule deliberately: both tiers now
+write the same un-namespaced CANONICAL keys (`resistance`), because
+"load the specs from DigiKey and Mouser" is meaningless while a
+secondary's parametric data sits under a prefix nothing reads. For those
+rows the prefix no longer identifies the writer, so ownership moved to
+`custom_fields.provider`. Catalog and optional keys keep the prefix rule
+exactly as it was. The tests below pin both halves in both directions.
 """
 from __future__ import annotations
 
@@ -380,13 +388,15 @@ def test_secondary_refresh_writes_namespaced_fields_and_a_link(authed, monkeypat
     assert body["link"]["last_refresh_at"] is not None
 
     rows = _fields(authed, part_id)
-    assert rows["mouser:Resistance"]["value"] == "0 Ohms"
-    assert rows["mouser:Resistance"]["source"] == "provider"
     assert rows["mouser:source_url"]["value"] == "https://www.mouser.com/p/1"
     assert rows["mouser:datasheet_url"]["value"] == "https://example.com/mouser-ds.pdf"
     assert rows["mouser:category"]["value"] == "Resistors"
-    # Un-namespaced keys belong to the primary — a secondary writes none.
-    assert "Resistance" not in rows
+    # Canonical specs are shared and un-namespaced, stamped with the writer.
+    assert rows["resistance"]["value"] == "0 Ω"
+    assert rows["resistance"]["source"] == "provider"
+    assert rows["resistance"]["provider"] == "mouser"
+    assert "mouser:Resistance" not in rows
+    # Un-namespaced CATALOG keys still belong to the primary alone.
     assert "source_url" not in rows
 
 
@@ -459,8 +469,9 @@ def test_refresh_naming_the_primary_explicitly_runs_the_primary_flow(authed, mon
     assert r.status_code == 200, r.text
     assert r.json()["data"]["part"]["manufacturer"] == "DIGIKEY-MFR"
     rows = _fields(authed, part_id)
-    assert "Resistance" in rows
-    assert "digikey:Resistance" not in rows
+    # Bare catalog/asset keys, not `digikey:`-prefixed ones.
+    assert "source_url" in rows
+    assert not [k for k in rows if k.startswith("digikey:")]
 
 
 def test_primary_refresh_records_a_link_row(authed, monkeypatch):
@@ -501,10 +512,14 @@ def test_primary_refresh_keeps_every_secondary_row(authed, monkeypatch):
 
     after = _fields(authed, part_id)
     assert mouser_keys <= set(after)
-    assert after["mouser:Resistance"]["value"] == "0 Ohms"
-    # ...and the primary still wrote its own un-namespaced rows.
-    assert after["Resistance"]["value"] == "0 Ohms"
-    assert after["Package / Case"]["value"] == "0402"
+    assert after["mouser:source_url"]["value"] == "https://www.mouser.com/p/1"
+    # The canonical row Mouser wrote and DigiKey did not answer survives,
+    # still attributed to Mouser.
+    assert after["tolerance"]["provider"] == "mouser"
+    # ...and the primary still wrote its own rows.
+    assert after["resistance"]["value"] == "0 Ω"
+    assert after["resistance"]["provider"] == "digikey"
+    assert after["package"]["value"] == "0402"
 
 
 def test_secondary_refresh_keeps_every_primary_row(authed, monkeypatch):
@@ -531,8 +546,8 @@ def test_secondary_refresh_keeps_every_primary_row(authed, monkeypatch):
 
 
 def test_a_secondary_refresh_prunes_only_its_own_stale_rows(authed, monkeypatch):
-    """Second Mouser payload drops `Tolerance`; that row goes, and nothing
-    outside `mouser:` moves."""
+    """Second Mouser payload drops `Tolerance`; the row Mouser owns goes,
+    and nothing DigiKey owns moves."""
     _enable_digikey_primary(authed)
     _configure_mouser_secondary(authed)
     part_id = _create_part(authed)
@@ -541,7 +556,7 @@ def test_a_secondary_refresh_prunes_only_its_own_stale_rows(authed, monkeypatch)
     authed.post(f"/api/parts/{part_id}/refresh-from-provider")
     _stub_mouser(monkeypatch)
     authed.post(f"/api/parts/{part_id}/refresh-from-provider?provider=mouser")
-    assert "mouser:Tolerance" in _fields(authed, part_id)
+    assert _fields(authed, part_id)["tolerance"]["provider"] == "mouser"
 
     slimmer = dict(_MOUSER_PART)
     slimmer["ProductAttributes"] = [
@@ -552,9 +567,12 @@ def test_a_secondary_refresh_prunes_only_its_own_stale_rows(authed, monkeypatch)
     assert r.json()["data"]["summary"]["removed"] == 1
 
     after = _fields(authed, part_id)
-    assert "mouser:Tolerance" not in after
-    assert after["mouser:Resistance"]["value"] == "1 Ohm"
-    assert after["Package / Case"]["value"] == "0402"
+    assert "tolerance" not in after
+    # DigiKey outranks Mouser, so the shared key keeps DigiKey's value
+    # even though Mouser just sent a different one.
+    assert after["resistance"]["value"] == "0 Ω"
+    assert after["resistance"]["provider"] == "digikey"
+    assert after["package"]["value"] == "0402"
 
 
 def test_secondary_refresh_leaves_a_manual_row_in_its_namespace_alone(authed, monkeypatch):
@@ -606,7 +624,7 @@ def test_an_overlong_upstream_key_is_skipped_not_a_500(authed, monkeypatch):
     rows = _fields(authed, part_id)
     assert f"mouser:{too_long}" not in rows
     assert rows[f"mouser:{just_fits}"]["value"] == "kept"
-    assert rows["mouser:Resistance"]["value"] == "0 Ohms"
+    assert rows["resistance"]["value"] == "0 Ω"
 
 
 def test_the_primary_path_reports_no_skips(authed, monkeypatch):
@@ -639,6 +657,50 @@ def test_a_colon_in_an_upstream_key_is_not_a_provider_namespace(authed, monkeypa
     assert _fields(authed, part_id)["Vref:max"]["value"] == "3.3 V"
 
 
+def test_a_canonical_row_is_owned_by_its_provider_column_not_its_prefix(
+    authed, monkeypatch
+):
+    """The A3 half of ADR-0031's contract, from the primary's side.
+
+    `resistance` is un-namespaced, so the prefix rule would hand it to
+    whoever is primary and the delete pass would drop it the moment
+    DigiKey's payload did not contain it. `custom_fields.provider` is
+    what stops that."""
+    _enable_digikey_primary(authed)
+    _configure_mouser_secondary(authed)
+    part_id = _create_part(authed)
+
+    _stub_mouser(monkeypatch)
+    authed.post(f"/api/parts/{part_id}/refresh-from-provider?provider=mouser")
+    assert _fields(authed, part_id)["tolerance"]["provider"] == "mouser"
+
+    # A DigiKey payload with no Tolerance at all.
+    _stub_digikey(monkeypatch)
+    r = authed.post(f"/api/parts/{part_id}/refresh-from-provider")
+    assert r.json()["data"]["summary"]["removed"] == 0
+    assert _fields(authed, part_id)["tolerance"]["provider"] == "mouser"
+
+
+def test_a_secondary_cannot_delete_the_primarys_canonical_row(authed, monkeypatch):
+    """The mirror image. A Mouser payload that stops mentioning a key
+    DigiKey owns must leave it alone — it is not Mouser's to prune."""
+    _enable_digikey_primary(authed)
+    _configure_mouser_secondary(authed)
+    part_id = _create_part(authed)
+
+    _stub_digikey(monkeypatch)
+    authed.post(f"/api/parts/{part_id}/refresh-from-provider")
+    assert _fields(authed, part_id)["package"]["provider"] == "digikey"
+
+    bare = dict(_MOUSER_PART)
+    bare["Description"] = "Mouser description"
+    bare["ProductAttributes"] = []
+    _stub_mouser(monkeypatch, bare)
+    r = authed.post(f"/api/parts/{part_id}/refresh-from-provider?provider=mouser")
+    assert r.json()["data"]["summary"]["removed"] == 0
+    assert _fields(authed, part_id)["package"]["provider"] == "digikey"
+
+
 # ---------------------------------------------------------------------------
 # DELETE /api/parts/{id}/provider-links/{provider}
 # ---------------------------------------------------------------------------
@@ -662,8 +724,11 @@ def test_unlink_secondary_drops_its_link_and_fields_only(authed, monkeypatch):
 
     after = _fields(authed, part_id)
     assert not [k for k in after if k.startswith("mouser:")]
-    # Primary untouched.
-    assert after["Resistance"]["value"] == "0 Ohms"
+    # The canonical row Mouser wrote goes with it...
+    assert "tolerance" not in after
+    # ...and the one DigiKey owns does not, prefix or no prefix.
+    assert after["resistance"]["value"] == "0 Ω"
+    assert after["resistance"]["provider"] == "digikey"
     detail = authed.get(f"/api/parts/{part_id}").json()["data"]
     assert detail["linked_provider"] == "digikey"
     assert [link["provider"] for link in detail["provider_links"]] == ["digikey"]
@@ -685,16 +750,16 @@ def test_unlink_secondary_demotes_overrides_to_manual(authed, monkeypatch):
         json={
             "object_type": "part",
             "object_id": part_id,
-            "key": "mouser:Resistance",
+            "key": "mouser:category",
             "value": "my value",
         },
     )
     assert r.status_code in (200, 201), r.text
-    assert _fields(authed, part_id)["mouser:Resistance"]["source"] == "override"
+    assert _fields(authed, part_id)["mouser:category"]["source"] == "override"
 
     authed.delete(f"/api/parts/{part_id}/provider-links/mouser")
 
-    row = _fields(authed, part_id)["mouser:Resistance"]
+    row = _fields(authed, part_id)["mouser:category"]
     assert row["source"] == "manual"
     assert row["value"] == "my value"
     assert row["original_value"] is None
@@ -710,7 +775,7 @@ def test_unlink_refuses_the_primary_provider(authed, monkeypatch):
     assert r.status_code == 400, r.text
     assert r.json()["code"] == "part.provider_link_is_primary"
     # Nothing was removed.
-    assert "Resistance" in _fields(authed, part_id)
+    assert "resistance" in _fields(authed, part_id)
 
 
 def test_unlink_works_after_the_workspace_primary_moves_away(authed, monkeypatch):
@@ -907,3 +972,124 @@ def test_credential_rotation_audit_row_names_the_provider_not_the_secret(authed,
     assert row is not None
     assert row.comment == "provider=mouser,fields=api_key"
     assert "secret-never-logged" not in (row.comment or "")
+
+
+def test_a_secondary_may_fill_a_null_category_and_nothing_else(authed, monkeypatch):
+    """The single exception to "a secondary writes no part column" (A4).
+
+    Filling a category nobody chose is not a claim on the part's identity,
+    and a Mouser-only part would otherwise stay uncategorized forever.
+    """
+    _enable_digikey_primary(authed)
+    _configure_mouser_secondary(authed)
+    category_id = authed.post("/api/categories", json={"name": "Resistors"}).json()[
+        "data"
+    ]["id"]
+    part_id = _create_part(authed)
+    _stub_mouser(monkeypatch)
+
+    authed.post(f"/api/parts/{part_id}/refresh-from-provider?provider=mouser")
+
+    part = authed.get(f"/api/parts/{part_id}").json()["data"]
+    assert part["category_id"] == category_id
+    # ...and still not one identity column.
+    assert part["manufacturer"] is None
+    assert part["linked_provider"] is None
+    assert part["last_refresh_at"] is None
+
+
+def test_a_secondary_never_overrules_a_category_already_set(authed, monkeypatch):
+    _enable_digikey_primary(authed)
+    _configure_mouser_secondary(authed)
+    authed.post("/api/categories", json={"name": "Resistors"})
+    mine = authed.post("/api/categories", json={"name": "Bias network"}).json()["data"][
+        "id"
+    ]
+    r = authed.post(
+        "/api/parts",
+        json={"name": "R", "part_type": "linked", "mpn": MPN, "category_id": mine},
+    )
+    assert r.status_code in (200, 201), r.text
+    part_id = r.json()["data"]["id"]
+    _stub_mouser(monkeypatch)
+
+    authed.post(f"/api/parts/{part_id}/refresh-from-provider?provider=mouser")
+
+    assert authed.get(f"/api/parts/{part_id}").json()["data"]["category_id"] == mine
+
+
+def test_unlinking_a_demoted_primary_keeps_the_parts_image_and_datasheet(
+    authed, monkeypatch, db
+):
+    """HIGH-2. `image_url` / `datasheet_url` / catalog keys are BARE, and
+    a bare key belongs to whoever is primary NOW — not to the provider
+    stamped on it. DigiKey writes them as primary, an admin switches the
+    primary to Mouser, and DigiKey becomes an ordinary secondary. Its
+    unlink must take its `digikey:` namespace and its canonical rows, and
+    nothing else: those two keys are what the part's media card renders.
+    """
+    _enable_digikey_primary(authed)
+    part_id = _create_part(authed)
+    _stub_digikey(monkeypatch)
+    authed.post(f"/api/parts/{part_id}/refresh-from-provider")
+    before = _fields(authed, part_id)
+    assert before["image_url"]["provider"] == "digikey"
+    assert before["resistance"]["provider"] == "digikey"
+
+    # The admin switches the workspace primary. DigiKey is a secondary now.
+    r = authed.patch(
+        "/api/workspaces/current",
+        json={"parts_provider": "mouser", "parts_provider_api_key": "fake-key"},
+    )
+    assert r.status_code == 200, r.text
+    authed.put(
+        "/api/workspaces/current/provider-credentials",
+        json={"provider": "digikey", "api_key": "id", "api_secret": "secret"},
+    )
+
+    r = authed.delete(f"/api/parts/{part_id}/provider-links/digikey")
+    assert r.status_code == 200, r.text
+
+    after = _fields(authed, part_id)
+    assert after["image_url"]["value"] == "https://example.com/dk.jpg"
+    assert after["datasheet_url"]["value"] == "https://example.com/dk-ds.pdf"
+    assert after["source_url"]["value"] == "https://www.digikey.com/p/1"
+    # The canonical row IS DigiKey's, wherever the primary sits now.
+    assert "resistance" not in after
+
+
+def test_a_secondary_does_not_delete_an_unstamped_canonical_row(
+    authed, monkeypatch, db
+):
+    """MEDIUM-2. Until the A5 backfill runs, a canonical row can exist
+    with a NULL `provider`. Writing to one is allowed — somebody has to
+    claim the 9,377 rows that predate the column — but DELETING on that
+    reading lets a secondary take the primary's un-backfilled rows."""
+    import uuid as _uuid
+
+    from app.domain.custom_fields.models import CustomField
+
+    _enable_digikey_primary(authed)
+    _configure_mouser_secondary(authed)
+    part_id = _create_part(authed)
+    ws_id = _uuid.UUID(authed.get("/api/workspaces/current").json()["data"]["id"])
+    db.add(
+        CustomField(
+            workspace_id=ws_id,
+            object_type="part",
+            object_id=_uuid.UUID(part_id),
+            key="capacitance",
+            value="100 nF",
+            source="provider",
+        )
+    )
+    db.flush()
+
+    # A Mouser payload that says nothing about capacitance.
+    _stub_mouser(monkeypatch)
+    r = authed.post(f"/api/parts/{part_id}/refresh-from-provider?provider=mouser")
+    assert r.status_code == 200, r.text
+
+    rows = _fields(authed, part_id)
+    assert rows["capacitance"]["value"] == "100 nF"
+    assert rows["capacitance"]["provider"] is None

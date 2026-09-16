@@ -58,12 +58,69 @@ It writes **no part column at all**.
 `provider_fields.py::provider_owns_custom_field_key(provider, key, is_primary)`
 is the whole rule: the primary owns every key that is not namespaced, a secondary
 owns exactly its own prefix. The two sets are disjoint by construction, so the
-delete pass physically cannot see another provider's rows. The refresh route
-(`api/routes/parts_refresh.py`) passes it as the `owns_key` argument to
-`_reconcile_provider_fields`; there is no second place the boundary is expressed.
+delete pass physically cannot see another provider's rows.
 
 Only names in `KNOWN_PROVIDER_NAMES` count as a namespace, so an upstream spec
 genuinely called `Vref:max` stays the primary's.
+
+### Amendment (A3, 2026-09-16): canonical spec keys are shared
+
+[ADR-0034](0034-spec-schema.md) introduced a per-category canonical spec schema,
+and with it one deliberate hole in the rule above: **both tiers write the same
+un-namespaced canonical key.** A secondary writes `resistance`, not
+`mouser:Resistance`.
+
+That is not a relaxation for convenience — it is the point of having a second
+provider at all. "Load the specs from DigiKey and Mouser" is meaningless while a
+secondary's parametric data sits under a prefix that `providerCatalog.ts` routes
+to the Sourcing tab and the Specs tab never reads. Namespacing catalog data was
+always right, because price and stock ARE per-distributor; namespacing a
+resistance is not, because a resistor has one.
+
+So DELETING is now decided per ROW, by
+`provider_fields.py::provider_wrote_custom_field_row(provider, row, is_primary)`
+— one predicate, asked by both operations that remove data (the reconcile's
+delete pass and unlink):
+
+- for a **canonical** key — `custom_fields.provider` (alembic 0081), strictly.
+  The row is yours only if you are stamped on it. An unstamped canonical row is
+  nobody's: `provider` is NULL on every row predating the column and on the
+  9,377 prod rows the backfill (A5) has not re-keyed, and a secondary acting on
+  "nobody recorded who wrote this, so it must be mine" would hard-delete the
+  primary's un-backfilled rows.
+- for **every other** key — the namespace rule above, unchanged. Applying
+  provenance here too would be worse, not better, in two ways: a workspace that
+  switched primary could never prune the old primary's bare rows, and
+  `DELETE /provider-links/{demoted-primary}` would take the part's bare
+  `image_url` and `datasheet_url` with it — keys that belong to whoever is
+  primary *now*.
+
+WRITING is the looser rule, and deliberately so: `spec_schema.provider_outranks`
+treats a NULL `provider` as claimable, which is how the first provider to answer
+a canonical key takes ownership of it and how the un-backfilled rows get a
+writer at all. A contested key goes to the higher `PROVIDER_PRECEDENCE`
+(`digikey` > `mouser` > unranked), not to who refreshed last. An ARCHIVED
+canonical row is unowned for this purpose whatever its stamp says — it holds no
+answer, and `uq_cf_unique` has no room for a second row beside it, so letting
+the stamp win would lock every weaker provider out of that key permanently.
+
+`spec_reconcile.py::reconcile_provider_specs` is where all of it is applied, for
+the create path and the refresh path alike; the refresh route no longer has a
+reconciler of its own.
+
+The primary still owns the part columns and `parts.linked_*`, and a secondary
+still writes only `"{provider}:"`-prefixed keys — EXCEPT canonical spec keys,
+above, and one part column. A secondary may now fill a **NULL** `category_id`
+(A4 files an uncategorized part from the provider's own taxonomy). That is the
+single exception to "a secondary writes no part column", and it is narrow on
+purpose — filling a category nobody chose is not a claim on the part's identity,
+and a Mouser-only part would otherwise stay uncategorized forever. Overruling a
+category that is already set never happens, from either tier.
+
+`tests/test_secondary_provider.py` pins all of it in both directions, including
+the two new cases that matter most: a primary refresh must not delete a
+canonical row the secondary owns, and a secondary refresh must not delete one
+the primary owns.
 
 **The two credential stores stay separate, and each provider is in exactly
 one of them.** The primary's key lives in the legacy
@@ -103,17 +160,24 @@ unremovable, with no route able to touch it.
 
 ## Consequences
 
-- Refreshing either provider is now safe in any order. `tests/test_secondary_provider.py`
-  pins both directions; those two tests are the reason this ADR exists, and they
-  should not be deleted without replacing the guarantee.
+- Refreshing either provider is now safe in any order, for namespaced rows by
+  construction and for canonical rows by provenance plus precedence.
+  `tests/test_secondary_provider.py` pins both directions; those tests are the
+  reason this ADR exists, and they should not be deleted without replacing the
+  guarantee.
 - A part can be linked to a secondary without a primary at all. The Sourcing tab
   therefore keys off `linked_provider || provider_links.length`, not
   `linked_provider` alone.
 - Namespaced keys are catalog data by definition, so `providerCatalog.ts` routes
-  them to the Sourcing tab and keeps them out of the user's Specs tab.
+  them to the Sourcing tab and keeps them out of the user's Specs tab. Since A3
+  that is also true the other way round: anything a secondary contributes to the
+  Specs tab arrives as a canonical key, never as a prefixed one.
 - Secondary refreshes do not download assets. The primary already owns the part's
   image and datasheet; a second content-addressed copy would cost a request per
   refresh to produce a field nothing renders. The upstream URL is stored as-is.
+- A secondary can fill a NULL `category_id` and nothing else on the part. Every
+  other column, and any category already chosen, remains the primary's / the
+  user's.
 - The legacy `workspaces.parts_provider_api_*` columns stay. Dropping them would
   be a destructive migration straight to prod (no staging) for no functional gain,
   and they remain the primary's only store.
@@ -126,7 +190,10 @@ unremovable, with no route able to touch it.
 - **Adding a provider** means exactly five edits, and nothing about the
   reconciliation changes:
   1. a branch in `providers/base.py::make_provider` (plus the client module);
-  2. a name in `provider_fields.py::KNOWN_PROVIDER_NAMES`;
+  2. a name in `provider_fields.py::KNOWN_PROVIDER_NAMES`, and a decision about
+     where it sits in `spec_schema.PROVIDER_PRECEDENCE` (leaving it out ranks it
+     last, which is the safe default — it can fill an empty canonical key and
+     replace its own rows, and can never overwrite DigiKey's or Mouser's);
   3. the `Literal` in `ProviderCredentialsIn` and `WorkspacePatch`
      (`domain/workspaces/schemas.py`);
   4. an entry in `web/src/lib/providers.ts::PROVIDERS` — the frontend's single
@@ -137,6 +204,8 @@ unremovable, with no route able to touch it.
 
 ## See also
 
+- [ADR-0034](0034-spec-schema.md) — the canonical spec schema, and why canonical
+  keys are shared across tiers.
 - [ADR-0025](0025-universal-audit-log-policy.md) — the audit row this feature's
   mutations join.
 - [ADR-0029](0029-api-tokens-and-csrf-exemption.md) — why the credentials route is

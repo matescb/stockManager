@@ -47,12 +47,21 @@ def _serialize(r: CustomField) -> dict:
 
 @router.get("/by-object/{object_type}/{object_id}")
 def list_for(object_type: str, object_id: UUID, db: DbSession, ws: CurrentWorkspace):
+    """Active rows only.
+
+    `archived_at` was inert on this table until the spec reconcile (A3)
+    started retiring junk provider rows with it — customs codes and `-`
+    placeholders that were never specs. Without this predicate archiving
+    them would hide nothing and the Specs tab would still read like a
+    customs declaration.
+    """
     rows = list(
         db.execute(
             select(CustomField)
             .where(CustomField.workspace_id == ws.id)
             .where(CustomField.object_type == object_type)
             .where(CustomField.object_id == object_id)
+            .where(CustomField.archived_at.is_(None))
             .order_by(CustomField.key)
         ).scalars()
     )
@@ -110,6 +119,11 @@ def create_or_update(
     new_value = payload.value
     if existing:
         original_source = existing.source
+        # `uq_cf_unique` does not exclude archived rows, so a key the
+        # reconcile retired still occupies its slot. Typing it back is a
+        # deliberate act by the user: restore the row rather than update
+        # something the list endpoint will never show them again.
+        existing.archived_at = None
         if existing.source == "provider" and new_value != existing.value:
             # User just edited a provider-supplied row. Promote it to an
             # override and remember what came from upstream.

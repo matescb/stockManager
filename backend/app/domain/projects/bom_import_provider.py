@@ -266,6 +266,10 @@ def _create_or_link(
         return True
 
     mpn = _entry_mpn(entry)
+    # The per-row `category_suggestion` is dropped here on purpose: this
+    # response counts created / linked / pending rows for a whole BOM, and
+    # a per-part suggestion has nowhere to land in that shape. The part
+    # still reports it on its own detail response.
     part = create_from_provider_lookup(
         db,
         workspace_id=workspace_id,
@@ -273,7 +277,7 @@ def _create_or_link(
         provider_name=provider_name,
         mpn=mpn,
         lookup_result=lookup_result,
-    )
+    ).part
     entry.part_id = part.id
     entry.entry_type = "part"
     entry.updated_by = user_id
