@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -19,9 +19,28 @@ from app.core.advisory_locks import RUN_JOB_LOCK_CLASSID
 logger = logging.getLogger(__name__)
 
 SessionFactory = Callable[[], Session]
-JobCallable = Callable[[Session], int]
+JobCallable = Callable[..., int]
 HEARTBEAT_DIR = Path("/tmp/stockmanager-job-heartbeats")
 HEARTBEAT_MAX_AGE_SECONDS = 90 * 60
+
+
+@dataclass(frozen=True)
+class JobOptions:
+    """The flags an operator-run job accepts.
+
+    Only jobs that set `JobSpec.takes_options` receive one; the
+    scheduled sidecar jobs take no arguments at all and their signature
+    stays `run(db)`.
+
+    `apply` is False by default and that is the whole point: these jobs
+    change data nobody asked them to change on a timer, so the operator
+    reads a report first. `run_job` rolls the transaction back after a
+    dry run, so "the job forgot to check the flag" is not a way to write
+    to production.
+    """
+
+    apply: bool = False
+    workspace_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -34,6 +53,10 @@ class JobSpec:
     idempotency: str
     run: JobCallable
     interval_setting: str | None = None
+    #: Whether `run` takes a second `JobOptions` argument, i.e. whether
+    #: this job is operator-run (`--apply` / `--workspace`) rather than
+    #: scheduled.
+    takes_options: bool = False
 
 
 class UnknownJobError(ValueError):
@@ -97,6 +120,22 @@ def _run_datasheet_backfill(db: Session) -> int:
     from app.domain.parts.services.datasheets import backfill_missing_datasheets
 
     return backfill_missing_datasheets(db)
+
+
+def _run_category_seed(db: Session, options: JobOptions) -> int:
+    from app.domain.categories.seed import run_category_seed
+
+    return run_category_seed(
+        db, apply=options.apply, workspace_id=options.workspace_id
+    )
+
+
+def _run_symbol_collapse(db: Session, options: JobOptions) -> int:
+    from app.domain.eda.symbol_collapse import run_symbol_collapse
+
+    return run_symbol_collapse(
+        db, apply=options.apply, workspace_id=options.workspace_id
+    )
 
 
 def _printing_is_configured() -> bool:
@@ -193,6 +232,33 @@ JOBS: dict[str, JobSpec] = {
         run=_run_datasheet_backfill,
         interval_setting="DATASHEET_BACKFILL_INTERVAL_SECONDS",
     ),
+    "category-seed": JobSpec(
+        name="category-seed",
+        owner="backend/categories",
+        cadence="manual (operator-run)",
+        idempotency=(
+            "Creates only categories the workspace is missing, matched by "
+            "name under the expected parent, and fills a KiCad metadata "
+            "field only where it is still unset. Never renames, re-parents "
+            "or overwrites. A second run creates nothing. Writes nothing at "
+            "all without --apply."
+        ),
+        run=_run_category_seed,
+        takes_options=True,
+    ),
+    "symbol-collapse": JobSpec(
+        name="symbol-collapse",
+        owner="backend/eda",
+        cadence="manual (operator-run)",
+        idempotency=(
+            "Clears part_eda.symbol_id only where the symbol came from a "
+            "vendor zip and the part's category has a default_symbol_ref to "
+            "fall back to. A cleared row no longer matches, so a second run "
+            "finds nothing. Writes nothing at all without --apply."
+        ),
+        run=_run_symbol_collapse,
+        takes_options=True,
+    ),
     "print-job-reconcile": JobSpec(
         name="print-job-reconcile",
         owner="backend/printing",
@@ -285,10 +351,24 @@ def run_job(
     jobs: Mapping[str, JobSpec] = JOBS,
     session_factory: SessionFactory = _default_session_factory,
     heartbeat_dir: Path = HEARTBEAT_DIR,
+    options: JobOptions | None = None,
 ) -> int:
-    """Run one registered job and return the job's affected-row count."""
+    """Run one registered job and return the job's affected-row count.
+
+    `options` is accepted only by jobs that declare `takes_options`;
+    passing it to a scheduled job is a `JobConfigError` rather than a
+    silently ignored flag, so `--apply` can never look like it worked.
+
+    A dry run ends in ROLLBACK, not COMMIT. The jobs plan without
+    writing, so this is the second of two independent guards — the one
+    that holds even if a job forgets to check the flag.
+    """
     job = _get_job(job_name, jobs)
     _job_interval_seconds(job)
+    if options is not None and not job.takes_options:
+        raise JobConfigError(f"job {job.name!r} takes no --apply / --workspace options")
+    if options is None and job.takes_options:
+        options = JobOptions()
 
     db = session_factory()
     try:
@@ -297,8 +377,12 @@ def run_job(
             _write_heartbeat(job.name, heartbeat_dir=heartbeat_dir)
             logger.info("job=%s status=skipped reason=lock_denied", job.name)
             return 0
-        affected = job.run(db)
-        db.commit()
+        affected = job.run(db, options) if job.takes_options else job.run(db)
+        if options is not None and not options.apply:
+            db.rollback()
+            logger.info("job=%s status=dry_run would_affect=%s", job.name, affected)
+        else:
+            db.commit()
     except Exception:
         db.rollback()
         logger.exception("job=%s status=error", job.name)
@@ -358,6 +442,26 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help="Maximum heartbeat age accepted by heartbeat checks.",
     )
+    run_mode = parser.add_mutually_exclusive_group()
+    run_mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Report what an operator-run job would change and write nothing. "
+            "This is the default; the flag exists to be explicit in a runbook."
+        ),
+    )
+    run_mode.add_argument(
+        "--apply",
+        action="store_true",
+        help="Commit the changes an operator-run job reports. Default is a dry run.",
+    )
+    parser.add_argument(
+        "--workspace",
+        metavar="UUID",
+        default=None,
+        help="Limit an operator-run job to one workspace. Default is all of them.",
+    )
     return parser
 
 
@@ -373,7 +477,37 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         )
     if args.heartbeat_max_age_seconds is None:
         args.heartbeat_max_age_seconds = HEARTBEAT_MAX_AGE_SECONDS
+    if args.workspace is not None:
+        try:
+            args.workspace = UUID(args.workspace)
+        except ValueError:
+            parser.error(f"--workspace is not a UUID: {args.workspace}")
+    # The probes answer a question about a job's configuration and never
+    # run it, so an --apply next to one would be silently discarded —
+    # the exact failure mode `run_job` refuses for scheduled jobs.
+    if (args.apply or args.dry_run or args.workspace is not None) and (
+        args.print_interval or args.check_heartbeat or args.check_all_heartbeats
+    ):
+        parser.error(
+            "--dry-run / --apply / --workspace cannot be combined with "
+            "--print-interval or a heartbeat check"
+        )
     return args
+
+
+def _options_for(
+    job_name: str, args: argparse.Namespace, jobs: Mapping[str, JobSpec]
+) -> JobOptions | None:
+    """`JobOptions` for an operator-run job, or None for a scheduled one.
+
+    A scheduled job that was handed `--apply` or `--workspace` gets the
+    options object anyway, so `run_job` refuses it by name instead of
+    dropping the flag on the floor.
+    """
+    asked = args.apply or args.dry_run or args.workspace is not None
+    if not asked and not _get_job(job_name, jobs).takes_options:
+        return None
+    return JobOptions(apply=args.apply, workspace_id=args.workspace)
 
 
 def main(
@@ -429,6 +563,7 @@ def main(
             jobs=jobs,
             session_factory=session_factory,
             heartbeat_dir=heartbeat_dir,
+            options=_options_for(args.job_name, args, jobs),
         )
     except (UnknownJobError, JobConfigError) as exc:
         print(str(exc), file=sys.stderr)
