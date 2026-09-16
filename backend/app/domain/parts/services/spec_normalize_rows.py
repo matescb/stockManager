@@ -8,10 +8,12 @@ says it belongs. No session, no queries: the caller loads the rows and
 owns the transaction, which is what lets the dry run roll a whole batch
 back.
 
-**Why not `reconcile_provider_specs`.** That function writes an
-*upstream payload* onto a part, and its last pass deletes every row the
-payload did not mention — correct there, catastrophic here, where the
-payload IS the current database state and "absent" means nothing. It
+**Why not `reconcile_provider_specs`. Do not "fix" this by routing the
+backfill through it.** That function writes an *upstream payload* onto a
+part, and its last pass deletes every row the payload did not mention.
+That is correct there and **a data-loss bug here**: the payload IS the
+current database state, so "absent from the payload" describes no row
+and the pass would delete whatever the schema happened not to claim. It
 also re-namespaces a secondary's catalog keys, which on a prod table
 whose 9,377 rows are all un-namespaced would duplicate them rather than
 move them. So this module reuses `normalise()` — the alias table, the

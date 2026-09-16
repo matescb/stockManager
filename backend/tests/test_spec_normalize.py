@@ -32,6 +32,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
 from app.cli.run_job import BackfillOptions, main, run_job
+from app.core.time import utcnow
 from app.core.advisory_locks import SPEC_NORMALIZE_LOCK_CLASSID
 from app.domain.audit.models import AuditLog
 from app.domain.custom_fields.models import CustomField
@@ -718,6 +719,87 @@ def test_a_parsed_number_is_not_degraded_by_re_reading_its_own_display(
 
     assert second.changes == 0
     assert _rows_by_key(db, part_id)["power"].value_num == first
+
+
+def test_an_archived_junk_row_stays_archived_across_two_runs(
+    client: TestClient, db, tmp_path: Path
+) -> None:
+    """Archived rows are invisible to every read path, and `_retire`
+    skips them. A backfill that rewrote one in place would put a customs
+    code back on the Specs tab — so a junk key that is already retired
+    must stay retired, on this run and every run after it."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "digikey")
+    category_id = _category(client, "Resistors")
+    part_id = _part(client, db, category_id=category_id, linked_provider="digikey")
+    already = _legacy_row(db, ws_id=ws_id, part_id=part_id, key="ECCN", value="EAR99")
+    already.archived_at = utcnow()
+    _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Resistance", value="10 kOhms")
+    db.commit()
+    retired_at = _rows_by_key(db, part_id)["ECCN"].archived_at
+
+    normalize_specs(db, apply=True, report_path=tmp_path / "first.csv")
+    second = normalize_specs(db, apply=True, report_path=tmp_path / "second.csv")
+
+    assert second.changes == 0
+    eccn = _rows_by_key(db, part_id)["ECCN"]
+    assert eccn.archived_at == retired_at, "not re-retired, and never revived"
+    assert eccn.value == "EAR99"
+    # The run that could have touched it reported nothing about it either.
+    assert not [
+        r
+        for r in _report_rows(tmp_path / "first.csv")
+        if r["key"] == "ECCN" or r["old_key"] == "ECCN"
+    ]
+
+
+def test_an_archived_canonical_row_is_revived_only_by_a_real_value(
+    client: TestClient, db, tmp_path: Path
+) -> None:
+    """The one row the job may un-archive: a canonical key a live vendor
+    spelling now answers. `uq_cf_unique` has no partial predicate, so the
+    archived row owns that key and there is nowhere else for the value to
+    go — and what lands in it is a parsed spec, never junk."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "digikey")
+    category_id = _category(client, "Resistors")
+    part_id = _part(client, db, category_id=category_id, linked_provider="digikey")
+    retired = _legacy_row(
+        db, ws_id=ws_id, part_id=part_id, key="resistance", value="-"
+    )
+    retired.archived_at = utcnow()
+    _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Resistance", value="47 kOhms")
+    db.commit()
+
+    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+
+    resistance = _rows_by_key(db, part_id)["resistance"]
+    assert resistance.archived_at is None
+    assert resistance.value == "47 kΩ"
+    assert resistance.provider == "digikey"
+
+
+def test_a_display_that_rounds_does_not_zero_its_own_sidecar(
+    client: TestClient, db, tmp_path: Path
+) -> None:
+    """`±0.00001%` displays as `0%`. Re-parsing that display on a second
+    run would replace a sidecar of 0.00001 with zero, which is worse than
+    no number at all — the partial index on `value_num` exists so one key
+    sorts as one quantity."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "digikey")
+    category_id = _category(client, "Resistors")
+    part_id = _part(client, db, category_id=category_id, linked_provider="digikey")
+    _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Tolerance", value="±0.00001%")
+    db.commit()
+
+    normalize_specs(db, apply=True, report_path=tmp_path / "first.csv")
+    first = _rows_by_key(db, part_id)["tolerance"].value_num
+    second = normalize_specs(db, apply=True, report_path=tmp_path / "second.csv")
+
+    assert float(first) == 0.00001
+    assert second.changes == 0
+    assert _rows_by_key(db, part_id)["tolerance"].value_num == first
 
 
 def test_a_placeholder_row_a_real_value_fills_is_not_reported_as_dropped(

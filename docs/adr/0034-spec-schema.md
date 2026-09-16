@@ -169,10 +169,11 @@ reconciler of its own. Three decisions landed with it:
   `provider_wrote_custom_field_row` refuses to let anyone DELETE. Three
   decisions it added:
 
-  - **It is not `reconcile_provider_specs`.** That function's last pass
+  - **It is not `reconcile_provider_specs`, and routing it through that
+    function later would be a data-loss bug.** That function's last pass
     deletes every row an upstream payload did not mention. Here the payload IS
-    the current database state, so "absent" means nothing, and the delete pass
-    would be a data-loss bug rather than a correctness one. It also
+    the current database state, so "absent from the payload" describes no row,
+    and the pass would delete whatever the schema happened not to claim. It also
     re-namespaces a secondary's catalog keys, which on a table whose rows are
     all un-namespaced would duplicate them instead of moving them.
     `services/spec_normalize_rows.py` reuses `normalise()` — the alias table,
