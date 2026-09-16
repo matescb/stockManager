@@ -15,6 +15,32 @@ the canonical record.
 
 ## Unreleased
 
+- **The manual now has a page on connecting an AI assistant.**
+  `docs/user/agents.md` ships in `/help` and covers what an assistant can
+  do with a workspace, minting the token, the client config snippet, the
+  read-only versus full-access trade, and the refusals that read as
+  failures but are not — a duplicate part number comes back as the
+  existing part, a part with a mandatory storage location refuses stock
+  anywhere else, and a token cannot leave the workspace it was minted in.
+  The first troubleshooting step for a rejected connection is the
+  `${STOCKMANAGER_TOKEN}` pitfall: many clients send header values
+  verbatim and never expand the variable. Linked from the manual index
+  and from the **Not KiCad — AI agents** card in **Settings → KiCad
+  setup**.
+- **`docs/api/mcp.md` gained Workflows and a required-arguments table.**
+  Four ordered call sequences (author a part from an MPN, add stock, wire
+  CAD data, check a BOM) and one table of every tool's required and
+  optional arguments with the refusals each one actually raises. Two
+  things the page previously left implicit are now stated: there is no
+  provider-lookup tool on this surface, so `create_part` is the first
+  call and not the second; and `get_part_eda` must precede `set_part_eda`,
+  which replaces a whole configuration and writes every omitted argument
+  as its default.
+- **The MCP session `instructions` now brief the model on call order**
+  rather than only on the tool inventory, and name every write tool.
+  `tests/test_mcp.py` pins both — a renamed or added write tool that
+  never reaches the briefing fails the suite — and caps the length, since
+  this string is paid for on every session.
 - **MCP: an assistant can now create a part.** Three write tools —
   `create_part`, `set_part_category`, `set_part_specs` — close the gap
   that made the server read-mostly for anything starting from a

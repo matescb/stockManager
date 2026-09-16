@@ -480,6 +480,36 @@ def test_every_tool_has_an_agent_facing_docstring():
         assert len(doc) > 40, f"{spec.name} has no usable description"
 
 
+def test_instructions_name_every_write_tool():
+    """The session briefing has to cover the whole mutating surface.
+
+    `instructions` is the one thing the model reads before it has called
+    anything, and it is where the ORDER of calls and the refusals that
+    only show up at call time are stated. A write tool missing from it
+    is a tool the model will reach for last, or reach for wrongly —
+    `set_part_eda` replacing a whole configuration is the example that
+    costs data rather than a retry.
+
+    Write tools only. The read tools are safe to discover by listing;
+    calling the wrong one costs a round trip and nothing else.
+    """
+    missing = sorted(
+        name for name in _EXPECTED_WRITE_TOOLS if name not in mcp_server.INSTRUCTIONS
+    )
+    assert missing == [], f"instructions do not mention: {', '.join(missing)}"
+
+
+def test_instructions_stay_briefing_sized():
+    """Paid for on every session, so it is a briefing and not the manual.
+
+    `docs/api/mcp.md` is where the long form lives. The cap is generous
+    enough that a new workflow paragraph fits and tight enough that
+    pasting a doc page in does not.
+    """
+    assert len(mcp_server.INSTRUCTIONS.splitlines()) <= 60
+    assert mcp_server._server.instructions == mcp_server.INSTRUCTIONS
+
+
 async def test_read_only_token_still_sees_every_tool(readonly_token):
     """Discoverability is not the gate. A read-only token lists the write
     tools too, and learns it may not use one only by calling it — the
