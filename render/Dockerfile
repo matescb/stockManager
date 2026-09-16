@@ -14,7 +14,7 @@
 #   curl -s "https://hub.docker.com/v2/repositories/kicad/kicad/tags?page_size=50" \
 #     | python3 -c "import sys,json;[print(t['name'],t['images'][0]['digest']) for t in json.load(sys.stdin)['results']]"
 # Digest pinned on 2026-09-04.
-FROM kicad/kicad:9.0@sha256:e638b79b0321f29395a5b783e94bb9f3c73303e8da15da27b8f5cb4b67a37729
+FROM kicad/kicad:10.0@sha256:182c8005cb775a2c448a4c18681d489f1ff472a761885eba3e08b07e3c0564de
 
 # The stored entries never reach disk beyond a per-request scratch dir, so
 # the only thing to add is the wrapper. Copied root-owned and world-
