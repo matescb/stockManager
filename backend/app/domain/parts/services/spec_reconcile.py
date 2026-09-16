@@ -197,13 +197,14 @@ def apply_provider_category(
 
     part.category_id = category.id
     part.updated_by = user_id
+    # The slug comes from the PATH, not from the row we filed under. When
+    # only the root resolved, the part is filed under "Capacitors" but it
+    # IS a ceramic capacitor, and the ceramic schema is the one that reads
+    # its dielectric. Deriving the slug from the coarser row would throw
+    # that away — and cost a second query to do it.
     return CategoryOutcome(
-        category_id=category.id,
-        assigned=True,
-        suggestion=None,
-        slug=category_slug_for(
-            category_name_path(db, ws_id=ws_id, category_id=category.id)
-        ),
+        category_id=category.id, assigned=True, suggestion=None,
+        slug=category_slug_for(path),
     )
 
 

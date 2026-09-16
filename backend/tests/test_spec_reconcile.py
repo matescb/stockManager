@@ -505,6 +505,11 @@ def test_a_leaf_that_does_not_exist_files_under_the_root(authed, monkeypatch):
 
     body = _refresh(authed, part_id)
     assert body["part"]["category_id"] == root
+    # ...and it still gets the CERAMIC schema. The part is filed under
+    # Capacitors because that is as deep as this tree goes, but it is a
+    # ceramic capacitor, and only the ceramic schema reads `X7R` as a
+    # dielectric. A bare "Capacitors" classifies to nothing on its own.
+    assert _fields(authed, part_id)["dielectric"]["value"] == "X7R"
 
 
 def test_the_category_picks_the_spec_schema(authed, monkeypatch):
