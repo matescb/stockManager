@@ -40,6 +40,7 @@ The single most load-bearing file is `ARCHITECTURE.md`. Don't restate things fro
 | SMTP outage | [`runbooks/smtp-outage.md`](runbooks/smtp-outage.md) |
 | DigiKey / Mouser provider outage | [`runbooks/provider-outage.md`](runbooks/provider-outage.md) |
 | Workspace recovery | [`runbooks/workspace-recovery.md`](runbooks/workspace-recovery.md) |
+| Spec-normalize backfill | [`runbooks/spec-normalize.md`](runbooks/spec-normalize.md) |
 
 ## I'm an end user of Stock Manager
 

@@ -30,6 +30,7 @@ How to handle ops scenarios. Each runbook follows the template in [STYLE.md](../
 | [scan-import-retry](scan-import-retry.md) | SEV-3 | Retry scan-import safely without bypassing idempotency |
 | [workspace-recovery](workspace-recovery.md) | SEV-2 | Restore a disabled workspace, audit a suspected isolation leak |
 | [analytics-umami](analytics-umami.md) | Routine / SEV-3 | Self-hosted Umami: rotate website ID, disable tracking, debug a missing pageview |
+| [spec-normalize](spec-normalize.md) | Routine | One-off backfill: re-key legacy provider specs onto the canonical schema, dry-run → review CSV → `pg_dump` → `--apply` |
 
 ## Where dashboards live
 

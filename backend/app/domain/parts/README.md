@@ -25,6 +25,9 @@ Owns the `Part` aggregate (linked / local / meta / sub-assembly), MPN uniqueness
 | `services/provider_import.py` | Create a linked `Part` from a lookup result (part columns, assets, category, specs) |
 | `services/spec_reconcile.py` | **The single writer** for a provider payload → `custom_fields`, for create AND refresh |
 | `services/provider_field_values.py` | `truncate_provider_field_value` — the `custom_fields.value` cap, shared by all three writers |
+| `services/spec_normalize.py` | The `spec-normalize` backfill job — batching, dry-run/apply boundary, audit, advisory lock |
+| `services/spec_normalize_rows.py` | Its row-level rules: re-key, archive, never delete, never touch what a user owns |
+| `services/spec_normalize_report.py` | The review CSV the backfill is approved from |
 | `providers/base.py` | `PartsProvider` protocol + result types |
 | `providers/mouser.py`, `providers/digikey.py` | Concrete provider clients (per-workspace creds) |
 
@@ -46,6 +49,9 @@ Owns the `Part` aggregate (linked / local / meta / sub-assembly), MPN uniqueness
 | File an uncategorized part | `services/spec_reconcile.py::apply_provider_category` |
 | Create a linked part from a lookup | `services/provider_import.py::create_from_provider_lookup` |
 | What is this category missing? | `spec_schema.py::missing_mandatory` |
+| Re-key a part's legacy provider rows | `services/spec_normalize_rows.py::normalize_part_rows` |
+| Back-fill the whole table | `services/spec_normalize.py::normalize_specs` (`run_job spec-normalize`) |
+| Re-parse a value already under its canonical key | `spec_schema.py::canonical_value` |
 | Our category name → schema slug | `spec_schema.py::category_slug_for` |
 | Provider category → our category path | `spec_schema.py::category_for_provider` |
 | Parse a spec value | `spec_values.py::parse_si`, `::format_si` |
