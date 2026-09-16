@@ -33,9 +33,10 @@ the canonical record.
   of the path and never creating a category. When nothing resolves, the
   response carries `category_suggestion`. Part detail and list rows gain
   `spec_incomplete` / `missing_specs` — the mandatory keys the part's
-  category says it should have and nobody supplied. The refresh summary
-  also reports `archived`, `restored` and `dropped`, so "the vendor sent
-  it and we did not store it" is visible rather than merely absent. See
+  category says it should have and nobody supplied. The refresh response's
+  `summary` also carries `archived`, `restored` and `dropped`, so an API
+  client can tell "the vendor sent it and we did not store it" apart from
+  silence; the toast in the UI still reports added / updated / removed. See
   ADR-0034 and the A3 amendment to ADR-0031. The 9,377 existing rows are re-keyed by a
   part's next refresh, or in bulk by the `spec-normalize` backfill in a
   follow-up.

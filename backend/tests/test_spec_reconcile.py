@@ -1181,3 +1181,80 @@ def test_bulk_import_loads_the_category_tree_once_for_the_batch(
     # category read (the create path validates nothing here), not a
     # per-row one — five rows would be five or ten.
     assert scans <= 2, f"{scans} part_categories reads for a 5-row import"
+
+
+def test_a_refresh_loads_the_category_tree_once(authed, db, engine, monkeypatch):
+    """MEDIUM-1, the other half. `apply_provider_category` asks the tree
+    three questions — the part's own name path, where the provider's path
+    resolves, and the name path of the row it filed into — and the refresh
+    route has no loop to hang a shared snapshot off. Built per question,
+    that is three full scans of `part_categories` on every single refresh.
+
+    Pinned at the route rather than the service so the assertion covers
+    whatever else the request touches: this is the number an operator
+    pays, not the number one helper costs.
+    """
+    from sqlalchemy import event
+
+    _enable_digikey_primary(authed)
+    _category(authed, "Resistors")
+    part_id = _part(authed, "CAT-SCAN-1")
+    _stub_digikey(monkeypatch, DIGIKEY_RESISTOR)
+
+    scans = 0
+
+    def _on_execute(conn, cursor, statement, parameters, context, executemany):
+        nonlocal scans
+        if "FROM part_categories" in statement:
+            scans += 1
+
+    event.listen(engine, "before_cursor_execute", _on_execute)
+    try:
+        r = authed.post(f"/api/parts/{part_id}/refresh-from-provider")
+    finally:
+        event.remove(engine, "before_cursor_execute", _on_execute)
+
+    assert r.status_code == 200, r.text
+    # It did file the part — a refresh that resolved nothing would read
+    # the tree once too, and would pass this for the wrong reason.
+    assert _detail(authed, part_id)["category_id"] is not None
+    assert scans <= 1, f"{scans} part_categories reads for one refresh"
+
+
+def test_missing_specs_ignores_a_foreign_category(authed, db):
+    """The same isolation, one layer up: `missing_specs_for_parts` itself
+    must fall back to the COMMON schema for a category it cannot see.
+
+    The layer below is pinned by
+    `test_a_foreign_category_id_does_not_leak_its_spec_schema`; this one
+    asserts what an unresolvable category does to the answer, because
+    "the path lookup returned nothing" and "the badge is right" are two
+    different claims. A stand-in part carries the foreign id: a real row
+    cannot, the `check_parts_category_workspace` trigger (alembic 0056)
+    refuses the UPDATE, and the point of the code-level predicate is to
+    hold even if that trigger were ever dropped.
+    """
+    from types import SimpleNamespace
+
+    from app.api.routes._parts_shared import missing_specs_for_parts
+
+    other = TestClient(app)
+    _ws(other, "spec-missing-foreign@example.com")
+    foreign = uuid.UUID(_category(other, "Resistors"))
+
+    my_ws = uuid.UUID(authed.get("/api/workspaces/current").json()["data"]["id"])
+    part_id = uuid.UUID(_part(authed, "FOREIGN-CAT-1"))
+
+    stand_in = SimpleNamespace(id=part_id, category_id=foreign)
+    missing = missing_specs_for_parts(db, my_ws, [stand_in])
+
+    # The common schema, not the resistor one — `resistance` and
+    # `tolerance` would both be mandatory had the foreign category been
+    # allowed to select its schema.
+    assert missing[part_id] == ["package"]
+
+    # ...and the owning workspace DOES get the resistor schema off the
+    # very same category id, so the line above is the predicate working
+    # rather than "Resistors" quietly classifying to nothing.
+    other_ws = uuid.UUID(other.get("/api/workspaces/current").json()["data"]["id"])
+    assert "resistance" in missing_specs_for_parts(db, other_ws, [stand_in])[part_id]

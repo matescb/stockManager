@@ -50,6 +50,7 @@ from app.core.time import utcnow
 from app.domain.audit.service import log_ids as _audit_log_ids
 from app.domain.categories.service import (
     CategoryIndex,
+    category_index,
     category_name_path,
     resolve_category_path_or_root,
 )
@@ -96,11 +97,18 @@ class CategoryOutcome:
     filled from the SUGGESTION when the path did not resolve: knowing the
     part is a ceramic capacitor is useful even when this workspace has no
     category to file it under.
+
+    The category id itself is not reported. `part.category_id` is written
+    in place and every caller reads it from the part, so returning a
+    second copy only invited the two to disagree.
     """
 
-    category_id: UUID | None
+    #: True when this call filled a NULL `part.category_id`. Read by the
+    #: callers to stamp `category_assigned=1` on the reconcile audit row.
     assigned: bool
+    #: The path the provider named when nothing here could hold it.
     suggestion: str | None
+    #: The spec-schema slug to normalise the payload with.
     slug: str | None
 
 
@@ -208,29 +216,38 @@ def apply_provider_category(
     own category only wins when it actually classifies.
 
     `index` lets a caller in a loop (bulk-import-from-scan, up to 50
-    parts) pay for the workspace's category rows once.
+    parts) pay for the workspace's category rows once. A caller that
+    passes nothing still pays only once: the snapshot below is shared by
+    all three lookups this function makes.
     """
+    path = category_for_provider(provider_name, provider_category, description)
+    provider_slug = category_slug_for(path)
+    # Three questions, one tree: the part's own name path, where the
+    # provider's path resolves, and the name path of the row we filed it
+    # into. Asked separately they were three full scans of
+    # `part_categories` on every refresh — the route has no loop to hang a
+    # shared snapshot off, so the sharing has to live here. Built lazily,
+    # so an uncategorized part whose provider names nothing costs no query
+    # at all.
+    if index is None and (part.category_id is not None or path is not None):
+        index = category_index(db, ws_id=ws_id)
+
     own_slug = category_slug_for(
         category_name_path(db, ws_id=ws_id, category_id=part.category_id, index=index)
     )
-    path = category_for_provider(provider_name, provider_category, description)
-    provider_slug = category_slug_for(path)
 
     if part.category_id is not None:
         return CategoryOutcome(
-            category_id=part.category_id,
-            assigned=False,
-            suggestion=None,
-            slug=own_slug or provider_slug,
+            assigned=False, suggestion=None, slug=own_slug or provider_slug
         )
     if path is None:
-        return CategoryOutcome(None, False, None, None)
+        return CategoryOutcome(assigned=False, suggestion=None, slug=None)
 
     category = resolve_category_path_or_root(db, ws_id=ws_id, path=path, index=index)
     if category is None:
         # Nothing to file it under. The part keeps a NULL category and the
         # caller reports the path; the specs are still normalised.
-        return CategoryOutcome(None, False, path, provider_slug)
+        return CategoryOutcome(assigned=False, suggestion=path, slug=provider_slug)
 
     part.category_id = category.id
     part.updated_by = user_id
@@ -238,7 +255,6 @@ def apply_provider_category(
         category_name_path(db, ws_id=ws_id, category_id=category.id, index=index)
     )
     return CategoryOutcome(
-        category_id=category.id,
         assigned=True,
         suggestion=None,
         # The provider's path first: it is the finer of the two whenever
