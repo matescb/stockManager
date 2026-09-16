@@ -61,8 +61,8 @@ seconds at prod's scale (324 parts, 9,377 rows).
    | `rekey` | The row now carries its canonical key and the parsed value. `old_key == key` means only the value moved. |
    | `archive` | Retired: a customs code, or an alias superseded by the spelling that won the key. |
    | `drop` | Retired because the value was a placeholder (`-`). Same effect as `archive`; the column records the reason. |
-   | `stamp` | A canonical row that had the right key and value but no `provider`. |
-   | `value_num` | A canonical row whose numeric sidecar was missing. |
+   | `stamp` | A canonical row that had the right key and value but no `provider`. It may have filled an empty `value_num` in the same pass. |
+   | `value_num` | A canonical row that had its `provider` already and only the numeric sidecar missing. |
    | `category` | A part with no category, filed from its provider's taxonomy. `category_path` names where. |
 
    Two summary sections follow the changes, each after a blank line: counts
@@ -114,8 +114,10 @@ touching the dump. Every line describes exactly one row, identified by
 - A `rekey` line is reversed by setting `key` back to `old_key` and `value`
   back to `old_value` (and `value_num` to NULL). When `old_key` equals `key`
   only the value moved, so only the value needs restoring.
-- A `stamp` line is reversed by clearing `provider`; a `value_num` line by
-  clearing `value_num`.
+- A `stamp` or `value_num` line is reversed by clearing `provider` and
+  `value_num` on that row. Both actions only ever FILL those two columns, and
+  only on a row whose displayed value did not change, so clearing both is the
+  right reversal for either line.
 - A `category` line is reversed by clearing `parts.category_id`.
 
 Two rows answering one canonical key produce two lines — a `rekey` on the row
