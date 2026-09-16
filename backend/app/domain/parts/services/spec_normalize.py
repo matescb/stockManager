@@ -168,6 +168,7 @@ def _run(
             counts: Counter[str] = Counter()
             canonical: set[str] = set()
             part_ids = _part_ids(db, ws_id=ws.id)
+            done = 0
             for batch in _batches(part_ids, batch_size):
                 with _batch_transaction(db, apply=apply):
                     changes += _process_batch(
@@ -180,11 +181,15 @@ def _run(
                         canonical=canonical,
                     )
                 report.flush()
+                done += len(batch)
+                # Both numbers are cumulative within the workspace, so the
+                # line reads as progress rather than as a batch receipt.
                 logger.info(
-                    "%s workspace=%s parts=%d changes=%d apply=%s",
+                    "%s workspace=%s parts=%d/%d changes=%d apply=%s",
                     JOB_NAME,
                     ws.id,
-                    len(batch),
+                    done,
+                    len(part_ids),
                     sum(counts[action] for action in ACTIONS),
                     apply,
                 )
