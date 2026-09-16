@@ -66,8 +66,14 @@ __all__ = [
     "JOB_NAME",
     "REPORT_COLUMNS",
     "NormalizeOutcome",
+    "UnknownWorkspaceError",
     "normalize_specs",
 ]
+
+
+class UnknownWorkspaceError(ValueError):
+    """`--workspace` named a workspace that does not exist."""
+
 
 JOB_NAME = "spec-normalize"
 AUDIT_ACTION = "part.specs_normalized"
@@ -273,10 +279,16 @@ def _file_part(
     A part that already has a category keeps it. `apply_provider_category`
     enforces that too, but going through it for every part would cost a
     query each to re-derive a path this batch already has.
+
+    The uncategorized ones DO pay that cost — two small reads of
+    `part_categories` each. That table is eleven rows on prod and this is
+    a manual job, so batching it would mean reimplementing
+    `resolve_category_path_or_root` to save milliseconds.
     """
     if part.category_id is not None:
         return category_slug_for(paths.get(part.category_id)), None
 
+    previous_editor = part.updated_by
     outcome = apply_provider_category(
         db,
         ws_id=ws.id,
@@ -287,6 +299,10 @@ def _file_part(
     )
     if not outcome.assigned:
         return outcome.slug, None
+    # `apply_provider_category` stamps `updated_by` with the acting user,
+    # and a cron-shaped job has none. Writing NULL would erase whoever
+    # last edited the part, which is worse than leaving the column alone.
+    part.updated_by = previous_editor
     return outcome.slug, Change(
         action=ACTION_CATEGORY,
         category_path=category_name_path(db, ws_id=ws.id, category_id=outcome.category_id)
@@ -355,10 +371,20 @@ def _batch_transaction(db: Session, *, apply: bool) -> Iterator[None]:
 
 
 def _workspaces(db: Session, workspace_id: UUID | None) -> list[Workspace]:
+    """The workspaces to process, in id order.
+
+    A `--workspace` that names nothing raises rather than reporting a
+    clean run over zero workspaces: on the apply step those two outcomes
+    print identically, and one of them means the operator's scope was a
+    typo and the backfill they thought they ran did not happen.
+    """
     stmt = select(Workspace).order_by(Workspace.id)
     if workspace_id is not None:
         stmt = stmt.where(Workspace.id == workspace_id)
-    return list(db.execute(stmt).scalars())
+    rows = list(db.execute(stmt).scalars())
+    if workspace_id is not None and not rows:
+        raise UnknownWorkspaceError(f"no workspace with id {workspace_id}")
+    return rows
 
 
 def _part_ids(db: Session, *, ws_id: UUID) -> list[UUID]:
@@ -476,6 +502,14 @@ def _try_acquire_lock(db: Session) -> bool:
     Two concurrent runs would interleave two half-written re-keys over
     the same rows, so the lock has to outlive those commits. Same
     reasoning, and the same shape, as the datasheet backfill (ADR-0033).
+
+    Known limit, shared with that precedent: the lock lives on whichever
+    pooled connection the Session holds, and a commit hands that
+    connection back. A pool that returns a different one on the next
+    batch leaves the run unlocked and unlocks a connection that never
+    held the lock (a Postgres WARNING, not an error). At prod's scale —
+    two batches, seconds — the connection is not recycled in between.
+    Fix the pattern before reusing it for a job that runs for hours.
     """
     return bool(
         db.execute(
