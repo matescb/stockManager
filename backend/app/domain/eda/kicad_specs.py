@@ -111,12 +111,23 @@ def wanted_custom_field_keys(rules: Iterable[CategoryRules]) -> set[str]:
 
 
 def rules_by_category(
-    db: Session, *, workspace_id: UUID, categories: Iterable[PartCategory]
+    db: Session,
+    *,
+    workspace_id: UUID,
+    categories: Iterable[PartCategory],
+    workspace_rows: Iterable[PartCategory] | None = None,
 ) -> dict[UUID, CategoryRules]:
     """Resolved rules for each of `categories`, inheritance applied.
 
     Costs no query at all unless one of them has something to inherit —
     an unset column AND a parent to look it up from.
+
+    `workspace_rows` is that workspace's categories already in hand, for
+    a caller in a loop: bulk-import-from-scan creates up to 50 parts in
+    one request and already holds a `CategoryIndex`, so paying for the
+    walk's snapshot again per part would be an N+1 against
+    `part_categories`. Archived rows may be included; they are filtered
+    here, so the same snapshot serves callers that need them.
     """
     by_id = {category.id: category for category in categories}
     own = {
@@ -128,7 +139,9 @@ def rules_by_category(
     ):
         return own
 
-    ancestors, parent_map = _workspace_rules(db, workspace_id=workspace_id)
+    ancestors, parent_map = _workspace_rules(
+        db, workspace_id=workspace_id, rows=workspace_rows
+    )
     return {
         category_id: _inherited(category_id, rules, ancestors, parent_map)
         for category_id, rules in own.items()
@@ -136,7 +149,10 @@ def rules_by_category(
 
 
 def _workspace_rules(
-    db: Session, *, workspace_id: UUID
+    db: Session,
+    *,
+    workspace_id: UUID,
+    rows: Iterable[PartCategory] | None = None,
 ) -> tuple[dict[UUID, CategoryRules], ParentMap]:
     """The active categories' own rules plus the map to walk them by.
 
@@ -144,17 +160,29 @@ def _workspace_rules(
     surface. The projection is four small columns, and a workspace's
     category count is a hand-curated few dozen — see `tree.py` on why
     this load is deliberately uncapped.
+
+    Supplied rows are filtered to the same two predicates rather than
+    trusted: a caller's snapshot is whatever it needed for its own
+    purpose, and one carrying archived rows or another workspace's must
+    not change what inheritance sees.
     """
-    rows = db.execute(
-        select(
-            PartCategory.id,
-            PartCategory.parent_id,
-            PartCategory.value_template,
-            PartCategory.kicad_fields,
-        )
-        .where(PartCategory.workspace_id == workspace_id)
-        .where(PartCategory.archived_at.is_(None))
-    ).all()
+    if rows is not None:
+        rows = [
+            row
+            for row in rows
+            if row.workspace_id == workspace_id and row.archived_at is None
+        ]
+    else:
+        rows = db.execute(
+            select(
+                PartCategory.id,
+                PartCategory.parent_id,
+                PartCategory.value_template,
+                PartCategory.kicad_fields,
+            )
+            .where(PartCategory.workspace_id == workspace_id)
+            .where(PartCategory.archived_at.is_(None))
+        ).all()
     rules = {
         row.id: CategoryRules(row.value_template, _field_list(row.kicad_fields))
         for row in rows
