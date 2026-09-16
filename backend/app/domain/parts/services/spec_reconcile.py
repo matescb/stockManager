@@ -97,11 +97,18 @@ class CategoryOutcome:
     filled from the SUGGESTION when the path did not resolve: knowing the
     part is a ceramic capacitor is useful even when this workspace has no
     category to file it under.
+
+    The category id itself is not reported. `part.category_id` is written
+    in place and every caller reads it from the part, so returning a
+    second copy only invited the two to disagree.
     """
 
-    category_id: UUID | None
+    #: True when this call filled a NULL `part.category_id`. Read by the
+    #: callers to stamp `category_assigned=1` on the reconcile audit row.
     assigned: bool
+    #: The path the provider named when nothing here could hold it.
     suggestion: str | None
+    #: The spec-schema slug to normalise the payload with.
     slug: str | None
 
 
@@ -231,19 +238,16 @@ def apply_provider_category(
 
     if part.category_id is not None:
         return CategoryOutcome(
-            category_id=part.category_id,
-            assigned=False,
-            suggestion=None,
-            slug=own_slug or provider_slug,
+            assigned=False, suggestion=None, slug=own_slug or provider_slug
         )
     if path is None:
-        return CategoryOutcome(None, False, None, None)
+        return CategoryOutcome(assigned=False, suggestion=None, slug=None)
 
     category = resolve_category_path_or_root(db, ws_id=ws_id, path=path, index=index)
     if category is None:
         # Nothing to file it under. The part keeps a NULL category and the
         # caller reports the path; the specs are still normalised.
-        return CategoryOutcome(None, False, path, provider_slug)
+        return CategoryOutcome(assigned=False, suggestion=path, slug=provider_slug)
 
     part.category_id = category.id
     part.updated_by = user_id
@@ -251,7 +255,6 @@ def apply_provider_category(
         category_name_path(db, ws_id=ws_id, category_id=category.id, index=index)
     )
     return CategoryOutcome(
-        category_id=category.id,
         assigned=True,
         suggestion=None,
         # The provider's path first: it is the finer of the two whenever

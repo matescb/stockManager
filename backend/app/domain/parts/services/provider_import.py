@@ -25,7 +25,6 @@ from app.domain.parts.services.provider_field_values import (
     truncate_provider_field_value,
 )
 from app.domain.parts.services.spec_reconcile import (
-    ReconcileReport,
     apply_provider_category,
     reconcile_provider_specs,
 )
@@ -47,10 +46,15 @@ class ProviderImportOutcome:
     named when this workspace has no category to file it under. Surfaced
     per row by the callers, because "we know what this is and you have
     nowhere to put it" is actionable and silence is not.
+
+    The reconcile's own counts are NOT returned. They are already written
+    to `audit_log` by `reconcile_provider_specs`, and no create-path
+    caller ever read them — a bulk import reports rows created, not spec
+    keys written. The refresh route, which does surface them, holds the
+    report directly.
     """
 
     part: Part
-    report: ReconcileReport
     category_suggestion: str | None
 
 
@@ -123,7 +127,7 @@ def create_from_provider_lookup(
         user_id=user_id,
         index=category_index,
     )
-    report = reconcile_provider_specs(
+    reconcile_provider_specs(
         db,
         ws_id=workspace_id,
         part=p,
@@ -144,9 +148,7 @@ def create_from_provider_lookup(
         request_id=request_id,
         category_assigned=category.assigned,
     )
-    return ProviderImportOutcome(
-        part=p, report=report, category_suggestion=category.suggestion
-    )
+    return ProviderImportOutcome(part=p, category_suggestion=category.suggestion)
 
 
 def _link_fields(r: dict) -> dict[str, str]:
