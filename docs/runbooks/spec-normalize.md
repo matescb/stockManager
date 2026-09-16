@@ -46,7 +46,10 @@ seconds at prod's scale (324 parts, 9,377 rows).
        --dry-run --report /tmp/spec-normalize.csv
    ```
 
-2. **Copy the CSV out** of the container and read it.
+2. **Copy the CSV out** of the container and read it. The file is written
+   `0600` and any directory the job creates for it `0700` — it names every
+   part, key and value in the workspace, and `/tmp` in the container is
+   world-readable.
 
    ```bash
    sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import sys
 import time
 import uuid
@@ -369,3 +370,55 @@ def test_spec_normalize_is_registered_as_a_backfill() -> None:
     assert [
         name for name, job in JOBS.items() if job.takes_backfill_options
     ] == ["spec-normalize"]
+
+
+# ---------------------------------------------------------------------------
+# The report file's permissions
+#
+# A spec report names every part, key and value in a workspace, and lands in
+# whatever directory the operator pointed at — `/tmp` on the prod container,
+# which is world-readable by default. The mode is part of the contract, not
+# the caller's problem.
+# ---------------------------------------------------------------------------
+def test_the_report_file_and_its_directory_are_private(
+    monkeypatch: pytest.MonkeyPatch,
+    backfill_job: tuple[JobSpec, list[run_job_cli.BackfillOptions]],
+    tmp_path: Path,
+) -> None:
+    job, _ = backfill_job
+    report = tmp_path / "reports" / "out.csv"
+
+    with run_job_cli._report_stream(
+        run_job_cli.BackfillOptions(report_path=report)
+    ) as stream:
+        assert stream is not None
+        stream.write("x\n")
+
+    assert stat.S_IMODE(report.stat().st_mode) == 0o600
+    assert stat.S_IMODE(report.parent.stat().st_mode) == 0o700
+    assert report.read_text(encoding="utf-8") == "x\n"
+    assert job.name == "test-backfill"
+
+
+def test_no_report_path_yields_no_stream(
+    backfill_job: tuple[JobSpec, list[run_job_cli.BackfillOptions]],
+) -> None:
+    """``None`` means stdout, and the job decides what that looks like."""
+    with run_job_cli._report_stream(run_job_cli.BackfillOptions()) as stream:
+        assert stream is None
+
+
+def test_an_unwritable_report_path_is_a_usage_error(
+    tmp_path: Path,
+) -> None:
+    """Not a traceback: the operator mistyped a path and can fix it."""
+    blocker = tmp_path / "file"
+    blocker.write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(run_job_cli.JobConfigError) as exc_info:
+        with run_job_cli._report_stream(
+            run_job_cli.BackfillOptions(report_path=blocker / "nested" / "out.csv")
+        ):
+            pass
+
+    assert "cannot write --report" in str(exc_info.value)

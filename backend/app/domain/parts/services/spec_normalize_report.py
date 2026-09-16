@@ -21,10 +21,9 @@ with its own header row, so a spreadsheet import reads the changes and a
 from __future__ import annotations
 
 import csv
+import sys
 from dataclasses import dataclass
-from pathlib import Path
-from types import TracebackType
-from typing import IO, Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, TextIO
 from uuid import UUID
 
 __all__ = [
@@ -104,39 +103,21 @@ class Change:
 
 
 class NormalizeReport:
-    """Streaming writer for the change CSV. A ``None`` path writes nothing.
+    """Streaming CSV writer over a stream the CALLER owns.
 
-    Used as a context manager so the file handle is closed on the way out
-    of the job, including when a batch raises.
+    `stream` is what `run_job._report_stream` yields: the file `--report`
+    named, or ``None`` for stdout. Opening and closing belong to that
+    context manager, not here — every operator-run job gets its report
+    file on the same terms, including the `newline=""` the `csv` module
+    needs and the readable error when the path cannot be written.
     """
 
-    def __init__(self, path: Path | None) -> None:
-        self._path = path
-        self._handle: IO[str] | None = None
+    def __init__(self, stream: TextIO | None) -> None:
+        self._handle: TextIO = stream if stream is not None else sys.stdout
         # `csv.writer` returns a private `_csv.writer` type with no public
         # name to annotate against.
-        self._writer: Any = None
-
-    def __enter__(self) -> "NormalizeReport":
-        if self._path is not None:
-            # newline="" is the csv module's contract: it does its own line
-            # terminators, and without this a value containing a newline is
-            # written with platform-translated ones and no longer round-trips.
-            self._handle = self._path.open("w", encoding="utf-8", newline="")
-            self._writer = csv.writer(self._handle)
-            self._writer.writerow(REPORT_COLUMNS)
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> None:
-        if self._handle is not None:
-            self._handle.close()
-            self._handle = None
-            self._writer = None
+        self._writer: Any = csv.writer(self._handle)
+        self._writer.writerow(REPORT_COLUMNS)
 
     def write(
         self,
@@ -146,8 +127,6 @@ class NormalizeReport:
         mpn: str | None,
         change: Change,
     ) -> None:
-        if self._writer is None:
-            return
         self._writer.writerow(
             (
                 str(workspace_id),
@@ -165,8 +144,7 @@ class NormalizeReport:
 
     def flush(self) -> None:
         """Called at each batch boundary: a killed run keeps its file."""
-        if self._handle is not None:
-            self._handle.flush()
+        self._handle.flush()
 
     def write_summary(
         self,
@@ -174,8 +152,6 @@ class NormalizeReport:
         per_workspace: Mapping[UUID, Mapping[str, int]],
         unmapped: Iterable[tuple[str, str, int]],
     ) -> None:
-        if self._writer is None or self._handle is None:
-            return
         self._writer.writerow(())
         self._writer.writerow(_COUNT_SECTION_HEADER)
         for workspace_id in sorted(per_workspace, key=str):

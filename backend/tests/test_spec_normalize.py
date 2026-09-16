@@ -128,6 +128,16 @@ def _legacy_row(
     return row
 
 
+def _normalize(db, path: Path | None = None, **kwargs):
+    """`normalize_specs` with the report file opened the way the CLI opens
+    it — `run_job._report_stream` owns the handle in production, so the
+    tests do too rather than pretending the job takes a path."""
+    if path is None:
+        return normalize_specs(db, **kwargs)
+    with path.open("w", encoding="utf-8", newline="") as stream:
+        return normalize_specs(db, stream=stream, **kwargs)
+
+
 RESISTOR_ROWS: tuple[tuple[str, str], ...] = (
     ("Resistance", "10 kOhms"),
     ("Tolerance", "±1%"),
@@ -180,7 +190,7 @@ def test_dry_run_writes_nothing_to_the_database(
         for key, row in _rows_by_key(db, part_id).items()
     }
 
-    outcome = normalize_specs(db, report_path=tmp_path / "report.csv")
+    outcome = _normalize(db, tmp_path / "report.csv")
 
     assert outcome.changes > 0, "the fixture has work to do"
     after = {
@@ -198,8 +208,8 @@ def test_dry_run_reports_exactly_what_apply_then_does(
     dry = tmp_path / "dry.csv"
     wet = tmp_path / "wet.csv"
 
-    normalize_specs(db, report_path=dry)
-    normalize_specs(db, apply=True, report_path=wet)
+    _normalize(db, dry)
+    _normalize(db, wet, apply=True)
 
     assert _report_rows(dry) == _report_rows(wet)
 
@@ -222,7 +232,7 @@ def test_apply_rekeys_onto_the_canonical_schema_with_a_numeric_sidecar(
 ) -> None:
     _, part_id = resistor
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+    _normalize(db, tmp_path / "report.csv", apply=True)
 
     rows = _rows_by_key(db, part_id)
     assert "Resistance" not in rows, "the raw key was renamed, not duplicated"
@@ -240,7 +250,7 @@ def test_apply_archives_junk_keys(
 ) -> None:
     _, part_id = resistor
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+    _normalize(db, tmp_path / "report.csv", apply=True)
 
     rows = _rows_by_key(db, part_id)
     assert rows["ECCN"].archived_at is not None
@@ -252,7 +262,7 @@ def test_apply_retires_placeholder_values(
 ) -> None:
     _, part_id = resistor
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+    _normalize(db, tmp_path / "report.csv", apply=True)
 
     assert _rows_by_key(db, part_id)["Failure Rate"].archived_at is not None
 
@@ -262,7 +272,7 @@ def test_apply_keeps_an_unrecognised_parametric_key_verbatim(
 ) -> None:
     _, part_id = resistor
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+    _normalize(db, tmp_path / "report.csv", apply=True)
 
     features = _rows_by_key(db, part_id)["Features"]
     assert features.value == "Moisture Resistant"
@@ -279,7 +289,7 @@ def test_every_canonical_row_it_writes_carries_a_provider(
     normalised value to whoever refreshes first."""
     _, part_id = resistor
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+    _normalize(db, tmp_path / "report.csv", apply=True)
 
     for key in ("resistance", "tolerance", "power", "package"):
         assert _rows_by_key(db, part_id)[key].provider == "digikey", key
@@ -296,7 +306,7 @@ def test_provider_falls_back_to_the_workspace_primary(
     _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Resistance", value="10 kOhms")
     db.commit()
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+    _normalize(db, tmp_path / "report.csv", apply=True)
 
     assert _rows_by_key(db, part_id)["resistance"].provider == "mouser"
 
@@ -315,7 +325,7 @@ def test_a_part_nobody_can_be_attributed_keeps_its_canonical_rows_unwritten(
     _legacy_row(db, ws_id=ws_id, part_id=part_id, key="ECCN", value="EAR99")
     db.commit()
 
-    outcome = normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+    outcome = _normalize(db, tmp_path / "report.csv", apply=True)
 
     rows = _rows_by_key(db, part_id)
     assert "resistance" not in rows
@@ -344,7 +354,7 @@ def test_a_higher_precedence_provider_keeps_the_canonical_row(
     _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Resistance", value="47 kOhms")
     db.commit()
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+    _normalize(db, tmp_path / "report.csv", apply=True)
 
     rows = _rows_by_key(db, part_id)
     assert rows["resistance"].value == "10 kΩ"
@@ -365,7 +375,7 @@ def test_a_part_carrying_both_spellings_ends_with_one_canonical_row(
     _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Resistance", value="47 kOhms")
     db.commit()
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+    _normalize(db, tmp_path / "report.csv", apply=True)
 
     rows = _rows_by_key(db, part_id)
     assert rows["resistance"].value == "47 kΩ"
@@ -405,7 +415,7 @@ def test_manual_and_override_rows_are_left_alone(
     _legacy_row(db, ws_id=ws_id, part_id=part_id, key="ECCN", value="mine", source="manual")
     db.commit()
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+    _normalize(db, tmp_path / "report.csv", apply=True)
 
     rows = _rows_by_key(db, part_id)
     assert rows["resistance"].value == "4k7 measured"
@@ -432,7 +442,7 @@ def test_a_raw_alias_is_not_moved_onto_a_manual_canonical_row(
     _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Resistance", value="10 kOhms")
     db.commit()
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+    _normalize(db, tmp_path / "report.csv", apply=True)
 
     rows = _rows_by_key(db, part_id)
     assert rows["resistance"].value == "4k7"
@@ -446,9 +456,9 @@ def test_a_raw_alias_is_not_moved_onto_a_manual_canonical_row(
 def test_a_second_apply_changes_nothing(
     resistor: tuple[uuid.UUID, uuid.UUID], db, tmp_path: Path
 ) -> None:
-    normalize_specs(db, apply=True, report_path=tmp_path / "first.csv")
+    _normalize(db, tmp_path / "first.csv", apply=True)
 
-    second = normalize_specs(db, apply=True, report_path=tmp_path / "second.csv")
+    second = _normalize(db, tmp_path / "second.csv", apply=True)
 
     assert second.changes == 0
     assert _report_rows(tmp_path / "second.csv") == []
@@ -474,7 +484,7 @@ def test_a_part_with_no_category_is_filed_from_the_provider_taxonomy(
     )
     db.commit()
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+    _normalize(db, tmp_path / "report.csv", apply=True)
 
     db.expire_all()
     assert str(db.get(Part, part_id).category_id) == ceramic_id
@@ -493,7 +503,7 @@ def test_an_existing_category_is_never_overridden(
     )
     db.commit()
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+    _normalize(db, tmp_path / "report.csv", apply=True)
 
     db.expire_all()
     assert str(db.get(Part, part_id).category_id) == resistors_id
@@ -518,7 +528,7 @@ def test_a_part_filed_under_a_root_still_gets_the_finer_schema(
     _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Capacitance", value="100 nF")
     db.commit()
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+    _normalize(db, tmp_path / "report.csv", apply=True)
 
     rows = _rows_by_key(db, part_id)
     assert rows["capacitance"].value == "100 nF"
@@ -542,7 +552,7 @@ def test_the_assigned_category_picks_the_spec_schema_for_the_same_run(
     _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Resistance", value="10 kOhms")
     db.commit()
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+    _normalize(db, tmp_path / "report.csv", apply=True)
 
     assert _rows_by_key(db, part_id)["resistance"].value == "10 kΩ"
 
@@ -575,7 +585,7 @@ def test_the_workspace_flag_scopes_the_run(
 ) -> None:
     ws_a, part_a, _, part_b = two_workspaces
 
-    normalize_specs(db, apply=True, workspace_id=ws_a, report_path=tmp_path / "r.csv")
+    _normalize(db, tmp_path / "r.csv", apply=True, workspace_id=ws_a)
 
     assert "resistance" in _rows_by_key(db, part_a)
     assert "resistance" not in _rows_by_key(db, part_b)
@@ -587,7 +597,7 @@ def test_a_full_run_normalises_every_workspace(
 ) -> None:
     ws_a, part_a, ws_b, part_b = two_workspaces
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "r.csv")
+    _normalize(db, tmp_path / "r.csv", apply=True)
 
     assert "resistance" in _rows_by_key(db, part_a)
     assert "resistance" in _rows_by_key(db, part_b)
@@ -600,7 +610,7 @@ def test_one_audit_row_per_workspace_carries_counts_and_key_names_only(
 ) -> None:
     ws_a, _, ws_b, _ = two_workspaces
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "r.csv")
+    _normalize(db, tmp_path / "r.csv", apply=True)
 
     rows = list(
         db.execute(select(AuditLog).where(AuditLog.action == AUDIT_ACTION)).scalars()
@@ -621,7 +631,7 @@ def test_the_report_carries_the_agreed_columns(
     ws_id, part_id = resistor
     report = tmp_path / "report.csv"
 
-    normalize_specs(db, report_path=report)
+    _normalize(db, report)
 
     rows = _report_rows(report)
     assert list(rows[0]) == list(REPORT_COLUMNS)
@@ -642,7 +652,7 @@ def test_the_report_summarises_counts_and_unmapped_keys(
     ws_id, _ = resistor
     report = tmp_path / "report.csv"
 
-    normalize_specs(db, report_path=report)
+    _normalize(db, report)
 
     text = report.read_text(encoding="utf-8")
     assert f"count,{ws_id},rekey," in text.replace(", ", ",") or f"count,{ws_id},rekey" in text
@@ -650,15 +660,19 @@ def test_the_report_summarises_counts_and_unmapped_keys(
     assert "unmapped,resistor,Features,1" in text
 
 
-def test_a_dry_run_without_a_report_path_still_reports_its_counts(
-    resistor: tuple[uuid.UUID, uuid.UUID], db
+def test_a_dry_run_with_no_report_file_writes_the_csv_to_stdout(
+    resistor: tuple[uuid.UUID, uuid.UUID], db, capsys
 ) -> None:
-    """The CLI refuses `--apply` without `--report`, but a scripted dry run
-    that only wants the counts should not have to name a file."""
+    """`--report` is optional and its absence means stdout, not silence —
+    the CLI contract every operator-run job shares. The apply path still
+    requires a file, because a pipe is not a rollback record."""
     outcome = normalize_specs(db)
 
     assert outcome.changes > 0
     assert outcome.counts["rekey"] == 4
+    printed = capsys.readouterr().out
+    assert printed.startswith(",".join(REPORT_COLUMNS))
+    assert "rekey,resistance,Resistance,digikey,10 kOhms,10 k\u03a9" in printed
 
 
 def test_an_unknown_workspace_id_is_an_error_not_an_empty_run(
@@ -668,7 +682,7 @@ def test_an_unknown_workspace_id_is_an_error_not_an_empty_run(
     "nothing left to do", which is the wrong thing to believe on the apply
     step."""
     with pytest.raises(UnknownWorkspaceError):
-        normalize_specs(db, workspace_id=uuid.uuid4(), report_path=tmp_path / "r.csv")
+        _normalize(db, tmp_path / "r.csv", workspace_id=uuid.uuid4())
 
 
 # ---------------------------------------------------------------------------
@@ -692,9 +706,9 @@ def test_two_rows_stripping_to_one_key_do_not_resurface_on_the_next_run(
     )
     db.commit()
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "first.csv")
+    _normalize(db, tmp_path / "first.csv", apply=True)
     first = _rows_by_key(db, part_id)["resistance"].value
-    second = normalize_specs(db, apply=True, report_path=tmp_path / "second.csv")
+    second = _normalize(db, tmp_path / "second.csv", apply=True)
 
     assert second.changes == 0
     assert _rows_by_key(db, part_id)["resistance"].value == first
@@ -713,9 +727,9 @@ def test_a_parsed_number_is_not_degraded_by_re_reading_its_own_display(
     _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Power (Watts)", value="1/3W")
     db.commit()
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "first.csv")
+    _normalize(db, tmp_path / "first.csv", apply=True)
     first = _rows_by_key(db, part_id)["power"].value_num
-    second = normalize_specs(db, apply=True, report_path=tmp_path / "second.csv")
+    second = _normalize(db, tmp_path / "second.csv", apply=True)
 
     assert second.changes == 0
     assert _rows_by_key(db, part_id)["power"].value_num == first
@@ -738,8 +752,8 @@ def test_an_archived_junk_row_stays_archived_across_two_runs(
     db.commit()
     retired_at = _rows_by_key(db, part_id)["ECCN"].archived_at
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "first.csv")
-    second = normalize_specs(db, apply=True, report_path=tmp_path / "second.csv")
+    _normalize(db, tmp_path / "first.csv", apply=True)
+    second = _normalize(db, tmp_path / "second.csv", apply=True)
 
     assert second.changes == 0
     eccn = _rows_by_key(db, part_id)["ECCN"]
@@ -771,7 +785,7 @@ def test_an_archived_canonical_row_is_revived_only_by_a_real_value(
     _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Resistance", value="47 kOhms")
     db.commit()
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+    _normalize(db, tmp_path / "report.csv", apply=True)
 
     resistance = _rows_by_key(db, part_id)["resistance"]
     assert resistance.archived_at is None
@@ -793,9 +807,9 @@ def test_a_display_that_rounds_does_not_zero_its_own_sidecar(
     _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Tolerance", value="±0.00001%")
     db.commit()
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "first.csv")
+    _normalize(db, tmp_path / "first.csv", apply=True)
     first = _rows_by_key(db, part_id)["tolerance"].value_num
-    second = normalize_specs(db, apply=True, report_path=tmp_path / "second.csv")
+    second = _normalize(db, tmp_path / "second.csv", apply=True)
 
     assert float(first) == 0.00001
     assert second.changes == 0
@@ -816,7 +830,7 @@ def test_a_placeholder_row_a_real_value_fills_is_not_reported_as_dropped(
     _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Resistance", value="47 kOhms")
     db.commit()
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+    _normalize(db, tmp_path / "report.csv", apply=True)
 
     resistance = _rows_by_key(db, part_id)["resistance"]
     assert resistance.value == "47 kΩ"
@@ -841,7 +855,7 @@ def test_a_merge_reports_one_line_per_row_so_the_rollback_works(
     _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Resistance", value="47 kOhms")
     db.commit()
 
-    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+    _normalize(db, tmp_path / "report.csv", apply=True)
 
     rows = _report_rows(tmp_path / "report.csv")
     rekey = next(r for r in rows if r["action"] == "rekey")
@@ -873,7 +887,7 @@ def test_a_second_run_that_finds_the_lock_held_does_nothing(
             {"classid": SPEC_NORMALIZE_LOCK_CLASSID, "key": "spec-normalize"},
         )
 
-        outcome = normalize_specs(db, apply=True, report_path=tmp_path / "r.csv")
+        outcome = _normalize(db, tmp_path / "r.csv", apply=True)
     finally:
         holder.execute(text("SELECT pg_advisory_unlock_all()"))
         holder.close()

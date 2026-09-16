@@ -34,7 +34,7 @@ from collections import Counter
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from typing import TextIO
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -117,14 +117,16 @@ def normalize_specs(
     *,
     apply: bool = False,
     workspace_id: UUID | None = None,
-    report_path: Path | None = None,
+    stream: TextIO | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> NormalizeOutcome:
     """Re-key every workspace's provider specs onto the canonical schema.
 
     `workspace_id` limits the run to one workspace; omitted, every
-    workspace is processed in id order. `report_path` receives the review
-    CSV — omitted, the run still logs its summary but leaves no file.
+    workspace is processed in id order. `stream` is where the review CSV
+    goes — the file `--report` named, or ``None`` for stdout. The CLI
+    opens and closes it (`run_job._report_stream`), so every operator-run
+    job reports on the same terms.
 
     Caller owns the session. On apply this function commits per batch, so
     it takes a SESSION-level advisory lock rather than relying on
@@ -139,7 +141,7 @@ def normalize_specs(
             db,
             apply=apply,
             workspace_id=workspace_id,
-            report_path=report_path,
+            stream=stream,
             batch_size=batch_size,
         )
     except Exception:
@@ -161,56 +163,56 @@ def _run(
     *,
     apply: bool,
     workspace_id: UUID | None,
-    report_path: Path | None,
+    stream: TextIO | None,
     batch_size: int,
 ) -> NormalizeOutcome:
     per_workspace: dict[UUID, Counter[str]] = {}
     unmapped: Counter[tuple[str, str]] = Counter()
     parts = changes = 0
 
-    with NormalizeReport(report_path) as report:
-        for ws in _workspaces(db, workspace_id):
-            counts: Counter[str] = Counter()
-            canonical: set[str] = set()
-            part_ids = _part_ids(db, ws_id=ws.id)
-            # One tree read for the whole workspace. Filing a part changes
-            # `parts.category_id`, never `part_categories`, so the index
-            # stays true for every batch — and the rows in it are never
-            # modified, so a dry run's savepoint rollback leaves it intact.
-            index = category_index(db, ws_id=ws.id)
-            done = 0
-            for batch in _batches(part_ids, batch_size):
-                with _batch_transaction(db, apply=apply):
-                    changes += _process_batch(
-                        db,
-                        ws=ws,
-                        part_ids=batch,
-                        report=report,
-                        counts=counts,
-                        unmapped=unmapped,
-                        canonical=canonical,
-                        index=index,
-                    )
-                report.flush()
-                done += len(batch)
-                # Both numbers are cumulative within the workspace, so the
-                # line reads as progress rather than as a batch receipt.
-                logger.info(
-                    "%s workspace=%s parts=%d/%d changes=%d apply=%s",
-                    JOB_NAME,
-                    ws.id,
-                    done,
-                    len(part_ids),
-                    sum(counts[action] for action in ACTIONS),
-                    apply,
+    report = NormalizeReport(stream)
+    for ws in _workspaces(db, workspace_id):
+        counts: Counter[str] = Counter()
+        canonical: set[str] = set()
+        part_ids = _part_ids(db, ws_id=ws.id)
+        # One tree read for the whole workspace. Filing a part changes
+        # `parts.category_id`, never `part_categories`, so the index
+        # stays true for every batch — and the rows in it are never
+        # modified, so a dry run's savepoint rollback leaves it intact.
+        index = category_index(db, ws_id=ws.id)
+        done = 0
+        for batch in _batches(part_ids, batch_size):
+            with _batch_transaction(db, apply=apply):
+                changes += _process_batch(
+                    db,
+                    ws=ws,
+                    part_ids=batch,
+                    report=report,
+                    counts=counts,
+                    unmapped=unmapped,
+                    canonical=canonical,
+                    index=index,
                 )
-            parts += len(part_ids)
-            per_workspace[ws.id] = counts
-            if apply and any(counts[action] for action in ACTIONS):
-                _audit(db, ws_id=ws.id, counts=counts, canonical=canonical)
-                db.commit()
-        ranked = _rank_unmapped(unmapped)
-        report.write_summary(per_workspace=per_workspace, unmapped=ranked)
+            report.flush()
+            done += len(batch)
+            # Both numbers are cumulative within the workspace, so the
+            # line reads as progress rather than as a batch receipt.
+            logger.info(
+                "%s workspace=%s parts=%d/%d changes=%d apply=%s",
+                JOB_NAME,
+                ws.id,
+                done,
+                len(part_ids),
+                sum(counts[action] for action in ACTIONS),
+                apply,
+            )
+        parts += len(part_ids)
+        per_workspace[ws.id] = counts
+        if apply and any(counts[action] for action in ACTIONS):
+            _audit(db, ws_id=ws.id, counts=counts, canonical=canonical)
+            db.commit()
+    ranked = _rank_unmapped(unmapped)
+    report.write_summary(per_workspace=per_workspace, unmapped=ranked)
 
     totals: Counter[str] = Counter()
     for counts in per_workspace.values():
