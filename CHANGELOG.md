@@ -57,9 +57,10 @@ the canonical record.
   whose symbol came from a vendor zip and whose category now has a default
   to fall back on. Neither job renames, re-parents, overwrites a value a
   user set, or deletes anything: a collision is reported, not resolved.
-  `run_job` grew `--dry-run` (the default), `--apply` and `--workspace`;
-  a dry run ends in ROLLBACK, and a scheduled job handed those flags exits
-  2 rather than ignoring them. `docs/domain/categories.md` is the new page.
+  `run_job` grew `--dry-run` (the default), `--apply`, `--workspace` and
+  `--report <path>`; a dry run ends in ROLLBACK and still writes the
+  report, and a scheduled job handed those flags exits 2 rather than
+  ignoring them. `docs/domain/categories.md` is the new page.
 
 - **The manual now has a page on connecting an AI assistant.**
   `docs/user/agents.md` ships in `/help` and covers what an assistant can

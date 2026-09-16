@@ -109,6 +109,10 @@ A `--workspace` that names no workspace is an error, not an empty report.
 Exit 0 with a header-only CSV reads as "there was nothing to do", which is
 the one answer a typo in a UUID must not produce.
 
+`--report <path>` sends the CSV to a file instead of stdout, on a dry run
+as well as an apply. A path that cannot be opened is the same kind of
+usage error as an unknown `--workspace`: exit 2 with a readable message.
+
 Source: `backend/app/domain/categories/seed.py`, data in
 `seed_tables.py`, pinned by `backend/tests/test_category_seed.py`.
 
