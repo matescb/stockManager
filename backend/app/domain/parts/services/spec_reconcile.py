@@ -40,7 +40,7 @@ See ADR-0031 (namespaces), ADR-0034 (the schema).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Mapping, Sequence
 from uuid import UUID
 
@@ -122,7 +122,7 @@ class ReconcileReport:
     #: Canonical keys a higher-precedence provider already answered.
     kept_other_provider: tuple[str, ...] = ()
     #: Raw payload keys refused: junk, placeholder values, losing aliases.
-    dropped: tuple[str, ...] = field(default=())
+    dropped: tuple[str, ...] = ()
 
     def summary(self) -> dict[str, int]:
         """The `summary` object the refresh response has always carried,
@@ -267,12 +267,15 @@ def reconcile_provider_specs(
             )
             added += 1
             canonical.append(key)
-        elif row.source == "manual":
-            kept_manual.append(key)
-        elif row.source == "override":
-            # The user's edit stands. Only the remembered upstream value
-            # moves, so a later Restore lands on what the vendor says now.
-            if provider_outranks(provider_name, row.provider):
+        elif row.source != "provider":
+            # `manual` and `override` are the user's, and so is anything a
+            # future `source` value might mean — the fail-safe branch is the
+            # one that changes nothing. An override's remembered upstream
+            # value still moves, so a later Restore lands on what the vendor
+            # says now; its live value does not.
+            if row.source == "override" and provider_outranks(
+                provider_name, row.provider
+            ):
                 row.original_value = truncate_provider_field_value(value.display)
                 row.provider = provider_name
                 row.updated_by = user_id
@@ -429,6 +432,14 @@ def _namespaced_desired(
     ):
         if is_primary:
             if is_provider_namespaced_key(key):
+                continue
+            # A bare upstream key that happens to spell a canonical one
+            # (`package`, `mounting`) would be a SECOND row for a key the
+            # canonical pass just wrote — impossible under `uq_cf_unique`,
+            # so the insert would be a 500 rather than a duplicate. The
+            # canonical row is the better answer anyway; drop the other.
+            # A secondary is safe by construction: its keys are prefixed.
+            if key in norm.canonical:
                 continue
             stored = key
         else:

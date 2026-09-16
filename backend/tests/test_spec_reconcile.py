@@ -813,3 +813,26 @@ def test_a_manual_edit_brings_an_archived_row_back(authed, db, monkeypatch):
         .count()
         == 1
     )
+
+
+def test_a_bare_upstream_key_that_spells_a_canonical_one_is_not_a_second_row(
+    authed, monkeypatch
+):
+    """`uq_cf_unique` allows one row per key, so an upstream parameter
+    literally named `package` cannot coexist with the canonical `package`
+    the same payload produced. The canonical row is the better answer;
+    without this the insert is a 500 on vendor data we do not control."""
+    _enable_digikey_primary(authed)
+    _category(authed, "Resistors")
+    part_id = _part(authed)
+    odd = dict(DIGIKEY_RESISTOR)
+    odd["Parameters"] = [
+        {"ParameterText": "Package / Case", "ValueText": "0402 (1005 Metric)"},
+        {"ParameterText": "package", "ValueText": "whatever the vendor meant"},
+    ]
+    _stub_digikey(monkeypatch, odd)
+
+    _refresh(authed, part_id)
+
+    rows = _fields(authed, part_id)
+    assert rows["package"]["value"] == "0402 (1005 Metric)"
