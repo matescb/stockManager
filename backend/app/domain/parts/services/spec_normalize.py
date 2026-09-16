@@ -368,6 +368,12 @@ def _batch_transaction(db: Session, *, apply: bool) -> Iterator[None]:
     it. A second, read-only implementation of the same rules is the thing
     this avoids — it could disagree with the writer, and the operator
     would never know which one was right.
+
+    `run_job` rolls a dry run back as well, and that is the OUTER guard,
+    not a duplicate of this one: it protects against a job that forgot to
+    check the flag, while this one makes `normalize_specs` side-effect-free
+    when it is called directly, and is what lets the apply path commit per
+    batch so a killed run keeps what it finished.
     """
     if apply:
         yield
