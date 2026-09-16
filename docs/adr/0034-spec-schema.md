@@ -180,7 +180,8 @@ reconciler of its own. Three decisions landed with it:
     answers is left exactly where it is.
   - **A canonical row is never written without a provider.** A row with
     `provider IS NULL` is claimable by whoever refreshes next
-    (`provider_owns_custom_field_row`), so a backfill that left one behind
+    (`provider_outranks` treats an unstamped row as claimable), so a
+    backfill that left one behind
     would hand a normalised value to the first provider through the door. The
     name comes from the key namespace, else `parts.linked_provider`, else the
     workspace primary; when none of the three answers, the canonical rewrite

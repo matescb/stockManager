@@ -273,7 +273,8 @@ def test_every_canonical_row_it_writes_carries_a_provider(
 ) -> None:
     """The hard precondition: a canonical row with `provider IS NULL` is
     claimable by ANY provider's next refresh
-    (`provider_owns_custom_field_row`), so leaving one behind hands a
+    (`spec_schema.provider_outranks` treats an unstamped row as
+    claimable), so leaving one behind hands a
     normalised value to whoever refreshes first."""
     _, part_id = resistor
 

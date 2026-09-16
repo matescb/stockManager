@@ -42,7 +42,7 @@ from sqlalchemy.orm import Session
 
 from app.core.advisory_locks import SPEC_NORMALIZE_LOCK_CLASSID
 from app.domain.audit.service import log_ids as audit_log_ids
-from app.domain.categories.service import category_name_path, category_name_paths
+from app.domain.categories.service import CategoryIndex, category_index
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part
 from app.domain.parts.provider_fields import KNOWN_PROVIDER_NAMES
@@ -174,6 +174,11 @@ def _run(
             counts: Counter[str] = Counter()
             canonical: set[str] = set()
             part_ids = _part_ids(db, ws_id=ws.id)
+            # One tree read for the whole workspace. Filing a part changes
+            # `parts.category_id`, never `part_categories`, so the index
+            # stays true for every batch — and the rows in it are never
+            # modified, so a dry run's savepoint rollback leaves it intact.
+            index = category_index(db, ws_id=ws.id)
             done = 0
             for batch in _batches(part_ids, batch_size):
                 with _batch_transaction(db, apply=apply):
@@ -185,6 +190,7 @@ def _run(
                         counts=counts,
                         unmapped=unmapped,
                         canonical=canonical,
+                        index=index,
                     )
                 report.flush()
                 done += len(batch)
@@ -230,18 +236,16 @@ def _process_batch(
     counts: Counter[str],
     unmapped: Counter[tuple[str, str]],
     canonical: set[str],
+    index: CategoryIndex,
 ) -> int:
     parts = _parts(db, ws_id=ws.id, part_ids=part_ids)
     rows_by_part = _rows_by_part(db, ws_id=ws.id, part_ids=part_ids)
-    paths = category_name_paths(
-        db, ws_id=ws.id, category_ids=[p.category_id for p in parts]
-    )
     written = 0
     for part in parts:
         rows = rows_by_part.get(part.id, [])
         provider = _resolve_provider(part, ws)
         slug, filed = _file_part(
-            db, ws=ws, part=part, rows=rows, paths=paths, provider=provider
+            db, ws=ws, part=part, rows=rows, index=index, provider=provider
         )
         outcome = normalize_part_rows(
             part_rows=rows, category_slug=slug, default_provider=provider
@@ -266,7 +270,7 @@ def _file_part(
     ws: Workspace,
     part: Part,
     rows: Sequence[CustomField],
-    paths: Mapping[UUID, str],
+    index: CategoryIndex,
     provider: str | None,
 ) -> tuple[str | None, Change | None]:
     """Give the part a category if it has none, and return its schema slug.
@@ -277,16 +281,16 @@ def _file_part(
     the same ordering `provider_import.py` uses.
 
     A part that already has a category keeps it. `apply_provider_category`
-    enforces that too, but going through it for every part would cost a
-    query each to re-derive a path this batch already has.
+    enforces that too, but going through it for every part would re-derive
+    a path the workspace index already holds.
 
-    The uncategorized ones DO pay that cost — two small reads of
-    `part_categories` each. That table is eleven rows on prod and this is
-    a manual job, so batching it would mean reimplementing
-    `resolve_category_path_or_root` to save milliseconds.
+    `index` is the workspace's whole category tree, read once per
+    workspace and threaded through — without it every uncategorized part
+    costs two full `part_categories` reads, which is the N+1 the batched
+    lookups exist to avoid.
     """
     if part.category_id is not None:
-        return category_slug_for(paths.get(part.category_id)), None
+        return category_slug_for(index.paths.get(part.category_id)), None
 
     previous_editor = part.updated_by
     outcome = apply_provider_category(
@@ -296,6 +300,7 @@ def _file_part(
         provider_name=provider or "",
         provider_category=_provider_category_text(rows, provider),
         description=part.description,
+        index=index,
     )
     if not outcome.assigned:
         return outcome.slug, None
@@ -305,8 +310,9 @@ def _file_part(
     part.updated_by = previous_editor
     return outcome.slug, Change(
         action=ACTION_CATEGORY,
-        category_path=category_name_path(db, ws_id=ws.id, category_id=outcome.category_id)
-        or "",
+        category_path=index.paths.get(outcome.category_id, "")
+        if outcome.category_id
+        else "",
     )
 
 

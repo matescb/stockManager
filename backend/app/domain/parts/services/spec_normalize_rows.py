@@ -28,7 +28,8 @@ the result under rules of its own:
   is on screen today and put nothing in its place.
 * **a canonical row always names its provider.** A row with
   `provider IS NULL` is claimable by whoever refreshes next
-  (`provider_fields.py::provider_owns_custom_field_row`), so writing one
+  (`spec_schema.provider_outranks` treats an unstamped row as
+  claimable), so writing one
   would hand a normalised value to the first provider through the door.
   When no provider can be named the canonical rewrite is skipped for
   that part and reported; junk is still retired, because a customs code
@@ -473,7 +474,15 @@ def _retired(row: CustomField, action: str) -> Change:
 
 
 def _archive(row: CustomField) -> None:
+    """Retire a row, and take its number out of the sortable index.
+
+    `ix_custom_fields_ws_key_value_num` is partial on
+    `value_num IS NOT NULL`, so a retired row that kept one stays in an
+    index built to answer questions about live specs. The ingest path
+    clears it for the same reason.
+    """
     row.archived_at = utcnow()
+    row.value_num = None
 
 
 def _namespace_of(key: str) -> str | None:
