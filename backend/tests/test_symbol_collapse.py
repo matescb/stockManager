@@ -22,10 +22,14 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.domain.audit.models import AuditLog
+from app.domain.eda import symbol_collapse as collapse_module
 from app.domain.eda.models import EdaSymbol, PartEda
 from app.domain.eda.symbol_collapse import (
     AUDIT_ACTION,
+    CLEARED,
     CSV_COLUMNS,
+    SKIPPED,
+    WOULD_CLEAR,
     collapse_candidates,
     run_symbol_collapse,
 )
@@ -263,6 +267,75 @@ def test_an_archived_symbol_is_not_reported(ws: Tenant, db):
 
     assert run_symbol_collapse(db, apply=True, stream=io.StringIO()) == 0
     assert ws.symbol_id_str(part_id) == "Device:R"
+
+
+def test_an_empty_default_symbol_ref_is_not_a_default(ws: Tenant, db):
+    """`kicad_library.py:298` reads the column for truthiness, so `""`
+    resolves to no symbol at all. Collapsing against it would delete
+    every part in the category from the KiCad library — `_document`
+    returns None for a part with no symbol."""
+    category = ws.category("Resistors", default_symbol_ref="Device:R")
+    part_id = create_part(ws.session, name="R", category_id=category["id"])
+    symbol = ws.symbol("R_VENDOR", category_id=category["id"])
+    ws.configure(part_id, symbol_id=symbol["id"])
+    blanked = ws.session.patch(
+        f"/api/categories/{category['id']}", json={"default_symbol_ref": ""}
+    )
+    assert blanked.status_code == 200, blanked.text
+
+    assert run_symbol_collapse(db, apply=True, stream=io.StringIO()) == 0
+    assert ws.config(part_id).symbol_id == uuid.UUID(symbol["id"])
+    # The part is still in the library, which is the whole point.
+    assert ws.symbol_id_str(part_id) == "PCM_SM_resistors:R_VENDOR"
+
+
+def test_a_config_changed_since_the_report_is_skipped_not_overwritten(ws: Tenant, db):
+    """The operator reads a report and then applies. A `PUT /parts/{id}/eda`
+    in between is a user decision."""
+    part_id = _vendor_part(ws)
+    candidates = collapse_candidates(db)
+    assert len(candidates) == 1
+
+    replacement = ws.symbol("R_OTHER")
+    ws.configure(part_id, symbol_id=replacement["id"])
+
+    outcomes = collapse_module._apply(db, candidates)
+
+    assert [o.action for o in outcomes] == [SKIPPED]
+    assert ws.config(part_id).symbol_id == uuid.UUID(replacement["id"])
+    assert _audit_rows(db) == []
+
+    stream = io.StringIO()
+    collapse_module.write_report(outcomes, stream)
+    assert "changed during the run" in stream.getvalue()
+
+
+def test_a_deleted_config_is_skipped_not_recreated(ws: Tenant, db):
+    part_id = _vendor_part(ws)
+    candidates = collapse_candidates(db)
+    assert ws.session.delete(f"/api/parts/{part_id}/eda").status_code == 200
+
+    outcomes = collapse_module._apply(db, candidates)
+
+    assert [o.action for o in outcomes] == [SKIPPED]
+    assert _audit_rows(db) == []
+
+
+def test_an_unknown_workspace_is_an_error_not_an_empty_report(ws: Tenant, db):
+    with pytest.raises(LookupError, match="no workspace"):
+        collapse_candidates(db, workspace_id=uuid.uuid4())
+
+
+def test_the_report_action_column_says_what_happened(ws: Tenant, db):
+    _vendor_part(ws)
+
+    dry = io.StringIO()
+    run_symbol_collapse(db, apply=False, stream=dry)
+    assert WOULD_CLEAR in dry.getvalue()
+
+    wet = io.StringIO()
+    run_symbol_collapse(db, apply=True, stream=wet)
+    assert CLEARED in wet.getvalue()
 
 
 # ---------------------------------------------------------------------

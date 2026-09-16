@@ -16,6 +16,8 @@ refuse these flags outright rather than accept and ignore them: a
 """
 from __future__ import annotations
 
+import inspect
+
 import pytest
 from sqlalchemy.orm import Session
 
@@ -24,6 +26,7 @@ from app.cli.run_job import (
     JobConfigError,
     JobOptions,
     JobSpec,
+    heartbeat_is_fresh,
     main,
     run_job,
 )
@@ -249,6 +252,88 @@ def test_the_operator_jobs_are_registered_and_unscheduled(job_name: str) -> None
     assert job.takes_options is True
     assert job.interval_setting is None
     assert "--apply" in job.idempotency
+
+
+def test_the_operator_jobs_are_exactly_these_two() -> None:
+    """A set equality, not a subset: a third job quietly gaining
+    `takes_options` would otherwise slip past every check here, and the
+    deployment docs name these two by hand."""
+    assert {name for name, job in JOBS.items() if job.takes_options} == set(
+        _OPERATOR_JOBS
+    )
+
+
+@pytest.mark.parametrize("job_name", sorted(JOBS))
+def test_every_job_signature_matches_its_takes_options_flag(job_name: str) -> None:
+    """The flag decides how `run_job` calls the function, so a flag that
+    disagrees with the signature is a `TypeError` at 3am, not at import."""
+    job = JOBS[job_name]
+    parameters = inspect.signature(job.run).parameters
+    assert len(parameters) == 1 + int(job.takes_options)
+
+
+@pytest.mark.parametrize("job_name", _OPERATOR_JOBS)
+def test_an_operator_job_is_always_heartbeat_healthy(job_name: str) -> None:
+    """Nothing schedules them, so they have no cadence to be late for.
+    Answering `True` rather than raising is what lets a monitor iterate
+    `list(JOBS)` without knowing which kind each job is."""
+    assert heartbeat_is_fresh(job_name) is True
+
+
+def test_an_operator_job_writes_no_heartbeat_file(tmp_path) -> None:
+    """A file saying it ran once last March would read as healthy, and
+    its absence as broken. Neither is a fact about a job a human runs."""
+    session = _FakeSession()
+
+    run_job(
+        "example",
+        jobs=_spec(lambda db, options: 0, takes_options=True),
+        session_factory=lambda: session,  # type: ignore[return-value]
+        heartbeat_dir=tmp_path,
+    )
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_scheduled_job_still_writes_a_heartbeat(tmp_path) -> None:
+    run_job(
+        "example",
+        jobs=_spec(lambda db: 0),
+        session_factory=lambda: _FakeSession(),  # type: ignore[return-value]
+        heartbeat_dir=tmp_path,
+    )
+
+    assert [p.name for p in tmp_path.iterdir()] == ["example"]
+
+
+@pytest.mark.parametrize(
+    "job_name", sorted(name for name, job in JOBS.items() if not job.takes_options)
+)
+def test_every_scheduled_job_commits(job_name: str, tmp_path, monkeypatch) -> None:
+    """The ROLLBACK branch belongs to the operator-run jobs alone. A
+    scheduled job that started rolling back would silently stop doing
+    its work while still reporting `status=ok`."""
+    session = _FakeSession()
+    spec = JOBS[job_name]
+    monkeypatch.setattr(
+        "app.cli.run_job._job_interval_seconds", lambda job: None
+    )
+
+    run_job(
+        job_name,
+        jobs={job_name: JobSpec(
+            name=spec.name,
+            owner=spec.owner,
+            cadence=spec.cadence,
+            idempotency=spec.idempotency,
+            run=lambda db: 0,
+        )},
+        session_factory=lambda: session,  # type: ignore[return-value]
+        heartbeat_dir=tmp_path,
+    )
+
+    assert session.committed is True
+    assert session.rolled_back is False
 
 
 def test_no_scheduled_job_takes_options() -> None:

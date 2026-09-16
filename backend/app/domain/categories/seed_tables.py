@@ -75,6 +75,16 @@ SEEDABLE_FIELDS: tuple[str, ...] = (
     "kicad_fields",
 )
 
+# Seedable fields where an EMPTY container is a real user value rather
+# than an unset column, so the seed must leave it alone.
+#
+# `kicad_fields = []` is how a category says "emit no symbol fields"
+# against a parent that emits some — `domain/eda/kicad_specs.py` stops
+# the inheritance walk on it. Every other seedable field is read for
+# truthiness downstream (`kicad_library.py`), so `[]` and `""` there are
+# indistinguishable from NULL and safe to fill.
+EMPTY_IS_SET_FIELDS: frozenset[str] = frozenset({"kicad_fields"})
+
 _RESISTOR_FIELDS = ("resistance", "tolerance", "power", "temp_coefficient", "package")
 _CERAMIC_FIELDS = ("capacitance", "voltage_rating", "dielectric", "tolerance", "package")
 _ELECTROLYTIC_FIELDS = (

@@ -21,6 +21,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.cli.run_job import main as run_job_main
 from app.domain.audit.models import AuditLog
@@ -31,6 +32,7 @@ from app.domain.categories.seed import (
     AUDIT_ACTION,
     CREATED,
     CSV_COLUMNS,
+    REASON_NAME_AMBIGUOUS,
     REASON_RACE,
     SKIPPED,
     UNCHANGED,
@@ -441,6 +443,30 @@ def _stale_index(monkeypatch, *, blind_to: Workspace) -> None:
     monkeypatch.setattr(seed_module, "_load_index", _patched)
 
 
+def test_the_constraint_names_match_the_service():
+    """`seed.py` copies them rather than importing the FastAPI-facing
+    service module; this is the test that keeps the copy honest."""
+    from app.domain.categories import service
+
+    assert seed_module._UQ_WS_NAME == service.UQ_PART_CATEGORIES_WS_NAME
+    assert seed_module._UQ_WS_SLUG == service.UQ_PART_CATEGORIES_WS_SLUG
+
+
+def test_an_integrity_error_that_is_not_a_lost_race_propagates(db, owned, monkeypatch):
+    """"Re-run the job" is an instruction that can never work for a CHECK
+    or a trigger violation, so only the two uniqueness constraints are
+    swallowed."""
+    ws, _client = owned
+
+    def _explode(db_, *, ws, apply, seeds):
+        raise IntegrityError("INSERT …", {}, Exception("null value in column"))
+
+    monkeypatch.setattr(seed_module, "plan_workspace", _explode)
+
+    with pytest.raises(IntegrityError):
+        _seed(db, ws)
+
+
 def test_a_lost_race_costs_one_workspace_and_no_data(db, owned, monkeypatch):
     ws, client = owned
     existing = _create(client, "Resistors", description="mine")
@@ -471,6 +497,64 @@ def test_one_workspace_losing_the_race_does_not_stop_the_next(
     assert by_workspace[mine.id].detail == REASON_RACE
     assert len(_categories(db, theirs)) == len(SEED_CATEGORIES)
     assert [row.workspace_id for row in _audit_rows(db)] == [theirs.id]
+
+
+# ---------------------------------------------------------------------
+# Ambiguity, unknown workspaces, and what the audit row claims
+# ---------------------------------------------------------------------
+
+
+def test_two_categories_sharing_a_name_are_reported_not_guessed_between(db, owned):
+    """`uq_part_categories_ws_name` is case-SENSITIVE, so "Resistors" and
+    "resistors" are two legal rows. Picking one would make the run's
+    effect depend on row order."""
+    ws, client = owned
+    _create(client, "Resistors", library_slug="resistors-upper")
+    _create(client, "resistors", library_slug="resistors-lower")
+
+    outcomes = _seed(db, ws)
+
+    by_path = {o.path: o for o in outcomes}
+    assert by_path["Resistors"].action == SKIPPED
+    assert by_path["Resistors"].detail == REASON_NAME_AMBIGUOUS
+    rows = _categories(db, ws)
+    assert rows["Resistors"].default_symbol_ref is None
+    assert rows["resistors"].default_symbol_ref is None
+
+
+def test_an_unknown_workspace_is_an_error_not_an_empty_report(db, owned):
+    """An empty CSV and exit 0 reads as "nothing to do", which is the one
+    answer a typo in a UUID must not produce."""
+    with pytest.raises(LookupError, match="no workspace"):
+        seed_all_workspaces(db, apply=False, workspace_id=uuid.uuid4())
+
+
+def test_the_audit_row_names_updated_categories_too(db, owned):
+    """An update writes KiCad metadata onto a category a user made. That
+    is exactly the change the audit trail exists to make traceable."""
+    ws, client = owned
+    existing = _create(client, "Resistors")
+
+    _seed(db, ws)
+
+    rows = _audit_rows(db)
+    assert len(rows) == 1
+    assert uuid.UUID(existing["id"]) in rows[0].target_ids
+    assert len(rows[0].target_ids) == len(SEED_CATEGORIES)
+    # Counts only — a category name is user data.
+    assert "Resistors" not in (rows[0].comment or "")
+
+
+def test_a_dry_run_reports_no_category_id_for_a_row_it_would_create(db, owned):
+    """The id is minted so children can be planned against it and then
+    thrown away; printing it would put a UUID that will never exist into
+    the operator's report."""
+    ws, _client = owned
+
+    outcomes = _seed(db, ws, apply=False)
+
+    assert all(o.action == CREATED for o in outcomes)
+    assert {o.category_id for o in outcomes} == {None}
 
 
 # ---------------------------------------------------------------------

@@ -42,6 +42,7 @@ import csv
 import logging
 import sys
 import uuid
+from collections import Counter
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, TextIO
@@ -54,6 +55,7 @@ from sqlalchemy.orm import Session
 from app.domain.audit.service import log as audit_log
 from app.domain.categories.models import PartCategory
 from app.domain.categories.seed_tables import (
+    EMPTY_IS_SET_FIELDS,
     SEED_CATEGORIES,
     SEEDABLE_FIELDS,
     SeedCategory,
@@ -67,11 +69,18 @@ __all__ = [
     "AUDIT_ACTION",
     "CREATED",
     "CSV_COLUMNS",
+    "REASON_ARCHIVED",
+    "REASON_NAME_AMBIGUOUS",
+    "REASON_NAME_TAKEN",
+    "REASON_PARENT_MISSING",
     "REASON_RACE",
+    "REASON_SLUG_TAKEN",
+    "REASON_TOO_DEEP",
     "SKIPPED",
     "UNCHANGED",
     "UPDATED",
     "SeedOutcome",
+    "assert_workspace_exists",
     "iter_seed_paths",
     "plan_workspace",
     "run_category_seed",
@@ -102,7 +111,22 @@ REASON_SLUG_TAKEN = "library slug used by another category"
 REASON_ARCHIVED = "an archived category already has this name here"
 REASON_PARENT_MISSING = "parent category could not be resolved"
 REASON_TOO_DEEP = f"would exceed the {MAX_DEPTH}-level nesting cap"
+
+# The two partial unique indexes a lost race can trip. COPIES of
+# `categories/service.py`'s constants rather than an import, so a CLI job
+# does not drag the FastAPI-facing service module (and its `fastapi`
+# import chain) into its own; `tests/test_category_seed.py::
+# test_the_constraint_names_match_the_service` fails if they drift. Same
+# deliberate-copy pattern as `PLACEHOLDER_PATTERN` in
+# `categories/schemas.py`.
+_UQ_WS_NAME = "uq_part_categories_ws_name"
+_UQ_WS_SLUG = "uq_part_categories_ws_slug"
+_RACEABLE_CONSTRAINTS: frozenset[str] = frozenset({_UQ_WS_NAME, _UQ_WS_SLUG})
 REASON_RACE = "another writer took a name or slug mid-run; re-run the job"
+REASON_NAME_AMBIGUOUS = (
+    "two active categories share this name; rename one so the seed knows "
+    "which it means"
+)
 
 
 @dataclass(frozen=True)
@@ -142,13 +166,13 @@ def _is_unset(field: str, value: object) -> bool:
 
     Blank strings and empty arrays count as unset because nothing
     downstream can tell them from NULL — `kicad_library.py` tests each
-    of them for truthiness. `kicad_fields` is the exception: an empty
-    list there is a real instruction that stops the inheritance walk in
-    `kicad_specs.py`, so only NULL is unset.
+    of them for truthiness. The exceptions are listed in
+    `seed_tables.EMPTY_IS_SET_FIELDS`, where an empty container is a
+    real instruction rather than an absent value.
     """
     if value is None:
         return True
-    if field == "kicad_fields":
+    if field in EMPTY_IS_SET_FIELDS:
         return False
     if isinstance(value, str):
         return not value.strip()
@@ -184,6 +208,15 @@ class _WorkspaceIndex:
         self.by_parent_name: dict[tuple[UUID | None, str], PartCategory] = {
             (r.parent_id, r.name.lower()): r for r in active
         }
+        # `uq_part_categories_ws_name` is case-SENSITIVE, so "Resistors"
+        # and "resistors" are two legal rows that collapse to one key in
+        # the maps above. Counting them is how `_plan_one` can refuse to
+        # pick one arbitrarily — the caller gets a rename to do, not a
+        # coin toss that a re-run could decide differently.
+        self._name_counts: Counter[str] = Counter(r.name.lower() for r in active)
+        self._parent_name_counts: Counter[tuple[UUID | None, str]] = Counter(
+            (r.parent_id, r.name.lower()) for r in active
+        )
         archived = [r for r in rows if r.archived_at is not None]
         self.archived_by_name: dict[str, PartCategory] = {
             r.name.lower(): r for r in archived
@@ -197,6 +230,18 @@ class _WorkspaceIndex:
         self.by_name[row.name.lower()] = row
         self.by_slug[row.library_slug] = row
         self.by_parent_name[(row.parent_id, row.name.lower())] = row
+        self._name_counts[row.name.lower()] += 1
+        self._parent_name_counts[(row.parent_id, row.name.lower())] += 1
+
+    def is_ambiguous(self, seed: SeedCategory, parent_id: UUID | None) -> bool:
+        """Whether more than one active row answers this seed row's lookup.
+
+        Scoped exactly like `match`: workspace-wide for a root, under the
+        resolved parent for a child.
+        """
+        if seed.parent is None:
+            return self._name_counts[seed.name.lower()] > 1
+        return self._parent_name_counts[(parent_id, seed.name.lower())] > 1
 
     def match(self, seed: SeedCategory, parent_id: UUID | None) -> PartCategory | None:
         """The active row this seed row already has, if any.
@@ -228,9 +273,21 @@ class _WorkspaceIndex:
 
 
 def _load_index(db: Session, *, workspace_id: UUID) -> _WorkspaceIndex:
+    """One workspace's categories, oldest first.
+
+    The ORDER BY is not cosmetic. The maps below are keyed on a
+    lower-cased name while the unique index is case-sensitive, so two
+    rows can share a key; without a stable order the survivor would be
+    whatever Postgres returned first, and two runs could disagree about
+    which category they filled. Oldest-first also makes the survivor the
+    one the user created first, which is the better guess where
+    `is_ambiguous` does not already refuse to guess at all.
+    """
     rows = list(
         db.execute(
-            select(PartCategory).where(PartCategory.workspace_id == workspace_id)
+            select(PartCategory)
+            .where(PartCategory.workspace_id == workspace_id)
+            .order_by(PartCategory.created_at.asc(), PartCategory.id.asc())
         ).scalars()
     )
     return _WorkspaceIndex(rows)
@@ -282,12 +339,19 @@ def plan_workspace(
 ) -> list[SeedOutcome]:
     """Plan — and, when `apply`, perform — the seed for one workspace.
 
-    Takes the workspace-tree advisory lock the reparent path takes,
-    before the index is read: every decision below rests on that
-    snapshot, and a concurrent create could otherwise take the name this
-    run is about to use.
+    On `--apply`, takes the workspace-tree advisory lock the reparent
+    path takes, before the index is read: every decision below rests on
+    that snapshot, and a concurrent create could otherwise take the name
+    this run is about to use.
+
+    A dry run does NOT take it. The lock is exclusive per workspace and
+    the report can be minutes of work across an estate; blocking every
+    category write in every workspace to produce a file that changes
+    nothing is a cost with no matching benefit. The plan may be a moment
+    stale, which is what a plan is.
     """
-    lock_workspace_tree(db, workspace_id=ws.id)
+    if apply:
+        lock_workspace_tree(db, workspace_id=ws.id)
     index = _load_index(db, workspace_id=ws.id)
     resolved: dict[str, UUID] = {}
     outcomes: list[SeedOutcome] = []
@@ -334,9 +398,16 @@ def _plan_one(
 
     parent_id: UUID | None = None
     if seed.parent is not None:
+        # Keyed by the parent's NAME because `SeedCategory.parent` holds
+        # one; `test_seed_names_are_unique` is what makes that key
+        # unambiguous, and the same test is why a path key would buy
+        # nothing here.
         parent_id = resolved.get(seed.parent)
         if parent_id is None:
             return outcome(SKIPPED, detail=REASON_PARENT_MISSING), None
+
+    if index.is_ambiguous(seed, parent_id):
+        return outcome(SKIPPED, detail=REASON_NAME_AMBIGUOUS), None
 
     existing = index.match(seed, parent_id)
     if existing is not None:
@@ -368,10 +439,27 @@ def _plan_one(
         return outcome(SKIPPED, detail=REASON_TOO_DEEP), None
 
     row = _new_row(seed, workspace_id=ws.id, parent_id=parent_id)
-    return outcome(CREATED, category_id=row.id), row
+    # The minted id is real only under `--apply`. A dry run needs one so
+    # children can be planned against it, but printing it would put a
+    # UUID that will never exist into the operator's report.
+    return outcome(CREATED, category_id=row.id if apply else None), row
+
+
+def assert_workspace_exists(db: Session, workspace_id: UUID | None) -> None:
+    """Refuse a `--workspace` that names no workspace.
+
+    Without this the job reports a header-only CSV and exits 0, which
+    reads as "there was nothing to do" — the one answer an operator must
+    not be given for a typo in a UUID.
+    """
+    if workspace_id is None:
+        return
+    if db.get(Workspace, workspace_id) is None:
+        raise LookupError(f"no workspace with id {workspace_id}")
 
 
 def _workspaces(db: Session, *, workspace_id: UUID | None) -> list[Workspace]:
+    assert_workspace_exists(db, workspace_id)
     stmt = select(Workspace).order_by(Workspace.name.asc(), Workspace.id.asc())
     if workspace_id is not None:
         stmt = stmt.where(Workspace.id == workspace_id)
@@ -379,20 +467,23 @@ def _workspaces(db: Session, *, workspace_id: UUID | None) -> list[Workspace]:
 
 
 def _summary(outcomes: Iterable[SeedOutcome]) -> str:
-    counts: dict[str, int] = {}
-    for outcome in outcomes:
-        counts[outcome.action] = counts.get(outcome.action, 0) + 1
+    counts = Counter(outcome.action for outcome in outcomes)
     return " ".join(f"{action}={counts[action]}" for action in sorted(counts))
 
 
 def _write_audit(db: Session, *, ws: Workspace, outcomes: Sequence[SeedOutcome]) -> None:
     """One `audit_log` row for one changed workspace.
 
-    A workspace where nothing changed gets none: a row saying "I looked
-    and did nothing" is noise in a table on-call reads. The comment is
-    action counts only — never a category name, which is user data.
+    `target_ids` carries every row this run WROTE, created and updated
+    alike — an update writes KiCad metadata onto a category a user made,
+    which is exactly the kind of change the audit trail exists to make
+    traceable (CLAUDE.md: stable target ids when available). A workspace
+    where nothing changed gets no row at all: "I looked and did nothing"
+    is noise in a table on-call reads. The comment stays action counts
+    only — a category name is user data.
     """
-    if not any(o.is_write for o in outcomes):
+    written = [o.category_id for o in outcomes if o.is_write and o.category_id]
+    if not written:
         return
     audit_log(
         db,
@@ -400,14 +491,15 @@ def _write_audit(db: Session, *, ws: Workspace, outcomes: Sequence[SeedOutcome])
         user=None,
         action=AUDIT_ACTION,
         target_type="part_category",
-        target_ids=[
-            o.category_id
-            for o in outcomes
-            if o.action == CREATED and o.category_id is not None
-        ]
-        or None,
+        target_ids=written,
         comment=_summary(outcomes),
     )
+
+
+def _violated_constraint(exc: IntegrityError) -> str | None:
+    """The constraint name Postgres reported, if it reported one."""
+    diag = getattr(getattr(exc, "orig", None), "diag", None)
+    return getattr(diag, "constraint_name", None)
 
 
 def _seed_one_workspace(
@@ -417,7 +509,7 @@ def _seed_one_workspace(
     apply: bool,
     seeds: Sequence[SeedCategory],
 ) -> list[SeedOutcome]:
-    """One workspace's seed, contained so a collision can't take the run
+    """One workspace's seed, contained so a lost race can't take the run
     down with it.
 
     The uniqueness pre-checks read a snapshot, and the workspace-tree
@@ -426,19 +518,34 @@ def _seed_one_workspace(
     the new category has a parent, so a concurrent create of a *root*
     can take a name between this run's check and its flush. That is a
     lost race, not a bug, and losing it must cost one workspace rather
-    than the twenty after it — hence the savepoint. The operator re-runs;
-    the job is idempotent, so the second run picks up whatever the first
-    did not get.
+    than the twenty after it — hence the savepoint. The operator
+    re-runs; the job is idempotent, so the second run picks up whatever
+    the first did not get.
+
+    Only the two uniqueness constraints are treated that way. A
+    workspace-FK trigger violation, a NOT NULL, a CHECK or a failure
+    writing the audit row is a bug in this job or a corrupt tree, and
+    telling the operator to "re-run" would hide it behind an
+    instruction that can never work — so anything else is re-raised.
     """
     if not apply:
         return plan_workspace(db, ws=ws, apply=False, seeds=seeds)
+    outcomes: list[SeedOutcome] = []
     try:
         with db.begin_nested():
             outcomes = plan_workspace(db, ws=ws, apply=True, seeds=seeds)
             _write_audit(db, ws=ws, outcomes=outcomes)
-    except IntegrityError:
+    except IntegrityError as exc:
+        constraint = _violated_constraint(exc)
+        if constraint not in _RACEABLE_CONSTRAINTS:
+            raise
+        # No `exc_info`: a SQLAlchemy traceback carries the statement's
+        # bound parameters, which here are the workspace's category names
+        # and descriptions. The constraint name is the whole diagnosis.
         logger.warning(
-            "category-seed workspace=%s status=raced", ws.id, exc_info=True
+            "category-seed workspace=%s status=raced constraint=%s",
+            ws.id,
+            constraint,
         )
         return [SeedOutcome(ws.id, ws.name, "(workspace)", SKIPPED, None, REASON_RACE)]
     return outcomes

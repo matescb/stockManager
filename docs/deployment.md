@@ -458,7 +458,7 @@ optional `--workspace <uuid>`.
 | Job | What it changes | Report |
 |---|---|---|
 | `category-seed` | Creates missing passive categories per workspace and fills KiCad metadata that was never set. Never renames, re-parents or overwrites. | CSV: `workspace_id, workspace_name, path, action, category_id, detail` |
-| `symbol-collapse` | Clears `part_eda.symbol_id` where the symbol came from a vendor zip and the part's category has a `default_symbol_ref`, so one `Device:R` replaces one symbol per part. | CSV: `workspace_id, workspace_name, part_id, part_name, category, symbol_name, symbol_source, before, after` |
+| `symbol-collapse` | Clears `part_eda.symbol_id` where the symbol came from a vendor zip and the part's category has a non-empty `default_symbol_ref`, so one `Device:R` replaces one symbol per part. | CSV: `workspace_id, workspace_name, part_id, part_name, category, symbol_name, symbol_source, before, after, action, detail` |
 
 The report goes to **stdout** and the logging to **stderr**, so redirecting
 gives a clean CSV:
@@ -473,6 +473,11 @@ A dry run ends in ROLLBACK, not COMMIT (`run_job.py`), which is the second of
 two guards — the jobs also plan without writing. `--apply` commits and writes
 one `audit_log` row per changed workspace. Take a `pg_dump` first anyway
 (see [Backups](#backups)); there is no staging environment.
+
+Neither job is on a heartbeat: they have no cadence to be late for, so
+`--check-heartbeat` reports them healthy and they write no heartbeat file. A
+`--workspace` naming no workspace exits 2 rather than printing an empty
+report.
 
 Passing `--apply` or `--workspace` to a *scheduled* job exits 2 rather than
 being ignored. Details and the seed's exact rules:

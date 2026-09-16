@@ -77,6 +77,12 @@ What it will and won't do:
   `library_slug` already used elsewhere in the workspace, an archived
   category of that name, a parent that was itself skipped, or a nesting that
   would pass `tree.MAX_DEPTH`.
+- **Refuses to guess between two categories with the same name.**
+  `uq_part_categories_ws_name` is case-*sensitive*, so `Resistors` and
+  `resistors` are two legal rows. The seed matches case-insensitively, sees
+  two answers, and skips with "two active categories share this name" — a
+  rename for a human, not a coin toss that a re-run could decide the other
+  way.
 
 It takes the workspace-tree advisory lock (`tree.py::lock_workspace_tree`)
 before reading, but that lock does not cover every writer: `create_category`
@@ -88,9 +94,20 @@ carries on with the next workspace. Re-run the job; it is idempotent.
 
 The report is CSV on stdout (`workspace_id, workspace_name, path, action,
 category_id, detail`); the logging goes to stderr, so
-`… category-seed > seed.csv` gives a clean file. `--apply` writes one
-`audit_log` row per changed workspace, action `category.seed`, carrying the
-created ids and a counts-only comment.
+`… category-seed > seed.csv` gives a clean file. `category_id` is blank for a
+row a dry run would create — the id exists only so children can be planned
+against it, and printing a UUID that will never exist would be a lie in the
+operator's report.
+
+`--apply` writes one `audit_log` row per changed workspace, action
+`category.seed`. `target_ids` names every category the run wrote, created
+**and** updated: an update writes KiCad metadata onto a category a user made,
+which is exactly what the audit trail is for. The comment is action counts
+only, because a category name is user data.
+
+A `--workspace` that names no workspace is an error, not an empty report.
+Exit 0 with a header-only CSV reads as "there was nothing to do", which is
+the one answer a typo in a UUID must not produce.
 
 Source: `backend/app/domain/categories/seed.py`, data in
 `seed_tables.py`, pinned by `backend/tests/test_category_seed.py`.
@@ -135,9 +152,26 @@ docker compose -f docker-compose.dev.yml exec backend \
 ```
 
 It leaves alone: hand-uploaded symbols, external refs the user typed, parts
-whose category has no default (clearing there leaves the part with no symbol
-at all), archived symbols (already falling through to the default), and
-footprints — a footprint is per-package and genuinely per-part.
+whose category has no default, archived symbols (already falling through to
+the default), and footprints — a footprint is per-package and genuinely
+per-part.
+
+"No default" means an empty string as well as NULL. `kicad_library.py:298`
+reads the column for truthiness, so a category patched to `""` resolves to no
+symbol at all; clearing `symbol_id` against it would leave those parts with
+no symbol, and `_document` drops a part with no symbol out of the library
+entirely. The predicate is `coalesce(default_symbol_ref, '') != ''` for that
+reason and must stay that way. (`category-seed` repairs the underlying state:
+a blank string counts as unset, so the seed fills it.)
+
+It also re-checks each `part_eda` row against the symbol the report was built
+from, and skips anything that changed in between — a `PUT /parts/{id}/eda`
+between the dry run and the apply is a user decision. The audit row, the
+comment count and the job's return value are all built from what was actually
+cleared, so none of them can over-claim.
+
+The report adds `action` (`would_clear` / `cleared` / `skipped`) and `detail`
+to the columns, so a skipped race is visible rather than silently missing.
 
 The `eda_symbols` rows themselves survive. Another part may still reference
 one, and they are the record of what was imported.

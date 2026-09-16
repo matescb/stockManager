@@ -19,7 +19,14 @@ from app.core.advisory_locks import RUN_JOB_LOCK_CLASSID
 logger = logging.getLogger(__name__)
 
 SessionFactory = Callable[[], Session]
-JobCallable = Callable[..., int]
+# A scheduled job takes the session alone; an operator-run job takes the
+# session and its flags. Spelling both out rather than `Callable[..., int]`
+# keeps the two shapes checkable — `tests/test_run_job_options.py::
+# test_every_job_signature_matches_its_takes_options_flag` reads the real
+# signature off each registered job and fails if the flag lies about it.
+ScheduledJob = Callable[[Session], int]
+OperatorJob = Callable[[Session, "JobOptions"], int]
+JobCallable = ScheduledJob | OperatorJob
 HEARTBEAT_DIR = Path("/tmp/stockmanager-job-heartbeats")
 HEARTBEAT_MAX_AGE_SECONDS = 90 * 60
 
@@ -312,6 +319,12 @@ def heartbeat_is_fresh(
 ) -> bool:
     """Return True when a scheduled job is disabled or has a fresh heartbeat."""
     job = _get_job(job_name, jobs)
+    if job.takes_options:
+        # Operator-run: nothing schedules it, so it has no cadence to be
+        # late for and writes no heartbeat. Healthy by definition — and
+        # answering rather than raising is what lets a monitor iterate
+        # `list(JOBS)` without knowing which kind each one is.
+        return True
     interval = _job_interval_seconds(job)
     if interval is None:
         raise JobConfigError(f"job {job.name!r} does not define a settings interval")
@@ -366,22 +379,31 @@ def run_job(
     job = _get_job(job_name, jobs)
     _job_interval_seconds(job)
     if options is not None and not job.takes_options:
-        raise JobConfigError(f"job {job.name!r} takes no --apply / --workspace options")
-    if options is None and job.takes_options:
-        options = JobOptions()
+        raise JobConfigError(
+            f"job {job.name!r} is scheduled and takes no "
+            "--dry-run / --apply / --workspace options"
+        )
+    # Defaulted here rather than narrowed at the call site: an
+    # operator-run job always receives a `JobOptions`, and "no flags"
+    # means the dry run.
+    job_options = options if options is not None else JobOptions()
 
     db = session_factory()
     try:
         if not _acquire_job_lock(db, job.name):
             db.rollback()
-            _write_heartbeat(job.name, heartbeat_dir=heartbeat_dir)
+            _write_heartbeat(job, heartbeat_dir=heartbeat_dir)
             logger.info("job=%s status=skipped reason=lock_denied", job.name)
             return 0
-        affected = job.run(db, options) if job.takes_options else job.run(db)
-        if options is not None and not options.apply:
-            db.rollback()
-            logger.info("job=%s status=dry_run would_affect=%s", job.name, affected)
+        if job.takes_options:
+            affected = job.run(db, job_options)
+            if job_options.apply:
+                db.commit()
+            else:
+                db.rollback()
+                logger.info("job=%s status=dry_run would_affect=%s", job.name, affected)
         else:
+            affected = job.run(db)
             db.commit()
     except Exception:
         db.rollback()
@@ -390,7 +412,7 @@ def run_job(
     finally:
         db.close()
 
-    _write_heartbeat(job.name, heartbeat_dir=heartbeat_dir)
+    _write_heartbeat(job, heartbeat_dir=heartbeat_dir)
     logger.info(
         "job=%s status=ok affected=%s cadence=%s owner=%s",
         job.name,
@@ -401,10 +423,20 @@ def run_job(
     return affected
 
 
-def _write_heartbeat(job_name: str, *, heartbeat_dir: Path = HEARTBEAT_DIR) -> None:
+def _write_heartbeat(job: JobSpec, *, heartbeat_dir: Path = HEARTBEAT_DIR) -> None:
+    """Record that a SCHEDULED job ran.
+
+    Operator-run jobs write none. A heartbeat is the answer to "is the
+    cadence still being met", and a job a human runs by hand has no
+    cadence — a file saying it ran once last March would be read as
+    healthy, and its absence read as broken. `heartbeat_is_fresh` has
+    the matching rule.
+    """
+    if job.takes_options:
+        return
     heartbeat_dir.mkdir(parents=True, exist_ok=True)
-    heartbeat_path = heartbeat_dir / job_name
-    tmp_path = heartbeat_dir / f".{job_name}.{uuid4().hex}.tmp"
+    heartbeat_path = heartbeat_dir / job.name
+    tmp_path = heartbeat_dir / f".{job.name}.{uuid4().hex}.tmp"
     tmp_path.write_text("ok\n", encoding="utf-8")
     tmp_path.replace(heartbeat_path)
 
@@ -565,7 +597,12 @@ def main(
             heartbeat_dir=heartbeat_dir,
             options=_options_for(args.job_name, args, jobs),
         )
-    except (UnknownJobError, JobConfigError) as exc:
+    except (UnknownJobError, JobConfigError, LookupError) as exc:
+        # LookupError is what an operator-run job raises for a
+        # `--workspace` that names nothing. Reporting it as a usage error
+        # rather than letting it surface as a traceback is the point: the
+        # alternative, an empty report and exit 0, reads as "nothing to
+        # do" for what is actually a typo.
         print(str(exc), file=sys.stderr)
         return 2
     return 0
