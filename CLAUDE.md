@@ -210,20 +210,33 @@ them, that's the bug.
   `backend/app/domain/parts/provider_fields.py`. Adding a new catalog
   field needs the FE list AND the relevant server-side touchpoint.
 - **One primary parts provider, many secondaries, disjoint field
-  namespaces.** `workspaces.parts_provider` is the primary: it owns the
-  part columns, `parts.linked_*`, and the un-namespaced
-  `source='provider'` custom fields. A secondary (credentials in
-  `workspace_provider_credentials`) writes no part column and only
-  `"{provider}:"`-prefixed fields. Every reconciliation scopes itself
-  through `provider_fields.py::provider_owns_custom_field_key` — the
-  refresh's trailing "delete rows absent from my payload" pass would
-  otherwise wipe every other provider's rows on each refresh. The
-  primary's credentials live in the legacy `workspaces.parts_provider_api_*`
-  columns, NOT in `workspace_provider_credentials` — that table holds
-  secondaries only, migration 0070 backfills nothing into it, and the
-  PUT route refuses the primary, so no provider ever has two credential
-  stores. ADR-0031; `tests/test_secondary_provider.py` pins both
-  directions.
+  namespaces — except canonical specs.** `workspaces.parts_provider` is
+  the primary: it owns the part columns, `parts.linked_*`, and the
+  un-namespaced `source='provider'` CATALOG fields. A secondary
+  (credentials in `workspace_provider_credentials`) writes
+  `"{provider}:"`-prefixed catalog fields, and the only part column it
+  may touch is a NULL `category_id` (filling one is not a claim on the
+  part's identity; overruling one is, and never happens). **Both tiers
+  write un-namespaced CANONICAL spec keys** (`resistance`, not
+  `mouser:Resistance`) — that is the point of having a second provider,
+  since parametric data under a prefix nothing reads is not "loading the
+  specs from both". Ownership for the refresh's trailing "delete rows
+  absent from my payload" pass is therefore per ROW, through
+  `provider_fields.py::provider_owns_custom_field_row`: the
+  `custom_fields.provider` column for a canonical key, the namespace rule
+  for everything else (applying provenance to non-canonical keys is the
+  mirror-image bug — a switched-over workspace could never prune the old
+  primary's bare rows). A contested canonical key goes to the higher
+  `spec_schema.PROVIDER_PRECEDENCE` (DigiKey > Mouser), not to whoever
+  refreshed last. Unlink asks the narrower
+  `provider_wrote_custom_field_row`, which reads an unstamped row as
+  somebody else's. `services/spec_reconcile.py` is the ONLY writer, for
+  the create path and the refresh path alike. The primary's credentials
+  live in the legacy `workspaces.parts_provider_api_*` columns, NOT in
+  `workspace_provider_credentials` — that table holds secondaries only,
+  migration 0070 backfills nothing into it, and the PUT route refuses the
+  primary, so no provider ever has two credential stores. ADR-0031 +
+  ADR-0034; `tests/test_secondary_provider.py` pins both directions.
 - **Polymorphic cleanup on hard delete.** `attachments`, `custom_fields`,
   and `tag_links` have no FK on `object_id`. Hard-deleting a registered
   parent (`part`, `order`, `project`, `build`, `lot`, `storage_location`)

@@ -98,6 +98,13 @@ longer has a reconciler of its own. Unlink asks a third, narrower question —
 else's, because "nobody recorded who wrote this" is not evidence that the
 provider being unlinked did.
 
+One more thing moved with it: a secondary may now fill a **NULL** `category_id`
+(A4 files an uncategorized part from the provider's own taxonomy). That is the
+single exception to "a secondary writes no part column", and it is narrow on
+purpose — filling a category nobody chose is not a claim on the part's identity,
+and a Mouser-only part would otherwise stay uncategorized forever. Overruling a
+category that is already set never happens, from either tier.
+
 `tests/test_secondary_provider.py` pins all of it in both directions, including
 the two new cases that matter most: a primary refresh must not delete a
 canonical row the secondary owns, and a secondary refresh must not delete one
@@ -156,6 +163,9 @@ unremovable, with no route able to touch it.
 - Secondary refreshes do not download assets. The primary already owns the part's
   image and datasheet; a second content-addressed copy would cost a request per
   refresh to produce a field nothing renders. The upstream URL is stored as-is.
+- A secondary can fill a NULL `category_id` and nothing else on the part. Every
+  other column, and any category already chosen, remains the primary's / the
+  user's.
 - The legacy `workspaces.parts_provider_api_*` columns stay. Dropping them would
   be a destructive migration straight to prod (no staging) for no functional gain,
   and they remain the primary's only store.

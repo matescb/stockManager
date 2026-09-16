@@ -972,3 +972,47 @@ def test_credential_rotation_audit_row_names_the_provider_not_the_secret(authed,
     assert row is not None
     assert row.comment == "provider=mouser,fields=api_key"
     assert "secret-never-logged" not in (row.comment or "")
+
+
+def test_a_secondary_may_fill_a_null_category_and_nothing_else(authed, monkeypatch):
+    """The single exception to "a secondary writes no part column" (A4).
+
+    Filling a category nobody chose is not a claim on the part's identity,
+    and a Mouser-only part would otherwise stay uncategorized forever.
+    """
+    _enable_digikey_primary(authed)
+    _configure_mouser_secondary(authed)
+    category_id = authed.post("/api/categories", json={"name": "Resistors"}).json()[
+        "data"
+    ]["id"]
+    part_id = _create_part(authed)
+    _stub_mouser(monkeypatch)
+
+    authed.post(f"/api/parts/{part_id}/refresh-from-provider?provider=mouser")
+
+    part = authed.get(f"/api/parts/{part_id}").json()["data"]
+    assert part["category_id"] == category_id
+    # ...and still not one identity column.
+    assert part["manufacturer"] is None
+    assert part["linked_provider"] is None
+    assert part["last_refresh_at"] is None
+
+
+def test_a_secondary_never_overrules_a_category_already_set(authed, monkeypatch):
+    _enable_digikey_primary(authed)
+    _configure_mouser_secondary(authed)
+    authed.post("/api/categories", json={"name": "Resistors"})
+    mine = authed.post("/api/categories", json={"name": "Bias network"}).json()["data"][
+        "id"
+    ]
+    r = authed.post(
+        "/api/parts",
+        json={"name": "R", "part_type": "linked", "mpn": MPN, "category_id": mine},
+    )
+    assert r.status_code in (200, 201), r.text
+    part_id = r.json()["data"]["id"]
+    _stub_mouser(monkeypatch)
+
+    authed.post(f"/api/parts/{part_id}/refresh-from-provider?provider=mouser")
+
+    assert authed.get(f"/api/parts/{part_id}").json()["data"]["category_id"] == mine

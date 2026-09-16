@@ -237,7 +237,13 @@ def reconcile_provider_specs(
     norm = normalise(
         category_slug, provider_name, list(raw_specs), description=description
     )
-    rows = _active_rows(db, ws_id=ws_id, part_id=part.id)
+    # ARCHIVED rows are loaded too, and that is load-bearing: `uq_cf_unique`
+    # (workspace_id, object_type, object_id, key) has no partial WHERE, so a
+    # row this reconcile retired last time still occupies its key. Writing
+    # past it would be an IntegrityError — a 500 on refresh, and a rolled-back
+    # row in the middle of a bulk import. A key that comes back with a real
+    # value is un-archived instead (see `_write`).
+    rows = _rows_for(db, ws_id=ws_id, part_id=part.id)
     by_key = {row.key: row for row in rows}
 
     added = updated = 0
@@ -283,6 +289,7 @@ def reconcile_provider_specs(
             # Claiming provenance is not a change the operator did
             # anything to see, so it is not counted as an update.
             row.provider = provider_name
+            _unarchive(row, user_id)
             canonical.append(key)
 
     desired, skipped = _namespaced_desired(
@@ -308,6 +315,7 @@ def reconcile_provider_specs(
                 row.updated_by = user_id
                 updated += 1
             row.provider = provider_name
+            _unarchive(row, user_id)
         elif row.source == "override":
             if row.original_value != value:
                 row.original_value = value
@@ -350,16 +358,28 @@ def reconcile_provider_specs(
 # ---------------------------------------------------------------------------
 # internals
 # ---------------------------------------------------------------------------
-def _active_rows(db, *, ws_id: UUID, part_id: UUID) -> list[CustomField]:
+def _rows_for(db, *, ws_id: UUID, part_id: UUID) -> list[CustomField]:
+    """Every `custom_fields` row on this part, archived included."""
     return list(
         db.execute(
             select(CustomField)
             .where(CustomField.workspace_id == ws_id)
             .where(CustomField.object_type == "part")
             .where(CustomField.object_id == part_id)
-            .where(CustomField.archived_at.is_(None))
         ).scalars()
     )
+
+
+def _unarchive(row: CustomField, user_id: UUID | None) -> None:
+    """A retired key that upstream answers again is live data once more.
+
+    Restoring beats inserting alongside: `uq_cf_unique` would refuse the
+    insert, and it keeps one row per key rather than a live one shadowing
+    a retired one nothing can reach.
+    """
+    if row.archived_at is not None:
+        row.archived_at = None
+        row.updated_by = user_id
 
 
 def _new_row(
@@ -444,6 +464,10 @@ def _retire(
     archived = removed = 0
     for row in rows:
         if row.source != "provider" or row.key in touched:
+            continue
+        if row.archived_at is not None:
+            # Already retired by an earlier pass. Leave it archived rather
+            # than hard-deleting it now — the record is the point.
             continue
         if not provider_owns_custom_field_row(
             provider_name, row, is_primary=is_primary

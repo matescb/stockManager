@@ -732,3 +732,84 @@ def test_a_refresh_files_into_its_own_workspaces_category(db, monkeypatch):
     body = _refresh(mine, part_id)
     assert body["part"]["category_id"] == my_resistors
     assert body["part"]["category_id"] != other_resistors
+
+
+# ---------------------------------------------------------------------------
+# Archived rows and `uq_cf_unique`
+# ---------------------------------------------------------------------------
+
+
+def test_a_key_upstream_answers_again_is_restored_not_re_inserted(
+    authed, db, monkeypatch
+):
+    """`uq_cf_unique` has no partial WHERE, so an archived row still owns
+    its key. Prod has ~1,000 rows whose value is `-`; the first refresh
+    that omits one archives it, and the next refresh that carries a real
+    value for the same key would collide on insert — a 500 on refresh, and
+    a rolled-back row in the middle of a bulk import.
+    """
+    from app.domain.custom_fields.models import CustomField
+
+    _enable_digikey_primary(authed)
+    part_id = _part(authed)
+    ws_id = uuid.UUID(authed.get("/api/workspaces/current").json()["data"]["id"])
+    db.add(
+        CustomField(
+            workspace_id=ws_id,
+            object_type="part",
+            object_id=uuid.UUID(part_id),
+            key="Packaging",
+            value="-",
+            source="provider",
+        )
+    )
+    db.flush()
+
+    without = dict(DIGIKEY_RESISTOR)
+    without["Parameters"] = [
+        p for p in DIGIKEY_RESISTOR["Parameters"] if p["ParameterText"] != "Packaging"
+    ]
+    _stub_digikey(monkeypatch, without)
+    body = _refresh(authed, part_id)
+    assert body["summary"]["archived"] >= 1
+    assert "Packaging" not in _fields(authed, part_id)
+
+    _stub_digikey(monkeypatch, DIGIKEY_RESISTOR)
+    _refresh(authed, part_id)
+
+    rows = _fields(authed, part_id)
+    assert rows["Packaging"]["value"] == "Tape & Reel (TR)"
+    assert (
+        db.query(CustomField)
+        .filter_by(object_id=uuid.UUID(part_id), key="Packaging")
+        .count()
+        == 1
+    )
+
+
+def test_a_manual_edit_brings_an_archived_row_back(authed, db, monkeypatch):
+    """Same constraint from the other side: typing a retired key into the
+    add-spec form must restore the row, not update one the list endpoint
+    will never show again."""
+    from app.domain.custom_fields.models import CustomField
+
+    _enable_digikey_primary(authed)
+    part_id = _part(authed)
+    _stub_digikey(monkeypatch, DIGIKEY_RESISTOR)
+    _refresh(authed, part_id)
+    assert "ECCN" not in _fields(authed, part_id)
+
+    r = authed.post(
+        "/api/custom-fields",
+        json={"object_type": "part", "object_id": part_id, "key": "ECCN", "value": "mine"},
+    )
+    assert r.status_code in (200, 201), r.text
+
+    rows = _fields(authed, part_id)
+    assert rows["ECCN"]["value"] == "mine"
+    assert (
+        db.query(CustomField)
+        .filter_by(object_id=uuid.UUID(part_id), key="ECCN")
+        .count()
+        == 1
+    )
