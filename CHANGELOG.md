@@ -53,8 +53,8 @@ the canonical record.
   client can tell "the vendor sent it and we did not store it" apart from
   silence; the toast in the UI still reports added / updated / removed. See
   ADR-0034 and the A3 amendment to ADR-0031. The 9,377 existing rows are re-keyed by a
-  part's next refresh, or in bulk by the `spec-normalize` backfill in a
-  follow-up.
+  part's next refresh, or in bulk by the `spec-normalize` backfill,
+  which landed with it.
 - **One symbol per class in the KiCad chooser, and a category tree to hang
   it off.** Every vendor zip a workspace imports ships its own schematic
   symbol, and the KiCad document prefers a hosted symbol over the category

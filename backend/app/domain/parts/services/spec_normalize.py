@@ -70,8 +70,13 @@ __all__ = [
 ]
 
 
-class UnknownWorkspaceError(ValueError):
-    """`--workspace` named a workspace that does not exist."""
+class UnknownWorkspaceError(LookupError):
+    """`--workspace` named a workspace that does not exist.
+
+    A `LookupError` because that is the shape `cli/run_job.py::main`
+    already turns into a usage error and exit 2 for the other
+    operator-run jobs.
+    """
 
 
 JOB_NAME = "spec-normalize"

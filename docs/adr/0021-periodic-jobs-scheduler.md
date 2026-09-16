@@ -58,6 +58,7 @@ Jobs in the same registry that are **not** scheduled:
   - Creating HTTP endpoints solely so a scheduler can trigger maintenance jobs.
   - Giving a one-off backfill its own CLI entry point instead of registering it here.
   - Defaulting a backfill to `--apply`, or letting a job that cannot honour the review flags accept them.
+  - Accepting `--apply` on a job that rewrites values IN PLACE without `--report`. The CSV is the only record of what those values were, and it is what the rollback procedure reads. `JobSpec.requires_report` declares it; `category-seed` and `symbol-collapse` leave it False because creating a row and clearing a nullable column are both undoable from the schema alone.
 
 ## Alternatives considered
 

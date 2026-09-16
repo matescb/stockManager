@@ -18,6 +18,7 @@ refuse these flags outright rather than accept and ignore them: a
 from __future__ import annotations
 
 import inspect
+import stat
 from pathlib import Path
 
 import pytest
@@ -28,12 +29,15 @@ from app.cli.run_job import (
     JobConfigError,
     JobOptions,
     JobSpec,
+    _options_for,
+    _parse_args,
+    _report_stream,
     heartbeat_is_fresh,
     main,
     run_job,
 )
 
-_OPERATOR_JOBS = ("category-seed", "symbol-collapse")
+_OPERATOR_JOBS = ("category-seed", "spec-normalize", "symbol-collapse")
 
 
 class _FakeResult:
@@ -256,10 +260,10 @@ def test_the_operator_jobs_are_registered_and_unscheduled(job_name: str) -> None
     assert "--apply" in job.idempotency
 
 
-def test_the_operator_jobs_are_exactly_these_two() -> None:
-    """A set equality, not a subset: a third job quietly gaining
+def test_the_operator_jobs_are_exactly_these_three() -> None:
+    """A set equality, not a subset: a fourth job quietly gaining
     `takes_options` would otherwise slip past every check here, and the
-    deployment docs name these two by hand."""
+    deployment docs name these three by hand."""
     assert {name for name, job in JOBS.items() if job.takes_options} == set(
         _OPERATOR_JOBS
     )
@@ -516,3 +520,93 @@ def test_an_unwritable_report_path_is_a_usage_error(tmp_path, db) -> None:
 
     with pytest.raises(JobConfigError, match="cannot write --report"):
         _run_category_seed(db, JobOptions(report=blocker / "seed.csv"))
+
+
+# ---------------------------------------------------------------------------
+# The report file's permissions, and the one job that insists on having one
+#
+# A report names every workspace, part, key and value the job touched, and it
+# lands wherever the operator pointed — on the prod container that is a
+# world-readable `/tmp`. The mode belongs to `_report_stream`'s contract, not
+# to each job.
+# ---------------------------------------------------------------------------
+def test_the_report_file_and_its_directory_are_private(tmp_path: Path) -> None:
+    report = tmp_path / "reports" / "out.csv"
+
+    with _report_stream(JobOptions(report=report)) as stream:
+        assert stream is not None
+        stream.write("x\n")
+
+    assert stat.S_IMODE(report.stat().st_mode) == 0o600
+    assert stat.S_IMODE(report.parent.stat().st_mode) == 0o700
+    assert report.read_text(encoding="utf-8") == "x\n"
+
+
+def test_an_existing_report_directory_is_not_re_moded(tmp_path: Path) -> None:
+    """`--report /tmp/x.csv` hardens the file and leaves `/tmp` alone. The
+    container's `/tmp` is shared; 0700 on it would break every other
+    process that writes there."""
+    existing = tmp_path / "shared"
+    existing.mkdir(mode=0o755)
+    before = stat.S_IMODE(existing.stat().st_mode)
+
+    with _report_stream(JobOptions(report=existing / "out.csv")):
+        pass
+
+    assert stat.S_IMODE(existing.stat().st_mode) == before
+    assert stat.S_IMODE((existing / "out.csv").stat().st_mode) == 0o600
+
+
+def test_no_report_path_yields_no_stream() -> None:
+    """``None`` means stdout, and the job decides what that looks like."""
+    with _report_stream(JobOptions()) as stream:
+        assert stream is None
+
+
+def test_an_unwritable_report_path_is_a_usage_error(tmp_path: Path) -> None:
+    """Not a traceback: the operator mistyped a path and can fix it."""
+    blocker = tmp_path / "file"
+    blocker.write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(JobConfigError) as exc_info:
+        with _report_stream(JobOptions(report=blocker / "nested" / "out.csv")):
+            pass
+
+    assert "cannot write --report" in str(exc_info.value)
+
+
+_REPORT_REQUIRED = sorted(name for name, job in JOBS.items() if job.requires_report)
+
+
+@pytest.mark.parametrize("job_name", _REPORT_REQUIRED)
+def test_apply_without_a_report_is_refused(
+    job_name: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A job that rewrites values IN PLACE has no rollback record except
+    the CSV, so `--apply` without `--report` is a usage error rather than
+    a change nobody can review afterwards."""
+    exit_code = main(
+        [job_name, "--apply"], jobs=JOBS, session_factory=_unreachable_session
+    )
+
+    assert exit_code == 2
+    assert "requires --report with --apply" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("job_name", _REPORT_REQUIRED)
+def test_a_dry_run_needs_no_report(job_name: str) -> None:
+    """Only the apply path insists. A dry run with no file writes its CSV
+    to stdout like every other operator-run job."""
+    options = _options_for(job_name, _parse_args([job_name]), JOBS)
+
+    assert options == JobOptions()
+
+
+def test_only_an_in_place_rewrite_requires_a_report() -> None:
+    """`category-seed` only creates rows and `symbol-collapse` only clears a
+    nullable column, so both are undoable from the schema alone."""
+    assert _REPORT_REQUIRED == ["spec-normalize"]
+
+
+def _unreachable_session() -> Session:
+    raise AssertionError("the flag check must run before any session is opened")

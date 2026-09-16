@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 from collections.abc import Callable, Iterator, Mapping
@@ -75,6 +76,13 @@ class JobSpec:
     #: this job is operator-run (`--apply` / `--workspace` / `--report`)
     #: rather than scheduled.
     takes_options: bool = False
+    #: Whether `--apply` is refused without `--report`. Set by a job that
+    #: rewrites values IN PLACE, where the CSV is the only record of what
+    #: they were and the rollback procedure reads it. A job that only
+    #: creates rows (`category-seed`) or clears a nullable column
+    #: (`symbol-collapse`) can be undone from the schema alone and leaves
+    #: this False.
+    requires_report: bool = False
 
 
 class UnknownJobError(ValueError):
@@ -151,12 +159,19 @@ def _report_stream(options: JobOptions) -> Iterator[TextIO | None]:
     The file is written even on a dry run, and that is the point — the
     report IS the deliverable of a dry run. The transaction rolls back;
     the operator still has the CSV to read.
+
+    It is written 0600, in a 0700 directory when the job has to create
+    one. These reports name every workspace, part, key and value they
+    touch, and they land wherever the operator pointed — which on the
+    prod container is a world-readable `/tmp`. `exist_ok=True` does not
+    re-mode a directory that already exists, so `--report /tmp/x.csv`
+    hardens the file and never touches `/tmp` itself.
     """
     if options.report is None:
         yield None
         return
     try:
-        options.report.parent.mkdir(parents=True, exist_ok=True)
+        options.report.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         handle = options.report.open("w", encoding="utf-8", newline="")
     except OSError as exc:
         # Same contract as a `--workspace` that names nothing: a usage
@@ -165,6 +180,9 @@ def _report_stream(options: JobOptions) -> Iterator[TextIO | None]:
         # is a real failure and must keep its stack.
         raise JobConfigError(f"cannot write --report {options.report}: {exc}") from exc
     with handle:
+        # After the open, so the mode applies to the file that exists
+        # rather than racing whatever umask the operator's shell carries.
+        os.chmod(options.report, 0o600)
         yield handle
 
 
@@ -190,6 +208,22 @@ def _run_symbol_collapse(db: Session, options: JobOptions) -> int:
             workspace_id=options.workspace_id,
             stream=stream,
         )
+
+
+def _run_spec_normalize(db: Session, options: JobOptions) -> int:
+    from app.domain.parts.services.spec_normalize import normalize_specs
+
+    # A `--workspace` that names nothing raises `UnknownWorkspaceError`,
+    # a `LookupError` — the shape `main` already turns into exit 2 for the
+    # other operator-run jobs. Nothing to translate here.
+    with _report_stream(options) as stream:
+        outcome = normalize_specs(
+            db,
+            apply=options.apply,
+            workspace_id=options.workspace_id,
+            stream=stream,
+        )
+    return outcome.changes
 
 
 def _printing_is_configured() -> bool:
@@ -312,6 +346,23 @@ JOBS: dict[str, JobSpec] = {
         ),
         run=_run_symbol_collapse,
         takes_options=True,
+    ),
+    "spec-normalize": JobSpec(
+        name="spec-normalize",
+        owner="backend/parts",
+        cadence="manual (operator-run, one-off backfill)",
+        idempotency=(
+            "Re-keys existing provider custom_fields onto the canonical spec "
+            "schema (ADR-0034) and files uncategorized parts from the "
+            "provider's own taxonomy. A row already carrying its canonical "
+            "key, parsed value, provider and value_num is not a change, so a "
+            "second run reports 0. Nothing is deleted: junk keys and "
+            "placeholder values are archived. Writes nothing at all without "
+            "--apply, which it refuses without --report."
+        ),
+        run=_run_spec_normalize,
+        takes_options=True,
+        requires_report=True,
     ),
     "print-job-reconcile": JobSpec(
         name="print-job-reconcile",
@@ -602,8 +653,14 @@ def _options_for(
         or args.workspace is not None
         or args.report is not None
     )
-    if not asked and not _get_job(job_name, jobs).takes_options:
+    job = _get_job(job_name, jobs)
+    if not asked and not job.takes_options:
         return None
+    if job.requires_report and args.apply and args.report is None:
+        raise JobConfigError(
+            f"job {job.name!r} requires --report with --apply: it rewrites "
+            "values in place, and the CSV is the only record of what they were"
+        )
     return JobOptions(
         apply=args.apply, workspace_id=args.workspace, report=args.report
     )

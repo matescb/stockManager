@@ -31,7 +31,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
-from app.cli.run_job import BackfillOptions, main, run_job
+from app.cli.run_job import JobOptions, main, run_job
 from app.core.time import utcnow
 from app.core.advisory_locks import SPEC_NORMALIZE_LOCK_CLASSID
 from app.domain.audit.models import AuditLog
@@ -932,7 +932,7 @@ def test_the_job_runs_through_the_registry(
         "spec-normalize",
         session_factory=lambda: db,
         heartbeat_dir=tmp_path / "heartbeats",
-        options=BackfillOptions(report_path=tmp_path / "r.csv"),
+        options=JobOptions(report=tmp_path / "r.csv"),
     )
 
     assert affected > 0
