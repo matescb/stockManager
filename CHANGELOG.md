@@ -15,6 +15,21 @@ the canonical record.
 
 ## Unreleased
 
+- **`spec-normalize` re-keys the specs that pre-date the schema.** A new
+  one-off `run_job` backfill does in bulk what a refresh does one part at
+  a time: it moves existing `custom_fields` rows onto their canonical key
+  with a parsed value and a `value_num` sidecar, archives customs codes
+  and `-` placeholders, stamps `custom_fields.provider` on every
+  canonical row it writes, and files parts that have no category from
+  their provider's taxonomy. It is `--dry-run` by default and writes
+  nothing in that mode; the CSV it produces (per-change lines, counts per
+  workspace, and the raw keys the schema had no alias for) is the review
+  step before `--apply`. Nothing is ever deleted, `manual` and `override`
+  rows are invisible to it, a category a user chose is never overridden,
+  and a second run reports zero changes. `--apply` requires `--report`,
+  because the CSV is the only record of the values it replaces.
+  `--workspace` narrows it to one tenant. Runbook:
+  `docs/runbooks/spec-normalize.md`; ADR-0034.
 - **Provider specs are normalised on import and refresh, and imported
   parts get a category.** `domain/parts/services/spec_reconcile.py` is now
   the single writer for a provider payload, used by both the create path
@@ -38,8 +53,8 @@ the canonical record.
   client can tell "the vendor sent it and we did not store it" apart from
   silence; the toast in the UI still reports added / updated / removed. See
   ADR-0034 and the A3 amendment to ADR-0031. The 9,377 existing rows are re-keyed by a
-  part's next refresh, or in bulk by the `spec-normalize` backfill in a
-  follow-up.
+  part's next refresh, or in bulk by the `spec-normalize` backfill,
+  which landed with it.
 - **One symbol per class in the KiCad chooser, and a category tree to hang
   it off.** Every vendor zip a workspace imports ships its own schematic
   symbol, and the KiCad document prefers a hosted symbol over the category

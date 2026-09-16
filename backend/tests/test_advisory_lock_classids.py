@@ -8,6 +8,7 @@ from app.core.advisory_locks import (
     DATASHEET_BACKFILL_LOCK_CLASSID,
     PASSWORD_RESET_THROTTLE_LOCK_CLASSID,
     RUN_JOB_LOCK_CLASSID,
+    SPEC_NORMALIZE_LOCK_CLASSID,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -22,6 +23,7 @@ def test_classids_disjoint() -> None:
         "run_job": RUN_JOB_LOCK_CLASSID,
         "password_reset_throttle": PASSWORD_RESET_THROTTLE_LOCK_CLASSID,
         "datasheet_backfill": DATASHEET_BACKFILL_LOCK_CLASSID,
+        "spec_normalize": SPEC_NORMALIZE_LOCK_CLASSID,
     }
     assert len(set(classids.values())) == len(classids)
     assert all(INT4_MIN <= classid <= INT4_MAX for classid in classids.values())
@@ -72,3 +74,24 @@ def test_hashtext_lock_sites_use_two_arg_namespaces() -> None:
     assert "DATASHEET_BACKFILL_LOCK_CLASSID" in datasheets_source
     assert "CAST(:classid AS int4)" in datasheets_source
     assert "CAST(hashtext(:key) AS int4)" in datasheets_source
+
+    # Same rule for the spec-normalize backfill, which commits per batch of
+    # parts so a killed run keeps what it finished.
+    spec_normalize_source = (
+        REPO_ROOT
+        / "backend"
+        / "app"
+        / "domain"
+        / "parts"
+        / "services"
+        / "spec_normalize.py"
+    ).read_text(encoding="utf-8")
+
+    assert "pg_try_advisory_xact_lock" not in spec_normalize_source, (
+        "the backfill lock must survive its own commits"
+    )
+    assert "pg_try_advisory_lock(" in spec_normalize_source
+    assert "pg_advisory_unlock(" in spec_normalize_source
+    assert "SPEC_NORMALIZE_LOCK_CLASSID" in spec_normalize_source
+    assert "CAST(:classid AS int4)" in spec_normalize_source
+    assert "CAST(hashtext(:key) AS int4)" in spec_normalize_source

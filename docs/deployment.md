@@ -450,7 +450,7 @@ resolves jobs orphaned in `sent` even after printing is turned back off).
 
 ### Operator-run jobs
 
-Two jobs in the same registry are **not** scheduled and must never be given a
+Three jobs in the same registry are **not** scheduled and must never be given a
 sidecar: they change data on a judgement call, so a human runs them, reads the
 report, and then decides. They take `--apply` (default is a dry run), an
 optional `--workspace <uuid>`, and an optional `--report <path>`.
@@ -459,6 +459,7 @@ optional `--workspace <uuid>`, and an optional `--report <path>`.
 |---|---|---|
 | `category-seed` | Creates missing passive categories per workspace and fills KiCad metadata that was never set. Never renames, re-parents or overwrites. | CSV: `workspace_id, workspace_name, path, action, category_id, detail` |
 | `symbol-collapse` | Clears `part_eda.symbol_id` where the symbol came from a vendor zip and the part's category has a non-empty `default_symbol_ref`, so one `Device:R` replaces one symbol per part. | CSV: `workspace_id, workspace_name, part_id, part_name, category, symbol_name, symbol_source, before, after, action, detail` |
+| `spec-normalize` | Re-keys the provider `custom_fields` rows that pre-date the spec schema (ADR-0034) onto their canonical key with a parsed value and a `value_num` sidecar, archives customs codes and `-` placeholders, stamps `provider`, and files uncategorized parts from the provider's taxonomy. A one-off backfill, not a recurring cleanup. | CSV: `workspace_id, part_id, mpn, action, key, old_key, provider, old_value, new_value, category_path`, plus counts per workspace and the raw keys the schema had no alias for |
 
 The report goes to **stdout** and the logging to **stderr**, so redirecting
 gives a clean CSV:
@@ -494,6 +495,30 @@ installs renders a KiCad Value from the part's canonical specs, and a partial
 render still beats the part name — so a passive that has a `package` spec but
 no `resistance` yet would show `0603` on the schematic. Run the
 `spec-normalize` backfill to completion first.
+
+**`spec-normalize` additionally refuses `--apply` without `--report`.** It
+rewrites values in place, so the CSV is the only record of what they were and
+the rollback procedure reads it. The report file is written `0600`, in a
+`0700` directory if the job has to create one, because it names every part,
+key and value in the workspace.
+
+```bash
+cd /srv/stockmanager
+sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
+    exec backend python -m app.cli.run_job spec-normalize \
+    --dry-run --report /tmp/spec-normalize.csv
+sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
+    exec -T backend cat /tmp/spec-normalize.csv > ~/spec-normalize.csv
+```
+
+`/tmp` inside the `backend` container is writable by the `appuser` the image
+runs as and is not a mounted volume, so the file goes away with the container
+— copy it out before the next deploy. Do **not** write it under
+`/data/uploads`: that is the `uploads` volume, and an operator report has no
+business in the content-addressed asset store. Read the CSV, take a
+`pg_dump`, then re-run the same command with `--apply`; the job is
+idempotent, so a second `--apply` reports zero changes. Full procedure:
+[spec-normalize runbook](runbooks/spec-normalize.md).
 
 ### Label printer connectivity
 

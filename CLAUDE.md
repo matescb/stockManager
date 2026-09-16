@@ -40,10 +40,11 @@ the order a new engineer should read them.
 
 **Ops shelf (on-call):**
 
-- `docs/runbooks/` — 10 runbooks: secret-rotation, backup-restore,
+- `docs/runbooks/` — ops playbooks: secret-rotation, backup-restore,
   prod-rollback, migration-recovery, sentry-triage, on-call-quickstart,
-  incident-response, smtp-outage, provider-outage, workspace-recovery.
-  `docs/runbooks/README.md` has the severity matrix.
+  incident-response, smtp-outage, provider-outage, workspace-recovery,
+  spec-normalize, and more. `docs/runbooks/README.md` is the index and
+  has the severity matrix.
 
 **End-user shelf:**
 

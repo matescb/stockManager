@@ -141,6 +141,14 @@ reconciler of its own. Three decisions landed with it:
     anything — a vendor taxonomy we do not control must not grow a curated tree.
   - **Don't sort on `value_num` without `value_num IS NOT NULL` in the query.**
     The supporting index is partial; without the predicate Postgres seq-scans.
+  - **Don't let the A5 backfill delete a row, or hand it
+    `reconcile_provider_specs`.** Its payload is the current database state,
+    so the reconcile's "delete everything absent from my payload" pass has
+    nothing to mean and everything to take. See the A5 note below.
+  - **Don't write a canonical row without `custom_fields.provider`.** An
+    unstamped canonical row is claimable by whoever refreshes next, which is
+    the ownership rule working as designed — and exactly why a backfill that
+    leaves one behind gives a normalised value away.
 
 ## Follow-ups this ADR does not cover
 
@@ -152,10 +160,63 @@ reconciler of its own. Three decisions landed with it:
   class for MOSFETs and BJTs (`Transistors / MOSFET`, not `… / MOSFET N`):
   N- vs P-channel is in the `fet_type` SPEC, not in the vendor's category
   string, and a wrong category is worse than a coarse one.
-- **A5** is the `spec-normalize` backfill that re-keys the 9,377 existing rows.
-  Until it runs, a part's rows are normalised by its next refresh and not
-  before, and every legacy row has a NULL `provider` — which is exactly the
-  "unclaimed" case the ownership rule is written for.
+- ~~**A5**~~ — landed 2026-09-16. `run_job spec-normalize` re-keys the 9,377
+  existing rows in bulk, `--dry-run` by default; see
+  [the runbook](../runbooks/spec-normalize.md). Until it is APPLIED on a given
+  database, a part's rows are still normalised only by its next refresh, and
+  every legacy row has a NULL `provider` — which is exactly the "unclaimed"
+  case `provider_outranks` is written for, and exactly what
+  `provider_wrote_custom_field_row` refuses to let anyone DELETE. Three
+  decisions it added:
+
+  - **It is not `reconcile_provider_specs`, and routing it through that
+    function later would be a data-loss bug.** That function's last pass
+    deletes every row an upstream payload did not mention. Here the payload IS
+    the current database state, so "absent from the payload" describes no row,
+    and the pass would delete whatever the schema happened not to claim. It also
+    re-namespaces a secondary's catalog keys, which on a table whose rows are
+    all un-namespaced would duplicate them instead of moving them.
+    `services/spec_normalize_rows.py` reuses `normalise()` — the alias table,
+    the junk denylist and the parser are not re-implemented — and writes the
+    result under backfill rules: nothing is deleted, junk and superseded
+    aliases are archived, and a row whose canonical key a `manual` row already
+    answers is left exactly where it is.
+  - **A canonical row is never written without a provider.** A row with
+    `provider IS NULL` is claimable by whoever refreshes next
+    (`provider_outranks` treats an unstamped row as claimable), so a backfill
+    that left one behind would hand a normalised value to whoever comes
+    through the door first. The
+    name comes from the key namespace, else `parts.linked_provider`, else the
+    workspace primary; when none of the three answers, the canonical rewrite
+    is skipped for that part and counted. Junk is still retired — a customs
+    code is junk whoever wrote it.
+  - **The description is not mined.** `normalise()` pulls Mouser's parametric
+    values out of prose and a refresh wants that; a backfill does not, because
+    it would write specs with no existing row behind them and therefore
+    nothing for the operator to review in the CSV.
+
+  A row this schema has already re-keyed is invisible to `normalise()` —
+  `resistance` is not one of `Resistance`'s aliases — so
+  `spec_schema.canonical_value` re-parses it by canonical key instead. Without
+  that the job would read its own output as unmapped free text and never be
+  idempotent. Two further things that idempotency turned out to rest on, both
+  found in review:
+
+  - **The sidecar only moves when the display moves.** On a second run the
+    candidate is a re-parse of the display the job itself wrote, and a display
+    carries fewer significant digits than the raw vendor value: `1/3W` stores
+    `333.3333 mW` with `value_num` `0.333333333333333333`, and re-parsing the
+    display gives `0.3333333`. Overwriting on that difference makes every such
+    row a change on every run, and `±0.00001%` — which displays as `0%` — has
+    its number replaced by zero. `value_num` is therefore written only when
+    the display changes or when the row has none.
+  - **Two rows that strip to one payload key are collapsed.** `Resistance`
+    next to `mouser:Resistance` is what a workspace that promoted a secondary
+    to primary carries. Only one can hold the canonical key; the loser is
+    archived like any superseded alias. Leaving it live would make it the sole
+    answer on the NEXT run, which would then change a value the operator had
+    already approved. Non-canonical keys are not collapsed — `Features` and
+    `mouser:Features` are two providers' answers to one question.
 - **A7** renders mandatory-but-missing keys on the Specs tab. It should also
   close a sharp edge this ADR widens: `isCatalogKey` classifies by key name
   alone, so a user who types `MOQ` or `Availability` as a manual spec gets a
@@ -207,7 +268,10 @@ Neither job re-keys existing `custom_fields` rows; that is still A5.
   `backend/app/domain/parts/services/spec_reconcile.py`,
   `backend/app/domain/categories/seed.py`,
   `backend/app/domain/categories/seed_tables.py`,
-  `backend/app/domain/eda/symbol_collapse.py`
+  `backend/app/domain/eda/symbol_collapse.py`,
+  `backend/app/domain/parts/services/spec_normalize.py`,
+  `backend/app/domain/parts/services/spec_normalize_rows.py`,
+  `backend/app/domain/parts/services/spec_normalize_report.py`
 - Migration: `backend/alembic/versions/0081_custom_field_provider_value_num.py`
 - Tests: `backend/tests/test_spec_schema.py`,
   `backend/tests/test_spec_values.py`,
@@ -216,9 +280,12 @@ Neither job re-keys existing `custom_fields` rows; that is still A5.
   `backend/tests/test_category_for_provider.py`,
   `backend/tests/test_category_path_resolution.py`,
   `backend/tests/test_category_seed.py`,
-  `backend/tests/test_symbol_collapse.py`
+  `backend/tests/test_symbol_collapse.py`,
+  `backend/tests/test_spec_normalize.py`
 - Related: `backend/app/domain/parts/provider_fields.py`,
   `web/src/lib/providerCatalog.ts`,
   `backend/app/domain/parts/providers/mouser.py`
+- Runbook: [`docs/runbooks/spec-normalize.md`](../runbooks/spec-normalize.md)
 - Related: [ADR-0007](0007-provider-catalog-vs-spec-split.md),
+  [ADR-0021](0021-periodic-jobs-scheduler.md),
   [ADR-0031](0031-primary-and-secondary-parts-providers.md)

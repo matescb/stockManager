@@ -14,11 +14,17 @@ PASSWORD_RESET_THROTTLE_LOCK_CLASSID: Final[int] = 2
 # keep its attempt counters, loses that protection partway through. This
 # namespace is for a lock the job holds across its own commits.
 DATASHEET_BACKFILL_LOCK_CLASSID: Final[int] = 3
+# SESSION-level, for the same reason as the namespace above: the
+# `spec-normalize` backfill commits once per batch of parts so a killed run
+# keeps what it finished, and the xact-scoped run_job lock is gone after the
+# first of those commits.
+SPEC_NORMALIZE_LOCK_CLASSID: Final[int] = 4
 
 ADVISORY_LOCK_CLASSIDS: Final[Mapping[str, int]] = MappingProxyType(
     {
         "run_job": RUN_JOB_LOCK_CLASSID,
         "password_reset_throttle": PASSWORD_RESET_THROTTLE_LOCK_CLASSID,
         "datasheet_backfill": DATASHEET_BACKFILL_LOCK_CLASSID,
+        "spec_normalize": SPEC_NORMALIZE_LOCK_CLASSID,
     }
 )
