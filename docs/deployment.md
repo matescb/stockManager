@@ -450,15 +450,18 @@ resolves jobs orphaned in `sent` even after printing is turned back off).
 
 ### Operator-run jobs
 
-Three jobs in the same registry are **not** scheduled and must never be given a
+Four jobs in the same registry are **not** scheduled and must never be given a
 sidecar: they change data on a judgement call, so a human runs them, reads the
 report, and then decides. They take `--apply` (default is a dry run), an
-optional `--workspace <uuid>`, and an optional `--report <path>`.
+optional `--workspace <uuid>`, and an optional `--report <path>`. One of them,
+`part-rename`, reads a fourth flag of its own; passing it to any other job is
+a usage error rather than a flag quietly ignored.
 
 | Job | What it changes | Report |
 |---|---|---|
 | `category-seed` | Creates missing passive categories per workspace and fills KiCad metadata that was never set. Never renames, re-parents or overwrites. | CSV: `workspace_id, workspace_name, path, action, category_id, detail` |
 | `symbol-collapse` | Clears `part_eda.symbol_id` where the symbol came from a vendor zip and the part's category has a non-empty `default_symbol_ref`, so one `Device:R` replaces one symbol per part. | CSV: `workspace_id, workspace_name, part_id, part_name, category, symbol_name, symbol_source, before, after, action, detail` |
+| `part-rename` | Renames parts to the convention in [`docs/domain/parts.md`](domain/parts.md#naming-convention) — a spec-rendered value behind the category's class letter (`R 10 kΩ 1% 0603`), else the MPN. Text the rename would overwrite is parked in the part's `alias` custom field. | CSV: `workspace_id, part_id, mpn, old_name, new_name, class, alias_written, old_name_preserved_in, skip_reason` |
 | `spec-normalize` | Re-keys the provider `custom_fields` rows that pre-date the spec schema (ADR-0034) onto their canonical key with a parsed value and a `value_num` sidecar, archives customs codes and `-` placeholders, stamps `provider`, and files uncategorized parts from the provider's taxonomy. A one-off backfill, not a recurring cleanup. | CSV: `workspace_id, part_id, mpn, action, key, old_key, provider, old_value, new_value, category_path`, plus counts per workspace and the raw keys the schema had no alias for |
 
 The report goes to **stdout** and the logging to **stderr**, so redirecting
@@ -519,6 +522,51 @@ business in the content-addressed asset store. Read the CSV, take a
 `pg_dump`, then re-run the same command with `--apply`; the job is
 idempotent, so a second `--apply` reports zero changes. Full procedure:
 [spec-normalize runbook](runbooks/spec-normalize.md).
+
+**`part-rename` also refuses `--apply` without `--report`**, for the same
+reason: it rewrites `parts.name` in place. Most renamed parts keep their old
+name in the `alias` custom field, but one renamed off its own MPN does not, so
+the CSV is the record.
+
+Two rules keep it from destroying text, and both show up in the report rather
+than being decided silently:
+
+- **A free-text name is reported but not renamed.** It is the one class an
+  import never produced, so it is presumed deliberate. Those rows come back
+  with `skip_reason=free_excluded`; re-run with `--include-free` to convert
+  them once you have read which parts they are.
+- **A part that already has an `alias` is skipped**, because `uq_cf_unique`
+  allows one row per key and the old text would have nowhere to go
+  (`skip_reason=alias_conflict`). The exception is a name that merely repeated
+  the part's `description`: that is renamed anyway and reported as
+  `old_name_preserved_in=description`, which is weaker than an alias since a
+  provider refresh can rewrite that column.
+
+```bash
+cd /srv/stockmanager
+sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
+    exec backend python -m app.cli.run_job part-rename \
+    --dry-run --report /tmp/part-rename.csv
+sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
+    exec -T backend cat /tmp/part-rename.csv > ~/part-rename.csv
+```
+
+Read `old_name_preserved_in` on every row before `--apply`: `none` on a
+renamed row would mean text going nowhere, and there is no such case by
+construction, so one in the file is a bug rather than a decision.
+
+**Run it after `spec-normalize`.** Until the provider spec rows carry canonical
+keys, no category template renders and almost every part is proposed for its
+MPN — reported as `template_unrenderable`. That is a correct outcome, not a
+failed run, and re-running afterwards renames those parts the rest of the way.
+A second run over already-converted parts reports zero.
+
+**One follow-on to know about.** BOM import matches an unmatched row against
+`parts.name` as its last resort (`domain/projects/bom_import.py::_match_part`,
+step 5). A BOM whose only identifying column is the old name will stop matching
+a renamed part and auto-create a duplicate instead. The old name is on the part
+as its `alias`, so search still finds it; re-map that BOM to the MPN column, or
+check the parts list for duplicates after the first import following a rename.
 
 ### Label printer connectivity
 

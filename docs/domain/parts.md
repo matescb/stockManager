@@ -2,7 +2,7 @@
 
 Audience: engineer
 
-The `parts` table is the catalogue: one row per distinct component the workspace tracks. This page covers `part_type`, MPN uniqueness, the linked-provider lifecycle, and the archive contract.
+The `parts` table is the catalogue: one row per distinct component the workspace tracks. This page covers `part_type`, the naming convention, MPN uniqueness, the linked-provider lifecycle, and the archive contract.
 
 For the model definition see [`data-model.md`](data-model.md#parts). For the MPN uniqueness rationale see [ADR-0004](../adr/0004-mpn-uniqueness-per-workspace.md).
 
@@ -20,6 +20,53 @@ For the model definition see [`data-model.md`](data-model.md#parts). For the MPN
 The vocabulary is enforced only at the call site (the create-part schema). There is no DB CHECK constraint.
 
 `local` and `linked` are **derived**, not user-owned: they are a reading of `linked_provider`, re-synced by `sync_part_type_and_log` (`backend/app/domain/parts/part_type.py`) at both transitions — the primary branch of the refresh route (`backend/app/api/routes/parts_refresh.py:310-325`) and the unlink PATCH (`backend/app/api/routes/parts_core.py:389-392`). Each transition writes one `part.type_synced` audit row commented `part_type: local→linked` — a separate action from `part.updated` so the unlink PATCH, which writes both, never puts two rows under one action. `meta` and `sub_assembly` are user-declared roles and are never rewritten by a link event, even on a part that carries `linked_provider`. Alembic `0080` backfilled the 160 prod rows that drifted before this existed.
+
+## Naming convention
+
+`parts.name` is the part's **canonical identity**, never project prose. `backend/app/domain/parts/naming.py` is the only definition of that rule; everything else calls it.
+
+| Case | Name | Example |
+|---|---|---|
+| The part's category (or its nearest ancestor) has a `value_template` | The category's `refdes_prefix`, then the rendered template | `R 10 kΩ 1% 0603`, `C 1 µF 50 V X7R 0805`, `L 22 µH 5.3 A 1210` |
+| Everything else | The MPN | `STM32F103C8T6` |
+| A template that is exactly `{mpn}` | The MPN, with no class letter | `STM32F103C8T6`, not `U STM32F103C8T6` |
+
+The manufacturer stays in `manufacturer` and the provider's copy stays in `description`. A project's words for a BOM line ("1k 1% 0402 - TL431 ref feed R") belong to `ProjectEntry.name`, which already carries the BOM's own "part" column verbatim.
+
+Both inputs inherit up the category tree: a `value_template` and a `refdes_prefix` set on *Capacitors* cover *Capacitors / Ceramic* without being repeated. The template walk is `domain/eda/kicad_specs.py::rules_by_category`, shared with the KiCad library so the two surfaces cannot drift; the prefix walk is `naming.py::_refdes_prefixes` and follows the same archived-ancestor rule.
+
+`canonical_name` returns `None` unless **every** placeholder in the template resolves. `domain/eda/value_template.py::render_value` is deliberately forgiving — it drops a missing spec so a KiCad `Value` still reads well on a half-specified part — and a name cannot afford that: `{resistance} {tolerance} {package}` on a part carrying only `package` renders `0603`, and a workspace of half-specified passives would all end up named `R 0603`. Callers fall back to the MPN instead. This is the normal state of a catalogue that has not been through spec normalisation, not a degraded one.
+
+**Where it is applied.** At creation only, never on a read path:
+
+| Door | Rule |
+|---|---|
+| `services/provider_import.py::create_from_provider_lookup` | Name defaults to the MPN, never the description. Upgraded to the canonical name at the end of the function, after `apply_provider_category` has filed the part and `reconcile_provider_specs` has written its canonical keys — before either of those the template has nothing to read, so the order is load-bearing. |
+| `services/create_part.py::create_part` | A user-supplied name is kept as typed; a blank one defaults to the MPN. |
+| `projects/bom_import.py::_auto_create_values` | The MPN wins the name. The BOM's "part" column is the name only when the row has no MPN. |
+
+**Names are not unique.** `parts.name` carries `ix_parts_ws_name` and a trigram index for search (`domain/parts/models.py`), but **no UNIQUE constraint** — `uq_parts_ws_mpn` is the identity constraint — and every consumer keys on the part id, KiCad included (`domain/eda/kicad_refs.py`). Two parts arriving at the same canonical name is a catalogue duplicate to resolve, not an error the convention prevents.
+
+### `part-rename`
+
+The `run_job part-rename` sweep brings an existing catalogue up to the convention (`backend/app/domain/parts/services/part_rename.py`). One of the four operator-run jobs: dry by default, `--apply` to write (refused without `--report`, since it rewrites `parts.name` in place), `--workspace` to scope, and `--include-free` to widen what it touches. `part_eda.value` overrides are untouched. See [ADR-0021](../adr/0021-periodic-jobs-scheduler.md) for the job registry and [deployment](../deployment.md#operator-run-jobs) for the procedure.
+
+Every active part classifies as one of:
+
+| Class | Name is | Renamed by default | Old name kept in |
+|---|---|---|---|
+| `canonical` | already what the convention wants | no rename needed | — |
+| `mpn` | the MPN | yes, when a template gives it a canonical name | `mpn` column |
+| `description` | the provider's `description` | yes | `alias` |
+| `role_suffix` | `<canonical or mpn> - <role>` | yes | `alias` (the role only; the head is the new name) |
+| `free` | anything else — hand-typed | **no**, unless `--include-free` | `alias` |
+
+Two rules keep the sweep from destroying text:
+
+- **`free` names are left alone** unless `--include-free` is passed. It is the one class the import never produced, so the name is somebody's deliberate choice. They are still listed in the report, with `skip_reason=free_excluded`, so the decision is made from data.
+- **A part that already has an `alias` is skipped**, not renamed, because `uq_cf_unique` allows one row per key and the old text would have nowhere to go. The exception is the `description` class, which is renamed anyway and reported as `old_name_preserved_in=description` — weaker than an alias, since a provider refresh can rewrite that column, but not nothing. Both cases count as `skipped_alias_conflict`.
+
+The CSV carries `workspace_id, part_id, mpn, old_name, new_name, class, alias_written, old_name_preserved_in, skip_reason`, streamed to `--report` or to stdout. `old_name` and `alias_written` are written verbatim; every other column is prefixed with an apostrophe when it starts with a spreadsheet formula character, so the recovery copy is never corrupted by the mitigation. The file's mode and the readable error for an unwritable path belong to `cli/run_job.py::_report_stream`, shared by every operator-run job.
 
 ## MPN uniqueness
 
@@ -153,7 +200,7 @@ There is no dedicated `parts/service.py`. Logic for parts splits across the rout
 | Provider MPN lookup with cache | `domain/parts/services/provider_cache.py::lookup_with_cache` | TTL cache + per-provider circuit breaker. |
 | Force-fresh provider lookup | `domain/parts/services/provider_cache.py::lookup_fresh` | Skips cache read; still applies circuit breaker. |
 | Download provider asset | `domain/parts/services/assets.py::fetch_provider_asset` | SSRF-hardened download to UPLOAD_DIR. |
-| Create a linked part from a lookup | `domain/parts/services/provider_import.py::create_from_provider_lookup` | Returns `ProviderImportOutcome(part, category_suggestion)`. The reconcile counts are audited, not returned. |
+| Create a linked part from a lookup | `domain/parts/services/provider_import.py::create_from_provider_lookup` | Returns `ProviderImportOutcome(part, report, category_suggestion)`. |
 | Write a provider payload onto a part | `domain/parts/services/spec_reconcile.py::reconcile_provider_specs` | The single writer for create AND refresh. |
 | File an uncategorized part | `domain/parts/services/spec_reconcile.py::apply_provider_category` | Never overrules a category the user chose; creates nothing. |
 | Build a configured provider | `domain/parts/providers/base.py::make_provider` | Factory keyed on `workspaces.parts_provider`. |

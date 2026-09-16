@@ -39,6 +39,7 @@ Jobs using this scheduler:
 Jobs in the same registry that are **not** scheduled:
 
 - `category-seed` and `symbol-collapse` — operator-run. They take `--dry-run` (the default), `--apply` and `--workspace`, and a dry run ends in ROLLBACK. They are here rather than in a one-off script so they inherit the allow-list, the advisory lock and the heartbeat plumbing this ADR chose, but they must never be given a sidecar: both change data on a judgement call, and a timer that re-created categories a user deleted would be a bug. `run_job` refuses `--apply` on a scheduled job (exit 2) so the two modes cannot be confused. See `docs/deployment.md` — "Operator-run jobs".
+- `part-rename` — the same shape, for the naming convention in [`docs/domain/parts.md`](../domain/parts.md#naming-convention). It also refuses `--apply` without `--report`, because it rewrites `parts.name` in place. It is the first job to need a flag only it reads (`--include-free`), which `JobSpec.extra_flags` declares: the parser is shared, so a flag every job accepts and only one understands has to be refused by name for the rest rather than silently dropped.
 - `spec-normalize` — the same shape, for a one-off BACKFILL: it re-keys the provider `custom_fields` rows that pre-date the spec schema (ADR-0034) and is meant to be run once and then never again. It adds one rule of its own — `--apply` is refused without `--report`, because it rewrites values in place and the CSV is the only record of what they were. See [the runbook](../runbooks/spec-normalize.md).
 
 ## Consequences
