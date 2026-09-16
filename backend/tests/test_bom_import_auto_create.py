@@ -348,3 +348,26 @@ def test_preview_would_skip_count_matches_commit(db):
     )
 
     assert preview.would_skip_count == result.skipped == 1
+
+
+def test_auto_create_prefers_the_mpn_over_the_bom_part_column(db):
+    """The BOM's own "part" column is a project's words for the line
+    ("1k 1% 0402 - TL431 ref feed R"), not the catalogue's name for the
+    component. When the row carries an MPN, that is the part's identity
+    and the prose stays on the BOM entry, which already holds it."""
+    ws, user = _setup_ws(db)
+    project = _project(db, ws, user)
+    payload = _commit_payload(
+        "qty,mpn,part\n1,RC0402FR-071KL,1k 1% 0402 - TL431 ref feed R\n",
+        mapping=_mapping("quantity", "mpn", "part"),
+    )
+
+    result = bom.commit(db, workspace_id=ws.id, user_id=user.id, project=project, payload=payload)
+    db.commit()
+
+    assert result.auto_created == 1
+    part = _parts(db, ws)[0]
+    assert part.name == "RC0402FR-071KL"
+    assert part.mpn == "RC0402FR-071KL"
+    # Nothing is lost: the line's own words are on the line.
+    assert _entries(db, project)[0].name == "1k 1% 0402 - TL431 ref feed R"

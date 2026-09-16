@@ -2,7 +2,7 @@
 
 Audience: end user
 
-Create, edit, archive a part. Pick the right type. Use supplier lookup.
+Create, edit, archive a part. Pick the right type. Name it the way the catalogue does. Use supplier lookup.
 
 A **part** is a thing you buy or build — a resistor, a connector, a finished sub-board. Stock and orders attach to parts. Projects' bills of materials reference parts.
 
@@ -27,6 +27,30 @@ You don't have to keep these two straight yourself — the app does it for you:
 Meta-parts and sub-assemblies are never changed this way. Those say what a part *is*, not where its data comes from, so a meta-part that you refresh from a supplier stays a meta-part.
 
 Where the type is shown — the part header, the parts list, the list preview — a linked part names its supplier next to the type, for example **linked · DigiKey**.
+
+## How parts are named
+
+A part's **name** says what the component *is*, so that the same component is recognisable wherever it turns up — a bill of materials, a pick list, the KiCad chooser.
+
+- **Resistors, capacitors, inductors and the like** are named by their value, with the class letter in front: **R 10 kΩ 1% 0603**, **C 1 µF 50 V X7R 0805**, **C 1000 µF 50 V elyt**, **L 22 µH 5.3 A 1210**. The app builds that from the specs on the part, using the template set on its category.
+- **Everything else** is named by its **manufacturer part number**: **STM32F103C8T6**. The manufacturer has its own field and the supplier's description has its own field, so neither needs to be in the name.
+- **What a part does in one project** — "Servo integrator + bias monitor", "TL431 ref feed" — is not part of the name. Put it on the bill-of-materials line, which has a name and a comments field of its own.
+
+The app names new parts this way for you. A supplier import is named by its MPN, and by its value once the part has a category and the specs to fill the template. A part you create by hand keeps whatever name you type.
+
+If the specs needed for the value are missing, the part keeps its MPN as its name. Fill the specs in on the **Specs** tab and ask an admin to re-run the rename sweep.
+
+> Two parts are allowed to end up with the same name. Nothing in the app identifies a part by its name — if you see a duplicate, it means you have two catalogue entries for one component, which is worth tidying up.
+
+### Renaming what is already there
+
+An admin can bring an existing catalogue up to this convention in one pass. It runs as a report first, so you can see every proposed change before anything is renamed.
+
+Names you typed yourself are **not** renamed. The sweep only fixes names that came from an import — a supplier description, or a bill-of-materials column — and lists your hand-typed ones without touching them, so somebody can decide case by case. Anything it does replace is kept on the part as a spec called **alias**, so it stays searchable. If a part already has an **alias**, the sweep leaves that part alone rather than overwrite it.
+
+Ask an admin for the report; it is a CSV listing every part, its old name, its proposed one, and where the old name ended up.
+
+One thing to watch after a rename: if you import a bill of materials that identifies parts only by name, the renamed parts will no longer match and you may get duplicates. Import by manufacturer part number where you can, and check the parts list for duplicates after the first import following a rename.
 
 ## Create a part
 

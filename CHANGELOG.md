@@ -15,6 +15,44 @@ the canonical record.
 
 ## Unreleased
 
+- **Part names now say what the part is.** `parts.name` is the canonical
+  identity: a part whose category carries a `value_template` is named by
+  that template behind the category's class letter (`R 10 kΩ 1% 0603`),
+  and everything else by its MPN. The manufacturer has its own column
+  and the supplier's copy stays in `description`, which is where the
+  127 prod parts named `RES SMD 10K OHM 1% 1/16W 0603` got their name
+  from. `domain/parts/naming.py` is the single definition; provider
+  import and BOM auto-create apply it at creation, and a user-supplied
+  name is never rewritten. Importing a resistor from DigiKey now files
+  it under Resistors, normalises `Resistance: 10 kOhms` to
+  `resistance: 10 kΩ` and names it `R 10 kΩ 1% 0603`, none of which is
+  a string the provider sent. A template renders a name only when every
+  one of its placeholders resolves — a partial render is what would name
+  every half-specified resistor in a workspace `R 0603` — so a part whose
+  specs fall short keeps its part number. A project's words for a BOM
+  line stay on the line — `ProjectEntry.name` already carried the BOM's
+  "part" column, so BOM auto-create simply stops copying it onto the part
+  when the row has an MPN.
+- **`run_job part-rename`** converts an existing catalogue, the fourth
+  operator-run job: reporting by default, renaming only with `--apply`,
+  which it refuses without `--report` because it rewrites `parts.name`
+  in place. Two rules keep it from destroying text. A hand-typed
+  (`free`) name is reported but not renamed unless `--include-free` is
+  passed, being the one class an import never produced; and a part that
+  already carries an `alias` custom field is skipped rather than
+  renamed, since `uq_cf_unique` allows one row per key and the old text
+  would have nowhere to go. Everything else parks its old name in a
+  `manual` `alias`, including the `description` class — that column
+  looks self-preserving and is not, being provider-owned on a linked
+  part. The CSV says per row where the old name ended up and why
+  anything was skipped. Re-running is a no-op, which matters because
+  most parts reach only their MPN until `spec-normalize` has re-keyed
+  their provider spec rows; those are reported as
+  `template_unrenderable` and renamed the rest of the way on a later
+  run. `--apply` writes one audit row per workspace carrying counts
+  only. `--include-free` is the first flag only one job reads, declared
+  through `JobSpec.extra_flags` and refused by name for every other job.
+
 - **`spec-normalize` re-keys the specs that pre-date the schema.** A new
   one-off `run_job` backfill does in bulk what a refresh does one part at
   a time: it moves existing `custom_fields` rows onto their canonical key

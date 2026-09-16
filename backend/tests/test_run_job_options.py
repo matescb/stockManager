@@ -37,7 +37,12 @@ from app.cli.run_job import (
     run_job,
 )
 
-_OPERATOR_JOBS = ("category-seed", "spec-normalize", "symbol-collapse")
+_OPERATOR_JOBS = (
+    "category-seed",
+    "part-rename",
+    "spec-normalize",
+    "symbol-collapse",
+)
 
 
 class _FakeResult:
@@ -511,8 +516,16 @@ def test_without_the_flag_the_report_still_goes_to_stdout(tmp_path, db, capsys) 
     assert "workspace_id," in capsys.readouterr().out
 
 
-def test_an_unwritable_report_path_is_a_usage_error(tmp_path, db) -> None:
-    """Same contract as a `--workspace` that names nothing."""
+def test_an_unwritable_report_path_reaches_the_operator_through_a_job(
+    tmp_path, db
+) -> None:
+    """Same contract as a `--workspace` that names nothing.
+
+    Named apart from the `_report_stream` test below on purpose: the two
+    shared a name until this line, so pytest kept only the second and
+    this one — the one that proves a JOB surfaces the error rather than
+    swallowing it — never ran.
+    """
     from app.cli.run_job import _run_category_seed
 
     blocker = tmp_path / "not-a-dir"
@@ -604,9 +617,89 @@ def test_a_dry_run_needs_no_report(job_name: str) -> None:
 
 def test_only_an_in_place_rewrite_requires_a_report() -> None:
     """`category-seed` only creates rows and `symbol-collapse` only clears a
-    nullable column, so both are undoable from the schema alone."""
-    assert _REPORT_REQUIRED == ["spec-normalize"]
+    nullable column, so both are undoable from the schema alone.
+    `part-rename` overwrites `parts.name`, and `spec-normalize` overwrites
+    spec values — for those two the CSV is the record of what was there."""
+    assert _REPORT_REQUIRED == ["part-rename", "spec-normalize"]
 
 
 def _unreachable_session() -> Session:
     raise AssertionError("the flag check must run before any session is opened")
+
+
+# ---------------------------------------------------------------------
+# A flag only one job reads
+# ---------------------------------------------------------------------
+
+
+def test_include_free_reaches_the_job_that_declares_it() -> None:
+    # Arrange / Act
+    options = _options_for(
+        "part-rename", _parse_args(["part-rename", "--include-free"]), JOBS
+    )
+
+    # Assert
+    assert options is not None
+    assert options.include_free is True
+
+
+@pytest.mark.parametrize(
+    "job_name", [name for name in _OPERATOR_JOBS if name != "part-rename"]
+)
+def test_include_free_is_refused_for_a_job_that_does_not_read_it(
+    job_name: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The parser is shared, so argparse accepts `--include-free` for
+    every job. Refusing it by name is the only way an operator learns the
+    job they named does not read it — the same contract `--apply` on a
+    scheduled job gets."""
+    # Act
+    exit_code = main(
+        [job_name, "--include-free"], jobs=JOBS, session_factory=_unreachable_session
+    )
+
+    # Assert
+    assert exit_code == 2
+    assert "takes no --include-free" in capsys.readouterr().err
+
+
+def test_a_scheduled_job_is_refused_include_free_too(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Act
+    exit_code = main(
+        ["session-purge", "--include-free"],
+        jobs=JOBS,
+        session_factory=_unreachable_session,
+    )
+
+    # Assert
+    assert exit_code == 2
+    assert "takes no --include-free" in capsys.readouterr().err
+
+
+def test_include_free_cannot_be_combined_with_a_heartbeat_check(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """It is a job flag, and a probe runs no job — the same reason the
+    other four are refused there."""
+    # Act
+    exit_code = main(
+        ["part-rename", "--include-free", "--check-heartbeat"],
+        jobs=JOBS,
+        session_factory=_unreachable_session,
+    )
+
+    # Assert
+    assert exit_code == 2
+    assert "--include-free" in capsys.readouterr().err
+
+
+def test_every_extra_flag_is_declared_by_at_least_one_job() -> None:
+    """A flag in the parser that no job lists in `extra_flags` is a flag
+    that is refused for every job — offered and unusable."""
+    from app.cli.run_job import _EXTRA_FLAGS
+
+    declared = {flag for spec in JOBS.values() for flag in spec.extra_flags}
+
+    assert set(_EXTRA_FLAGS) == declared

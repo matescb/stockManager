@@ -60,6 +60,10 @@ class JobOptions:
     apply: bool = False
     workspace_id: UUID | None = None
     report: Path | None = None
+    #: `part-rename` only, declared through `JobSpec.extra_flags`. A job
+    #: that does not declare it and is handed `--include-free` is
+    #: refused by name, the same way a scheduled job handed `--apply` is.
+    include_free: bool = False
 
 
 @dataclass(frozen=True)
@@ -83,6 +87,12 @@ class JobSpec:
     #: (`symbol-collapse`) can be undone from the schema alone and leaves
     #: this False.
     requires_report: bool = False
+    #: Flag names beyond the common four that this job reads, as
+    #: `JobOptions` attribute names. The parser is shared, so a flag only
+    #: one job understands is accepted by argparse and then refused for
+    #: every job that does not list it here — silently ignoring it is the
+    #: failure mode this whole surface is built to avoid.
+    extra_flags: tuple[str, ...] = ()
 
 
 class UnknownJobError(ValueError):
@@ -226,6 +236,23 @@ def _run_spec_normalize(db: Session, options: JobOptions) -> int:
     return outcome.changes
 
 
+def _run_part_rename(db: Session, options: JobOptions) -> int:
+    from app.domain.parts.services.part_rename import rename_parts
+
+    # A `--workspace` that names nothing raises `UnknownWorkspaceError`,
+    # the same `LookupError` the other operator-run jobs raise and `main`
+    # already reports as a usage error.
+    with _report_stream(options) as stream:
+        outcome = rename_parts(
+            db,
+            apply=options.apply,
+            include_free=options.include_free,
+            workspace_id=options.workspace_id,
+            stream=stream,
+        )
+    return outcome.counts.renamed
+
+
 def _printing_is_configured() -> bool:
     """True when a print sink is configured (``PRINT_HOST`` non-empty)."""
     from app.core.config import settings
@@ -363,6 +390,28 @@ JOBS: dict[str, JobSpec] = {
         run=_run_spec_normalize,
         takes_options=True,
         requires_report=True,
+    ),
+    "part-rename": JobSpec(
+        name="part-rename",
+        owner="backend/parts",
+        cadence="manual (operator-run)",
+        idempotency=(
+            "Classifies every active part against the naming convention "
+            "(domain/parts/naming.py) and renames only those that do not "
+            "already match, so a second run proposes nothing. Text a rename "
+            "would overwrite is parked in the part's `alias` custom field; a "
+            "part that already has an `alias` is skipped rather than renamed, "
+            "and free-text names are skipped unless --include-free. Writes "
+            "nothing at all without --apply, which it refuses without "
+            "--report."
+        ),
+        run=_run_part_rename,
+        takes_options=True,
+        # It rewrites `parts.name` in place. The CSV is the operator's
+        # record of what those names were — the `alias` field covers most
+        # classes but not a part renamed off its own MPN.
+        requires_report=True,
+        extra_flags=("include_free",),
     ),
     "print-job-reconcile": JobSpec(
         name="print-job-reconcile",
@@ -602,6 +651,15 @@ def _parser() -> argparse.ArgumentParser:
             "stdout. Written on a dry run too — the report is the point of one."
         ),
     )
+    parser.add_argument(
+        "--include-free",
+        action="store_true",
+        help=(
+            "part-rename only: also rename parts whose name is free text. "
+            "Off by default — a hand-typed name is somebody's deliberate "
+            "choice — and the report lists them either way."
+        ),
+    )
     return parser
 
 
@@ -625,17 +683,35 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # The probes answer a question about a job's configuration and never
     # run it, so an --apply next to one would be silently discarded —
     # the exact failure mode `run_job` refuses for scheduled jobs.
-    if (
+    if _job_flags_given(args) and (
+        args.print_interval or args.check_heartbeat or args.check_all_heartbeats
+    ):
+        parser.error(
+            "--dry-run / --apply / --workspace / --report / --include-free "
+            "cannot be combined with --print-interval or a heartbeat check"
+        )
+    return args
+
+
+#: `JobOptions` attributes a job opts into through `JobSpec.extra_flags`.
+#: One entry per flag the shared parser offers but only some jobs read.
+_EXTRA_FLAGS: tuple[str, ...] = ("include_free",)
+
+
+def _job_flags_given(args: argparse.Namespace) -> bool:
+    """Whether the operator passed any job flag at all.
+
+    One definition, because `_parse_args` and `_options_for` ask the same
+    question and a flag added to only one of them is a flag that is
+    either silently dropped or wrongly refused next to a health probe.
+    """
+    return bool(
         args.apply
         or args.dry_run
         or args.workspace is not None
         or args.report is not None
-    ) and (args.print_interval or args.check_heartbeat or args.check_all_heartbeats):
-        parser.error(
-            "--dry-run / --apply / --workspace / --report cannot be combined "
-            "with --print-interval or a heartbeat check"
-        )
-    return args
+        or any(getattr(args, flag) for flag in _EXTRA_FLAGS)
+    )
 
 
 def _options_for(
@@ -647,14 +723,19 @@ def _options_for(
     `--report` gets the options object anyway, so `run_job` refuses it by
     name instead of dropping the flag on the floor.
     """
-    asked = (
-        args.apply
-        or args.dry_run
-        or args.workspace is not None
-        or args.report is not None
-    )
     job = _get_job(job_name, jobs)
-    if not asked and not job.takes_options:
+    undeclared = [
+        flag
+        for flag in _EXTRA_FLAGS
+        if getattr(args, flag) and flag not in job.extra_flags
+    ]
+    if undeclared:
+        # By name, not ignored. The parser is shared, so argparse accepts
+        # a flag for every job; this is the only place that can tell the
+        # operator the job they named does not read it.
+        spelled = ", ".join(f"--{flag.replace('_', '-')}" for flag in undeclared)
+        raise JobConfigError(f"job {job.name!r} takes no {spelled}")
+    if not _job_flags_given(args) and not job.takes_options:
         return None
     if job.requires_report and args.apply and args.report is None:
         raise JobConfigError(
@@ -662,7 +743,10 @@ def _options_for(
             "values in place, and the CSV is the only record of what they were"
         )
     return JobOptions(
-        apply=args.apply, workspace_id=args.workspace, report=args.report
+        apply=args.apply,
+        workspace_id=args.workspace,
+        report=args.report,
+        include_free=args.include_free,
     )
 
 

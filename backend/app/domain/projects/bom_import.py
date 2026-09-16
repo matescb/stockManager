@@ -300,8 +300,18 @@ def _clean(value: str | None) -> str | None:
 
 
 def _auto_create_values(row: ParsedRow) -> dict[str, str | None]:
+    """The columns an auto-created part takes from one BOM row.
+
+    **The MPN wins the name.** A BOM's "part" column is a project's words
+    for the line ("1k 1% 0402 - TL431 ref feed R"), which is exactly what
+    `domain/parts/naming.py` says a part name is not; the catalogue names
+    the component and the project names its job. Nothing is lost by
+    preferring the MPN — `ProjectEntry.name` below already carries
+    `row.part` verbatim, so the line keeps its own words. The column is
+    still the name when there is no MPN to use instead.
+    """
     mpn = _clean(row.mpn)
-    name = _clean(row.part) or mpn
+    name = mpn or _clean(row.part)
     if not name and not mpn:
         raise _SkipRow
     return {
