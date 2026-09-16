@@ -41,15 +41,15 @@ from __future__ import annotations
 
 import csv
 import logging
+import sys
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, replace
-from pathlib import Path
+from typing import Any, TextIO
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.time import utcnow
 from app.domain.audit.service import log as audit_log
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part
@@ -65,19 +65,23 @@ from app.domain.workspaces.models import Workspace
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "DEFAULT_REPORT_DIR",
     "REPORT_COLUMNS",
     "RenameCounts",
     "RenameOutcome",
-    "default_report_path",
+    "UnknownWorkspaceError",
     "rename_parts",
 ]
 
-# Where the operator's change list lands when `--report` is not given.
-# `/tmp` for the same reason `run_job.HEARTBEAT_DIR` is there: the prod
-# backend container runs as a non-root user with no writable path of its
-# own, and this file is a working document, not state.
-DEFAULT_REPORT_DIR = Path("/tmp/stockmanager-job-reports")
+
+class UnknownWorkspaceError(LookupError):
+    """`--workspace` named a workspace that does not exist.
+
+    A `LookupError` because that is the shape `cli/run_job.py::main`
+    turns into a usage error and exit 2 for every operator-run job. The
+    twin in `services/spec_normalize.py` says the same thing; if a third
+    job needs it, hoist both rather than adding another.
+    """
+
 
 # One row per proposed rename. `alias_written` is the text parked in the
 # `alias` custom field — empty when there was nothing to preserve or an
@@ -166,12 +170,35 @@ class RenameCounts:
 @dataclass(frozen=True)
 class RenameOutcome:
     counts: RenameCounts
-    report_path: Path
     applied: bool
 
 
-def default_report_path() -> Path:
-    return DEFAULT_REPORT_DIR / f"part-rename-{utcnow():%Y%m%dT%H%M%SZ}.csv"
+class RenameReport:
+    """Streaming CSV writer over a stream the CALLER owns.
+
+    `stream` is what `run_job._report_stream` yields: the file
+    `--report` named, or None for stdout. Opening, closing, the
+    directory mode and the readable error when the path cannot be
+    written all belong to that context manager — every operator-run job
+    gets its report on the same terms.
+
+    Streaming rather than buffered, and that is what makes an `--apply`
+    run that raises part-way still useful: the rows decided before the
+    failure are already on disk. The transaction rolls back; the
+    operator keeps the list of what the job was doing when it stopped.
+    """
+
+    def __init__(self, stream: TextIO | None) -> None:
+        self._handle: TextIO = stream if stream is not None else sys.stdout
+        # `csv.writer` returns a private `_csv.writer` with no public
+        # name to annotate against.
+        self._writer: Any = csv.writer(self._handle)
+        self._writer.writerow(REPORT_COLUMNS)
+
+    def write(self, row: Sequence[str]) -> None:
+        self._writer.writerow(
+            [_neutralise(cell, column) for cell, column in zip(row, REPORT_COLUMNS)]
+        )
 
 
 def rename_parts(
@@ -180,42 +207,29 @@ def rename_parts(
     apply: bool = False,
     include_free: bool = False,
     workspace_id: UUID | None = None,
-    report_path: Path | None = None,
+    stream: TextIO | None = None,
 ) -> RenameOutcome:
     """Classify every active part, report the renames, optionally do them.
 
-    Returns the counts and where the report landed. The caller
-    (`cli/run_job.py`) owns the commit, so a dry run is a read plus a
-    file write and nothing else.
-
-    **The report is written even when the sweep raises.** An `--apply`
-    run that has already mutated hundreds of rows and then hits a
-    constraint would otherwise leave no record of what it was doing —
-    and the rows it wrote are the ones the operator most needs listed.
-    The transaction still rolls back; see `_write_report` on what that
-    means for a report of changes that did not survive.
+    `stream` is where the review CSV goes; the caller opens and closes it
+    (`run_job._report_stream`). `run_job` also owns the transaction, and
+    ends a dry run in ROLLBACK, so a run without `--apply` cannot write
+    even if this function were wrong about which mode it is in.
     """
-    report_path = report_path or default_report_path()
-    counts = RenameCounts()
-    rows: list[list[str]] = []
-    try:
-        counts = _sweep(
-            db,
-            apply=apply,
-            include_free=include_free,
-            workspace_id=workspace_id,
-            rows=rows,
-        )
-    finally:
-        _write_report(report_path, rows)
-
+    report = RenameReport(stream)
+    counts = _sweep(
+        db,
+        apply=apply,
+        include_free=include_free,
+        workspace_id=workspace_id,
+        report=report,
+    )
     logger.info(
-        "job=part-rename mode=%s report=%s %s",
+        "job=part-rename mode=%s %s",
         "apply" if apply else "dry-run",
-        report_path,
         counts.as_comment(),
     )
-    return RenameOutcome(counts=counts, report_path=report_path, applied=apply)
+    return RenameOutcome(counts=counts, applied=apply)
 
 
 def _sweep(
@@ -224,14 +238,9 @@ def _sweep(
     apply: bool,
     include_free: bool,
     workspace_id: UUID | None,
-    rows: list[list[str]],
+    report: RenameReport,
 ) -> RenameCounts:
-    """The sweep itself, appending to `rows` as it goes.
-
-    `rows` is an out-parameter rather than a return value so that a raise
-    part-way through still leaves the caller holding everything decided
-    up to that point.
-    """
+    """The sweep itself, writing each decided row as it goes."""
     counts = RenameCounts()
     for workspace in _workspaces(db, workspace_id=workspace_id):
         workspace_counts = RenameCounts()
@@ -242,7 +251,7 @@ def _sweep(
                 parts=parts,
                 apply=apply,
                 include_free=include_free,
-                rows=rows,
+                report=report,
             )
             workspace_counts += batch_counts
             if apply:
@@ -268,15 +277,18 @@ def _sweep(
 def _workspaces(db: Session, *, workspace_id: UUID | None) -> Sequence[Workspace]:
     """Every workspace, or the one asked for.
 
-    An id that names no workspace yields nothing rather than raising: the
-    operator typed it on a command line, and an empty report says so more
-    usefully than a traceback. `workspaces` has no archive flag — a
-    workspace exists or it does not.
+    An id that names no workspace is a usage error, not an empty report:
+    an operator converting one workspace at a time needs a typo to say
+    so, and the other operator-run jobs answer the same way. `workspaces`
+    has no archive flag — a workspace exists or it does not.
     """
     stmt = select(Workspace)
     if workspace_id is not None:
         stmt = stmt.where(Workspace.id == workspace_id)
-    return db.execute(stmt.order_by(Workspace.created_at)).scalars().all()
+    workspaces = db.execute(stmt.order_by(Workspace.created_at)).scalars().all()
+    if workspace_id is not None and not workspaces:
+        raise UnknownWorkspaceError(f"no workspace with id {workspace_id}")
+    return workspaces
 
 
 def _part_batches(db: Session, *, workspace_id: UUID) -> Iterator[Sequence[Part]]:
@@ -317,7 +329,7 @@ def _process(
     parts: Sequence[Part],
     apply: bool,
     include_free: bool,
-    rows: list[list[str]],
+    report: RenameReport,
 ) -> RenameCounts:
     results = canonical_names(db, workspace_id=workspace_id, parts=parts)
     existing_aliases = _parts_with_an_alias(
@@ -333,7 +345,7 @@ def _process(
         proposal = propose_rename(part, result.name)
         if proposal.new_name is None:
             if proposal.skip_reason:
-                rows.append(_report_row(workspace_id, part, proposal, alias=None))
+                report.write(_report_row(workspace_id, part, proposal, alias=None))
             continue
 
         proposal = _resolve_conflicts(
@@ -342,14 +354,14 @@ def _process(
         if proposal.new_name is None:
             skipped_free += int(proposal.skip_reason == _SKIP_FREE)
             alias_conflicts += int(proposal.skip_reason == _SKIP_ALIAS_CONFLICT)
-            rows.append(_report_row(workspace_id, part, proposal, alias=None))
+            report.write(_report_row(workspace_id, part, proposal, alias=None))
             continue
 
         alias = proposal.alias if proposal.preserved_in == "alias" else None
         alias_conflicts += int(proposal.skip_reason == _SKIP_ALIAS_CONFLICT)
         renamed += 1
         aliases += int(bool(alias))
-        rows.append(_report_row(workspace_id, part, proposal, alias=alias))
+        report.write(_report_row(workspace_id, part, proposal, alias=alias))
         if apply:
             _apply(
                 db,
@@ -485,44 +497,10 @@ def _neutralise(cell: str, column: str) -> str:
     """Stop a spreadsheet reading a part name as a formula.
 
     Skipped for `_VERBATIM_COLUMNS`: those hold the recovery copy of
-    text the rename overwrites, and an apostrophe silently glued to the
-    front of it is a corrupted recovery value. `csv.writer` still quotes
-    them per RFC 4180.
+    text the rename overwrites, and an apostrophe glued to the front of
+    it is a corrupted recovery value. `csv.writer` still quotes them per
+    RFC 4180, and the runbook says to read the file as text.
     """
     if column in _VERBATIM_COLUMNS:
         return cell
     return f"'{cell}" if cell[:1] in _FORMULA_LEADERS else cell
-
-
-def _write_report(report_path: Path, rows: list[list[str]]) -> None:
-    """The change list, always written — an empty one is an answer too.
-
-    Written before the caller commits, so a run that raises afterwards
-    leaves a report of changes the rollback undid. That is the right
-    trade: a report listing work that did not land is recoverable by
-    re-reading it, and no report at all after a partial apply is not.
-    The runbook says to check the job's exit status against the file.
-
-    The file carries part names and MPNs, so it is created 0600 inside a
-    0700 directory rather than left world-readable in a shared `/tmp`.
-    """
-    _prepare_report_dir(report_path.parent)
-    with report_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(REPORT_COLUMNS)
-        writer.writerows(
-            [_neutralise(cell, column) for cell, column in zip(row, REPORT_COLUMNS)]
-            for row in rows
-        )
-    report_path.chmod(0o600)
-
-
-def _prepare_report_dir(directory: Path) -> None:
-    """Make the report's directory, private when we are the one making it.
-
-    `mode=` applies only on creation, so a directory that already exists
-    keeps whatever it has — including one an operator deliberately points
-    `--report` at. The default lives under `/tmp`, which is shared, so
-    the mode matters there.
-    """
-    directory.mkdir(parents=True, exist_ok=True, mode=0o700)

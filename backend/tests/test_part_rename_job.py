@@ -30,7 +30,11 @@ from app.domain.audit.models import AuditLog
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part
 from app.domain.parts.naming import ALIAS_CUSTOM_FIELD_KEY
-from app.domain.parts.services.part_rename import REPORT_COLUMNS, rename_parts
+from app.domain.parts.services.part_rename import (
+    REPORT_COLUMNS,
+    RenameOutcome,
+    rename_parts,
+)
 from app.domain.workspaces.models import WorkspaceMember
 from tests._factories import signup_user
 
@@ -108,6 +112,17 @@ def report_path(tmp_path: Path) -> Path:
     return tmp_path / "part-rename.csv"
 
 
+def _run(db: Any, report_path: Path, **kwargs: Any) -> RenameOutcome:
+    """Run the job with its CSV going to `report_path`.
+
+    The stream belongs to the caller — in production that is
+    `run_job._report_stream`, which also owns the 0700 directory and the
+    0600 file. Here it is just a file the assertions can read back.
+    """
+    with report_path.open("w", encoding="utf-8", newline="") as handle:
+        return rename_parts(db, stream=handle, **kwargs)
+
+
 # ---------------------------------------------------------------------
 # Dry run
 # ---------------------------------------------------------------------
@@ -125,7 +140,7 @@ def test_a_dry_run_proposes_and_writes_nothing(authed_client, db, report_path):
     )
 
     # Act
-    outcome = rename_parts(db, report_path=report_path)
+    outcome = _run(db, report_path)
     db.flush()
 
     # Assert
@@ -149,7 +164,7 @@ def test_the_report_names_every_proposal_and_its_class(
     )
 
     # Act
-    rename_parts(db, report_path=report_path)
+    _run(db, report_path)
 
     # Assert
     rows = _report_rows(report_path)
@@ -173,7 +188,7 @@ def test_parts_already_holding_the_right_name_stay_out_of_the_report(
     _part(db, workspace_id, "STM32F103C8T6", mpn="STM32F103C8T6")
 
     # Act
-    outcome = rename_parts(db, report_path=report_path)
+    outcome = _run(db, report_path)
 
     # Assert
     assert outcome.counts.renamed == 0
@@ -205,7 +220,7 @@ def test_a_part_whose_template_cannot_render_is_counted_and_falls_back(
     )
 
     # Act
-    outcome = rename_parts(db, report_path=report_path)
+    outcome = _run(db, report_path)
 
     # Assert
     assert outcome.counts.template_unrenderable == 1
@@ -224,7 +239,7 @@ def test_archived_parts_are_not_considered(authed_client, db, report_path):
     )
 
     # Act
-    outcome = rename_parts(db, report_path=report_path)
+    outcome = _run(db, report_path)
 
     # Assert
     assert outcome.counts.considered == 0
@@ -249,7 +264,7 @@ def test_apply_renames_the_part_and_keeps_the_role_as_an_alias(
     )
 
     # Act
-    outcome = rename_parts(db, apply=True, report_path=report_path)
+    outcome = _run(db, report_path, apply=True)
     db.flush()
 
     # Assert
@@ -285,7 +300,7 @@ def test_apply_renames_a_passive_to_its_canonical_name(
     )
 
     # Act
-    rename_parts(db, apply=True, report_path=report_path)
+    _run(db, report_path, apply=True)
     db.flush()
 
     # Assert
@@ -307,7 +322,7 @@ def test_apply_keeps_hand_typed_names_whole_in_the_alias(
     )
 
     # Act
-    rename_parts(db, apply=True, include_free=True, report_path=report_path)
+    _run(db, report_path, apply=True, include_free=True)
     db.flush()
 
     # Assert
@@ -334,7 +349,7 @@ def test_apply_never_overwrites_an_alias_that_is_already_there(
     db.flush()
 
     # Act
-    outcome = rename_parts(db, apply=True, report_path=report_path)
+    outcome = _run(db, report_path, apply=True)
     db.flush()
 
     # Assert — not renamed at all. The alias slot is taken, so the role
@@ -371,7 +386,7 @@ def test_an_archived_alias_row_also_blocks_the_write(
     db.flush()
 
     # Act
-    outcome = rename_parts(db, apply=True, report_path=report_path)
+    outcome = _run(db, report_path, apply=True)
     db.flush()
 
     # Assert
@@ -386,11 +401,11 @@ def test_a_second_apply_changes_nothing(authed_client, db, report_path):
     part = _part(
         db, workspace_id, "STM32F103C8T6 - Servo integrator", mpn="STM32F103C8T6"
     )
-    rename_parts(db, apply=True, report_path=report_path)
+    _run(db, report_path, apply=True)
     db.flush()
 
     # Act
-    second = rename_parts(db, apply=True, report_path=report_path)
+    second = _run(db, report_path, apply=True)
     db.flush()
 
     # Assert
@@ -411,7 +426,7 @@ def test_apply_writes_one_audit_row_per_workspace_carrying_counts_only(
     _part(db, workspace_id, "MPN-2 - role", mpn="MPN-2")
 
     # Act
-    rename_parts(db, apply=True, include_free=True, report_path=report_path)
+    _run(db, report_path, apply=True, include_free=True)
     db.flush()
 
     # Assert
@@ -433,7 +448,7 @@ def test_a_workspace_with_nothing_to_rename_writes_no_audit_row(
     _part(db, workspace_id, "STM32F103C8T6", mpn="STM32F103C8T6")
 
     # Act
-    rename_parts(db, apply=True, report_path=report_path)
+    _run(db, report_path, apply=True)
     db.flush()
 
     # Assert
@@ -454,7 +469,7 @@ def test_every_workspace_is_swept_when_none_is_named(authed_client, db, report_p
     part_b = _part(db, workspace_b, "B-1 - role", mpn="B-1")
 
     # Act
-    outcome = rename_parts(db, apply=True, report_path=report_path)
+    outcome = _run(db, report_path, apply=True)
     db.flush()
 
     # Assert
@@ -473,9 +488,7 @@ def test_naming_one_workspace_leaves_the_others_alone(
     part_b = _part(db, workspace_b, "B-1 - role", mpn="B-1")
 
     # Act
-    outcome = rename_parts(
-        db, apply=True, workspace_id=workspace_a, report_path=report_path
-    )
+    outcome = _run(db, report_path, apply=True, workspace_id=workspace_a)
     db.flush()
 
     # Assert
@@ -502,7 +515,7 @@ def test_more_parts_than_one_batch_are_all_swept(authed_client, db, report_path,
     ]
 
     # Act
-    outcome = rename_parts(db, apply=True, report_path=report_path)
+    outcome = _run(db, report_path, apply=True)
     db.flush()
 
     # Assert
@@ -528,7 +541,7 @@ def test_the_recovery_columns_are_verbatim_and_the_rest_is_neutralised(
     )
 
     # Act
-    rename_parts(db, include_free=True, report_path=report_path)
+    _run(db, report_path, include_free=True)
 
     # Assert
     row = _report_rows(report_path)[0]
@@ -554,7 +567,7 @@ def test_a_free_text_name_is_reported_but_not_renamed(
     )
 
     # Act
-    outcome = rename_parts(db, apply=True, report_path=report_path)
+    outcome = _run(db, report_path, apply=True)
     db.flush()
 
     # Assert — untouched, and listed with the reason so the operator can
@@ -576,9 +589,7 @@ def test_include_free_opts_into_renaming_them(authed_client, db, report_path):
     )
 
     # Act
-    outcome = rename_parts(
-        db, apply=True, include_free=True, report_path=report_path
-    )
+    outcome = _run(db, report_path, apply=True, include_free=True)
     db.flush()
 
     # Assert
@@ -608,9 +619,7 @@ def test_a_free_name_with_an_alias_already_taken_is_never_renamed(
     db.flush()
 
     # Act
-    outcome = rename_parts(
-        db, apply=True, include_free=True, report_path=report_path
-    )
+    outcome = _run(db, report_path, apply=True, include_free=True)
     db.flush()
 
     # Assert
@@ -647,7 +656,7 @@ def test_a_description_name_with_an_alias_taken_is_renamed_and_says_so(
     db.flush()
 
     # Act
-    outcome = rename_parts(db, apply=True, report_path=report_path)
+    outcome = _run(db, report_path, apply=True)
     db.flush()
 
     # Assert
@@ -683,7 +692,7 @@ def test_the_report_says_where_every_old_name_went(authed_client, db, report_pat
     _part(db, workspace_id, "MPN-7 - bias", mpn="MPN-7")
 
     # Act
-    rename_parts(db, report_path=report_path)
+    _run(db, report_path)
 
     # Assert
     preserved = {
@@ -711,27 +720,10 @@ def test_the_report_survives_a_failure_part_way_through(
 
     # Act
     with pytest.raises(RuntimeError):
-        rename_parts(db, apply=True, report_path=report_path)
+        _run(db, report_path, apply=True)
 
     # Assert
     assert _report_rows(report_path)[0]["new_name"] == "MPN-5"
-
-
-def test_the_report_is_not_world_readable(authed_client, db, tmp_path):
-    """It carries part names and MPNs, and its default home is /tmp."""
-    # Arrange
-    workspace_id = _workspace(authed_client)
-    _part(db, workspace_id, "MPN-6 - role", mpn="MPN-6")
-    report_path = tmp_path / "nested" / "report.csv"
-
-    # Act
-    rename_parts(db, report_path=report_path)
-
-    # Assert
-    assert report_path.stat().st_mode & 0o077 == 0
-    assert report_path.parent.stat().st_mode & 0o077 == 0
-
-
 def test_a_rename_does_not_credit_itself_to_the_last_human_editor(
     authed_client, db, report_path
 ):
@@ -750,7 +742,7 @@ def test_a_rename_does_not_credit_itself_to_the_last_human_editor(
     db.flush()
 
     # Act
-    rename_parts(db, apply=True, report_path=report_path)
+    _run(db, report_path, apply=True)
     db.flush()
 
     # Assert
