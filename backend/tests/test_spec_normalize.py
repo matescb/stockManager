@@ -498,6 +498,34 @@ def test_an_existing_category_is_never_overridden(
     assert str(db.get(Part, part_id).category_id) == resistors_id
 
 
+def test_a_part_filed_under_a_root_still_gets_the_finer_schema(
+    client: TestClient, db, tmp_path: Path
+) -> None:
+    """The sub-category seed has not run anywhere, so real parts sit under
+    the "Capacitors" root — which classifies to nothing, because the
+    dielectric is the spec set. The provider's own taxonomy still knows
+    the part is a ceramic capacitor, and the backfill has to use it or it
+    hands the common schema to most of the parts it exists to re-key."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    capacitors_id = _category(client, "Capacitors")
+    part_id = _part(client, db, category_id=capacitors_id, linked_provider="mouser")
+    _legacy_row(
+        db, ws_id=ws_id, part_id=part_id, key="category", value="Ceramic Capacitors"
+    )
+    _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Dielectric", value="X7R")
+    _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Capacitance", value="100 nF")
+    db.commit()
+
+    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+
+    rows = _rows_by_key(db, part_id)
+    assert rows["capacitance"].value == "100 nF"
+    assert rows["dielectric"].value == "X7R"
+    db.expire_all()
+    assert str(db.get(Part, part_id).category_id) == capacitors_id
+
+
 def test_the_assigned_category_picks_the_spec_schema_for_the_same_run(
     client: TestClient, db, tmp_path: Path
 ) -> None:

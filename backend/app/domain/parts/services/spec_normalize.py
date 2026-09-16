@@ -55,7 +55,6 @@ from app.domain.parts.services.spec_normalize_report import (
 )
 from app.domain.parts.services.spec_normalize_rows import normalize_part_rows
 from app.domain.parts.services.spec_reconcile import apply_provider_category
-from app.domain.parts.spec_schema import category_slug_for
 from app.domain.workspaces.models import Workspace
 
 logger = logging.getLogger(__name__)
@@ -280,18 +279,21 @@ def _file_part(
     ceramic capacitor's (a dielectric name) under the same vendor key —
     the same ordering `provider_import.py` uses.
 
-    A part that already has a category keeps it. `apply_provider_category`
-    enforces that too, but going through it for every part would re-derive
-    a path the workspace index already holds.
+    Every part goes through `apply_provider_category`, including the ones
+    that already have a category. It is the single place that knows the
+    slug is not simply "the part's category": a part filed under the
+    "Capacitors" root classifies to nothing, because the dielectric is
+    the spec set, and so does one the user filed under "Bias network" —
+    in both cases the provider's own taxonomy still knows what the part
+    is. Deriving the slug from the part's category here instead would
+    hand the common schema to most of the parts the backfill exists to
+    re-key. It only ever WRITES a NULL `category_id`, so a category the
+    user chose is still safe.
 
     `index` is the workspace's whole category tree, read once per
-    workspace and threaded through — without it every uncategorized part
-    costs two full `part_categories` reads, which is the N+1 the batched
-    lookups exist to avoid.
+    workspace and threaded through — without it every part costs a full
+    `part_categories` read, which is the N+1 the index exists to avoid.
     """
-    if part.category_id is not None:
-        return category_slug_for(index.paths.get(part.category_id)), None
-
     previous_editor = part.updated_by
     outcome = apply_provider_category(
         db,
