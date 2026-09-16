@@ -105,11 +105,9 @@ earlier result has the other.
 
 ### Authoring a part
 
-| Tool | Arguments | Refusals |
-|---|---|---|
-| `create_part` | `name?`, `mpn?`, `manufacturer?`, `description?`, `category_id?`, `part_type?` (`local`\|`linked`), `internal_part_number?` | `part.name_or_mpn_required` with neither `name` nor `mpn`; `category.not_found` for a category id, name or slug that is not in this workspace; `part.invalid_field` for an over-long value |
-| `set_part_category` | `part_id_or_mpn`, `category_id_or_name` | `category.not_found` (lists up to 10 existing names), `category.name_conflict` when two categories differ only in case, `part.not_found` |
-| `set_part_specs` | `part_id_or_mpn`, `specs` (key → value), `replace_missing?` | `custom_field.reserved_key`, `custom_field.key_whitespace`, `custom_field.too_many` (> 50 keys), `custom_field.too_long` (key > 256 or value > 1024 characters) |
+Arguments and refusals for these three are in [Required arguments and
+refusals](#required-arguments-and-refusals); what follows is the part of the
+contract a table cannot carry.
 
 **A duplicate MPN is a success, not an error.** `POST /api/parts` answers 409
 with `existing_id`; `create_part` answers `{"found_existing": true, "part":
@@ -146,6 +144,188 @@ Reserved keys — `image_url`, `datasheet_url`, `source_url`, and anything
 prefixed `digikey:` or `mouser:` — are refused outright, and one bad key
 refuses the whole call so a batch never lands half written
 ([ADR-0031](../adr/0031-primary-and-secondary-parts-providers.md) owns the namespaces).
+
+## Workflows
+
+The four sequences an assistant is actually asked for, as ordered tool calls.
+Argument names are the ones in `backend/app/mcp/tools/`; they are not uniform
+across the surface, so copy them rather than inferring them.
+
+### Add a part from a manufacturer part number
+
+There is **no provider-lookup tool on this surface.** Nothing here searches
+DigiKey or Mouser by MPN and hands back attributes — the MPN, manufacturer,
+description and specifications come from wherever the assistant already has
+them (a schematic, a datasheet, its own knowledge). `sourcing_offers` is not
+that tool either: it takes a `part_id`, so it can only run once the part
+exists, and it answers price and availability rather than parameters.
+
+1. `list_categories()` — once per session. You need a category id, name or
+   slug for step 3, and the refusal in step 3 is cheaper to avoid than to
+   recover from.
+2. `create_part(mpn=…, manufacturer=…, description=…, category_id=…)`.
+   `name` defaults to the MPN, so an MPN alone is a complete call.
+   **Read `found_existing` before reporting success** — `true` means the
+   workspace already had this MPN and nothing was written.
+   `category_id` accepts an id, an exact name or a slug, so passing it here
+   makes step 3 unnecessary.
+3. `set_part_category(part_id_or_mpn=…, category_id_or_name=…)` — only to
+   refile a part, or when step 2 ran without a category. Create a missing
+   one with `create_category(name=…)` first.
+4. `set_part_specs(part_id_or_mpn=…, specs={…})`. Values are stored verbatim,
+   units included. On a part a provider already owns, read
+   `skipped_provider_owned` in the result: those keys were not written.
+5. `add_stock(part_id=…, qty=…, storage_location_id=…)` if you also hold
+   quantities — `create_part` never sets stock.
+
+Steps 2–4 are three writes, three audit rows and three chances to be refused.
+That is deliberate: `create_part` takes no `specs` argument, because a
+partially-valid batch would leave the model reconciling what landed.
+
+### Add stock from a scan
+
+Bag codes are not on this surface. The lookup lives on a REST route the web
+scanner uses — `GET /api/parts/by-bag-signature/{signature}`
+(`backend/app/api/routes/parts_core.py:516-517`) — so an assistant works from
+the MPN a scanner decoded, not from the raw bag code.
+
+1. `search_parts(query=<MPN>)` — confirm the part exists and get its id. Skip
+   it and go straight to `create_part` if it may not exist yet; that call
+   answers the "already there" case itself.
+2. `list_storage_locations()` — `add_stock` takes a location **id**, and the
+   response carries each location's constraints (`is_full`,
+   `single_part_only`, `existing_parts_only`) so a refusal can be predicted.
+3. `add_stock(part_id=…, qty=…, storage_location_id=…, note=…)`. Pass the
+   location. Omitting it lands the stock in the unassigned pool, and is
+   refused outright on a part with a mandatory default location.
+4. The result already carries the part's new `on_hand`; a follow-up
+   `stock_levels` call is redundant.
+
+`consume_stock` mirrors this and has one trap: omitting `storage_location_id`
+consumes from the **unassigned pool only**, not from wherever the part happens
+to sit. Call `get_part` first and pass the location that actually holds the
+stock. `move_stock(part_id, qty, from_location_id, to_location_id)` requires
+both ends.
+
+### Wire CAD data
+
+1. `find_parts_missing_eda(kind="footprint")` — or `"symbol"`, `"model3d"`,
+   `"spice"`. This is the work queue.
+2. `get_part_eda(part_id=…)` — **mandatory before step 4.** `set_part_eda`
+   replaces the whole configuration; an omitted argument is written as its
+   default, not left alone.
+3. Get the bytes into the library, by whichever door fits:
+   - `import_vendor_zip(part_id=…, content_base64=…, overwrite=False)` for a
+     SnapEDA / Component Search Engine / UltraLibrarian archive. It wires the
+     part as it imports, so step 4 is often unnecessary.
+   - `fetch_lcsc(part_id=…, lcsc_id="C25804", overwrite=False)` — same, with
+     the bytes fetched from EasyEDA rather than uploaded.
+   - `upload_eda_asset(kind=…, filename=…, content_base64=…, part_id=…,
+     category_slug=…)` for a single file. With `part_id` it fills that part's
+     **empty** slots only and reports `part_eda_updated`.
+4. `set_part_eda(part_id=…, …)` for anything the importers did not set —
+   `value`, `keywords`, `footprint_filters`, the `exclude_from_*` flags, or a
+   reference into the user's own local KiCad libraries. A symbol is named by
+   `symbol_id` (hosted here) **or** `symbol_ref_external` (`"Device:R"`),
+   never both; same for `footprint_id` / `footprint_ref_external`. Leaving
+   both empty inherits the category default. Pass back everything from step 2
+   you want to keep.
+
+### Check a BOM against stock
+
+1. `list_projects()` — projects, newest first, with their ids.
+2. `bom_shortages(project_id=…, build_qty=N)`. One row per line that cannot be
+   covered, with `required`, `available` and `short_by`. Substitutes and
+   meta-part members count towards availability; do-not-populate lines and
+   lines with no linked part are skipped. An empty `shortages` list means the
+   build is covered, and `lines_checked` says how many lines that verdict
+   rests on.
+3. `get_project_bom(project_id=…)` only if you need the lines themselves —
+   `designators`, per-board `quantity`, `dnp`. The shortage answer does not
+   require it.
+4. Per shorted part: `stock_levels(part_id=…)` for the `on_hand` / `reserved`
+   / `available` split, and `sourcing_offers(part_id=…, qty=…)` for price and
+   distributor availability. `sourcing_offers` spends metered quota and is
+   rate-limited to 60/minute — call it for the shortages, not for the BOM.
+
+## Required arguments and refusals
+
+Every tool can additionally return
+`auth.token_read_only`, `resource.insufficient_role` or `rate_limited`; those
+three are properties of the credential and the clock, not of the call, and are
+not repeated per row.
+
+| Tool | Required | Optional | Characteristic refusals |
+|---|---|---|---|
+| `search_parts` | `query` | `category_slug`, `limit` | `category.not_found` |
+| `get_part` | `id_or_mpn` | — | `part.not_found` |
+| `get_part_eda` | `part_id` | — | `part.not_found` |
+| `find_parts_missing_eda` | `kind` | `category_slug`, `limit` | `category.not_found` |
+| `stock_levels` | — | `part_id`, `low_stock_only`, `limit` | `part.not_found` |
+| `list_storage_locations` | — | — | — |
+| `list_categories` | — | — | — |
+| `list_projects` | — | — | — |
+| `get_project_bom` | `project_id` | — | `project.not_found` |
+| `bom_shortages` | `project_id` | `build_qty` | `project.not_found` |
+| `sourcing_offers` | `part_id` | `qty` | `part.not_found` only. Every other failure is **degradation, not a refusal**: a part with no MPN, unconfigured sourcing, an exhausted budget and a provider error all return `status` (`no_mpn` / `not_configured` / `budget_blocked` / `provider_error`) with an empty `offers` list. Read that as "unknown", not "unavailable" |
+| `create_part` | one of `name` / `mpn` | `manufacturer`, `description`, `category_id`, `part_type`, `internal_part_number` | `part.name_or_mpn_required`; `category.not_found`; `category.archived`; `part.invalid_field` (over-long value). **Not** `part.mpn_conflict` — see below |
+| `set_part_category` | `part_id_or_mpn`, `category_id_or_name` | — | `part.not_found`; `category.not_found` (lists up to 10 existing names); `category.name_conflict` when two differ only in case |
+| `set_part_specs` | `part_id_or_mpn`, `specs` | `replace_missing` | `custom_field.reserved_key`; `custom_field.key_whitespace`; `custom_field.too_many` (> 50 keys); `custom_field.too_long` (key > 256, value > 1024) |
+| `create_category` | `name` | `description` | `category.name_conflict`, `category.slug_conflict` |
+| `add_stock` | `part_id`, `qty` | `storage_location_id`, `note` | `stock.operation_error` — a non-positive `qty`, a location that is archived, full or not in this workspace, or the mandatory-default rule below; `stock.constraint_violation` for `single_part_only` / `existing_parts_only` |
+| `consume_stock` | `part_id`, `qty` | `storage_location_id`, `note` | `stock.operation_error` — a non-positive `qty`, or "insufficient stock (have 3, want 10)" |
+| `move_stock` | `part_id`, `qty`, `from_location_id`, `to_location_id` | — | `resource.not_found` for either end; `stock.operation_error` for a non-positive `qty` or too little stock at the source; `stock.constraint_violation` on the destination |
+| `set_part_eda` | `part_id` | the other eleven | `eda_symbol.not_found`, `eda_footprint.not_found`, `eda_datafile.not_found`; `eda.ref_conflict` when both `<slot>_id` and `<slot>_ref_external` are set; `eda.archived` for a retired entry |
+| `upload_eda_asset` | `kind`, `filename`, `content_base64` | `part_id`, `category_slug` | `eda.unsupported_kind`, `eda.invalid_file`, `eda.empty_file`, `eda.file_too_large`, `eda.multiple_symbols`, `eda.legacy_format` |
+| `import_vendor_zip` | `part_id`, `content_base64` | `overwrite` | `eda.invalid_archive`, `eda.archive_too_large`, `eda.no_entries` |
+| `fetch_lcsc` | `part_id`, `lcsc_id` | `overwrite` | `eda.lcsc_not_found`, `eda.lcsc_unavailable` |
+
+Three spellings of the same argument survive on this surface — `id_or_mpn`
+(`get_part`), `part_id` (everything in `read.py`, `write.py`,
+`write_inventory.py`, `sourcing.py`) and `part_id_or_mpn` (`write_parts.py`).
+All three accept a part id **or** an exact MPN; only the names differ.
+
+### The four refusals worth knowing before you call
+
+**A duplicate MPN is not a refusal.** `create_part` on an MPN this workspace
+already holds returns `{"found_existing": true, "part": {…}}` and writes
+nothing — no part, no audit row. The REST twin answers `409` with
+`existing_id`; the tool converts it. The MPN is stripped first, so
+`"  LM358DR "` finds the part `"LM358DR"` names. Every other 409 (an archived
+category, for one) stays a failure, because the conversion matches on the
+error code rather than the status.
+
+**A mandatory default storage location is enforced on `add_stock`.** A part
+with `default_storage_mandatory` set and a default location configured refuses
+any addition that does not name **that** location — including one that names
+no location at all. The refusal is
+`stock.operation_error: part requires default storage location`
+(`backend/app/domain/stock/service.py:609-611`). `create_part` cannot set
+either flag, so an assistant meets this only on parts a person configured.
+Three more `stock.operation_error` cases share the shape: the location is
+archived, marked full, or not in this workspace. Two others are the
+workspace's serial-tracking rule — a serialized part must be added one at a
+time and with a `lot.serial_number`, which this surface cannot supply.
+
+**The workspace is pinned to the token and nothing can move it.** There is no
+`X-Workspace-Id` equivalent here. An id belonging to another workspace is
+answered `part.not_found` / `category.not_found` / `resource.not_found` —
+never a permission error, the same rule the REST surface follows
+([ADR-0002](../adr/0002-code-enforced-workspace-isolation.md)). An assistant
+that needs two workspaces needs two tokens and two configured servers.
+
+**A read-only token is refused at call time, not at list time.** The string is
+fixed:
+
+```
+auth.token_read_only: this tool writes and the token is read-only;
+mint a full-access token to use it
+```
+
+It applies to all twelve write tools, `sourcing_offers` included. The role
+check runs second and answers
+`resource.insufficient_role: this tool writes and requires role member+ in
+this workspace` (`backend/app/mcp/tools/_registry.py:95-123`).
 
 ## Permissions
 
