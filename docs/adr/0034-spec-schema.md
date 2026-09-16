@@ -195,7 +195,24 @@ reconciler of its own. Three decisions landed with it:
   `resistance` is not one of `Resistance`'s aliases — so
   `spec_schema.canonical_value` re-parses it by canonical key instead. Without
   that the job would read its own output as unmapped free text and never be
-  idempotent.
+  idempotent. Two further things that idempotency turned out to rest on, both
+  found in review:
+
+  - **The sidecar only moves when the display moves.** On a second run the
+    candidate is a re-parse of the display the job itself wrote, and a display
+    carries fewer significant digits than the raw vendor value: `1/3W` stores
+    `333.3333 mW` with `value_num` `0.333333333333333333`, and re-parsing the
+    display gives `0.3333333`. Overwriting on that difference makes every such
+    row a change on every run, and `±0.00001%` — which displays as `0%` — has
+    its number replaced by zero. `value_num` is therefore written only when
+    the display changes or when the row has none.
+  - **Two rows that strip to one payload key are collapsed.** `Resistance`
+    next to `mouser:Resistance` is what a workspace that promoted a secondary
+    to primary carries. Only one can hold the canonical key; the loser is
+    archived like any superseded alias. Leaving it live would make it the sole
+    answer on the NEXT run, which would then change a value the operator had
+    already approved. Non-canonical keys are not collapsed — `Features` and
+    `mouser:Features` are two providers' answers to one question.
 - **A7** renders mandatory-but-missing keys on the Specs tab. It should also
   close a sharp edge this ADR widens: `isCatalogKey` classifies by key name
   alone, so a user who types `MOQ` or `Availability` as a manual spec gets a

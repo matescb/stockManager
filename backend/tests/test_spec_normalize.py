@@ -31,7 +31,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
-from app.cli.run_job import BackfillOptions, run_job
+from app.cli.run_job import BackfillOptions, main, run_job
 from app.core.advisory_locks import SPEC_NORMALIZE_LOCK_CLASSID
 from app.domain.audit.models import AuditLog
 from app.domain.custom_fields.models import CustomField
@@ -39,6 +39,7 @@ from app.domain.parts.models import Part
 from app.domain.parts.services.spec_normalize import (
     AUDIT_ACTION,
     REPORT_COLUMNS,
+    UnknownWorkspaceError,
     normalize_specs,
 )
 from app.domain.workspaces.models import Workspace
@@ -619,14 +620,127 @@ def test_the_report_summarises_counts_and_unmapped_keys(
     assert "unmapped,resistor,Features,1" in text
 
 
-def test_a_run_without_a_report_path_still_normalises(
+def test_a_dry_run_without_a_report_path_still_reports_its_counts(
     resistor: tuple[uuid.UUID, uuid.UUID], db
 ) -> None:
-    _, part_id = resistor
+    """The CLI refuses `--apply` without `--report`, but a scripted dry run
+    that only wants the counts should not have to name a file."""
+    outcome = normalize_specs(db)
 
-    normalize_specs(db, apply=True)
+    assert outcome.changes > 0
+    assert outcome.counts["rekey"] == 4
 
-    assert "resistance" in _rows_by_key(db, part_id)
+
+def test_an_unknown_workspace_id_is_an_error_not_an_empty_run(
+    resistor: tuple[uuid.UUID, uuid.UUID], db, tmp_path: Path
+) -> None:
+    """`parts=0 changes=0` after a typo'd `--workspace` reads exactly like
+    "nothing left to do", which is the wrong thing to believe on the apply
+    step."""
+    with pytest.raises(UnknownWorkspaceError):
+        normalize_specs(db, workspace_id=uuid.uuid4(), report_path=tmp_path / "r.csv")
+
+
+# ---------------------------------------------------------------------------
+# Idempotency traps found in review
+# ---------------------------------------------------------------------------
+def test_two_rows_stripping_to_one_key_do_not_resurface_on_the_next_run(
+    client: TestClient, db, tmp_path: Path
+) -> None:
+    """A workspace that promoted Mouser from secondary to primary carries
+    `Resistance` next to `mouser:Resistance`. Both strip to one payload
+    key; only one can hold `resistance`. Leaving the other live would make
+    it the sole answer next time, changing a value this run had already
+    reported as final."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    category_id = _category(client, "Resistors")
+    part_id = _part(client, db, category_id=category_id)
+    _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Resistance", value="47 kOhms")
+    _legacy_row(
+        db, ws_id=ws_id, part_id=part_id, key="mouser:Resistance", value="10 kOhms"
+    )
+    db.commit()
+
+    normalize_specs(db, apply=True, report_path=tmp_path / "first.csv")
+    first = _rows_by_key(db, part_id)["resistance"].value
+    second = normalize_specs(db, apply=True, report_path=tmp_path / "second.csv")
+
+    assert second.changes == 0
+    assert _rows_by_key(db, part_id)["resistance"].value == first
+
+
+def test_a_parsed_number_is_not_degraded_by_re_reading_its_own_display(
+    client: TestClient, db, tmp_path: Path
+) -> None:
+    """`1/3W` displays as `333.3333 mW`, and the display has fewer
+    significant digits than the raw value. Re-parsing it on the next run
+    must not overwrite the number the first run read from `1/3W`."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "digikey")
+    category_id = _category(client, "Resistors")
+    part_id = _part(client, db, category_id=category_id, linked_provider="digikey")
+    _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Power (Watts)", value="1/3W")
+    db.commit()
+
+    normalize_specs(db, apply=True, report_path=tmp_path / "first.csv")
+    first = _rows_by_key(db, part_id)["power"].value_num
+    second = normalize_specs(db, apply=True, report_path=tmp_path / "second.csv")
+
+    assert second.changes == 0
+    assert _rows_by_key(db, part_id)["power"].value_num == first
+
+
+def test_a_placeholder_row_a_real_value_fills_is_not_reported_as_dropped(
+    client: TestClient, db, tmp_path: Path
+) -> None:
+    """`resistance = "-"` is retired only if nothing answers `resistance`.
+    Here `Resistance` does, so the row is filled rather than archived —
+    and the report must not claim a `drop` the run undid."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "digikey")
+    category_id = _category(client, "Resistors")
+    part_id = _part(client, db, category_id=category_id, linked_provider="digikey")
+    _legacy_row(db, ws_id=ws_id, part_id=part_id, key="resistance", value="-")
+    _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Resistance", value="47 kOhms")
+    db.commit()
+
+    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+
+    resistance = _rows_by_key(db, part_id)["resistance"]
+    assert resistance.value == "47 kΩ"
+    assert resistance.archived_at is None
+    actions = {r["action"] for r in _report_rows(tmp_path / "report.csv")}
+    assert "drop" not in actions
+
+
+def test_a_merge_reports_one_line_per_row_so_the_rollback_works(
+    client: TestClient, db, tmp_path: Path
+) -> None:
+    """When a value moves onto a row that already holds the canonical key,
+    that is two changes to two rows. The `rekey` line must describe only
+    the row whose value moved — naming the other row's key as `old_key`
+    would make the runbook's "rename it back" reversal collide with the
+    archived row on `uq_cf_unique`."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "digikey")
+    category_id = _category(client, "Resistors")
+    part_id = _part(client, db, category_id=category_id, linked_provider="digikey")
+    _legacy_row(db, ws_id=ws_id, part_id=part_id, key="resistance", value="10 kΩ")
+    _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Resistance", value="47 kOhms")
+    db.commit()
+
+    normalize_specs(db, apply=True, report_path=tmp_path / "report.csv")
+
+    rows = _report_rows(tmp_path / "report.csv")
+    rekey = next(r for r in rows if r["action"] == "rekey")
+    assert rekey["key"] == "resistance"
+    assert rekey["old_key"] == "resistance"
+    assert rekey["old_value"] == "10 kΩ"
+    assert rekey["new_value"] == "47 kΩ"
+    archived = next(r for r in rows if r["action"] == "archive")
+    assert archived["key"] == "Resistance"
+    assert archived["old_value"] == "47 kOhms"
 
 
 # ---------------------------------------------------------------------------
@@ -654,6 +768,31 @@ def test_a_second_run_that_finds_the_lock_held_does_nothing(
         holder.close()
 
     assert outcome.changes == 0
+    assert "Resistance" in _rows_by_key(db, part_id)
+
+
+def test_a_typo_in_the_workspace_flag_exits_non_zero(
+    resistor: tuple[uuid.UUID, uuid.UUID], db, tmp_path: Path, capsys
+) -> None:
+    """Through the CLI, a `--workspace` that names nothing is exit 2 with a
+    message — not a successful run that changed nothing."""
+    _, part_id = resistor
+
+    exit_code = main(
+        [
+            "spec-normalize",
+            "--apply",
+            "--workspace",
+            str(uuid.uuid4()),
+            "--report",
+            str(tmp_path / "r.csv"),
+        ],
+        session_factory=lambda: db,
+        heartbeat_dir=tmp_path / "heartbeats",
+    )
+
+    assert exit_code == 2
+    assert "no workspace with id" in capsys.readouterr().err
     assert "Resistance" in _rows_by_key(db, part_id)
 
 

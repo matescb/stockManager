@@ -74,7 +74,8 @@ seconds at prod's scale (324 parts, 9,377 rows).
 3. **Take a `pg_dump`** — see [backup-restore](backup-restore.md). There is no
    staging environment and no bulk undo.
 
-4. **Apply**, with the same `--workspace` scope you reviewed:
+4. **Apply**, with the same `--workspace` scope you reviewed. `--report` is
+   required here, not optional: the values it overwrites survive nowhere else.
 
    ```bash
    sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
@@ -105,13 +106,22 @@ sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
 ## Rollback
 
 Nothing was deleted, so most of a run can be undone from the CSV without
-touching the dump:
+touching the dump. Every line describes exactly one row, identified by
+`part_id` + `old_key`:
 
-- An `archive` or `drop` row is reversed by clearing `archived_at` on that
+- An `archive` or `drop` line is reversed by clearing `archived_at` on that
   part's row for that `key`.
-- A `rekey` row is reversed by setting `key` back to `old_key` and `value`
-  back to `old_value` (and `value_num` to NULL).
-- A `category` row is reversed by clearing `parts.category_id`.
+- A `rekey` line is reversed by setting `key` back to `old_key` and `value`
+  back to `old_value` (and `value_num` to NULL). When `old_key` equals `key`
+  only the value moved, so only the value needs restoring.
+- A `stamp` line is reversed by clearing `provider`; a `value_num` line by
+  clearing `value_num`.
+- A `category` line is reversed by clearing `parts.category_id`.
+
+Two rows answering one canonical key produce two lines — a `rekey` on the row
+that kept the key and an `archive` on the one that was retired. Reverse both
+or neither: restoring only the `archive` leaves two live rows for one key
+again.
 
 If the run is wrong in a way the CSV does not describe — a bug rather than a
 bad alias — restore from the `pg_dump` taken in step 3 using

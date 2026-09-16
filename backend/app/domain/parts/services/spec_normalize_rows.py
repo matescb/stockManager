@@ -114,7 +114,7 @@ def normalize_part_rows(
     changes: list[Change] = []
     live = [r for r in part_rows if r.source == "provider" and r.archived_at is None]
 
-    remaining = _retire_junk(live, changes)
+    remaining, placeholders = _retire_junk(live, changes)
     settled, unkeyed = _split_already_canonical(remaining)
     groups, unattributed = _group_by_provider(unkeyed, default_provider)
 
@@ -137,20 +137,28 @@ def normalize_part_rows(
 
     for provider in sorted(groups):
         norm = _normalise_group(groups[provider], category_slug, provider)
-        by_raw_key = norm.by_raw_key
+        rows_by_raw_key = norm.rows_by_raw_key
         for key, value in norm.canonical.items():
-            source_row = by_raw_key.get(value.raw_key)
-            if source_row is not None:
-                _offer(contests, key, _Candidate(value, provider, source_row))
-        superseded.extend(
-            row
-            for row in (by_raw_key.get(raw_key) for raw_key in norm.dropped)
-            if row is not None
-        )
+            rows = rows_by_raw_key.get(value.raw_key, ())
+            if rows:
+                _offer(contests, key, _Candidate(value, provider, rows[0]))
+                # Two DB rows can strip to one payload key — `Resistance`
+                # next to `mouser:Resistance` on a workspace that promoted
+                # Mouser to primary. Only one can hold the canonical key,
+                # and leaving the other live would make it the sole answer
+                # on the NEXT run, which would then change a value this run
+                # already reported. Retiring it here is what keeps a second
+                # run empty. Non-canonical keys are NOT collapsed this way:
+                # `Features` and `mouser:Features` are two providers'
+                # answers to one question and both are kept verbatim.
+                superseded.extend(rows[1:])
+        for raw_key in norm.dropped:
+            superseded.extend(rows_by_raw_key.get(raw_key, ()))
         unmapped.extend((slug_label, key) for key in norm.optional)
 
     canonical, kept_manual, kept_other = _apply_canonical(part_rows, contests, changes)
     _archive_superseded(superseded, changes)
+    _retire_placeholders(placeholders, changes)
     return PartOutcome(
         changes=tuple(changes),
         kept_manual=kept_manual,
@@ -178,9 +186,11 @@ class _GroupNorm:
     canonical: dict[str, SpecValue]
     optional: dict[str, str]
     dropped: list[str]
-    #: The row each payload key came from, first-wins — the same rule
-    #: `spec_schema._partition` applies to a repeated key.
-    by_raw_key: dict[str, CustomField]
+    #: Every row each payload key came from, in key order. A LIST, not one
+    #: row: `spec_schema._partition` keeps the first of a repeated key
+    #: because a payload duplicate costs nothing to discard, but here each
+    #: one is a durable row that has to be accounted for.
+    rows_by_raw_key: dict[str, list[CustomField]]
 
 
 def _offer(
@@ -225,25 +235,42 @@ def _split_already_canonical(
 
 def _retire_junk(
     live: Sequence[CustomField], changes: list[Change]
-) -> list[CustomField]:
-    """Archive customs codes and placeholder values; return the rest.
+) -> tuple[list[CustomField], list[CustomField]]:
+    """Archive customs codes; set placeholder rows aside. Returns
+    `(rows with data, rows holding a placeholder)`.
 
     Deliberately ahead of, and independent of, provider attribution: a
     TARIC code is not a spec whoever wrote it, and a part nobody can
     attribute still deserves to lose its ~1,000 `-` rows.
+
+    A junk KEY can be archived on the spot — no customs code is a
+    canonical key, so nothing later in the pass can want it back. A junk
+    VALUE cannot: the row's key may BE a canonical key, in which case a
+    vendor spelling elsewhere on the part is about to fill it, and
+    archiving it here would put a `drop` in the report for a row the same
+    run revived. `_retire_placeholders` settles those at the end.
     """
     remaining: list[CustomField] = []
+    placeholders: list[CustomField] = []
     for row in live:
-        bare_key = _bare_key(row.key)
-        if is_junk_key(bare_key):
+        if is_junk_key(_bare_key(row.key)):
             _archive(row)
             changes.append(_retired(row, ACTION_ARCHIVE))
         elif is_junk_value(row.value):
-            _archive(row)
-            changes.append(_retired(row, ACTION_DROP))
+            placeholders.append(row)
         else:
             remaining.append(row)
-    return remaining
+    return remaining, placeholders
+
+
+def _retire_placeholders(
+    rows: Sequence[CustomField], changes: list[Change]
+) -> None:
+    """Archive the `-` rows nothing filled in the meantime."""
+    for row in rows:
+        if row.archived_at is None and is_junk_value(row.value):
+            _archive(row)
+            changes.append(_retired(row, ACTION_DROP))
 
 
 def _group_by_provider(
@@ -274,20 +301,21 @@ def _normalise_group(
 
     Sorted by key so a part that carries both `Resistance` and
     `mouser:Resistance` resolves the same way on every run — they strip
-    to one payload key and `normalise` keeps the first.
+    to one payload key, `normalise` keeps the first, and the caller
+    retires the rest.
     """
-    by_raw_key: dict[str, CustomField] = {}
+    rows_by_raw_key: dict[str, list[CustomField]] = {}
     payload: list[tuple[str, str]] = []
     for row in sorted(rows, key=lambda r: r.key):
         bare_key = _bare_key(row.key)
-        by_raw_key.setdefault(bare_key, row)
+        rows_by_raw_key.setdefault(bare_key, []).append(row)
         payload.append((bare_key, row.value or ""))
     norm = normalise(category_slug, provider, payload)
     return _GroupNorm(
         canonical=norm.canonical,
         optional=norm.optional,
         dropped=norm.dropped,
-        by_raw_key=by_raw_key,
+        rows_by_raw_key=rows_by_raw_key,
     )
 
 
@@ -324,13 +352,21 @@ def _apply_canonical(
         elif not provider_outranks(candidate.provider, target.provider):
             kept_other += 1
         else:
+            # Two rows answer one canonical key. The value moves onto the
+            # one already holding the key and the other is retired, which
+            # is TWO changes to TWO rows — and each report line describes
+            # exactly one of them. Naming the source row's key as this
+            # line's `old_key` would read as a rename, and the runbook's
+            # "set `key` back to `old_key`" reversal would then try to
+            # rename the live row onto a key the archived one still owns
+            # (`uq_cf_unique` has no partial predicate, so that fails).
             old_value = target.value or ""
             if _write_canonical(target, candidate) is not None:
                 changes.append(
                     Change(
                         action=ACTION_REKEY,
                         key=key,
-                        old_key=source_row.key,
+                        old_key=key,
                         provider=candidate.provider,
                         old_value=old_value,
                         new_value=target.value or "",
@@ -377,17 +413,33 @@ def _write_canonical(row: CustomField, candidate: _Candidate) -> str | None:
     Returns the action that best names what moved, or ``None`` when the
     row already said all of it — which is what makes a second run a
     no-op.
+
+    **The sidecar only moves when the display moves, or when there is no
+    sidecar at all.** On a second run the candidate is a re-parse of the
+    display this job wrote, and a display carries fewer significant
+    digits than the raw vendor value the first run read: `1/3W` is stored
+    as `333.3333 mW` with `value_num` 0.333333333333333333, and
+    re-parsing the display gives 0.3333333. Overwriting on that
+    difference would make every such row a change on every run, and
+    `±0.00001%` — which displays as `0%` — would have its number
+    replaced by zero.
     """
     display = truncate_provider_field_value(candidate.value.display)
+    new_num = candidate.value.value_num
     value_changed = row.value != display
-    num_changed = row.value_num != candidate.value.value_num
+    num_changed = (
+        row.value_num != new_num
+        if value_changed
+        else row.value_num is None and new_num is not None
+    )
     provider_changed = row.provider != candidate.provider
     unarchived = row.archived_at is not None
     if not (value_changed or num_changed or provider_changed or unarchived):
         return None
 
     row.value = display
-    row.value_num = candidate.value.value_num
+    if value_changed or num_changed:
+        row.value_num = new_num
     row.provider = candidate.provider
     row.archived_at = None
     if value_changed or unarchived:
