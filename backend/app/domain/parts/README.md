@@ -11,6 +11,7 @@ Owns the `Part` aggregate (linked / local / meta / sub-assembly), MPN uniqueness
 | `models.py` | `Part`, `PartCadKey`, `PartDatasheet`, `PartMetaMember`, `PartSubstitute`, `BulkImportIdempotency`, `WorkspaceProviderCredential`, `PartProviderLink` |
 | `schemas.py` | Pydantic request/response models for the parts API |
 | `provider_fields.py` | Which custom-field keys a provider owns + the primary/secondary namespace boundary |
+| `part_type.py` | Re-derives `part_type` (`linked` / `local`) from `linked_provider` at every link/unlink, and audits the change |
 | `provider_credentials.py` | `credentials_for` / `upsert` / `clear` for per-workspace provider keys |
 | `provider_links.py` | `part_provider_links` CRUD — which providers know a given part |
 | `services/assets.py` | Remote asset (image / datasheet) download → content-addressed storage; owns the two fetch policies |
@@ -32,6 +33,7 @@ Owns the `Part` aggregate (linked / local / meta / sub-assembly), MPN uniqueness
 | Resolve a provider's credentials | `provider_credentials.py::credentials_for` |
 | Whose namespace is this key? | `provider_fields.py::provider_owns_custom_field_key` |
 | A part's provider links | `provider_links.py::links_for_part`, `::upsert_link` |
+| Keep `part_type` in step with the link | `part_type.py::sync_part_type_and_log` |
 
 ## Hard rules (this module)
 

@@ -352,7 +352,8 @@ jobs:
           pytest -q --tb=short -m slow \
             tests/test_migrations.py \
             tests/test_migration_0070_backfill.py \
-            tests/test_migration_0074_uom_widening.py
+            tests/test_migration_0074_uom_widening.py \
+            tests/test_migration_0080_part_type_backfill.py
 
       - name: Upload backend coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1

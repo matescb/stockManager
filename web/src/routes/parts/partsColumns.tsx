@@ -37,6 +37,7 @@ import { ImageOff } from "lucide-react";
 
 import { categoryPath } from "@/lib/categoryTree";
 import { formatDate, formatDateTime } from "@/lib/format";
+import { partTypeLabel } from "@/lib/partType";
 import { providerLabel } from "@/lib/providers";
 import type { Part, PartCategory } from "@/lib/schemas";
 import { isSafeHttpOrSameOriginUrl } from "@/lib/url";
@@ -131,7 +132,16 @@ export function partsListColumns({ categories }: PartsColumnOptions): Column<Par
         );
       },
     },
-    { key: "part_type", header: "Type", accessor: r => r.part_type, width: "100px" },
+    {
+      key: "part_type",
+      header: "Type",
+      // Accessor stays the raw column so sort, search and CSV keep
+      // working on the stored vocabulary; only the cell says which
+      // provider backs a linked part.
+      accessor: r => r.part_type,
+      render: r => partTypeLabel(r),
+      width: "140px",
+    },
     {
       key: "name",
       header: "Part",

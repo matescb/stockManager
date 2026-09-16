@@ -114,12 +114,17 @@ const ROW_ONE = makePart({
   manufacturer: "Yageo",
   on_hand: 1200,
 });
+// Provider-linked on purpose: the pane's type pill names the provider,
+// and it is the only row that can prove the pill stopped being duplicated
+// by a second one beside it.
 const ROW_TWO = makePart({
   id: PART_TWO_ID,
   name: "Capacitor 100n",
   mpn: "CC0805KRX7R9BB104",
   manufacturer: "Yageo",
   on_hand: 42,
+  part_type: "linked",
+  linked_provider: "mouser",
 });
 
 vi.mock("@/lib/api", () => {
@@ -351,6 +356,16 @@ describe("parts list preview pane", () => {
     // No focus trap, no aria-modal — the list stays browsable.
     expect(pane.getAttribute("aria-modal")).toBeNull();
     expect(pane.getAttribute("role")).toBeNull();
+  });
+
+  it("names the provider in the type pill, once", async () => {
+    renderList(`/parts?sel=${PART_TWO_ID}`);
+    const pane = await screen.findByTestId("part-preview-pane");
+
+    expect(within(pane).getByText("linked · Mouser")).toBeTruthy();
+    // The separate provider pill that used to sit next to the type is
+    // gone — it said the same word twice.
+    expect(within(pane).queryByText("Mouser")).toBeNull();
   });
 
   it("shows where the part is stocked", async () => {

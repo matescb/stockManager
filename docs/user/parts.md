@@ -8,7 +8,7 @@ A **part** is a thing you buy or build — a resistor, a connector, a finished s
 
 ## Pick a part type
 
-You choose the type when you create the part. You cannot change it later.
+You choose the type when you create the part. The four types:
 
 - **Linked (MPN)** — has a real manufacturer part number and your workspace can look it up on a supplier (Mouser, DigiKey). Most parts are linked. The app pulls description, image, datasheet, specs, and price/stock data from the supplier.
 - **Local** — a part you keep in stock but don't pull from a supplier. Custom-made hardware, in-house labels, anything without a manufacturer part number. You fill in everything by hand.
@@ -16,6 +16,17 @@ You choose the type when you create the part. You cannot change it later.
 - **Sub-assembly** — something you build from other parts. Has its own bill of materials via a project; ends up in stock when a build completes.
 
 If unsure, pick **Linked** when the part has an MPN and your workspace has a provider configured. Pick **Local** otherwise.
+
+### Linked and local follow the supplier
+
+You don't have to keep these two straight yourself — the app does it for you:
+
+- A local part becomes **Linked** the first time a supplier lookup succeeds for it. This is what happens when you refresh a part that was created by hand or pulled in from an imported bill of materials.
+- A linked part becomes **Local** when you unlink it from its supplier. Its manufacturer, MPN and specs become yours to edit.
+
+Meta-parts and sub-assemblies are never changed this way. Those say what a part *is*, not where its data comes from, so a meta-part that you refresh from a supplier stays a meta-part.
+
+Where the type is shown — the part header, the parts list, the list preview — a linked part names its supplier next to the type, for example **linked · DigiKey**.
 
 ## Create a part
 

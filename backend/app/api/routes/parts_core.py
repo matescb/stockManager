@@ -48,6 +48,7 @@ from app.domain.categories import tree as category_tree
 from app.domain.categories.models import PartCategory
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part
+from app.domain.parts.part_type import sync_part_type_and_log
 from app.domain.parts.provider_links import (
     delete_link as _delete_provider_link,
 )
@@ -316,6 +317,10 @@ def patch_part(
             r.source = "manual"
             r.original_value = None
             r.updated_by = user.id
+        # Releasing the link makes the part locally owned — the type has
+        # to follow, or the pill keeps claiming a provider backs it.
+        request_id = getattr(request.state, "request_id", None)
+        sync_part_type_and_log(db, ws=ws, user=user, part=p, request_id=request_id)
 
     _audit_log(
         db,

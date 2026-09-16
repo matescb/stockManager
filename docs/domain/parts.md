@@ -8,16 +8,18 @@ For the model definition see [`data-model.md`](data-model.md#parts). For the MPN
 
 ## `part_type`
 
-`Part.part_type: String(20)` (`backend/app/domain/parts/models.py:59`). Default `"local"`. Four values:
+`Part.part_type: String(20)` (`backend/app/domain/parts/models.py:66-67`). Default `"local"`. Four values:
 
 | Value | Meaning | Stock semantics |
 |---|---|---|
-| `local` | Manually-entered part. No upstream provider linkage. | Stock writes go straight to the part. |
-| `linked` | Created via provider lookup (Mouser / DigiKey). `linked_provider`, `linked_external_id`, `last_refresh_at`, `description_locally_edited` are populated. | Same as `local` — the linkage is metadata for refresh/asset fetch, not a stock dimension. |
+| `local` | No upstream provider linkage. | Stock writes go straight to the part. |
+| `linked` | A primary provider (Mouser / DigiKey) owns the canonical fields. `linked_provider`, `linked_external_id`, `last_refresh_at`, `description_locally_edited` are populated. | Same as `local` — the linkage is metadata for refresh/asset fetch, not a stock dimension. |
 | `meta` | Aggregator: a "type-of" container whose members are real parts. Built from `part_meta_members`. | Holds **no** on-hand stock itself. BOM consumption against a meta-part picks from any registered member (`backend/app/domain/builds/service.py:46-56`). |
 | `sub_assembly` | Output of a build. Created automatically when a project's `associated_subassembly_part_id` is set; the `build_produce` row stocks it. | Treated as a regular part for stock-read purposes. |
 
 The vocabulary is enforced only at the call site (the create-part schema). There is no DB CHECK constraint.
+
+`local` and `linked` are **derived**, not user-owned: they are a reading of `linked_provider`, re-synced by `sync_part_type_and_log` (`backend/app/domain/parts/part_type.py`) at both transitions — the primary branch of the refresh route (`backend/app/api/routes/parts_refresh.py:310-325`) and the unlink PATCH (`backend/app/api/routes/parts_core.py:389-392`). Each transition writes one `part.type_synced` audit row commented `part_type: local→linked` — a separate action from `part.updated` so the unlink PATCH, which writes both, never puts two rows under one action. `meta` and `sub_assembly` are user-declared roles and are never rewritten by a link event, even on a part that carries `linked_provider`. Alembic `0080` backfilled the 160 prod rows that drifted before this existed.
 
 ## MPN uniqueness
 

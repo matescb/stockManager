@@ -32,6 +32,7 @@ from app.core.secrets import decrypt
 from app.core.time import utcnow
 from app.domain.audit.service import log as _audit_log
 from app.domain.custom_fields.models import CustomField
+from app.domain.parts.part_type import sync_part_type_and_log
 from app.domain.parts.provider_credentials import credentials_for
 from app.domain.parts.provider_fields import (
     CUSTOM_FIELD_KEY_MAX,
@@ -306,6 +307,21 @@ def refresh_from_provider(
         p.updated_by = user.id
         desired = _primary_desired_fields(r, ws)
         skipped = 0
+        # A part created `local` that the primary now owns IS linked;
+        # leaving the column behind is what put 160 prod parts in the
+        # wrong bucket. `meta` / `sub_assembly` are left alone.
+        #
+        # AFTER `_primary_desired_fields`, not before: the audit write
+        # flushes, and flushing here would hold the row lock on this
+        # `parts` row across that call's two remote asset downloads
+        # (image + datasheet, up to 45s each).
+        sync_part_type_and_log(
+            db,
+            ws=ws,
+            user=user,
+            part=p,
+            request_id=getattr(request.state, "request_id", None),
+        )
     else:
         # Secondary: the part's own columns belong to the primary. Not one
         # of them is touched here.

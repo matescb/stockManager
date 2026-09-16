@@ -68,7 +68,7 @@ Create a new part.
 |---|---|---|---|
 | `name` | string | one of name/mpn | Defaults to `mpn` when blank (`parts_core.py:153-154`). |
 | `mpn` | string | one of name/mpn | |
-| `part_type` | string | yes | `"manual"`, `"linked"`, `"meta"`. |
+| `part_type` | string | yes | `"linked"`, `"local"` (the default), `"meta"`, `"sub_assembly"`. `linked` / `local` are re-derived from `linked_provider` on every link and unlink — see [part_type](../domain/parts.md#part_type). |
 | `manufacturer`, `internal_part_number`, `description`, `footprint`, `notes_markdown` | string | no | |
 | `low_stock_report_quantity`, `attrition_percentage`, `attrition_min_quantity` | numeric | no | |
 | `default_storage_location_id` | UUID | no | Validated to belong to this workspace via `assert_in_workspace` (`parts_core.py:176-180`). |
@@ -106,6 +106,8 @@ Update part fields.
 | Field | Type | Notes |
 |---|---|---|
 | `unlink_provider` | bool | Pop-only flag. Clears `linked_provider`, resets `last_refresh_at` and `description_locally_edited`, demotes provider/override custom_fields to `manual` (`parts_core.py:261-280`). |
+
+Dropping the link also re-derives `part_type`: a `linked` part becomes `local`. `meta` and `sub_assembly` are left alone. The transition writes its own `part.type_synced` audit row, commented `part_type: linked→local`, alongside the route's `part.updated` row (`backend/app/domain/parts/part_type.py`).
 
 **Errors**
 
@@ -418,7 +420,7 @@ Re-run an MPN lookup against this part and reconcile its `source='provider'` cus
 
 The two tiers differ in what they may write — see ADR-0031.
 
-- **Primary** — always touches `manufacturer`, `mpn`, `footprint` (and `description` when not locally edited), sets `parts.linked_*`, and owns the un-namespaced custom fields.
+- **Primary** — always touches `manufacturer`, `mpn`, `footprint` (and `description` when not locally edited), sets `parts.linked_*`, and owns the un-namespaced custom fields. A hit also re-derives `part_type`: a `local` part becomes `linked` and gets a `part.type_synced` audit row. `meta` and `sub_assembly` are left alone.
 - **Secondary** — writes **no part column at all**. It records a `part_provider_links` row and custom fields under its own `"{provider}:"` prefix: `{provider}:source_url`, `{provider}:datasheet_url`, `{provider}:category`, and one `{provider}:{key}` per upstream spec. Assets are not downloaded; the upstream URL is stored as-is.
 
 **Response — found** — `200 OK`

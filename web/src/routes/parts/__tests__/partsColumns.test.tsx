@@ -182,6 +182,15 @@ describe("partsListColumns — accessors", () => {
     expect(accessorOf("category", makePart())).toBe("");
   });
 
+  it("keeps the type column sortable on the raw value while the cell names the provider", () => {
+    const linked = makePart({ part_type: "linked", linked_provider: "digikey" });
+    // Sort / search / CSV read the accessor, so it stays the stored word.
+    expect(accessorOf("part_type", linked)).toBe("linked");
+    expect(accessorOf("part_type", makePart())).toBe("local");
+    expect(renderCell("part_type", linked).container.textContent).toBe("linked · DigiKey");
+    expect(renderCell("part_type", makePart()).container.textContent).toBe("local");
+  });
+
   it("shows the provider's display name, not its wire value", () => {
     expect(accessorOf("linked_provider", makePart({ linked_provider: "digikey" }))).toBe(
       "DigiKey",
