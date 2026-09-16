@@ -1,5 +1,6 @@
-"""`run_job --dry-run / --apply / --workspace` — the operator-run job
-plumbing added for `category-seed` and `symbol-collapse`.
+"""`run_job --dry-run / --apply / --workspace / --report` — the
+operator-run job plumbing added for `category-seed` and
+`symbol-collapse`.
 
 The point of these flags is that a job which changes data nobody asked
 it to change on a timer cannot do so by accident. Two guards, tested
@@ -17,6 +18,7 @@ refuse these flags outright rather than accept and ignore them: a
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 
 import pytest
 from sqlalchemy.orm import Session
@@ -343,3 +345,174 @@ def test_no_scheduled_job_takes_options() -> None:
         if job.interval_setting is not None and job.takes_options
     ]
     assert scheduled == []
+
+
+# ---------------------------------------------------------------------
+# `--report` — reserved now for the operator jobs branches A5 and D add
+# ---------------------------------------------------------------------
+
+
+def test_job_options_carries_an_optional_report_path() -> None:
+    """`--report` lives on the shared options object, not in a job.
+
+    `feat/spec-normalize-job` and `feat/part-naming-convention` both
+    register an operator-run job through this registry once #928 merges,
+    and both want to write their CSV somewhere other than stdout. Having
+    it here means neither has to reopen the parser.
+    """
+    assert JobOptions().report is None
+    assert JobOptions(report=Path("/tmp/out.csv")).report == Path("/tmp/out.csv")
+
+
+def test_main_threads_a_report_path_through_to_the_job(tmp_path) -> None:
+    seen: list[JobOptions] = []
+    target = tmp_path / "report.csv"
+
+    def _job(db: Session, options: JobOptions) -> int:
+        seen.append(options)
+        return 0
+
+    code = main(
+        ["example", "--report", str(target)],
+        jobs=_spec(_job, takes_options=True),
+        session_factory=lambda: _FakeSession(),  # type: ignore[return-value]
+        heartbeat_dir=tmp_path,
+    )
+
+    assert code == 0
+    assert seen[0].report == target
+    # It is a path, not a string: a job that opens it must not have to
+    # guess which it got.
+    assert isinstance(seen[0].report, Path)
+
+
+def test_report_alone_still_means_a_dry_run(tmp_path) -> None:
+    """Asking for the report is not asking to write the database."""
+    seen: list[JobOptions] = []
+    session = _FakeSession()
+
+    def _job(db: Session, options: JobOptions) -> int:
+        seen.append(options)
+        return 0
+
+    main(
+        ["example", "--report", str(tmp_path / "r.csv")],
+        jobs=_spec(_job, takes_options=True),
+        session_factory=lambda: session,  # type: ignore[return-value]
+        heartbeat_dir=tmp_path,
+    )
+
+    assert seen[0].apply is False
+    assert session.rolled_back is True
+    assert session.committed is False
+
+
+def test_main_rejects_report_on_a_scheduled_job(tmp_path, capsys) -> None:
+    """Same contract as `--apply`: refused by name, never dropped."""
+    code = main(
+        ["example", "--report", str(tmp_path / "r.csv")],
+        jobs=_spec(lambda db: 0),
+        session_factory=_FakeSession,  # type: ignore[arg-type]
+        heartbeat_dir=tmp_path,
+    )
+
+    assert code == 2
+    assert "takes no" in capsys.readouterr().err
+
+
+def test_report_cannot_ride_along_with_a_config_probe(tmp_path) -> None:
+    code = main(
+        ["example", "--print-interval", "--report", str(tmp_path / "r.csv")],
+        jobs=_spec(lambda db, options: 0, takes_options=True),
+        session_factory=_FakeSession,  # type: ignore[arg-type]
+        heartbeat_dir=tmp_path,
+    )
+
+    assert code == 2
+
+
+@pytest.mark.parametrize(
+    "job_name", sorted(name for name, job in JOBS.items() if not job.takes_options)
+)
+def test_every_scheduled_job_dispatches_through_main(
+    job_name: str, tmp_path
+) -> None:
+    """The five cron sidecars call `main()`, not `run_job()`.
+
+    `test_every_scheduled_job_commits` pins the transaction behaviour one
+    layer down. This pins the layer the sidecars actually use: argument
+    parsing, `_options_for` returning None for a job that takes none, and
+    the exit code. A regression in any of those would leave the container
+    looping on a job that never runs, which is the failure mode the
+    heartbeat probe was built to catch after the fact.
+    """
+    session = _FakeSession()
+    calls: list[int] = []
+    spec = JOBS[job_name]
+
+    code = main(
+        [job_name],
+        jobs={
+            job_name: JobSpec(
+                name=spec.name,
+                owner=spec.owner,
+                cadence=spec.cadence,
+                idempotency=spec.idempotency,
+                run=lambda db: (calls.append(1), 0)[1],
+                interval_setting=spec.interval_setting,
+            )
+        },
+        session_factory=lambda: session,  # type: ignore[return-value]
+        heartbeat_dir=tmp_path,
+    )
+
+    assert code == 0
+    assert calls == [1]
+    assert session.committed is True
+    assert session.rolled_back is False
+
+
+def test_the_report_flag_actually_writes_the_csv(tmp_path, db) -> None:
+    """`--report` is not a flag that quietly does nothing.
+
+    Both operator jobs already take a `stream`; the flag points it at a
+    file instead of stdout. A sidecar-less operator run on a VPS wants
+    the CSV on disk, not scrolled past in an SSH session.
+    """
+    from app.cli.run_job import _run_category_seed
+
+    target = tmp_path / "nested" / "seed.csv"
+
+    _run_category_seed(db, JobOptions(report=target))
+
+    assert target.exists()
+    assert target.read_text(encoding="utf-8").startswith("workspace_id,")
+
+
+def test_the_report_flag_works_for_symbol_collapse_too(tmp_path, db) -> None:
+    from app.cli.run_job import _run_symbol_collapse
+
+    target = tmp_path / "collapse.csv"
+
+    _run_symbol_collapse(db, JobOptions(report=target))
+
+    assert target.read_text(encoding="utf-8").startswith("workspace_id,")
+
+
+def test_without_the_flag_the_report_still_goes_to_stdout(tmp_path, db, capsys) -> None:
+    from app.cli.run_job import _run_category_seed
+
+    _run_category_seed(db, JobOptions())
+
+    assert "workspace_id," in capsys.readouterr().out
+
+
+def test_an_unwritable_report_path_is_a_usage_error(tmp_path, db) -> None:
+    """Same contract as a `--workspace` that names nothing."""
+    from app.cli.run_job import _run_category_seed
+
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("", encoding="utf-8")
+
+    with pytest.raises(JobConfigError, match="cannot write --report"):
+        _run_category_seed(db, JobOptions(report=blocker / "seed.csv"))

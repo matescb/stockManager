@@ -6,9 +6,11 @@ import argparse
 import logging
 import sys
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TextIO
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
@@ -44,10 +46,19 @@ class JobOptions:
     reads a report first. `run_job` rolls the transaction back after a
     dry run, so "the job forgot to check the flag" is not a way to write
     to production.
+
+    `report` is where the job writes its CSV instead of stdout. Both
+    jobs here honour it, and it lives on the shared options object
+    rather than in either job because the two branches queued behind
+    this one (`feat/spec-normalize-job` and `feat/part-naming-convention`)
+    register operator jobs that want the same flag — a job opts in by
+    passing `_report_stream(options)` to whatever already takes a
+    `stream`, and adds nothing to the parser.
     """
 
     apply: bool = False
     workspace_id: UUID | None = None
+    report: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -61,8 +72,8 @@ class JobSpec:
     run: JobCallable
     interval_setting: str | None = None
     #: Whether `run` takes a second `JobOptions` argument, i.e. whether
-    #: this job is operator-run (`--apply` / `--workspace`) rather than
-    #: scheduled.
+    #: this job is operator-run (`--apply` / `--workspace` / `--report`)
+    #: rather than scheduled.
     takes_options: bool = False
 
 
@@ -129,20 +140,56 @@ def _run_datasheet_backfill(db: Session) -> int:
     return backfill_missing_datasheets(db)
 
 
+@contextmanager
+def _report_stream(options: JobOptions) -> Iterator[TextIO | None]:
+    """The file `--report` named, or None for "write to stdout".
+
+    `newline=""` because the payload is CSV: `csv` writes its own line
+    terminator, and letting the text layer translate it again produces
+    CRLFCRLF on a platform that does.
+
+    The file is written even on a dry run, and that is the point — the
+    report IS the deliverable of a dry run. The transaction rolls back;
+    the operator still has the CSV to read.
+    """
+    if options.report is None:
+        yield None
+        return
+    try:
+        options.report.parent.mkdir(parents=True, exist_ok=True)
+        handle = options.report.open("w", encoding="utf-8", newline="")
+    except OSError as exc:
+        # Same contract as a `--workspace` that names nothing: a usage
+        # error the operator can read and fix, not a traceback. Only the
+        # open is wrapped — an OSError raised later, from inside the job,
+        # is a real failure and must keep its stack.
+        raise JobConfigError(f"cannot write --report {options.report}: {exc}") from exc
+    with handle:
+        yield handle
+
+
 def _run_category_seed(db: Session, options: JobOptions) -> int:
     from app.domain.categories.seed import run_category_seed
 
-    return run_category_seed(
-        db, apply=options.apply, workspace_id=options.workspace_id
-    )
+    with _report_stream(options) as stream:
+        return run_category_seed(
+            db,
+            apply=options.apply,
+            workspace_id=options.workspace_id,
+            stream=stream,
+        )
 
 
 def _run_symbol_collapse(db: Session, options: JobOptions) -> int:
     from app.domain.eda.symbol_collapse import run_symbol_collapse
 
-    return run_symbol_collapse(
-        db, apply=options.apply, workspace_id=options.workspace_id
-    )
+    with _report_stream(options) as stream:
+        return run_symbol_collapse(
+            db,
+            apply=options.apply,
+            workspace_id=options.workspace_id,
+            stream=stream,
+        )
 
 
 def _printing_is_configured() -> bool:
@@ -381,7 +428,7 @@ def run_job(
     if options is not None and not job.takes_options:
         raise JobConfigError(
             f"job {job.name!r} is scheduled and takes no "
-            "--dry-run / --apply / --workspace options"
+            "--dry-run / --apply / --workspace / --report options"
         )
     # Defaulted here rather than narrowed at the call site: an
     # operator-run job always receives a `JobOptions`, and "no flags"
@@ -494,6 +541,16 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help="Limit an operator-run job to one workspace. Default is all of them.",
     )
+    parser.add_argument(
+        "--report",
+        metavar="PATH",
+        type=Path,
+        default=None,
+        help=(
+            "Write an operator-run job's CSV report to this file instead of "
+            "stdout. Written on a dry run too — the report is the point of one."
+        ),
+    )
     return parser
 
 
@@ -517,12 +574,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # The probes answer a question about a job's configuration and never
     # run it, so an --apply next to one would be silently discarded —
     # the exact failure mode `run_job` refuses for scheduled jobs.
-    if (args.apply or args.dry_run or args.workspace is not None) and (
-        args.print_interval or args.check_heartbeat or args.check_all_heartbeats
-    ):
+    if (
+        args.apply
+        or args.dry_run
+        or args.workspace is not None
+        or args.report is not None
+    ) and (args.print_interval or args.check_heartbeat or args.check_all_heartbeats):
         parser.error(
-            "--dry-run / --apply / --workspace cannot be combined with "
-            "--print-interval or a heartbeat check"
+            "--dry-run / --apply / --workspace / --report cannot be combined "
+            "with --print-interval or a heartbeat check"
         )
     return args
 
@@ -532,14 +592,21 @@ def _options_for(
 ) -> JobOptions | None:
     """`JobOptions` for an operator-run job, or None for a scheduled one.
 
-    A scheduled job that was handed `--apply` or `--workspace` gets the
-    options object anyway, so `run_job` refuses it by name instead of
-    dropping the flag on the floor.
+    A scheduled job that was handed `--apply`, `--workspace` or
+    `--report` gets the options object anyway, so `run_job` refuses it by
+    name instead of dropping the flag on the floor.
     """
-    asked = args.apply or args.dry_run or args.workspace is not None
+    asked = (
+        args.apply
+        or args.dry_run
+        or args.workspace is not None
+        or args.report is not None
+    )
     if not asked and not _get_job(job_name, jobs).takes_options:
         return None
-    return JobOptions(apply=args.apply, workspace_id=args.workspace)
+    return JobOptions(
+        apply=args.apply, workspace_id=args.workspace, report=args.report
+    )
 
 
 def main(

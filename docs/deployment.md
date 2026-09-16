@@ -452,8 +452,8 @@ resolves jobs orphaned in `sent` even after printing is turned back off).
 
 Two jobs in the same registry are **not** scheduled and must never be given a
 sidecar: they change data on a judgement call, so a human runs them, reads the
-report, and then decides. They take `--apply` (default is a dry run) and an
-optional `--workspace <uuid>`.
+report, and then decides. They take `--apply` (default is a dry run), an
+optional `--workspace <uuid>`, and an optional `--report <path>`.
 
 | Job | What it changes | Report |
 |---|---|---|
@@ -469,6 +469,12 @@ sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
     exec -T backend python -m app.cli.run_job category-seed --dry-run > seed.csv
 ```
 
+`--report <path>` writes the same CSV to a file inside the container instead,
+which is the better option when the job is long enough that you would rather
+not hold the SSH session open. The file is written on a dry run too — the
+report is the whole deliverable of one — and its parent directories are
+created if missing.
+
 A dry run ends in ROLLBACK, not COMMIT (`run_job.py`), which is the second of
 two guards — the jobs also plan without writing. `--apply` commits and writes
 one `audit_log` row per changed workspace. Take a `pg_dump` first anyway
@@ -479,8 +485,8 @@ Neither job is on a heartbeat: they have no cadence to be late for, so
 `--workspace` naming no workspace exits 2 rather than printing an empty
 report.
 
-Passing `--apply` or `--workspace` to a *scheduled* job exits 2 rather than
-being ignored. Details and the seed's exact rules:
+Passing `--apply`, `--workspace` or `--report` to a *scheduled* job exits 2
+rather than being ignored. Details and the seed's exact rules:
 [`docs/domain/categories.md`](domain/categories.md).
 
 **Order matters for `category-seed --apply`.** The `value_template` it
