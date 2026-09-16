@@ -43,3 +43,4 @@ New ADRs follow the template in [STYLE.md](../STYLE.md#adr-pages-docsadrnnnn-slu
 | 0031 | [A workspace has one primary parts provider and any number of secondaries, each in its own field namespace](0031-primary-and-secondary-parts-providers.md) |
 | 0032 | [2D symbol/footprint previews render server-side with kicad-cli, not in-browser](0032-server-side-kicad-cli-2d-rendering.md) |
 | 0033 | [Datasheet fetches drop the host allow-list and pin the resolved IP instead](0033-datasheet-fetch-drops-host-allow-list.md) |
+| 0034 | [Per-category canonical spec schema for provider specs](0034-spec-schema.md) |

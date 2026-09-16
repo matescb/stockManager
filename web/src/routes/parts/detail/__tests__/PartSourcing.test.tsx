@@ -54,6 +54,8 @@ const fields: CustomFieldRow[] = [
     value: "42",
     source: "provider",
     original_value: null,
+    provider: null,
+    value_num: null,
   },
   {
     id: "33333333-3333-4333-8333-333333333333",
@@ -61,6 +63,8 @@ const fields: CustomFieldRow[] = [
     value: "1.23 USD",
     source: "provider",
     original_value: null,
+    provider: null,
+    value_num: null,
   },
   {
     id: "44444444-4444-4444-8444-444444444444",
@@ -68,6 +72,8 @@ const fields: CustomFieldRow[] = [
     value: "10k",
     source: "provider",
     original_value: null,
+    provider: null,
+    value_num: null,
   },
 ];
 
@@ -97,6 +103,8 @@ const mouserFields: CustomFieldRow[] = [
     value: "8 weeks",
     source: "provider",
     original_value: null,
+    provider: null,
+    value_num: null,
   },
   {
     id: "66666666-6666-4666-8666-666666666666",
@@ -104,6 +112,8 @@ const mouserFields: CustomFieldRow[] = [
     value: "7",
     source: "provider",
     original_value: null,
+    provider: null,
+    value_num: null,
   },
 ];
 

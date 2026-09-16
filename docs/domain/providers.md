@@ -158,6 +158,8 @@ The PartSpecs and PartSourcing tabs split on this boundary. The classification i
 
 The server-side mirror is `backend/app/domain/parts/provider_fields.py`: `PROVIDER_RESERVED_CUSTOM_FIELD_KEYS` (`image_url`, `datasheet_url`, `source_url`) and `PROVIDER_ASSET_CUSTOM_FIELD_KINDS`, consumed by `api/routes/custom_fields.py:15`, `api/routes/parts_refresh.py:34` and `app/mcp/tools/_shared.py:51`. The provider-side field shapes are separate, in `providers/base.py`. Adding a catalog field needs the frontend list **and** the relevant server-side touchpoint.
 
+The catalog key *list* itself now has a server-side home too: `backend/app/domain/parts/spec_schema_tables.py::CATALOG_LITERAL_KEYS`, checked against the frontend set by `backend/tests/test_spec_schema.py`. The same module carries the per-category canonical spec keys, their provider aliases and the junk denylist — see [ADR-0034](../adr/0034-spec-schema.md).
+
 ## Cache + circuit breaker
 
 `backend/app/domain/parts/services/provider_cache.py`. Sits between callers and the provider.

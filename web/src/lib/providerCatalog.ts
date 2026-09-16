@@ -15,9 +15,17 @@
  */
 import { KNOWN_PROVIDER_NAMES } from "./providers";
 
+// Kept in step with `CATALOG_LITERAL_KEYS` in
+// `backend/app/domain/parts/spec_schema_tables.py` — `tests/test_spec_schema.py`
+// reads this file and fails the build if the two lists drift. `HTS code` and
+// `ECCN` are on the backend *denylist* rather than its catalog list (the
+// backend stops writing them; this list keeps historical rows off the Specs
+// tab), which is why the backend test allows either.
 const CATALOG_LITERAL_KEYS = new Set<string>([
   // Availability
   "In stock (qty)",
+  "On order (qty)",
+  "Availability",
   "Lead time",
   "Lifecycle",
   "End of life",
@@ -31,9 +39,16 @@ const CATALOG_LITERAL_KEYS = new Set<string>([
   "ECCN",
   // Distributor / packaging metadata
   "Packaging",
+  "Standard Pack Qty",
+  "MOQ",
+  "Order multiple",
+  "Max order qty",
+  "Alternate packagings",
   "Mouser P/N",
   "DigiKey P/N",
+  "LCSC",
   "Series",
+  "Detailed description",
 ]);
 
 // Which providers can own a `"{provider}:"` namespace comes from the one

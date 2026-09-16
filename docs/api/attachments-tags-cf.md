@@ -167,37 +167,40 @@ List custom fields for an object, sorted by `key`.
 ```json
 { "data": [ { "id": "…", "key": "…", "value": "…",
               "source": "manual" | "provider" | "override",
-              "original_value": "…" | null } ], "status": { … } }
+              "original_value": "…" | null,
+              "provider": "digikey" | "mouser" | null,
+              "value_num": "10000" | null } ], "status": { … } }
 ```
 
 **Notes**
 
-- Source: `backend/app/api/routes/custom_fields.py:28-39`.
+- `provider` and `value_num` are additive (alembic `0081`) and NULL on every row until the spec schema is wired into import and refresh. `provider` says which provider wrote the row; `value_num` is the SI base-unit number behind `value`, sent as a **string** so an exact `Numeric(36,18)` does not become a JS double. Sort and range-filter on it server-side. See [ADR-0034](../adr/0034-spec-schema.md).
+- Source: `backend/app/api/routes/custom_fields.py:34-45` (`_value_num_out` at `:21-31`).
 
 ### `POST /api/custom-fields`
 
-Upsert a (`object_type`, `object_id`, `key`) row. The handler manages the `source` transitions — see CLAUDE.md "Provider catalog vs spec keys" and the in-source comment at `custom_fields.py:44-58`:
+Upsert a (`object_type`, `object_id`, `key`) row. The handler manages the `source` transitions — see CLAUDE.md "Provider catalog vs spec keys" and the in-source docstring at `custom_fields.py:70-84`:
 
 | Existing source | New value | Result |
 |---|---|---|
-| (none) | any | insert as `source="manual"` (`:99-110`). |
-| `manual` | any | update value (`:93-95`). |
+| (none) | any | insert as `source="manual"` (`:144-166`). |
+| `manual` | any | update value (`:128-130`). |
 | `provider` | matches | update value (no source change). |
-| `provider` | differs | move existing into `original_value`, set `source="override"`, store new value (`:78-83`). |
-| `override` | matches `original_value` | revert: `source="provider"`, clear `original_value` (`:85-90`). |
-| `override` | other | update value (`:91-92`). |
+| `provider` | differs | move existing into `original_value`, set `source="override"`, store new value (`:113-118`). |
+| `override` | matches `original_value` | revert: `source="provider"`, clear `original_value` (`:119-125`). |
+| `override` | other | update value (`:126-127`). |
 
-`source` is server-controlled; any caller-supplied value is ignored (the handler always writes `manual` on insert) (`:54-58`).
+`source` is server-controlled; any caller-supplied value is ignored (the handler always writes `manual` on insert) (`:80-83`).
 
 **Request** — `CustomFieldIn`: `object_type`, `object_id`, `key`, `value`.
 
 **Response** — `200 OK` (existing) or `201 Created` (new) — serialised row.
 
-**Errors** — `404` — polymorphic target wrong / missing (via `assert_polymorphic_in_workspace`) (`custom_fields.py:63`).
+**Errors** — `404` — polymorphic target wrong / missing (via `assert_polymorphic_in_workspace`) (`custom_fields.py:97`).
 
 **Notes**
 
-- Source: `backend/app/api/routes/custom_fields.py:42-111`.
+- Source: `backend/app/api/routes/custom_fields.py:62-166`.
 
 ### `DELETE /api/custom-fields/{cf_id}`
 
@@ -205,7 +208,7 @@ Delete a row. No-op if missing or wrong workspace.
 
 **Notes**
 
-- Source: `backend/app/api/routes/custom_fields.py:114-123`.
+- Source: `backend/app/api/routes/custom_fields.py:169-189`.
 
 ### `DELETE /api/custom-fields/{cf_id}/override`
 
@@ -214,8 +217,8 @@ Restore an override back to its provider value.
 **Errors**
 
 - `404` — wrong workspace (via `assert_in_workspace`).
-- `400 custom_field.not_override` — `source != "override"` (`custom_fields.py:131-136`).
+- `400 custom_field.not_override` — `source != "override"` (`custom_fields.py:203-207`).
 
 **Notes**
 
-- Source: `backend/app/api/routes/custom_fields.py:126-141`.
+- Source: `backend/app/api/routes/custom_fields.py:192-223`.
