@@ -297,6 +297,13 @@ export default function KicadSetupSettings() {
                 </div>
                 <CopyButton value={setup.mcp_url} what="MCP URL" />
               </div>
+              <p className="text-sm text-muted">
+                <Link className="text-accent hover:underline" to="/help/agents">
+                  Connect an AI assistant
+                </Link>{" "}
+                walks through the token, the config snippet and what the
+                assistant will and won&apos;t do.
+              </p>
             </div>
           )}
         </>

@@ -107,8 +107,9 @@ describe("the bundled shelf", () => {
     expect(slugs).toContain("getting-started");
     expect(slugs).toContain("parts");
     expect(slugs).toContain("kicad");
-    // 14 files in docs/user/, one of which is the index.
-    expect(slugs.length).toBe(13);
+    expect(slugs).toContain("agents");
+    // 15 files in docs/user/, one of which is the index.
+    expect(slugs.length).toBe(14);
   });
 
   it("orders pages the way the index lists them, not alphabetically", () => {
