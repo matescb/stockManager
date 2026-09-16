@@ -19,6 +19,7 @@ from uuid import UUID
 from app.core.time import utcnow
 from app.domain.categories.service import CategoryIndex
 from app.domain.parts.models import Part
+from app.domain.parts.naming import canonical_name
 from app.domain.parts.provider_fields import PROVIDER_ASSET_CUSTOM_FIELD_KINDS
 from app.domain.parts.services.assets import fetch_provider_asset
 from app.domain.parts.services.provider_field_values import (
@@ -85,11 +86,18 @@ def create_from_provider_lookup(
 
     `category_index` lets a caller in a loop (bulk-import-from-scan, up
     to 50 parts) pay for the workspace's category rows once.
+
+    **The name is the MPN, never the description.** The provider's copy
+    ("RES SMD 10K OHM 1% 1/16W 0603") is marketing text about the part,
+    not a name for it, and `description` keeps it — see
+    `domain/parts/naming.py` for the convention. It is upgraded to the
+    category's rendered name at the end of this function, once the two
+    things that name reads from exist.
     """
     r = lookup_result
-    name = (r.get("description") or "").strip() or mpn
-    if len(name) > 300:
-        name = name[:300]
+    # `or mpn` twice over: an upstream record with a blank part number
+    # must not produce a part with a blank name.
+    name = ((r.get("mpn") or "").strip() or mpn)[:300]
 
     p = Part(
         workspace_id=workspace_id,
@@ -148,7 +156,51 @@ def create_from_provider_lookup(
         request_id=request_id,
         category_assigned=category.assigned,
     )
+    # Last, and that is the whole point: the name renders from the
+    # category `apply_provider_category` just filed the part under and
+    # the canonical spec keys `reconcile_provider_specs` just wrote.
+    # Before either of those ran there is nothing for a template to read.
+    _apply_canonical_name(
+        db, workspace_id=workspace_id, part=p, category_index=category_index
+    )
     return ProviderImportOutcome(part=p, category_suggestion=category.suggestion)
+
+
+def _apply_canonical_name(
+    db,
+    *,
+    workspace_id: UUID,
+    part: Part,
+    category_index: CategoryIndex | None = None,
+) -> None:
+    """Upgrade the MPN placeholder to the category's rendered name.
+
+    A no-op for anything the convention has nothing to say about: no
+    category (the provider's category text mapped to none of ours), no
+    `value_template` on the one it got, or specs too thin to render the
+    whole of it. `canonical_name` costs no query at all in the first
+    case, which is most imports outside the passive categories.
+
+    The caller's `category_index` is passed straight through for the same
+    reason `apply_provider_category` takes one: this runs once per
+    created part, and bulk-import-from-scan creates up to 50 in a
+    request. Reading `part_categories` again per part is the N+1 that
+    index exists to prevent
+    (`tests/test_spec_reconcile.py::test_bulk_import_loads_the_category_tree_once_for_the_batch`).
+    """
+    db.flush()
+    name = canonical_name(
+        db,
+        workspace_id=workspace_id,
+        part=part,
+        workspace_categories=(
+            list(category_index.rows_by_id.values())
+            if category_index is not None
+            else None
+        ),
+    )
+    if name:
+        part.name = name
 
 
 def _link_fields(r: dict) -> dict[str, str]:
