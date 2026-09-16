@@ -448,6 +448,53 @@ socket when `PRINT_HOST` is empty, and `print-job-reconcile` never touches the
 printer at all (it is pure DB bookkeeping, so it stays enabled either way and
 resolves jobs orphaned in `sent` even after printing is turned back off).
 
+### Operator-run jobs
+
+Two jobs in the same registry are **not** scheduled and must never be given a
+sidecar: they change data on a judgement call, so a human runs them, reads the
+report, and then decides. They take `--apply` (default is a dry run), an
+optional `--workspace <uuid>`, and an optional `--report <path>`.
+
+| Job | What it changes | Report |
+|---|---|---|
+| `category-seed` | Creates missing passive categories per workspace and fills KiCad metadata that was never set. Never renames, re-parents or overwrites. | CSV: `workspace_id, workspace_name, path, action, category_id, detail` |
+| `symbol-collapse` | Clears `part_eda.symbol_id` where the symbol came from a vendor zip and the part's category has a non-empty `default_symbol_ref`, so one `Device:R` replaces one symbol per part. | CSV: `workspace_id, workspace_name, part_id, part_name, category, symbol_name, symbol_source, before, after, action, detail` |
+
+The report goes to **stdout** and the logging to **stderr**, so redirecting
+gives a clean CSV:
+
+```bash
+cd /srv/stockmanager
+sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
+    exec -T backend python -m app.cli.run_job category-seed --dry-run > seed.csv
+```
+
+`--report <path>` writes the same CSV to a file inside the container instead,
+which is the better option when the job is long enough that you would rather
+not hold the SSH session open. The file is written on a dry run too — the
+report is the whole deliverable of one — and its parent directories are
+created if missing.
+
+A dry run ends in ROLLBACK, not COMMIT (`run_job.py`), which is the second of
+two guards — the jobs also plan without writing. `--apply` commits and writes
+one `audit_log` row per changed workspace. Take a `pg_dump` first anyway
+(see [Backups](#backups)); there is no staging environment.
+
+Neither job is on a heartbeat: they have no cadence to be late for, so
+`--check-heartbeat` reports them healthy and they write no heartbeat file. A
+`--workspace` naming no workspace exits 2 rather than printing an empty
+report.
+
+Passing `--apply`, `--workspace` or `--report` to a *scheduled* job exits 2
+rather than being ignored. Details and the seed's exact rules:
+[`docs/domain/categories.md`](domain/categories.md).
+
+**Order matters for `category-seed --apply`.** The `value_template` it
+installs renders a KiCad Value from the part's canonical specs, and a partial
+render still beats the part name — so a passive that has a `package` spec but
+no `resistance` yet would show `0603` on the schematic. Run the
+`spec-normalize` backfill to completion first.
+
 ### Label printer connectivity
 
 **Everything in this section is a MANUAL, one-time VPS + warehouse-host

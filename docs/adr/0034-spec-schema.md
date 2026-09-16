@@ -167,6 +167,15 @@ reconciler of its own. Three decisions landed with it:
 - **B1/B2** add `part_categories.value_template` and render the KiCad `Value`
   from canonical specs.
 
+**Landed since**: A6/B3 (the `category-seed` job and the `Device:*` defaults
+it carries) and B4 (`symbol-collapse`). The seed is where the canonical keys
+in this ADR become per-category `value_template` and `kicad_fields` values,
+which is why `backend/tests/test_category_seed.py` resolves every seeded
+category path back through `category_slug_for` and refuses a placeholder the
+schema does not define — a made-up key renders empty forever and fails
+nothing at runtime. See [`docs/domain/categories.md`](../domain/categories.md).
+Neither job re-keys existing `custom_fields` rows; that is still A5.
+
 ## Alternatives considered
 
 - **Keep storing specs verbatim and filter in the UI** — rejected: it leaves
@@ -195,14 +204,19 @@ reconciler of its own. Three decisions landed with it:
   `backend/app/domain/parts/spec_schema_tables.py`,
   `backend/app/domain/parts/spec_values.py`,
   `backend/app/domain/parts/spec_category_map.py`,
-  `backend/app/domain/parts/services/spec_reconcile.py`
+  `backend/app/domain/parts/services/spec_reconcile.py`,
+  `backend/app/domain/categories/seed.py`,
+  `backend/app/domain/categories/seed_tables.py`,
+  `backend/app/domain/eda/symbol_collapse.py`
 - Migration: `backend/alembic/versions/0081_custom_field_provider_value_num.py`
 - Tests: `backend/tests/test_spec_schema.py`,
   `backend/tests/test_spec_values.py`,
   `backend/tests/test_custom_field_provider_value_num.py`,
   `backend/tests/test_spec_reconcile.py`,
   `backend/tests/test_category_for_provider.py`,
-  `backend/tests/test_category_path_resolution.py`
+  `backend/tests/test_category_path_resolution.py`,
+  `backend/tests/test_category_seed.py`,
+  `backend/tests/test_symbol_collapse.py`
 - Related: `backend/app/domain/parts/provider_fields.py`,
   `web/src/lib/providerCatalog.ts`,
   `backend/app/domain/parts/providers/mouser.py`

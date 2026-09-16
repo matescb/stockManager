@@ -6,10 +6,12 @@ import argparse
 import logging
 import sys
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from uuid import uuid4
+from typing import TextIO
+from uuid import UUID, uuid4
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -19,9 +21,44 @@ from app.core.advisory_locks import RUN_JOB_LOCK_CLASSID
 logger = logging.getLogger(__name__)
 
 SessionFactory = Callable[[], Session]
-JobCallable = Callable[[Session], int]
+# A scheduled job takes the session alone; an operator-run job takes the
+# session and its flags. Spelling both out rather than `Callable[..., int]`
+# keeps the two shapes checkable — `tests/test_run_job_options.py::
+# test_every_job_signature_matches_its_takes_options_flag` reads the real
+# signature off each registered job and fails if the flag lies about it.
+ScheduledJob = Callable[[Session], int]
+OperatorJob = Callable[[Session, "JobOptions"], int]
+JobCallable = ScheduledJob | OperatorJob
 HEARTBEAT_DIR = Path("/tmp/stockmanager-job-heartbeats")
 HEARTBEAT_MAX_AGE_SECONDS = 90 * 60
+
+
+@dataclass(frozen=True)
+class JobOptions:
+    """The flags an operator-run job accepts.
+
+    Only jobs that set `JobSpec.takes_options` receive one; the
+    scheduled sidecar jobs take no arguments at all and their signature
+    stays `run(db)`.
+
+    `apply` is False by default and that is the whole point: these jobs
+    change data nobody asked them to change on a timer, so the operator
+    reads a report first. `run_job` rolls the transaction back after a
+    dry run, so "the job forgot to check the flag" is not a way to write
+    to production.
+
+    `report` is where the job writes its CSV instead of stdout. Both
+    jobs here honour it, and it lives on the shared options object
+    rather than in either job because the two branches queued behind
+    this one (`feat/spec-normalize-job` and `feat/part-naming-convention`)
+    register operator jobs that want the same flag — a job opts in by
+    passing `_report_stream(options)` to whatever already takes a
+    `stream`, and adds nothing to the parser.
+    """
+
+    apply: bool = False
+    workspace_id: UUID | None = None
+    report: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -34,6 +71,10 @@ class JobSpec:
     idempotency: str
     run: JobCallable
     interval_setting: str | None = None
+    #: Whether `run` takes a second `JobOptions` argument, i.e. whether
+    #: this job is operator-run (`--apply` / `--workspace` / `--report`)
+    #: rather than scheduled.
+    takes_options: bool = False
 
 
 class UnknownJobError(ValueError):
@@ -97,6 +138,58 @@ def _run_datasheet_backfill(db: Session) -> int:
     from app.domain.parts.services.datasheets import backfill_missing_datasheets
 
     return backfill_missing_datasheets(db)
+
+
+@contextmanager
+def _report_stream(options: JobOptions) -> Iterator[TextIO | None]:
+    """The file `--report` named, or None for "write to stdout".
+
+    `newline=""` because the payload is CSV: `csv` writes its own line
+    terminator, and letting the text layer translate it again produces
+    CRLFCRLF on a platform that does.
+
+    The file is written even on a dry run, and that is the point — the
+    report IS the deliverable of a dry run. The transaction rolls back;
+    the operator still has the CSV to read.
+    """
+    if options.report is None:
+        yield None
+        return
+    try:
+        options.report.parent.mkdir(parents=True, exist_ok=True)
+        handle = options.report.open("w", encoding="utf-8", newline="")
+    except OSError as exc:
+        # Same contract as a `--workspace` that names nothing: a usage
+        # error the operator can read and fix, not a traceback. Only the
+        # open is wrapped — an OSError raised later, from inside the job,
+        # is a real failure and must keep its stack.
+        raise JobConfigError(f"cannot write --report {options.report}: {exc}") from exc
+    with handle:
+        yield handle
+
+
+def _run_category_seed(db: Session, options: JobOptions) -> int:
+    from app.domain.categories.seed import run_category_seed
+
+    with _report_stream(options) as stream:
+        return run_category_seed(
+            db,
+            apply=options.apply,
+            workspace_id=options.workspace_id,
+            stream=stream,
+        )
+
+
+def _run_symbol_collapse(db: Session, options: JobOptions) -> int:
+    from app.domain.eda.symbol_collapse import run_symbol_collapse
+
+    with _report_stream(options) as stream:
+        return run_symbol_collapse(
+            db,
+            apply=options.apply,
+            workspace_id=options.workspace_id,
+            stream=stream,
+        )
 
 
 def _printing_is_configured() -> bool:
@@ -193,6 +286,33 @@ JOBS: dict[str, JobSpec] = {
         run=_run_datasheet_backfill,
         interval_setting="DATASHEET_BACKFILL_INTERVAL_SECONDS",
     ),
+    "category-seed": JobSpec(
+        name="category-seed",
+        owner="backend/categories",
+        cadence="manual (operator-run)",
+        idempotency=(
+            "Creates only categories the workspace is missing, matched by "
+            "name under the expected parent, and fills a KiCad metadata "
+            "field only where it is still unset. Never renames, re-parents "
+            "or overwrites. A second run creates nothing. Writes nothing at "
+            "all without --apply."
+        ),
+        run=_run_category_seed,
+        takes_options=True,
+    ),
+    "symbol-collapse": JobSpec(
+        name="symbol-collapse",
+        owner="backend/eda",
+        cadence="manual (operator-run)",
+        idempotency=(
+            "Clears part_eda.symbol_id only where the symbol came from a "
+            "vendor zip and the part's category has a default_symbol_ref to "
+            "fall back to. A cleared row no longer matches, so a second run "
+            "finds nothing. Writes nothing at all without --apply."
+        ),
+        run=_run_symbol_collapse,
+        takes_options=True,
+    ),
     "print-job-reconcile": JobSpec(
         name="print-job-reconcile",
         owner="backend/printing",
@@ -246,6 +366,12 @@ def heartbeat_is_fresh(
 ) -> bool:
     """Return True when a scheduled job is disabled or has a fresh heartbeat."""
     job = _get_job(job_name, jobs)
+    if job.takes_options:
+        # Operator-run: nothing schedules it, so it has no cadence to be
+        # late for and writes no heartbeat. Healthy by definition — and
+        # answering rather than raising is what lets a monitor iterate
+        # `list(JOBS)` without knowing which kind each one is.
+        return True
     interval = _job_interval_seconds(job)
     if interval is None:
         raise JobConfigError(f"job {job.name!r} does not define a settings interval")
@@ -285,20 +411,47 @@ def run_job(
     jobs: Mapping[str, JobSpec] = JOBS,
     session_factory: SessionFactory = _default_session_factory,
     heartbeat_dir: Path = HEARTBEAT_DIR,
+    options: JobOptions | None = None,
 ) -> int:
-    """Run one registered job and return the job's affected-row count."""
+    """Run one registered job and return the job's affected-row count.
+
+    `options` is accepted only by jobs that declare `takes_options`;
+    passing it to a scheduled job is a `JobConfigError` rather than a
+    silently ignored flag, so `--apply` can never look like it worked.
+
+    A dry run ends in ROLLBACK, not COMMIT. The jobs plan without
+    writing, so this is the second of two independent guards — the one
+    that holds even if a job forgets to check the flag.
+    """
     job = _get_job(job_name, jobs)
     _job_interval_seconds(job)
+    if options is not None and not job.takes_options:
+        raise JobConfigError(
+            f"job {job.name!r} is scheduled and takes no "
+            "--dry-run / --apply / --workspace / --report options"
+        )
+    # Defaulted here rather than narrowed at the call site: an
+    # operator-run job always receives a `JobOptions`, and "no flags"
+    # means the dry run.
+    job_options = options if options is not None else JobOptions()
 
     db = session_factory()
     try:
         if not _acquire_job_lock(db, job.name):
             db.rollback()
-            _write_heartbeat(job.name, heartbeat_dir=heartbeat_dir)
+            _write_heartbeat(job, heartbeat_dir=heartbeat_dir)
             logger.info("job=%s status=skipped reason=lock_denied", job.name)
             return 0
-        affected = job.run(db)
-        db.commit()
+        if job.takes_options:
+            affected = job.run(db, job_options)
+            if job_options.apply:
+                db.commit()
+            else:
+                db.rollback()
+                logger.info("job=%s status=dry_run would_affect=%s", job.name, affected)
+        else:
+            affected = job.run(db)
+            db.commit()
     except Exception:
         db.rollback()
         logger.exception("job=%s status=error", job.name)
@@ -306,7 +459,7 @@ def run_job(
     finally:
         db.close()
 
-    _write_heartbeat(job.name, heartbeat_dir=heartbeat_dir)
+    _write_heartbeat(job, heartbeat_dir=heartbeat_dir)
     logger.info(
         "job=%s status=ok affected=%s cadence=%s owner=%s",
         job.name,
@@ -317,10 +470,20 @@ def run_job(
     return affected
 
 
-def _write_heartbeat(job_name: str, *, heartbeat_dir: Path = HEARTBEAT_DIR) -> None:
+def _write_heartbeat(job: JobSpec, *, heartbeat_dir: Path = HEARTBEAT_DIR) -> None:
+    """Record that a SCHEDULED job ran.
+
+    Operator-run jobs write none. A heartbeat is the answer to "is the
+    cadence still being met", and a job a human runs by hand has no
+    cadence — a file saying it ran once last March would be read as
+    healthy, and its absence read as broken. `heartbeat_is_fresh` has
+    the matching rule.
+    """
+    if job.takes_options:
+        return
     heartbeat_dir.mkdir(parents=True, exist_ok=True)
-    heartbeat_path = heartbeat_dir / job_name
-    tmp_path = heartbeat_dir / f".{job_name}.{uuid4().hex}.tmp"
+    heartbeat_path = heartbeat_dir / job.name
+    tmp_path = heartbeat_dir / f".{job.name}.{uuid4().hex}.tmp"
     tmp_path.write_text("ok\n", encoding="utf-8")
     tmp_path.replace(heartbeat_path)
 
@@ -358,6 +521,36 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help="Maximum heartbeat age accepted by heartbeat checks.",
     )
+    run_mode = parser.add_mutually_exclusive_group()
+    run_mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Report what an operator-run job would change and write nothing. "
+            "This is the default; the flag exists to be explicit in a runbook."
+        ),
+    )
+    run_mode.add_argument(
+        "--apply",
+        action="store_true",
+        help="Commit the changes an operator-run job reports. Default is a dry run.",
+    )
+    parser.add_argument(
+        "--workspace",
+        metavar="UUID",
+        default=None,
+        help="Limit an operator-run job to one workspace. Default is all of them.",
+    )
+    parser.add_argument(
+        "--report",
+        metavar="PATH",
+        type=Path,
+        default=None,
+        help=(
+            "Write an operator-run job's CSV report to this file instead of "
+            "stdout. Written on a dry run too — the report is the point of one."
+        ),
+    )
     return parser
 
 
@@ -373,7 +566,47 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         )
     if args.heartbeat_max_age_seconds is None:
         args.heartbeat_max_age_seconds = HEARTBEAT_MAX_AGE_SECONDS
+    if args.workspace is not None:
+        try:
+            args.workspace = UUID(args.workspace)
+        except ValueError:
+            parser.error(f"--workspace is not a UUID: {args.workspace}")
+    # The probes answer a question about a job's configuration and never
+    # run it, so an --apply next to one would be silently discarded —
+    # the exact failure mode `run_job` refuses for scheduled jobs.
+    if (
+        args.apply
+        or args.dry_run
+        or args.workspace is not None
+        or args.report is not None
+    ) and (args.print_interval or args.check_heartbeat or args.check_all_heartbeats):
+        parser.error(
+            "--dry-run / --apply / --workspace / --report cannot be combined "
+            "with --print-interval or a heartbeat check"
+        )
     return args
+
+
+def _options_for(
+    job_name: str, args: argparse.Namespace, jobs: Mapping[str, JobSpec]
+) -> JobOptions | None:
+    """`JobOptions` for an operator-run job, or None for a scheduled one.
+
+    A scheduled job that was handed `--apply`, `--workspace` or
+    `--report` gets the options object anyway, so `run_job` refuses it by
+    name instead of dropping the flag on the floor.
+    """
+    asked = (
+        args.apply
+        or args.dry_run
+        or args.workspace is not None
+        or args.report is not None
+    )
+    if not asked and not _get_job(job_name, jobs).takes_options:
+        return None
+    return JobOptions(
+        apply=args.apply, workspace_id=args.workspace, report=args.report
+    )
 
 
 def main(
@@ -429,8 +662,14 @@ def main(
             jobs=jobs,
             session_factory=session_factory,
             heartbeat_dir=heartbeat_dir,
+            options=_options_for(args.job_name, args, jobs),
         )
-    except (UnknownJobError, JobConfigError) as exc:
+    except (UnknownJobError, JobConfigError, LookupError) as exc:
+        # LookupError is what an operator-run job raises for a
+        # `--workspace` that names nothing. Reporting it as a usage error
+        # rather than letting it surface as a traceback is the point: the
+        # alternative, an empty report and exit 0, reads as "nothing to
+        # do" for what is actually a typo.
         print(str(exc), file=sys.stderr)
         return 2
     return 0

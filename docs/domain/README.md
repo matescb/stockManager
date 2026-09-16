@@ -14,6 +14,7 @@ Start with [`data-model.md`](data-model.md) for the ER diagram and the full tabl
 | [ledger](ledger.md) | `stock_entries` deep dive — operation types, locking, current-quantity reads |
 | [workspace-isolation](workspace-isolation.md) | The code-enforced isolation rule + the one DB-enforced exception |
 | [parts](parts.md) | Part types (linked / local / meta / sub-assembly), MPN uniqueness, archival |
+| [categories](categories.md) | The category tree, its KiCad metadata, and the `category-seed` / `symbol-collapse` jobs |
 | [lots-and-serials](lots-and-serials.md) | Lot lifecycle, splits, parent_lot_id, serial-tracked workspaces |
 | [builds-and-bom](builds-and-bom.md) | Reservation, consume, shortage analysis, output_lot creation |
 | [orders-and-receive](orders-and-receive.md) | Receive orchestration → ledger writes + lot creation |

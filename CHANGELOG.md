@@ -39,6 +39,27 @@ the canonical record.
   ADR-0034 and the A3 amendment to ADR-0031. The 9,377 existing rows are re-keyed by a
   part's next refresh, or in bulk by the `spec-normalize` backfill in a
   follow-up.
+- **One symbol per class in the KiCad chooser, and a category tree to hang
+  it off.** Every vendor zip a workspace imports ships its own schematic
+  symbol, and the KiCad document prefers a hosted symbol over the category
+  default — so eighty imported resistors meant eighty `R` symbols, all
+  drawing the same box. Two operator-run jobs fix that, both dry-run by
+  default. `category-seed` gives a workspace the passive tree (Resistors;
+  Capacitors / Ceramic, Electrolytic, Tantalum, Film; Inductors / Power,
+  Ferrite bead, Common-mode choke; Diodes / Rectifier, Schottky, Zener, TVS,
+  LED; Transistors / BJT NPN, BJT PNP, MOSFET N, MOSFET P), each row
+  carrying a `refdes_prefix`, a stock `Device:*` symbol reference,
+  footprint filters, and the `value_template` / `kicad_fields` that render
+  the schematic `Value` from canonical specs. Pointing at KiCad's own
+  `Device` library means no symbol bytes ship for a passive at all.
+  `symbol-collapse` then clears `part_eda.symbol_id` on exactly the parts
+  whose symbol came from a vendor zip and whose category now has a default
+  to fall back on. Neither job renames, re-parents, overwrites a value a
+  user set, or deletes anything: a collision is reported, not resolved.
+  `run_job` grew `--dry-run` (the default), `--apply` and `--workspace`;
+  a dry run ends in ROLLBACK, and a scheduled job handed those flags exits
+  2 rather than ignoring them. `docs/domain/categories.md` is the new page.
+
 - **The manual now has a page on connecting an AI assistant.**
   `docs/user/agents.md` ships in `/help` and covers what an assistant can
   do with a workspace, minting the token, the client config snippet, the
