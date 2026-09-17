@@ -124,6 +124,17 @@ _MOSFET_TEMPLATE = "{vds} {id_max} {rds_on} {package}"
 
 _TRANSISTOR_FOOTPRINTS = ("SOT*", "TO_*", "*SOT?23*")
 
+# The active-component classes. `kicad_fields` is the MANDATORY canonical
+# keys of the category's spec slug — the ones a part of that class is
+# under-specified without — which is the same rule the passive tuples
+# above follow.
+_IC_FIELDS = ("ic_type", "supply_voltage", "package")
+_CONNECTOR_FIELDS = ("connector_type", "positions", "package")
+_CRYSTAL_FIELDS = ("frequency", "load_capacitance", "package")
+_FUSE_FIELDS = ("current_rating", "voltage_rating", "package")
+_SWITCH_FIELDS = ("switch_type", "package")
+_TRANSFORMER_FIELDS = ("transformer_type", "package")
+
 
 SEED_CATEGORIES: tuple[SeedCategory, ...] = (
     # ---- Resistors: no children. The class has one spec set, and a
@@ -378,5 +389,90 @@ SEED_CATEGORIES: tuple[SeedCategory, ...] = (
         footprint_filters=_TRANSISTOR_FOOTPRINTS,
         value_template=_MOSFET_TEMPLATE,
         kicad_fields=_MOSFET_FIELDS,
+    ),
+    # ---- The active-component roots. None has children: unlike
+    # Capacitors, where the dielectric changes the spec set, a bare
+    # "Connectors" is still a connector — so the root itself carries the
+    # slug, the fields and (where one exists) the symbol.
+    #
+    # An IC, a connector, a switch, a transformer and a screw carry NO
+    # default symbol. There is no `Device:U`; an IC's symbol is drawn per
+    # part and a connector's depends on its pin count. A default that is
+    # wrong for every part is worse than none — the chooser falls through
+    # to the part's own symbol instead of offering a two-pin box.
+    SeedCategory(
+        name="ICs",
+        library_slug="ics",
+        description="Integrated circuits — the symbol comes from the part.",
+        sort_order=60,
+        refdes_prefix="U",
+        kicad_fields=_IC_FIELDS,
+    ),
+    SeedCategory(
+        name="Connectors",
+        library_slug="connectors",
+        description="Headers, terminal blocks, and interconnect.",
+        sort_order=70,
+        refdes_prefix="J",
+        footprint_filters=("Connector*",),
+        kicad_fields=_CONNECTOR_FIELDS,
+    ),
+    # KiCad uses Y for crystals and X for oscillators. One category covers
+    # both, because no vendor taxonomy separates them reliably and the
+    # spec keys overlap; it carries Y, the commoner of the two, and an
+    # oscillator part overrides the prefix on itself.
+    SeedCategory(
+        name="Crystals & Oscillators",
+        library_slug="crystals-oscillators",
+        description="Crystals, oscillators and resonators.",
+        sort_order=80,
+        refdes_prefix="Y",
+        default_symbol_ref="Device:Crystal",
+        footprint_filters=("Crystal*", "Oscillator*"),
+        value_template="{frequency} {load_capacitance} {package}",
+        kicad_fields=_CRYSTAL_FIELDS,
+    ),
+    SeedCategory(
+        name="Fuses",
+        library_slug="fuses",
+        description="One-shot fuses and PTC resettables.",
+        sort_order=90,
+        refdes_prefix="F",
+        default_symbol_ref="Device:Fuse",
+        footprint_filters=("Fuse*",),
+        value_template="{current_rating} {voltage_rating} {package}",
+        kicad_fields=_FUSE_FIELDS,
+    ),
+    SeedCategory(
+        name="Switches",
+        library_slug="switches",
+        description="Tactile, slide, DIP, rocker and toggle switches.",
+        sort_order=100,
+        refdes_prefix="SW",
+        footprint_filters=("SW_*", "Button*"),
+        kicad_fields=_SWITCH_FIELDS,
+    ),
+    SeedCategory(
+        name="Transformers",
+        library_slug="transformers",
+        description="Power, pulse and audio transformers.",
+        sort_order=110,
+        refdes_prefix="T",
+        footprint_filters=("Transformer*",),
+        kicad_fields=_TRANSFORMER_FIELDS,
+    ),
+    # A screw has no parametric spec set and nothing to draw, so it
+    # carries neither a symbol nor fields. The empty tuple is the explicit
+    # "emit no symbol fields" this file's `EMPTY_IS_SET_FIELDS` note
+    # describes — not an absent value — so `package` is never drawn on a
+    # mounting hole, and a user who fills the column keeps their value.
+    SeedCategory(
+        name="Mechanical",
+        library_slug="mechanical",
+        description="Hardware — standoffs, screws, heatsinks, enclosures.",
+        sort_order=120,
+        refdes_prefix="H",
+        footprint_filters=("MountingHole*",),
+        kicad_fields=(),
     ),
 )

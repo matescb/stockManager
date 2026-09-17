@@ -162,7 +162,93 @@ def test_passive_categories_point_at_kicads_stock_device_library():
     assert refs["Tantalum"] == "Device:C_Polarized"
     assert refs["Zener"] == "Device:D_Zener"
     assert refs["MOSFET N"] == "Device:Q_NMOS_GDS"
+    assert refs["Crystals & Oscillators"] == "Device:Crystal"
+    assert refs["Fuses"] == "Device:Fuse"
     assert all(ref.startswith("Device:") for ref in refs.values())
+
+
+SEED_ROW_COUNT = 28
+
+
+def test_the_seed_is_the_tree_we_think_it_is():
+    """A count, spelled out, so growing the tree is a visible decision
+    rather than a side effect of editing a row."""
+    assert len(SEED_CATEGORIES) == SEED_ROW_COUNT
+    assert [s.library_slug for s in SEED_CATEGORIES if s.parent is None] == [
+        "resistors",
+        "capacitors",
+        "inductors",
+        "diodes",
+        "transistors",
+        "ics",
+        "connectors",
+        "crystals-oscillators",
+        "fuses",
+        "switches",
+        "transformers",
+        "mechanical",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("name", "prefix"),
+    [
+        ("ICs", "U"),
+        ("Connectors", "J"),
+        # KiCad uses Y for crystals and X for oscillators. One category
+        # covers both — the vendor taxonomy does not separate them
+        # reliably — so it carries Y, the commoner of the two, and an
+        # oscillator part overrides the prefix on itself.
+        ("Crystals & Oscillators", "Y"),
+        ("Fuses", "F"),
+        ("Switches", "SW"),
+        ("Transformers", "T"),
+        ("Mechanical", "H"),
+    ],
+)
+def test_the_active_component_roots_carry_their_reference_designator(name, prefix):
+    by_name = {seed.name: seed for seed in SEED_CATEGORIES}
+    assert by_name[name].refdes_prefix == prefix
+
+
+@pytest.mark.parametrize(
+    "name", ["ICs", "Connectors", "Switches", "Transformers", "Mechanical"]
+)
+def test_a_class_with_no_generic_symbol_carries_none(name):
+    """An IC's symbol is drawn per part — there is no `Device:U` — and a
+    connector's depends on its pin count. A default that is wrong for
+    every part is worse than no default: the chooser falls through to the
+    part's own symbol instead of offering a two-pin box."""
+    by_name = {seed.name: seed for seed in SEED_CATEGORIES}
+    assert by_name[name].default_symbol_ref is None
+    assert by_name[name].value_template is None
+
+
+def test_crystals_and_fuses_have_a_generic_symbol_and_a_value():
+    by_name = {seed.name: seed for seed in SEED_CATEGORIES}
+    assert by_name["Crystals & Oscillators"].default_symbol_ref == "Device:Crystal"
+    assert (
+        by_name["Crystals & Oscillators"].value_template
+        == "{frequency} {load_capacitance} {package}"
+    )
+    assert by_name["Fuses"].default_symbol_ref == "Device:Fuse"
+    assert (
+        by_name["Fuses"].value_template == "{current_rating} {voltage_rating} {package}"
+    )
+
+
+def test_a_mechanical_part_emits_no_kicad_fields(db, owned):
+    """A screw has no parametric spec set. The empty tuple is the explicit
+    "emit no symbol fields" that stops the inheritance walk in
+    `kicad_specs.py`, not an absent value — so `package` is never drawn on
+    a mounting hole."""
+    by_name = {seed.name: seed for seed in SEED_CATEGORIES}
+    assert by_name["Mechanical"].kicad_fields == ()
+
+    ws, _client = owned
+    _seed(db, ws)
+
+    assert _categories(db, ws)["Mechanical"].kicad_fields == []
 
 
 def test_ambiguous_roots_carry_no_symbol():
