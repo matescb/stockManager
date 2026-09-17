@@ -12,7 +12,8 @@ the whole workspace, so the column set is stored on the row.
 * `list_columns` — an ordered list of canonical spec keys to show as
   columns, e.g. `["resistance", "tolerance", "power"]`. Capped at 12 by
   `domain/categories/schemas.py`; every key is validated against the
-  category's effective spec schema (`domain/parts/spec_columns.py`), so
+  category's effective spec schema
+  (`domain/parts/services/spec_columns.py`), so
   a key that is not canonical for this category is a 422 rather than a
   permanently blank column.
 * `list_sort` — `{"key": "<spec key>", "dir": "asc"|"desc"}`, the

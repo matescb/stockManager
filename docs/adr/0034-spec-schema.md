@@ -96,12 +96,24 @@ one it sorts by, and `GET /api/parts` grew `spec_columns=` and
   `ORDER BY value_num <dir> NULLS LAST, value <dir> NULLS LAST, parts.id` on
   an OUTER-JOINed `custom_fields` row: the number orders a unit-bearing key
   numerically, the text orders a unitless one alphabetically, and a part
-  without the spec is last either way. The existing partial index
-  `ix_custom_fields_ws_key_value_num` serves it; no new index was needed.
-  The cursor had to grow with it — `core/pagination.py::paginate_keyset`
-  carries the whole `(value_num, value, id)` seek position, because an
-  `id`-only cursor over a non-`id` ordering repeats and drops rows at every
-  page boundary.
+  without the spec is last either way. **It is a scan and a top-N sort, not
+  an index read** — measured at 0.35 ms for 400 parts and 18.5 ms for
+  20,400, with `ix_custom_fields_ws_key_value_num` unused at both sizes.
+  No index can remove that sort while the join is an OUTER one, because a
+  part with no row for the key has no row to index and still has to land in
+  the NULLS-LAST tail. Accepted deliberately at this scale; the escape
+  hatch, if a category ever holds tens of thousands of parts, is a
+  composite `(workspace_id, key, value_num, object_id) WHERE archived_at IS
+  NULL` plus a query shaped so the non-NULL prefix drives.
+  The cursor had to grow — `core/pagination.py::paginate_keyset` carries
+  the whole `(value_num, value, id)` seek position plus a signed `scope`
+  naming the key, the direction and the category filter. The seek position
+  is needed because an `id`-only cursor over a non-`id` ordering repeats
+  and drops rows at every page boundary; the scope is needed because the
+  seek values are structurally valid under *any* spec key and in either
+  direction, so without it a cursor minted under one sort was honoured
+  under another — measured, a `dir` flip mid-walk served one row of six and
+  then reported end-of-list.
 - **A unitless count still sorts as text.** `pin_count`, `positions`,
   `rows`, `channels` and `hfe` have no `unit`, so `parse_si` never runs on
   them and `value_num` is NULL. The spec-schema endpoint reports them

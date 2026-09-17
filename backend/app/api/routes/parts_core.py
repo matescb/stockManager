@@ -49,6 +49,7 @@ from app.domain._quantity import quantity_out
 from app.domain.audit.service import log as _audit_log
 from app.domain.categories import tree as category_tree
 from app.domain.categories.models import PartCategory
+from app.domain.categories.service import category_index as _category_index
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part
 from app.domain.parts.part_type import sync_part_type_and_log
@@ -129,9 +130,15 @@ def list_parts(
     """
     use_paged = paged or cursor is not None
     decoded_cursor = decode_cursor(cursor) if cursor else None
+    # ONE load of this workspace's category tree, shared by the three
+    # things that need it: expanding the filter to its descendants,
+    # resolving the category's spec schema, and the completeness badge.
+    # Loading it per question was four statements where two used to do.
+    index = _category_index(db, ws_id=ws.id) if category_id is not None else None
     spec = _spec_columns.resolve_request(
         db, ws=ws, category_id=category_id, columns=spec_columns,
-        sort=sort, direction=dir,
+        sort=sort, direction=dir, include_descendants=include_descendants,
+        index=index,
     )
 
     stmt = select(Part).where(Part.workspace_id == ws.id)
@@ -157,7 +164,7 @@ def list_parts(
     if category_id is not None:
         stmt = stmt.where(Part.category_id.in_(category_tree.category_filter_ids(
             db, ws=ws, category_id=category_id,
-            include_descendants=include_descendants,
+            include_descendants=include_descendants, index=index,
         )))
 
     if spec.sort is not None:
@@ -165,7 +172,7 @@ def list_parts(
         # `(value_num, value, id)`. The page shape is unchanged.
         parts, next_cursor = _spec_columns.sorted_page(
             db, stmt, ws_id=ws.id, sort=spec.sort,
-            cursor=decoded_cursor, limit=limit,
+            cursor=decoded_cursor, limit=limit, scope=spec.cursor_scope,
         )
     elif use_paged:
         parts, next_cursor = paginate(
@@ -192,7 +199,9 @@ def list_parts(
 
     # One batched query per extra, for the whole page — see
     # `_parts_shared.serialize_part_rows`.
-    items = _serialize_rows(db, ws_id=ws.id, parts=parts, spec_keys=spec.columns)
+    items = _serialize_rows(
+        db, ws_id=ws.id, parts=parts, spec_keys=spec.columns, index=index
+    )
     if use_paged:
         return ok({"items": items, "next_cursor": next_cursor})
     return ok(items)

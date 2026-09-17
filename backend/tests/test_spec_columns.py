@@ -638,36 +638,123 @@ def test_a_sorted_listing_pages_without_gaps_or_repeats(authed_client, db):
 
 
 def test_a_cursor_from_a_different_sort_is_refused(authed_client, db):
-    """400, not a silent restart at page one.
+    """400, not a silent restart at page one, and not a wrong walk.
 
-    A client that keeps its cursor across a sort change appends the rows it
-    gets to what it already has, so restarting would show page one twice
-    and never reach the end.
+    Four ways a client can hand back a cursor that does not describe the
+    ordering it is now asking for. The two SHAPE mismatches (sorted cursor
+    on an unsorted request and vice versa) are visible in the payload; the
+    two IDENTITY mismatches are not, and are the dangerous pair — the seek
+    values are structurally valid under any spec key, and `(10000, "10
+    kΩ")` read as a descending seek is a legal descending seek. Before the
+    cursor carried its sort's identity, flipping `dir` mid-walk served one
+    row of six and then reported end-of-list.
+
+    Restarting at page one instead would be no better: the client appends
+    what it gets to what it has, so it would show page one twice and never
+    reach the end.
     """
     category = _category(authed_client, "Resistors")
     _resistor_ladder(authed_client, db, category["id"])
     create_part(authed_client, name="R extra", category_id=category["id"])
+    base = f"/api/parts?category_id={category['id']}&paged=true&limit=2"
 
-    unsorted_page = authed_client.get(
-        f"/api/parts?category_id={category['id']}&paged=true&limit=2"
+    def cursor_for(query: str) -> str:
+        page = authed_client.get(base + query).json()["data"]
+        assert page["next_cursor"], f"no next page for {query!r}"
+        return page["next_cursor"]
+
+    unsorted = cursor_for("")
+    ascending = cursor_for("&sort=spec:resistance")
+
+    for label, query, taken in (
+        # Shape: a `(name, id)` seek handed to the spec paginator.
+        ("unsorted cursor, sorted request", "&sort=spec:resistance", unsorted),
+        # Shape: a `(value_num, value, id)` seek handed to the name sort.
+        ("sorted cursor, unsorted request", "", ascending),
+        # Identity: same shape, different key. `10000` is a legal
+        # `tolerance` too, so nothing about the payload says no.
+        ("same shape, different key", "&sort=spec:tolerance", ascending),
+        # Identity: same shape, same key, reversed. This is the one that
+        # silently truncated the walk.
+        ("same key, flipped direction", "&sort=spec:resistance&dir=desc", ascending),
+    ):
+        r = authed_client.get(f"{base}{query}&cursor={taken}")
+        assert r.status_code == 400, f"{label}: {r.status_code} {r.text}"
+
+    # And the cursor that DOES match still works.
+    r = authed_client.get(f"{base}&sort=spec:resistance&cursor={ascending}")
+    assert r.status_code == 200, r.text
+
+
+def test_the_category_filter_is_part_of_a_sorted_cursors_identity(authed_client, db):
+    """A narrowed filter would make a forward seek skip rows silently.
+
+    Same trap `category_filter_ids` documents for the unsorted path, and
+    the reason the scope carries the category id and the descendants flag
+    rather than only the sort.
+    """
+    parent = _category(authed_client, "Resistors")
+    child = _category(authed_client, "Thin film", parent_id=parent["id"])
+    _resistor_ladder(authed_client, db, child["id"])
+    create_part(authed_client, name="R loose", category_id=parent["id"])
+
+    page = authed_client.get(
+        f"/api/parts?category_id={parent['id']}&paged=true&limit=2"
+        "&sort=spec:resistance"
     ).json()["data"]
-    assert unsorted_page["next_cursor"]
+    assert page["next_cursor"]
 
+    # Same sort, narrower filter.
     r = authed_client.get(
-        f"/api/parts?category_id={category['id']}&paged=true&limit=2"
-        f"&sort=spec:resistance&cursor={unsorted_page['next_cursor']}"
+        f"/api/parts?category_id={child['id']}&paged=true&limit=2"
+        f"&sort=spec:resistance&cursor={page['next_cursor']}"
+    )
+    assert r.status_code == 400, r.text
+    # Same sort, same category, descendants switched off.
+    r = authed_client.get(
+        f"/api/parts?category_id={parent['id']}&paged=true&limit=2"
+        f"&include_descendants=false&sort=spec:resistance"
+        f"&cursor={page['next_cursor']}"
     )
     assert r.status_code == 400, r.text
 
-    sorted_page = authed_client.get(
+
+def test_a_descending_walk_reaches_every_row(authed_client, db):
+    """The regression the cursor's sort identity was added for.
+
+    Paging a `dir=desc` listing from its own cursors must return all six
+    rows in reverse order. Before the fix this test would still pass — the
+    bug was a cursor from the *ascending* walk being honoured here — so it
+    is the companion to `test_a_cursor_from_a_different_sort_is_refused`,
+    not a replacement: this one pins that the descending walk itself is
+    complete.
+    """
+    category = _category(authed_client, "Resistors")
+    ws_id = _ws(authed_client)
+    for index in range(6):
+        _spec(
+            db, ws_id=ws_id,
+            part_id=create_part(
+                authed_client, name=f"R {index}", category_id=category["id"]
+            ),
+            key="resistance", value=f"{index} Ω", value_num=Decimal(index),
+        )
+
+    seen: list[str] = []
+    cursor: str | None = None
+    url = (
         f"/api/parts?category_id={category['id']}&paged=true&limit=2"
-        f"&sort=spec:resistance"
-    ).json()["data"]
-    r = authed_client.get(
-        f"/api/parts?category_id={category['id']}&paged=true&limit=2"
-        f"&cursor={sorted_page['next_cursor']}"
+        "&sort=spec:resistance&dir=desc"
     )
-    assert r.status_code == 400, r.text
+    for _ in range(10):
+        body = authed_client.get(
+            url + (f"&cursor={cursor}" if cursor else "")
+        ).json()["data"]
+        seen.extend(row["name"] for row in body["items"])
+        cursor = body["next_cursor"]
+        if cursor is None:
+            break
+    assert seen == [f"R {index}" for index in reversed(range(6))], seen
 
 
 def test_a_tampered_sorted_cursor_is_400(authed_client, db):
@@ -745,30 +832,38 @@ def test_a_spec_sort_covers_descendants(authed_client, db):
     )) == ["R 10 kΩ", "R 1 kΩ", "R 100 Ω"]
 
 
-def test_spec_sort_can_use_the_value_num_index(authed_client, db):
-    """`ix_custom_fields_ws_key_value_num` is the index the sort wants.
+def test_the_spec_sort_plan_is_a_scan_and_a_sort(authed_client, db):
+    """The ordering is NOT delivered by an index, and cannot be.
 
-    Asserting a chosen plan is not possible here — a three-row
-    `custom_fields` fits in one page and the planner is right to seq-scan
-    it, and forcing `enable_seqscan=off` would pin the planner's behaviour
-    rather than the query's shape. So this runs the real EXPLAIN and
-    asserts the plan is buildable and joins the right relation; the
-    measured shape on a populated table is recorded below.
+    `ix_custom_fields_ws_key_value_num` exists and this query does not use
+    it. Measured on a populated database, at a typical workspace size and
+    at fifty times one, the plan is the same both times:
 
-    On prod-sized data (9,377 `custom_fields` rows) the ascending
-    unit-bearing case plans as:
+        Limit -> Sort (top-N heapsort)
+                   -> Hash Right Join
+                        -> Seq Scan on custom_fields
+                        -> Seq Scan on parts
 
-        Nested Loop Left Join
-          ->  Index Scan using ix_custom_fields_ws_key_value_num
-                Index Cond: ((workspace_id = $1) AND (key = 'resistance'))
-          ->  Index Scan using parts_pkey on parts
+    | workspace | exec |
+    |---|---|
+    | 400 parts, 400 spec rows | 0.35 ms |
+    | 20,400 parts, 20,400 spec rows | 18.5 ms |
 
-    The index is `(workspace_id, key, value_num) WHERE value_num IS NOT
-    NULL`, i.e. already in `(key, value_num)` order for one workspace, so
-    the ORDER BY's leading term needs no sort node. The partial predicate
-    is why `value` is the second ORDER BY term rather than the first: rows
-    the parser could not read are outside the index and land in the
-    NULLS-LAST tail either way.
+    The reason is the OUTER join, not the index's shape: a part with no
+    `custom_fields` row for the key has no row to index and still has to
+    sort into the NULLS-LAST tail, so the full ordering only exists after
+    the join — which is where the sort node is. An index could at best
+    order the non-NULL prefix, and this one cannot even serve the lookup
+    without a heap fetch per row, carrying neither `object_id` nor
+    `archived_at`.
+
+    So this asserts the honest thing — a `Sort` node is in the plan — and
+    records the numbers. It is a **deliberate** cost at our scale, not an
+    oversight. If someone later adds a composite `(workspace_id, key,
+    value_num, object_id) WHERE archived_at IS NULL` and reshapes the
+    query so the sort disappears, this test fails, and the three places
+    that describe the cost (`spec_columns.sorted_page`, `docs/api/
+    parts.md`, ADR-0034) have to move with it. That is the point.
     """
     from sqlalchemy import text
 
@@ -776,29 +871,87 @@ def test_spec_sort_can_use_the_value_num_index(authed_client, db):
     _resistor_ladder(authed_client, db, category["id"])
     ws_id = _ws(authed_client)
 
-    plan = db.execute(
-        text(
-            """
-            EXPLAIN SELECT parts.id, cf.value_num, cf.value
-            FROM parts
-            LEFT OUTER JOIN custom_fields AS cf
-              ON cf.workspace_id = :ws
-             AND cf.object_type = 'part'
-             AND cf.object_id = parts.id
-             AND cf.key = 'resistance'
-             AND cf.archived_at IS NULL
-            WHERE parts.workspace_id = :ws AND parts.archived_at IS NULL
-            ORDER BY cf.value_num ASC NULLS LAST, cf.value ASC NULLS LAST, parts.id ASC
-            """
-        ),
-        {"ws": ws_id},
-    ).all()
-    rendered = "\n".join(row[0] for row in plan)
-    assert "custom_fields" in rendered, rendered
+    plan = "\n".join(
+        row[0]
+        for row in db.execute(
+            text(
+                """
+                EXPLAIN SELECT parts.id, cf.value_num, cf.value
+                FROM parts
+                LEFT OUTER JOIN custom_fields AS cf
+                  ON cf.workspace_id = :ws
+                 AND cf.object_type = 'part'
+                 AND cf.object_id = parts.id
+                 AND cf.key = 'resistance'
+                 AND cf.archived_at IS NULL
+                WHERE parts.workspace_id = :ws AND parts.archived_at IS NULL
+                ORDER BY cf.value_num ASC NULLS LAST,
+                         cf.value ASC NULLS LAST,
+                         parts.id ASC
+                LIMIT 51
+                """
+            ),
+            {"ws": ws_id},
+        ).all()
+    )
+    assert "Sort" in plan, plan
+    assert "ix_custom_fields_ws_key_value_num" not in plan, plan
 
+    # The index is still the right one to reach for when the time comes —
+    # assert it is the shape the docs say it is.
     definition = db.execute(
         text("SELECT indexdef FROM pg_indexes WHERE indexname = :name"),
         {"name": "ix_custom_fields_ws_key_value_num"},
     ).scalar_one()
     assert "value_num" in definition
     assert "value_num IS NOT NULL" in definition
+    assert "object_id" not in definition, (
+        "the index grew object_id — it can now serve the join, so the "
+        "'cannot be index-ordered' claim in sorted_page() needs re-measuring"
+    )
+
+
+def test_filtering_by_category_costs_no_extra_statement(authed_client, db, engine):
+    """Resolving the spec schema must not load the category tree again.
+
+    A category-filtered listing needs this workspace's tree three times —
+    to expand the filter to its descendants, to resolve the category's
+    spec schema, and for the `missing_specs` badge — and an unfiltered one
+    needs it once, for the badge. Loading it per question made the
+    filtered path four statements where two used to do.
+
+    Comparing filtered against unfiltered rather than asserting a constant
+    keeps this from breaking on an unrelated extra lookup while still
+    catching a re-load: every part here has a category, so the unfiltered
+    page loads the tree too and the two counts are directly comparable.
+    """
+    category = _category(authed_client, "Resistors")
+    for index in range(5):
+        create_part(authed_client, name=f"R {index}", category_id=category["id"])
+
+    def query_count(url: str, expect: int) -> int:
+        count = 0
+
+        def _on_execute(conn, cursor, statement, parameters, context, executemany):
+            nonlocal count
+            count += 1
+
+        event.listen(engine, "before_cursor_execute", _on_execute)
+        try:
+            r = authed_client.get(url)
+            assert r.status_code == 200, r.text
+            rows = r.json()["data"]
+        finally:
+            event.remove(engine, "before_cursor_execute", _on_execute)
+        assert len(rows) == expect, f"{url}: expected {expect} rows, got {len(rows)}"
+        assert count > 0, "the counter saw nothing — it is on the wrong engine"
+        return count
+
+    unfiltered = query_count("/api/parts", 5)
+    filtered = query_count(f"/api/parts?category_id={category['id']}", 5)
+    # Measured: 16 and 16. Without the shared index the filtered path was
+    # 19 — one extra `get_category` and two extra loads of the same tree.
+    assert filtered <= unfiltered, (
+        f"the category filter cost {filtered} statements vs {unfiltered} "
+        "unfiltered — the category tree is being loaded more than once"
+    )

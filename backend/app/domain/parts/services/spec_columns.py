@@ -71,6 +71,7 @@ __all__ = [
     "NUMERIC_UNITLESS_KEYS",
     "SPEC_SORT_PREFIX",
     "SpecSort",
+    "cursor_scope",
     "effective_schema",
     "is_numeric_key",
     "prospective_schema",
@@ -144,14 +145,18 @@ class EffectiveSchema:
 
 
 def effective_schema(
-    db: Session, *, ws: Any, category: PartCategory
+    db: Session, *, ws: Any, category: PartCategory, index: Any | None = None
 ) -> EffectiveSchema:
     """Resolve one category's spec schema and stored list settings.
 
     ONE query (`category_index`, workspace-scoped), because all three
-    answers are walks over the same `(id, parent_id, name)` map.
+    answers are walks over the same `(id, parent_id, name)` map — and no
+    query at all when the caller already holds that index. The parts list
+    does: `category_filter_ids` needs the same tree to expand the filter,
+    and `missing_specs_for_parts` needs it again for the completeness
+    badge, so the route loads it once and hands it to all three.
     """
-    index = category_index(db, ws_id=ws.id)
+    index = index if index is not None else category_index(db, ws_id=ws.id)
     return _resolved(
         index,
         path=index.paths.get(category.id) or category.name,
@@ -161,7 +166,12 @@ def effective_schema(
 
 
 def prospective_schema(
-    db: Session, *, ws: Any, name: str, parent_id: UUID | None
+    db: Session,
+    *,
+    ws: Any,
+    name: str,
+    parent_id: UUID | None,
+    index: Any | None = None,
 ) -> EffectiveSchema:
     """The schema a category that does not exist yet will have.
 
@@ -174,7 +184,7 @@ def prospective_schema(
     the owner is reported even when it is that parent — there is no "self"
     yet for the walk to compare against.
     """
-    index = category_index(db, ws_id=ws.id)
+    index = index if index is not None else category_index(db, ws_id=ws.id)
     parent = index.rows_by_id.get(parent_id) if parent_id else None
     parent_path = index.paths.get(parent.id) if parent is not None else None
     return _resolved(
@@ -305,6 +315,37 @@ class ListSpecRequest:
 
     columns: tuple[str, ...]
     sort: SpecSort | None
+    #: The keyset cursor's `scope` for this listing — `None` when it is not
+    #: spec-sorted. See `cursor_scope`.
+    cursor_scope: str | None = None
+
+
+def cursor_scope(
+    sort: SpecSort, *, category_id: UUID, include_descendants: bool
+) -> str:
+    """The discriminator signed into a spec-sorted page's cursor.
+
+    The seek values cannot identify their own sort: `10000` is a legal
+    `resistance` and a legal `voltage_rating`, and the same pair read
+    backwards is a legal descending seek. So everything that decides the
+    ORDER BY goes in here, plus the category filter — a forward seek under
+    a *narrowed* filter silently skips whatever sorted before the seek
+    position, which is the same trap `category_filter_ids` documents for
+    the unsorted path.
+
+    Not included: `q`, `mpn`, `archived`. They narrow the row set without
+    touching the ordering, so a cursor across a change to one of them
+    behaves exactly as it always has on the unsorted path — a shorter
+    walk, never a wrong one. Adding them here would 400 the common case of
+    typing in the search box mid-scroll.
+    """
+    return ":".join((
+        "spec",
+        sort.key,
+        "desc" if sort.descending else "asc",
+        str(category_id),
+        "tree" if include_descendants else "exact",
+    ))
 
 
 def resolve_request(
@@ -315,6 +356,8 @@ def resolve_request(
     columns: str | None,
     sort: str | None,
     direction: str,
+    include_descendants: bool = True,
+    index: Any | None = None,
 ) -> ListSpecRequest:
     """Validate the parts list's `spec_columns` / `sort` / `dir` params.
 
@@ -341,7 +384,7 @@ def resolve_request(
     if category_id is None:
         return ListSpecRequest((), None)
 
-    category = get_category(db, ws=ws, category_id=category_id)
+    category = _category(db, ws=ws, category_id=category_id, index=index)
     if (
         not columns
         and sort is None
@@ -349,21 +392,57 @@ def resolve_request(
         and category.parent_id is None
     ):
         return ListSpecRequest((), None)
-    schema = effective_schema(db, ws=ws, category=category)
+    schema = effective_schema(db, ws=ws, category=category, index=index)
     requested = validated_keys(_split_columns(columns), schema)
 
     if sort is None:
-        return ListSpecRequest(tuple(requested), _default_sort(schema))
-    if not sort.startswith(SPEC_SORT_PREFIX):
+        resolved = _default_sort(schema)
+    elif not sort.startswith(SPEC_SORT_PREFIX):
         raise_http(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             code=ErrorCodes.CATEGORY_UNKNOWN_SPEC_KEY,
             message=f'sort must be "{SPEC_SORT_PREFIX}<spec key>"',
             key=sort,
         )
-    key = sort[len(SPEC_SORT_PREFIX):]
-    validated_keys([key], schema)
-    return ListSpecRequest(tuple(requested), SpecSort(key, direction == "desc"))
+    else:
+        key = sort[len(SPEC_SORT_PREFIX):]
+        validated_keys([key], schema)
+        resolved = SpecSort(key, direction == "desc")
+
+    return ListSpecRequest(
+        tuple(requested),
+        resolved,
+        None
+        if resolved is None
+        else cursor_scope(
+            resolved,
+            category_id=category_id,
+            include_descendants=include_descendants,
+        ),
+    )
+
+
+def _category(
+    db: Session, *, ws: Any, category_id: UUID, index: Any | None
+) -> PartCategory:
+    """The category, from a shared index when there is one.
+
+    The index is already workspace-scoped, so a lookup in it gives exactly
+    the 404-on-foreign-or-missing that `get_category` gives — the
+    ADR-0002 rule that a foreign UUID must be indistinguishable from a
+    missing one. Using it saves the route a second point-select of a row
+    `category_filter_ids` has already resolved.
+    """
+    if index is None:
+        return get_category(db, ws=ws, category_id=category_id)
+    row = index.rows_by_id.get(category_id)
+    if row is None:
+        raise_http(
+            status.HTTP_404_NOT_FOUND,
+            code=ErrorCodes.CATEGORY_NOT_FOUND,
+            message="category not found",
+        )
+    return row
 
 
 def _split_columns(raw: str | None) -> list[str]:
@@ -448,6 +527,7 @@ def sorted_page(
     sort: SpecSort,
     cursor: Cursor | None,
     limit: int,
+    scope: str | None = None,
 ) -> tuple[list[Part], str | None]:
     """A page of parts ordered by one spec key, newest seek position out.
 
@@ -466,10 +546,39 @@ def sorted_page(
 
     The JOIN is an OUTER one, so a part *without* the spec is still on the
     page. `uq_cf_unique` makes the match single-valued, so it adds no rows.
-    Index: `ix_custom_fields_ws_key_value_num` is `(workspace_id, key,
-    value_num) WHERE value_num IS NOT NULL`, which serves the ordered scan
-    for a unit-bearing key; see the plan recorded in
-    `tests/test_spec_columns.py::test_spec_sort_can_use_the_value_num_index`.
+
+    **The ordering is NOT delivered by an index, and cannot be.** Measured
+    plan, both at a typical workspace size and at fifty times one:
+
+        Limit -> Sort (top-N heapsort)
+                   -> Hash Right Join
+                        -> Seq Scan on custom_fields
+                        -> Seq Scan on parts
+
+    | workspace | plan | exec |
+    |---|---|---|
+    | 400 parts, 400 spec rows | as above | 0.35 ms |
+    | 20,400 parts, 20,400 spec rows | as above | 18.5 ms |
+
+    `ix_custom_fields_ws_key_value_num` is never used, and adding an index
+    would not remove that `Sort`. The reason is the OUTER join, not the
+    index's shape: a part with no `custom_fields` row for the key has no
+    row to index, and it still has to sort into the NULLS-LAST tail — so
+    the full ordering only exists *after* the join, which is where the
+    sort node is. The index could at best order the non-NULL prefix, and
+    it cannot even do the lookup without a heap fetch per row because it
+    carries neither `object_id` nor `archived_at`.
+
+    So the cost is a scan and a top-N sort of the workspace's parts per
+    page, and that is **accepted deliberately**: 0.35 ms at the size any
+    real workspace here is, ~18 ms at a size none has reached. If a
+    category ever holds tens of thousands of parts, the next step is a
+    composite `(workspace_id, key, value_num, object_id) WHERE archived_at
+    IS NULL` — which makes the join side index-only and lets the non-NULL
+    prefix be read in order — as a new migration, plus a query shaped so
+    that prefix drives and the no-row parts are appended. Not worth a
+    migration on measured data. Pinned by
+    `tests/test_spec_columns.py::test_the_spec_sort_plan_is_a_scan_and_a_sort`.
     """
     spec = aliased(CustomField)
     stmt = stmt.outerjoin(
@@ -493,5 +602,9 @@ def sorted_page(
         # `value_num` is `NUMERIC(36,18)`; handing Postgres the cursor's
         # string would be a `numeric > text` type error.
         decoders=(Decimal, str),
+        # Signed into the cursor, so a seek position minted under a
+        # different key, direction or category filter is a 400 instead of
+        # being honoured against an ordering it does not describe.
+        scope=scope,
     )
 

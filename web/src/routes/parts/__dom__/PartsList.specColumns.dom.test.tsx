@@ -326,6 +326,39 @@ describe("PartsList — per-category spec columns", () => {
     expect(state.patches[0].body).toEqual({ list_columns: [] });
   });
 
+  it("fetches the list once, with the columns already known", async () => {
+    // Firing before the schema lands costs a page without `spec_columns`
+    // and then the same page with it — two requests for one render, on
+    // the busiest endpoint in the app.
+    await renderList();
+    await waitFor(() => expect(lastPartsUrl()).toContain("spec_columns=resistance"));
+    expect(state.requestedUrls).toHaveLength(1);
+  });
+
+  it("drops a `?sort=` key this category's schema does not have", async () => {
+    // A stale link, or a shared URL whose category was changed underneath
+    // it. Forwarding the key would 422 the whole listing.
+    const client = new QueryClient({
+      defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter
+          initialEntries={[`/parts?category=${CATEGORY_ID}&sort=dielectric`]}
+        >
+          <LocationProbe />
+          <Routes>
+            <Route path="/parts" element={<PartsList />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await screen.findByText("Resistor 10k");
+    expect(lastPartsUrl()).not.toContain("sort=");
+    // And a key the schema DOES have still goes through.
+    expect(lastPartsUrl()).toContain("spec_columns=resistance");
+  });
+
   it("drops a stored key the schema no longer has, everywhere", async () => {
     // A category renamed away from its schema keeps the stored key.
     // Sending it back would 422 the whole PATCH, so an unrelated tick must

@@ -9,7 +9,9 @@ Provides:
   - paginate_keyset() — the same seek, over N **nullable** sort expressions
     with NULLS LAST, for sorts whose key is not a column of the selected
     entity (the parts list's per-category spec columns join
-    `custom_fields` and order by `(value_num, value)`).
+    `custom_fields` and order by `(value_num, value)`). Its cursor carries
+    a caller-composed `scope` naming WHICH sort the seek belongs to, and
+    refuses a cursor from any other.
 
 Design notes:
   - itsdangerous.URLSafeSerializer is used for signing. The key is
@@ -52,6 +54,15 @@ class Cursor:
     #: and handing the wrong one to either paginator is a 400 rather than a
     #: silent restart from page 1.
     sort_keys: tuple[str | None, ...] | None = None
+    #: WHICH sort this seek position belongs to, as an opaque string the
+    #: caller composes. The seek values alone cannot say: `10000` is a
+    #: legal `resistance` and a legal `voltage_rating`, so a cursor minted
+    #: under one key is *structurally* valid under another and would be
+    #: honoured while meaning nothing — measured before this field existed,
+    #: flipping `dir` mid-walk returned one row of six and then reported
+    #: end-of-list. `paginate_keyset` refuses a cursor whose scope is not
+    #: the scope it was handed.
+    scope: str | None = None
 
 
 def _signer() -> URLSafeSerializer:
@@ -69,6 +80,8 @@ def encode_cursor(c: Cursor) -> str:
         # keeps `dumps(loads(s)) == s` true, which `decode_cursor` relies
         # on for its canonical-form check.
         payload["sks"] = list(c.sort_keys)
+    if c.scope is not None:
+        payload["sc"] = c.scope
     return _signer().dumps(payload)
 
 
@@ -93,10 +106,14 @@ def decode_cursor(s: str) -> Cursor:
         raw_keys = payload.get("sks")
         if raw_keys is not None and not isinstance(raw_keys, list):
             raise ValueError("sks must be a list")
+        raw_scope = payload.get("sc")
+        if raw_scope is not None and not isinstance(raw_scope, str):
+            raise ValueError("sc must be a string")
         return Cursor(
             id=UUID(payload["id"]),
             sort_key=payload.get("sk"),
             sort_keys=None if raw_keys is None else tuple(raw_keys),
+            scope=raw_scope,
         )
     except (KeyError, TypeError, ValueError):
         raise HTTPException(
@@ -137,7 +154,7 @@ def paginate(
                           next request; None when this is the last page.
     """
     limit = min(max(int(limit), 1), _MAX_PAGE_LIMIT)
-    _refuse_wrong_cursor_shape(cursor, wants_composite=False)
+    _refuse_wrong_cursor(cursor, wants_composite=False)
 
     # Apply cursor filter — tuple comparison gives correct pagination
     # semantics without a separate "seek" / double-query technique.
@@ -233,21 +250,35 @@ def paginate(
 # ---------------------------------------------------------------------------
 
 
-def _refuse_wrong_cursor_shape(cursor: Cursor | None, *, wants_composite: bool) -> None:
-    """400 when a cursor's seek shape doesn't match the requested sort.
+def _refuse_wrong_cursor(
+    cursor: Cursor | None, *, wants_composite: bool, scope: str | None = None
+) -> None:
+    """400 when a cursor does not belong to the requested sort.
 
-    A `paginate()` cursor carries `sort_key`; a `paginate_keyset()` cursor
-    carries `sort_keys`. Feeding one to the other happens when a client
-    keeps paging after changing the sort, and the tempting behaviour —
-    ignore the cursor — silently restarts at page one *while the client
-    appends the rows to what it already has*, so the user sees the first
-    page twice and never reaches the end. Failing is the honest answer;
-    the client drops the cursor and refetches.
+    Two checks, because two different mistakes reach here:
+
+    **Shape.** A `paginate()` cursor carries `sort_key`; a
+    `paginate_keyset()` cursor carries `sort_keys`. Feeding one to the
+    other happens when a client keeps paging after switching between a
+    sorted and an unsorted listing.
+
+    **Identity.** Within the keyset paginator, the seek values cannot say
+    which sort they came from — `10000` is a legal `resistance` and a
+    legal `voltage_rating`, and the same values read backwards are a legal
+    descending seek. So the caller composes a `scope` (the sort key, the
+    direction, and whatever filter changes the row set) and it is signed
+    into the cursor. Without it, a cursor minted under one sort was
+    *structurally* valid under another: measured, flipping `dir` mid-walk
+    served one row of six and then reported end-of-list.
+
+    Both are a 400 rather than "ignore the cursor and start over", because
+    the client appends what it gets to what it already has — a silent
+    restart shows page one twice and never reaches the end.
     """
     if cursor is None:
         return
     has_composite = cursor.sort_keys is not None
-    if has_composite is not wants_composite:
+    if has_composite is not wants_composite or cursor.scope != scope:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="cursor does not match the requested sort",
@@ -315,6 +346,7 @@ def paginate_keyset(
     limit: int,
     asc: bool = True,
     decoders: Sequence[Callable[[str], Any]] | None = None,
+    scope: str | None = None,
 ) -> tuple[list, str | None]:
     """Execute a keyset-paginated query sorted by `sort_exprs`, NULLS LAST.
 
@@ -332,13 +364,18 @@ def paginate_keyset(
     decoders:    Per-expression `str -> bind value`, for columns whose
                  Python type is not `str` (`Decimal` for `NUMERIC`). One
                  entry per sort expression; defaults to `str` throughout.
+    scope:       Opaque string naming WHICH sort this page belongs to. It
+                 is signed into the cursor and a cursor carrying any other
+                 scope is refused — see `_refuse_wrong_cursor`. Compose it
+                 from everything that changes the ORDER BY, and from any
+                 filter whose change would make a forward seek skip rows.
 
     Returns `(entities, next_cursor_str | None)` — same contract as
     `paginate()`, so the two are interchangeable at the call site.
     """
     limit = min(max(int(limit), 1), _MAX_PAGE_LIMIT)
     sort_exprs = tuple(sort_exprs)
-    _refuse_wrong_cursor_shape(cursor, wants_composite=True)
+    _refuse_wrong_cursor(cursor, wants_composite=True, scope=scope)
 
     if cursor is not None and cursor.sort_keys is not None:
         seek = _decoded_seek(cursor.sort_keys, decoders, len(sort_exprs))
@@ -377,6 +414,7 @@ def paginate_keyset(
                 sort_keys=tuple(
                     None if value is None else str(value) for value in last[1:]
                 ),
+                scope=scope,
             )
         )
     return entities, next_cursor

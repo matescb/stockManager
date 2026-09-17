@@ -247,7 +247,12 @@ def provider_links_for_parts(db, ws_id, part_ids: list) -> dict:
 
 
 def serialize_part_rows(
-    db, *, ws_id, parts: list, spec_keys: Sequence[str] = ()
+    db,
+    *,
+    ws_id,
+    parts: list,
+    spec_keys: Sequence[str] = (),
+    index: CategoryIndex | None = None,
 ) -> list[dict]:
     """Serialize a page of parts for a LIST response.
 
@@ -261,6 +266,11 @@ def serialize_part_rows(
     `?spec_columns=`, and an empty list costs no query and emits no
     `specs` key — so the response is byte-identical to what it was before
     per-category spec columns existed.
+
+    `index` is this workspace's already-loaded category tree, for
+    `missing_specs_for_parts` to read the name paths out of instead of
+    loading it again. The parts list passes it because a category-filtered
+    request has already loaded the same tree to expand the filter.
     """
     part_ids = [p.id for p in parts]
     image_urls = image_urls_for_parts(db, ws_id, part_ids)
@@ -271,7 +281,7 @@ def serialize_part_rows(
         db, workspace_id=ws_id, part_ids=part_ids, status="reserved"
     )
     links_map = provider_links_for_parts(db, ws_id, part_ids)
-    missing_map = missing_specs_for_parts(db, ws_id, parts)
+    missing_map = missing_specs_for_parts(db, ws_id, parts, index=index)
     specs_map = specs_for_parts(db, ws_id=ws_id, part_ids=part_ids, keys=spec_keys)
     return [
         serialize_part(

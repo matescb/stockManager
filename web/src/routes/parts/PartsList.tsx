@@ -115,12 +115,21 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
       return spec ? [spec] : [];
     });
   }, [specSchema]);
+  // A `?sort=` key this category's schema does not have would 422 the
+  // whole listing — a stale link, or a category changed under a shared
+  // URL. Dropping it is the same call `specColumns` above makes for a
+  // stale stored key: the list stays readable and loses the ordering,
+  // rather than becoming an error page.
+  const validSortKey =
+    sortKey !== null && specSchema?.keys.some((spec) => spec.key === sortKey)
+      ? sortKey
+      : null;
   // What the server is actually ordering by: the URL when it says, and
   // otherwise the category's saved default, which the server applies on
   // its own. The header arrow has to reflect both or a saved default looks
   // like no sort at all.
-  const specSort: CategoryListSort | null = sortKey
-    ? { key: sortKey, dir: sortDir }
+  const specSort: CategoryListSort | null = validSortKey
+    ? { key: validSortKey, dir: sortDir }
     : specSchema?.list_sort ?? null;
   const specColumnParam = specColumns.map((spec) => spec.key).join(",");
 
@@ -137,7 +146,7 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
     // here the request URL would move while the key stood still and
     // TanStack would keep serving the page that has no spec values on it.
     specColumnParam,
-    sortKey,
+    validSortKey,
     sortDir,
   });
   // The column set is data, not markup — see `partsColumns.tsx`. Memoised
@@ -208,13 +217,21 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
         (specColumnParam
           ? `&spec_columns=${encodeURIComponent(specColumnParam)}`
           : "") +
-        (sortKey
-          ? `&sort=${encodeURIComponent(`spec:${sortKey}`)}&dir=${sortDir}`
+        (validSortKey
+          ? `&sort=${encodeURIComponent(`spec:${validSortKey}`)}&dir=${sortDir}`
           : "")
       : "");
 
+  // With a category selected the request URL depends on that category's
+  // configured spec columns, which arrive asynchronously — so firing the
+  // list before the schema lands fetches the page twice, once without the
+  // columns and once with. `isFetched` is true after an error too, so a
+  // schema that fails to load still shows the list, without them.
+  const specSchemaReady = categoryId === null || specSchemaQuery.isFetched;
+
   const query = useInfiniteQuery({
     queryKey: partsKey,
+    enabled: specSchemaReady,
     queryFn: async ({ pageParam, signal }) => {
       const url = pageParam ? `${baseUrl}&cursor=${encodeURIComponent(pageParam)}` : baseUrl;
       const raw = await getPaged<unknown>(url, { signal });
@@ -383,7 +400,11 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
             </div>
           )}
           <QueryStateBoundary query={query} resourceLabel="parts">
-            {query.isLoading ? (
+            {query.isLoading || !specSchemaReady ? (
+              // `enabled: false` leaves the query "pending but not
+              // fetching", which `isLoading` reads as false — without the
+              // second half this flashes the empty state before the first
+              // request has even been made.
               <div className="text-muted">Loading…</div>
             ) : (
               <PartsPreviewLayout preview={preview}>

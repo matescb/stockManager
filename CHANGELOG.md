@@ -27,9 +27,13 @@ the canonical record.
   value NULLS LAST, id` — so `10 kΩ` sorts before `100 kΩ` instead of after
   it, a unitless key still sorts alphabetically, and a part with no such
   spec is last either way. The cursor carries the whole `(value_num, value,
-  id)` seek position, so paging a sorted list neither repeats nor drops
-  rows; a cursor from a different sort is a 400 rather than a silent
-  restart at page one. A category can also save a default sort
+  id)` seek position plus a signed scope naming the key, the direction and
+  the category filter, so paging a sorted list neither repeats nor drops
+  rows and a cursor from a different sort is a 400 rather than a silent
+  wrong walk. The sort is a scan and a top-N sort, not an index read —
+  0.35 ms at 400 parts, 18.5 ms at 20,400, accepted deliberately because
+  no index can order an OUTER join's NULL-extended rows. A category can
+  also save a default sort
   (`list_sort`), and both settings inherit from the nearest ancestor that
   sets them. `GET /api/categories/{id}/spec-schema` is the new read that
   says which keys a category has, resolved up the tree. Values for a whole

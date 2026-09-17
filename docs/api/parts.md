@@ -108,16 +108,39 @@ returned page:
   (`package`, `dielectric`) still sorts alphabetically rather than
   collapsing into one NULL block. A part without the spec is last **both
   ways** — it belongs at the end of the list however it is ordered.
-- The cursor carries the full `(value_num, value, id)` seek position, not
-  just `id` (`core/pagination.py::paginate_keyset`). A cursor minted for a
-  different sort is **`400`**, not a silent restart at page one: a client
-  that keeps paging after changing the sort appends what it gets to what it
-  has, so restarting would show page one twice and never reach the end.
-- `ix_custom_fields_ws_key_value_num` — `(workspace_id, key, value_num)
-  WHERE value_num IS NOT NULL` (migration `0081`) — serves the ordered scan
-  for a unit-bearing key; no new index was added. The measured plan is
-  recorded in
-  `tests/test_spec_columns.py::test_spec_sort_can_use_the_value_num_index`.
+- The cursor carries the full `(value_num, value, id)` seek position **and
+  a signed `scope`** naming which sort it belongs to — the key, the
+  direction, and the category filter (`core/pagination.py::paginate_keyset`).
+  The seek values alone cannot identify their own sort: `10000` is a legal
+  `resistance` and a legal `voltage_rating`, and the same pair read
+  backwards is a legal descending seek. A cursor from any other sort is
+  **`400`**, not a silent restart at page one: a client that keeps paging
+  appends what it gets to what it has, so restarting would show page one
+  twice and never reach the end. `q`, `mpn` and `archived` are deliberately
+  **not** in the scope — they narrow the row set without changing the
+  ordering, so a cursor across a change to one of them gives a shorter walk
+  rather than a wrong one, and putting them in would 400 the common case of
+  typing in the search box mid-scroll.
+- **The ordering is not delivered by an index, and cannot be.** Measured,
+  the plan is `Limit -> Sort (top-N heapsort) -> Hash Right Join` over a
+  seq scan of each table, at both sizes below;
+  `ix_custom_fields_ws_key_value_num` is never used.
+
+  | workspace | exec |
+  |---|---|
+  | 400 parts, 400 spec rows | 0.35 ms |
+  | 20,400 parts, 20,400 spec rows | 18.5 ms |
+
+  The reason is the OUTER join rather than the index's shape: a part with
+  no `custom_fields` row for the key has no row to index and still has to
+  sort into the NULLS-LAST tail, so the full ordering only exists *after*
+  the join. This is an **accepted** cost at the size any workspace here
+  is. If a category ever holds tens of thousands of parts, the next step is
+  a composite `(workspace_id, key, value_num, object_id) WHERE archived_at
+  IS NULL` as a new migration — which makes the join side index-only and
+  lets the non-NULL prefix be read in order — plus a query shaped so that
+  prefix drives. Pinned by
+  `tests/test_spec_columns.py::test_the_spec_sort_plan_is_a_scan_and_a_sort`.
 - **With no `sort`, the category's saved `list_sort` applies** (resolved up
   `parent_id`). That is the only way this endpoint behaves differently from
   before the feature, and only for a category somebody has configured. A

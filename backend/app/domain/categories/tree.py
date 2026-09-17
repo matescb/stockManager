@@ -176,6 +176,7 @@ def category_filter_ids(
     ws: Any,
     category_id: UUID,
     include_descendants: bool,
+    index: Any | None = None,
 ) -> set[UUID]:
     """The `category_id` set a parts listing filtered to `category_id`
     should match — the category alone, or it plus its whole subtree.
@@ -195,13 +196,35 @@ def category_filter_ids(
     page carrying a non-null `next_cursor` — which clients read as
     end-of-list. Pinned by `tests/test_parts_category_filter.py::
     test_category_filter_survives_a_page_boundary`.
+
+    `index` is an already-loaded `CategoryIndex` for this workspace. Pass
+    it when the caller holds one: the parts list needs the same tree twice
+    more — once for the per-category spec schema, once for the
+    completeness badge — and three loads to answer three questions about
+    the same few hundred rows is this route's N+1. The index is
+    workspace-scoped, so resolving the category out of it gives the same
+    404-on-foreign-or-missing `get_category` gives.
     """
     from app.domain.categories.service import get_category
 
-    get_category(db, ws=ws, category_id=category_id)
+    parent_map: ParentMap | None = None
+    if index is None:
+        get_category(db, ws=ws, category_id=category_id)
+    else:
+        if category_id not in index.rows_by_id:
+            raise_http(
+                status.HTTP_404_NOT_FOUND,
+                code=ErrorCodes.CATEGORY_NOT_FOUND,
+                message="category not found",
+            )
+        parent_map = {
+            row_id: row.parent_id for row_id, row in index.rows_by_id.items()
+        }
     if not include_descendants:
         return {category_id}
-    return descendant_ids(load_parent_map(db, workspace_id=ws.id), category_id)
+    if parent_map is None:
+        parent_map = load_parent_map(db, workspace_id=ws.id)
+    return descendant_ids(parent_map, category_id)
 
 
 def tree_paths(
