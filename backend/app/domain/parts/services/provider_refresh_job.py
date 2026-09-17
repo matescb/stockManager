@@ -43,6 +43,11 @@ system actor to name instead. The `audit_log` row is where "a job did
 this" is recorded — one per workspace for the sweep, on top of the
 per-part rows the refresh itself writes.
 
+Which parts a sweep touches, and the SAVEPOINT-or-COMMIT boundary around
+each batch of writes, live next door in `provider_refresh_scope.py` —
+the seam the 800-line ceiling was split on, and the one place to read
+"what counts as a linked part".
+
 ADR-0021 owns the job registry; ADR-0031 the tiers; ADR-0034 the specs.
 See `docs/runbooks/provider-refresh.md`.
 """
@@ -51,13 +56,12 @@ from __future__ import annotations
 import logging
 import time
 from collections import Counter
-from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TextIO
 from uuid import UUID
 
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.advisory_locks import PROVIDER_REFRESH_LOCK_CLASSID
@@ -86,6 +90,15 @@ from app.domain.parts.services.provider_refresh_report import (
     RefreshReport,
     RefreshRow,
 )
+from app.domain.parts.services.provider_refresh_scope import (
+    UnknownWorkspaceError,
+    batch_transaction,
+    batches,
+    links_by_part,
+    part_ids_in_scope,
+    parts_by_id,
+    workspaces_in_scope,
+)
 from app.domain.parts.services.spec_normalize_report import rank_unmapped
 from app.domain.provider_errors import ProviderError
 from app.domain.workspaces.models import Workspace
@@ -105,6 +118,10 @@ __all__ = [
     "REPORT_COLUMNS",
     "ProviderQuotaExhausted",
     "SweepOutcome",
+    # Defined in `provider_refresh_scope.py` and re-exported here: it is
+    # raised by a `--workspace` that names nothing, which is a fact about
+    # the JOB, and callers should not have to know which of the two
+    # modules the query happens to live in.
     "UnknownWorkspaceError",
     "refresh_linked_parts",
 ]
@@ -137,15 +154,6 @@ _QUOTA_TOKENS: tuple[str, ...] = (
     "limit exceeded",
     "429",
 )
-
-
-class UnknownWorkspaceError(LookupError):
-    """`--workspace` named a workspace that does not exist.
-
-    A `LookupError` because that is the shape `cli/run_job.py::main`
-    turns into a usage error and exit 2 for every operator-run job. The
-    twins in `spec_normalize.py` and `part_rename.py` say the same thing.
-    """
 
 
 class ProviderQuotaExhausted(RuntimeError):
@@ -309,12 +317,12 @@ def _run(
     parts_seen = 0
     remaining = limit
 
-    for ws in _workspaces(db, workspace_id):
+    for ws in workspaces_in_scope(db, workspace_id):
         if remaining is not None and remaining <= 0:
             break
         targets = _targets_for(db, ws)
         index = category_index(db, ws_id=ws.id)
-        part_ids = _part_ids(
+        part_ids = part_ids_in_scope(
             db, ws_id=ws.id, only_uncategorized=only_uncategorized, limit=remaining
         )
         if remaining is not None:
@@ -322,8 +330,8 @@ def _run(
         counts: Counter[str] = Counter()
 
         done = 0
-        for batch in _batches(part_ids, batch_size):
-            with _batch_transaction(db, apply=apply):
+        for batch in batches(part_ids, batch_size):
+            with batch_transaction(db, apply=apply):
                 # Parts actually VISITED, which is not `len(batch)` when the
                 # quota ran out part-way through it. The audit row and the
                 # outcome both say how far the run got, so they have to
@@ -407,8 +415,8 @@ def _process_batch(
 ) -> int:
     """Returns how many parts were visited — fewer than the batch when the
     quota ran out inside it."""
-    parts = _parts(db, ws_id=ws.id, part_ids=part_ids)
-    links = _links_by_part(db, ws_id=ws.id, part_ids=part_ids)
+    parts = parts_by_id(db, ws_id=ws.id, part_ids=part_ids)
+    links = links_by_part(db, ws_id=ws.id, part_ids=part_ids)
     primary = primary_provider_name(ws)
     visited = 0
     for part in parts:
@@ -642,127 +650,6 @@ def _looks_like_quota(message: str) -> bool:
 
 def _path(index: CategoryIndex, category_id: UUID | None) -> str:
     return index.paths.get(category_id, "") if category_id else ""
-
-
-# ---------------------------------------------------------------------------
-# transactions, batching, queries
-# ---------------------------------------------------------------------------
-@contextmanager
-def _batch_transaction(db: Session, *, apply: bool) -> Iterator[None]:
-    """One batch's write boundary: committed on apply, rolled back on dry run.
-
-    The dry run does the real mutations inside a SAVEPOINT and discards
-    it, so the CSV it produces is written by the code that would apply
-    it. `run_job` rolls a dry run back as well, and that is the OUTER
-    guard rather than a duplicate of this one: it protects against a job
-    that forgot to check the flag, while this makes
-    `refresh_linked_parts` side-effect-free when called directly, and is
-    what lets the apply path commit per batch so a halted run keeps what
-    it finished.
-    """
-    if apply:
-        yield
-        db.commit()
-        return
-    savepoint = db.begin_nested()
-    try:
-        yield
-    finally:
-        savepoint.rollback()
-
-
-def _workspaces(db: Session, workspace_id: UUID | None) -> list[Workspace]:
-    """The workspaces to process, in id order.
-
-    A `--workspace` that names nothing raises rather than reporting a
-    clean run over zero workspaces: on the apply step those two outcomes
-    print identically, and one of them means the operator's scope was a
-    typo and the sweep they thought they ran did not happen.
-    """
-    stmt = select(Workspace).order_by(Workspace.id)
-    if workspace_id is not None:
-        stmt = stmt.where(Workspace.id == workspace_id)
-    rows = list(db.execute(stmt).scalars())
-    if workspace_id is not None and not rows:
-        raise UnknownWorkspaceError(f"no workspace with id {workspace_id}")
-    return rows
-
-
-def _part_ids(
-    db: Session, *, ws_id: UUID, only_uncategorized: bool, limit: int | None
-) -> list[UUID]:
-    """Active parts with an MPN that some provider already knows.
-
-    "Knows" is a `part_provider_links` row OR the `parts.linked_provider`
-    column: the column is the primary's own record and predates the
-    table, and prod carries parts with one and not the other.
-
-    Archived parts are excluded — unlike `spec-normalize`, which
-    re-keys rows in place and has no reason to leave a hidden part on
-    legacy keys, this spends an API call per part and a hidden one is not
-    worth one.
-
-    Ids only, read once before the batch loop: keyset-paginating a table
-    while committing into it re-reads rows this run has already
-    rewritten, and a few hundred UUIDs is a few kilobytes.
-    """
-    linked_row = (
-        select(PartProviderLink.id)
-        .where(PartProviderLink.workspace_id == ws_id)
-        .where(PartProviderLink.part_id == Part.id)
-        .where(PartProviderLink.archived_at.is_(None))
-    )
-    stmt = (
-        select(Part.id)
-        .where(Part.workspace_id == ws_id)
-        .where(Part.archived_at.is_(None))
-        .where(func.btrim(func.coalesce(Part.mpn, "")) != "")
-        .where(
-            or_(
-                func.btrim(func.coalesce(Part.linked_provider, "")) != "",
-                linked_row.exists(),
-            )
-        )
-        .order_by(Part.id)
-    )
-    if only_uncategorized:
-        stmt = stmt.where(Part.category_id.is_(None))
-    if limit is not None:
-        stmt = stmt.limit(limit)
-    return list(db.execute(stmt).scalars())
-
-
-def _batches(part_ids: Sequence[UUID], size: int) -> Iterator[Sequence[UUID]]:
-    for start in range(0, len(part_ids), size):
-        yield part_ids[start : start + size]
-
-
-def _parts(db: Session, *, ws_id: UUID, part_ids: Sequence[UUID]) -> list[Part]:
-    return list(
-        db.execute(
-            select(Part)
-            .where(Part.workspace_id == ws_id)
-            .where(Part.id.in_(part_ids))
-            .order_by(Part.id)
-        ).scalars()
-    )
-
-
-def _links_by_part(
-    db: Session, *, ws_id: UUID, part_ids: Sequence[UUID]
-) -> dict[UUID, list[PartProviderLink]]:
-    """Every live link on this batch's parts. One query, not one per part."""
-    rows = db.execute(
-        select(PartProviderLink)
-        .where(PartProviderLink.workspace_id == ws_id)
-        .where(PartProviderLink.part_id.in_(part_ids))
-        .where(PartProviderLink.archived_at.is_(None))
-        .order_by(PartProviderLink.part_id, PartProviderLink.provider)
-    ).scalars()
-    by_part: dict[UUID, list[PartProviderLink]] = {}
-    for row in rows:
-        by_part.setdefault(row.part_id, []).append(row)
-    return by_part
 
 
 # ---------------------------------------------------------------------------
