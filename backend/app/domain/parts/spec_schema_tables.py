@@ -15,6 +15,10 @@ Where the names come from:
 * Alias order is precedence order: the first alias present in a payload
   wins, and the rest are recorded as superseded.
 
+`spec_schema_tables_more.py` holds the other half — the common optional
+keys and the seven active-component classes, merged in below. Every rule
+above applies to it unchanged.
+
 See ADR-0034.
 """
 from __future__ import annotations
@@ -32,11 +36,9 @@ from app.domain.parts.spec_schema_tables_more import (
 # ---------------------------------------------------------------------------
 # Common keys — merged into every category, including unknown ones.
 #
-# The three below are the ones every part has had since the schema
-# shipped; `EXTRA_COMMON_SPECS` adds the optional geometry, pin and
-# qualification keys. They are kept apart because these three are what
-# `package` completeness is measured against, and because the split is
-# what keeps this module reviewable.
+# The three below have been on every part since the schema shipped;
+# `EXTRA_COMMON_SPECS` adds the optional geometry, pin and qualification
+# keys.
 # ---------------------------------------------------------------------------
 _BASE_COMMON_SPECS: tuple[SpecKey, ...] = (
     SpecKey(
