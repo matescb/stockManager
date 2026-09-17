@@ -20,7 +20,10 @@ Good reasons to run it:
 - the spec schema has grown aliases and you want the vendors' current
   payloads read through them;
 - a workspace has just gained a second provider's credentials and you
-  want its parts linked to it (`--link-missing-providers`).
+  want its parts linked to it (`--link-missing-providers`);
+- parts were typed in or imported from a BOM and no provider has ever
+  been asked about them (`--include-unlinked` — see
+  [Linking local parts](#linking-local-parts)).
 
 Not an incident procedure. It rewrites part columns and spec rows on a
 system with no staging environment, and it spends a metered external
@@ -50,8 +53,8 @@ minutes, and `--link-missing-providers` roughly doubles that.
   reviewed stale for that part.
 - Know what it will **not** touch: `manual` and `override` custom fields,
   a category a user already chose, a part with no MPN, an archived part,
-  and a part nothing has ever linked to a provider. Rows `spec-normalize`
-  archived stay archived.
+  and — unless you pass `--include-unlinked` — a part nothing has ever
+  linked to a provider. Rows `spec-normalize` archived stay archived.
 - Know what it **will** rewrite: on the PRIMARY tier, `manufacturer`,
   `mpn`, `footprint` and (unless `description_locally_edited`)
   `description`, plus `linked_provider` / `linked_external_id` and
@@ -94,10 +97,10 @@ minutes, and `--link-missing-providers` roughly doubles that.
    | Action | What it means |
    |---|---|
    | `refreshed` | The provider answered and its payload was reconciled onto a part it was already linked to. |
-   | `linked` | The same, on a provider that had no claim on the part at all. Only `--link-missing-providers` produces these, and only on an exact-MPN hit. |
+   | `linked` | The same, on a provider that had no claim on the part at all. Only `--link-missing-providers` (a secondary joining a linked part) and `--include-unlinked` (any tier claiming a part nothing owned) produce these, and only on an exact-MPN hit. |
    | `miss` | The provider has never heard of this MPN, or answered with a different one. Nothing written, no link created. Not a failure — and the second case is common, because the sweep requires an EXACT MPN match (see below). |
    | `error` | The lookup raised, or the provider reported it is out of quota. The `error` column says which. |
-   | `skipped` | The part is linked to a provider this workspace has no usable credentials for, so there was nothing to ask. |
+   | `skipped` | There was nothing to ask: either the part is linked to a provider this workspace has no usable credentials for, or (under `--include-unlinked`) the part has no MPN. The no-MPN case is one line for the part with `provider` and `tier` blank — nobody was asked. |
 
    Exactly one of `assets_fetched` and `assets_would_fetch` is populated
    per row: a dry run downloads nothing and names what an apply would
@@ -142,6 +145,7 @@ minutes, and `--link-missing-providers` roughly doubles that.
 | `--limit N` | Stop after N parts, across the whole run. Start here. |
 | `--only-uncategorized` | Restrict the sweep to parts with no category — the cheapest way to file them without spending calls on parts that are already filed. |
 | `--link-missing-providers` | Also ask every SECONDARY provider the workspace has credentials for that the part is not linked to, and link it on an exact-MPN hit. One extra call per part per provider. It does NOT widen the set of parts (a part nothing has ever linked stays out of scope) and it never adds the workspace's PRIMARY — see below. |
+| `--include-unlinked` | Also visit active parts that no provider has ever been linked to, asking the PRIMARY first and then every secondary with credentials. On a hit the provider links the part; the primary may claim it and fills only what the part left empty. See [Linking local parts](#linking-local-parts). One call per part per provider. |
 | `--sleep-ms MS` | Milliseconds between provider calls, default 750. `0` turns the throttle off; only do that against a provider you know has headroom. |
 
 ## Two rules worth knowing before you run it
@@ -166,6 +170,55 @@ also not reversible the way [Rollback](#rollback) describes, because the
 unlink route refuses the primary. Promoting a provider onto a part is a
 per-part decision: use the Refresh button, or `POST
 /api/parts/{id}/refresh-from-provider`.
+
+## Linking local parts
+
+`--include-unlinked` is the flag for parts that were typed in or imported
+from a BOM and that no provider has ever been asked about. Without it
+those parts are out of scope entirely: the default sweep only re-asks
+providers a part is already known to. On our catalogue 34 unlinked parts
+carry an MPN and one does not.
+
+Each unlinked part is asked of the workspace **primary first, then every
+secondary with credentials**, exact-MPN only, and the first provider that
+answers links it. The cost is one call per part per provider, so budget
+it the same way as `--link-missing-providers`.
+
+**The primary may claim an unlinked part.** This is the one place it
+runs on a part it has never owned, and the exception is narrow on
+purpose: a part with no link row and no `linked_provider` has no primary
+to displace and no provider-written column to overwrite. Everywhere else
+— including `--link-missing-providers` — promoting a provider onto a part
+stays a per-part human decision, for the reasons under
+[Two rules worth knowing](#two-rules-worth-knowing-before-you-run-it).
+
+**What the claim writes.** `linked_provider`, `linked_external_id`,
+`last_refresh_at` and the `part_provider_links` row — those ARE the
+claim. `part_type` flips `local` → `linked`, because it is derived from
+`linked_provider`. A NULL `category_id` is filled if the vendor's
+category resolves to a category the workspace already has, and the
+canonical specs, the image and the datasheet arrive as on any primary
+refresh.
+
+**What the claim never overwrites.** `manufacturer`, `footprint` and
+`description` are filled only where the part is *silent* — the column is
+empty, or holds nothing but the part's own MPN, which is what a
+scan-created part carries. A description somebody typed survives, and so
+does one on a part with `description_locally_edited`. That is deliberately
+different from a refresh of a part the primary already owns, where the
+vendor drives those columns: there the vendor is the source of record,
+here whoever typed them never asked a vendor to replace their words.
+
+**A part with no MPN** is reported as `skipped` with
+`part has no MPN to look up`, one line, no provider asked. It is in the
+report rather than absent from it because supplying the MPN is the
+operator's next action, and a run whose whole purpose was to find local
+parts should not leave one out silently.
+
+A `linked` line from this pass is reversed the same way as any other —
+see [Rollback](#rollback). For a primary claim that is `PATCH
+/api/parts/{id}` with `unlink_provider=true`, not the unlink route, which
+refuses the primary by design.
 
 ## Concurrency
 

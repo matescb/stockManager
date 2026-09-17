@@ -10,16 +10,18 @@ The scope rule is the load-bearing part. A part is in scope when it is
 ACTIVE, has a non-blank MPN, and some provider already knows it — a
 `part_provider_links` row OR the `parts.linked_provider` column, because
 the column is the primary's own record, predates the table, and prod
-carries parts with one and not the other. Widening it would spend an API
-call per part on parts nothing has ever linked.
+carries parts with one and not the other. Widening it spends an API call
+per part per provider on parts nothing has ever linked, which is why
+`include_unlinked` is a flag the operator asks for rather than the
+default.
 """
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from uuid import UUID
 
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import and_, func, not_, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.core.advisory_locks import PROVIDER_REFRESH_LOCK_CLASSID
@@ -40,6 +42,7 @@ __all__ = [
     "links_by_part",
     "part_ids_in_scope",
     "parts_by_id",
+    "provider_order",
     "sweep_lock",
     "workspaces_in_scope",
 ]
@@ -109,13 +112,26 @@ def workspaces_in_scope(db: Session, workspace_id: UUID | None) -> list[Workspac
 
 
 def part_ids_in_scope(
-    db: Session, *, ws_id: UUID, only_uncategorized: bool, limit: int | None
+    db: Session,
+    *,
+    ws_id: UUID,
+    only_uncategorized: bool,
+    limit: int | None,
+    include_unlinked: bool = False,
 ) -> list[UUID]:
     """Active parts with an MPN that some provider already knows.
 
     "Knows" is a `part_provider_links` row OR the `parts.linked_provider`
     column: the column is the primary's own record and predates the
     table, and prod carries parts with one and not the other.
+
+    `include_unlinked` adds the parts NOTHING knows — 34 on prod carrying
+    an MPN, one carrying none. The MPN requirement is relaxed for those
+    and only those, so the part with none reports as `skipped` with a
+    reason rather than being silently absent from a run whose whole
+    purpose was to find it; a LINKED part with a blank MPN stays out,
+    because it is already in a provider's hands and there is nothing new
+    to learn about it here.
 
     Archived parts are excluded — unlike `spec-normalize`, which
     re-keys rows in place and has no reason to leave a hidden part on
@@ -132,17 +148,20 @@ def part_ids_in_scope(
         .where(PartProviderLink.part_id == Part.id)
         .where(PartProviderLink.archived_at.is_(None))
     )
+    known = or_(
+        func.btrim(func.coalesce(Part.linked_provider, "")) != "",
+        linked_row.exists(),
+    )
+    has_mpn = func.btrim(func.coalesce(Part.mpn, "")) != ""
+    reachable = (
+        or_(and_(known, has_mpn), not_(known)) if include_unlinked
+        else and_(known, has_mpn)
+    )
     stmt = (
         select(Part.id)
         .where(Part.workspace_id == ws_id)
         .where(Part.archived_at.is_(None))
-        .where(func.btrim(func.coalesce(Part.mpn, "")) != "")
-        .where(
-            or_(
-                func.btrim(func.coalesce(Part.linked_provider, "")) != "",
-                linked_row.exists(),
-            )
-        )
+        .where(reachable)
         .order_by(Part.id)
     )
     if only_uncategorized:
@@ -150,6 +169,66 @@ def part_ids_in_scope(
     if limit is not None:
         stmt = stmt.limit(limit)
     return list(db.execute(stmt).scalars())
+
+
+def provider_order(
+    part: Part,
+    *,
+    links: Sequence[PartProviderLink],
+    providers_available: Iterable[str],
+    primary: str | None,
+    link_missing_providers: bool,
+    include_unlinked: bool,
+) -> list[tuple[str, bool]]:
+    """`(provider, already_linked)` for one part, primary first.
+
+    The part's `part_provider_links` rows and its `linked_provider`
+    column are both read: the column is the primary's own record and
+    predates the table, and a part carrying one without the other is
+    exactly the drift this sweep exists to close.
+
+    **`--link-missing-providers` adds SECONDARIES only.** Adding the
+    workspace's primary would run the primary path on a part it has never
+    owned and rewrite `manufacturer`, `mpn`, `footprint`, `description`,
+    `linked_provider` and `part_type` from a provider nobody chose for
+    it — on icicle, where Mouser is primary and 252 of 290 links are
+    DigiKey secondaries, that is most of the catalogue. It is also not
+    reversible the way the runbook describes: `DELETE /provider-links/
+    {provider}` refuses the primary, and releasing those columns is a
+    `PATCH … unlink_provider=true` per part. Promoting a provider to a
+    part's primary is a per-part human decision, taken through
+    `POST /api/parts/{id}/refresh-from-provider`, not something a sweep
+    does to 252 parts at once.
+
+    **`--include-unlinked` is the one exception, and only on a part
+    nothing owns.** A part with no link row and no `linked_provider`
+    column has no primary to displace and no provider-written column to
+    overwrite, so the primary may claim it — and it is the tier that
+    fills a NULL category and downloads the datasheet, which is most of
+    what the flag is for. It fills gaps only; see
+    `provider_refresh.py::refresh_part` and its `claim_unowned`.
+
+    The whole list is ordered primary-first in ONE sort rather than
+    linked-then-unlinked, so the primary cannot end up behind a
+    secondary: it is the tier that fills a NULL category, and the
+    category picks the spec schema every later payload is read through.
+    """
+    linked = {row.provider for row in links}
+    own = (part.linked_provider or "").strip().lower()
+    if own:
+        linked.add(own)
+    candidates = dict.fromkeys(linked, True)
+    available = set(providers_available)
+    if link_missing_providers:
+        for name in available - linked - ({primary} if primary else set()):
+            candidates[name] = False
+    if include_unlinked and not linked:
+        for name in available:
+            candidates.setdefault(name, False)
+    return [
+        (name, candidates[name])
+        for name in sorted(candidates, key=lambda name: (name != primary, name))
+    ]
 
 
 def batches(part_ids: Sequence[UUID], size: int) -> Iterator[Sequence[UUID]]:

@@ -46,10 +46,20 @@ system actor to name instead. The `audit_log` row is where "a job did
 this" is recorded — one per workspace for the sweep, on top of the
 per-part rows the refresh itself writes.
 
-Which parts a sweep touches, and the SAVEPOINT-or-COMMIT boundary around
-each batch of writes, live next door in `provider_refresh_scope.py` —
-the seam the 800-line ceiling was split on, and the one place to read
-"what counts as a linked part".
+`--include-unlinked` widens the sweep to the parts NOTHING has linked —
+34 on prod carry an MPN and no provider link at all, one carries neither.
+It is the one place the PRIMARY tier runs on a part it has never owned,
+which is defensible only because nobody owns that part's columns either:
+the claim fills `manufacturer`, `footprint` and `description` where the
+part is silent and leaves anything a human typed exactly as it is
+(`refresh_part(claim_unowned=True)`). `--link-missing-providers`, by
+contrast, still adds secondaries only — a part with a primary already has
+one, and replacing it is a per-part human decision.
+
+Which parts a sweep touches, which providers each one is asked about, and
+the SAVEPOINT-or-COMMIT boundary around each batch of writes live next
+door in `provider_refresh_scope.py` — the seam the 800-line ceiling was
+split on, and the one place to read "what counts as a linked part".
 
 ADR-0021 owns the job registry; ADR-0031 the tiers; ADR-0034 the specs.
 See `docs/runbooks/provider-refresh.md`.
@@ -70,7 +80,7 @@ from sqlalchemy.orm import Session
 
 from app.domain.audit.service import log_ids as audit_log_ids
 from app.domain.categories.service import CategoryIndex, category_index
-from app.domain.parts.models import Part, PartProviderLink
+from app.domain.parts.models import Part
 from app.domain.parts.provider_credentials import active_credential_rows
 from app.domain.parts.services.provider_refresh import (
     ProviderTarget,
@@ -101,6 +111,7 @@ from app.domain.parts.services.provider_refresh_scope import (
     links_by_part,
     part_ids_in_scope,
     parts_by_id,
+    provider_order,
     sweep_lock,
     workspaces_in_scope,
 )
@@ -229,6 +240,7 @@ def refresh_linked_parts(
     limit: int | None = None,
     only_uncategorized: bool = False,
     link_missing_providers: bool = False,
+    include_unlinked: bool = False,
     sleep_ms: int = DEFAULT_SLEEP_MS,
     batch_size: int = DEFAULT_BATCH_SIZE,
     lock_held: bool = False,
@@ -241,6 +253,12 @@ def refresh_linked_parts(
     first". `stream` is where the review CSV goes — the file `--report`
     named, or ``None`` for stdout; the CLI opens and closes it
     (`run_job_options.report_stream`).
+
+    `include_unlinked` widens the scope to parts no provider has ever
+    been linked to, where the primary may claim the part and fills only
+    the columns it left empty. It is also the only way a part with NO
+    MPN reaches this function, and such a part gets one `skipped` line
+    naming the reason rather than being left out of the report.
 
     Caller owns the session. On apply this commits per batch, so it takes
     a SESSION-level advisory lock rather than relying on `run_job`'s
@@ -266,6 +284,7 @@ def refresh_linked_parts(
             limit=limit,
             only_uncategorized=only_uncategorized,
             link_missing_providers=link_missing_providers,
+            include_unlinked=include_unlinked,
             sleep_ms=sleep_ms,
             batch_size=batch_size,
         )
@@ -280,6 +299,7 @@ def _run_guarded(
     limit: int | None,
     only_uncategorized: bool,
     link_missing_providers: bool,
+    include_unlinked: bool,
     sleep_ms: int,
     batch_size: int,
 ) -> SweepOutcome:
@@ -293,6 +313,7 @@ def _run_guarded(
             limit=limit,
             only_uncategorized=only_uncategorized,
             link_missing_providers=link_missing_providers,
+            include_unlinked=include_unlinked,
             sleep_ms=sleep_ms,
             batch_size=batch_size,
         )
@@ -356,6 +377,7 @@ def _run(
     limit: int | None,
     only_uncategorized: bool,
     link_missing_providers: bool,
+    include_unlinked: bool,
     sleep_ms: int,
     batch_size: int,
 ) -> SweepOutcome:
@@ -373,7 +395,11 @@ def _run(
         targets = _targets_for(db, ws)
         index = category_index(db, ws_id=ws.id)
         part_ids = part_ids_in_scope(
-            db, ws_id=ws.id, only_uncategorized=only_uncategorized, limit=remaining
+            db,
+            ws_id=ws.id,
+            only_uncategorized=only_uncategorized,
+            limit=remaining,
+            include_unlinked=include_unlinked,
         )
         if remaining is not None:
             remaining -= len(part_ids)
@@ -393,6 +419,7 @@ def _run(
                     targets=targets,
                     index=index,
                     link_missing_providers=link_missing_providers,
+                    include_unlinked=include_unlinked,
                     report=report,
                     counts=counts,
                     per_provider=per_provider,
@@ -457,6 +484,7 @@ def _process_batch(
     targets: Mapping[str, ProviderTarget],
     index: CategoryIndex,
     link_missing_providers: bool,
+    include_unlinked: bool,
     report: RefreshReport,
     counts: Counter[str],
     per_provider: dict[tuple[UUID, str], Counter[str]],
@@ -473,12 +501,24 @@ def _process_batch(
     visited = 0
     for part in parts:
         visited += 1
-        order = _provider_order(
+        if not (part.mpn or "").strip():
+            # Only `--include-unlinked` can put one here: the default
+            # scope requires an MPN. There is nothing to ask any provider
+            # about it and the operator is the one who has to supply the
+            # MPN, so it gets a line naming the reason rather than being
+            # silently absent from a run whose purpose was to find it.
+            row = _no_mpn_row(ws_id=ws.id, part=part, index=index)
+            report.write(row)
+            counts[row.action] += 1
+            per_provider.setdefault((ws.id, row.provider), Counter())[row.action] += 1
+            continue
+        order = provider_order(
             part,
             links=links.get(part.id, ()),
-            targets=targets,
+            providers_available=targets,
             primary=primary,
             link_missing_providers=link_missing_providers,
+            include_unlinked=include_unlinked,
         )
         for provider_name, already_linked in order:
             row = _refresh_one(
@@ -501,6 +541,27 @@ def _process_batch(
             if halt:
                 return visited
     return visited
+
+
+def _no_mpn_row(*, ws_id: UUID, part: Part, index: CategoryIndex) -> RefreshRow:
+    """The one line a part with no MPN gets, before any provider is asked.
+
+    `provider` and `tier` are blank because no provider was asked and
+    none would have been: naming one would put a skip in that provider's
+    column of the summary for work it was never offered.
+    """
+    category = _path(index, part.category_id)
+    return RefreshRow(
+        workspace_id=ws_id,
+        part_id=part.id,
+        mpn="",
+        provider="",
+        tier="",
+        action=ACTION_SKIPPED,
+        category_before=category,
+        category_after=category,
+        error="part has no MPN to look up",
+    )
 
 
 def _refresh_one(
@@ -569,6 +630,12 @@ def _refresh_one(
             # reads as `miss` — which is a line in the CSV an operator
             # can act on, unlike a silent wrong match.
             require_exact_mpn=True,
+            # The primary on a part it was not already linked to can only
+            # be `--include-unlinked`: `provider_order` never offers the
+            # primary for a part some provider already knows. Nobody owns
+            # this part's columns, so the primary may claim it — and fills
+            # only what the part left empty.
+            claim_unowned=provider_name == primary and not already_linked,
             # A dry run downloads nothing. The file would land in
             # UPLOAD_DIR outside the savepoint this batch rolls back, so
             # a planning pass would leave content-addressed orphans and
@@ -631,56 +698,6 @@ def _refreshed_row(
         assets_fetched=outcome.assets_fetched,
         assets_would_fetch=outcome.assets_would_fetch,
     )
-
-
-def _provider_order(
-    part: Part,
-    *,
-    links: Sequence[PartProviderLink],
-    targets: Mapping[str, ProviderTarget],
-    primary: str | None,
-    link_missing_providers: bool,
-) -> list[tuple[str, bool]]:
-    """`(provider, already_linked)` for one part, primary first.
-
-    The part's `part_provider_links` rows and its `linked_provider`
-    column are both read: the column is the primary's own record and
-    predates the table, and a part carrying one without the other is
-    exactly the drift this sweep exists to close.
-
-    **`--link-missing-providers` adds SECONDARIES only.** Adding the
-    workspace's primary would run the primary path on a part it has never
-    owned and rewrite `manufacturer`, `mpn`, `footprint`, `description`,
-    `linked_provider` and `part_type` from a provider nobody chose for
-    it — on icicle, where Mouser is primary and 252 of 290 links are
-    DigiKey secondaries, that is most of the catalogue. It is also not
-    reversible the way the runbook describes: `DELETE /provider-links/
-    {provider}` refuses the primary, and releasing those columns is a
-    `PATCH … unlink_provider=true` per part. Promoting a provider to a
-    part's primary is a per-part human decision, taken through
-    `POST /api/parts/{id}/refresh-from-provider`, not something a sweep
-    does to 252 parts at once.
-
-    It does not widen the set of PARTS either — a part nothing has ever
-    linked is out of scope for this job whatever the flag says.
-
-    The whole list is ordered primary-first in ONE sort rather than
-    linked-then-unlinked, so the primary cannot end up behind a
-    secondary: it is the tier that fills a NULL category, and the
-    category picks the spec schema every later payload is read through.
-    """
-    linked = {row.provider for row in links}
-    own = (part.linked_provider or "").strip().lower()
-    if own:
-        linked.add(own)
-    candidates = dict.fromkeys(linked, True)
-    if link_missing_providers:
-        for name in set(targets) - linked - ({primary} if primary else set()):
-            candidates[name] = False
-    return [
-        (name, candidates[name])
-        for name in sorted(candidates, key=lambda name: (name != primary, name))
-    ]
 
 
 def _targets_for(db: Session, ws: Workspace) -> dict[str, ProviderTarget]:

@@ -15,7 +15,10 @@ staging environment, so the review artifact is part of the feature.
 
 One line per (part, provider) pair rather than per part: a prod part can
 be linked to two providers, the tiers do different things, and collapsing
-them would hide which one moved a column.
+them would hide which one moved a column. The one exception is a part
+with no MPN, which `--include-unlinked` can put in scope: no provider was
+asked about it, so it gets a single line with `provider` and `tier`
+blank.
 """
 from __future__ import annotations
 
@@ -43,8 +46,10 @@ __all__ = [
 #: was already linked to.
 ACTION_REFRESHED = "refreshed"
 #: The same, on a provider that had no claim on the part at all — only
-#: `--link-missing-providers` produces these, and only on an exact-MPN
-#: hit. The new association is the change to review. A part whose
+#: `--link-missing-providers` (a secondary joining a linked part) and
+#: `--include-unlinked` (any tier claiming an unlinked one) produce
+#: these, and only on an exact-MPN hit. The new association is the change
+#: to review. A part whose
 #: `linked_provider` column already named the provider reads as
 #: `refreshed` even when the sweep backfills its missing link row: the
 #: association was already a fact.
@@ -55,8 +60,10 @@ ACTION_MISS = "miss"
 #: The lookup raised. One part's problem — the sweep carries on, and the
 #: `error` column says what happened.
 ACTION_ERROR = "error"
-#: The part is linked to a provider this workspace has no usable
-#: credentials for, so there was nothing to ask.
+#: There was nothing to ask. Either the part is linked to a provider
+#: this workspace has no usable credentials for, or — under
+#: `--include-unlinked` — the part has no MPN to look up at all, which is
+#: reported once for the part with a blank `provider`.
 ACTION_SKIPPED = "skipped"
 
 ACTIONS: tuple[str, ...] = (

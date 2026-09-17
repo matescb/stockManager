@@ -122,6 +122,7 @@ def run_provider_refresh_job(db: Session, options: JobOptions) -> int:
                     limit=options.limit,
                     only_uncategorized=options.only_uncategorized,
                     link_missing_providers=options.link_missing_providers,
+                    include_unlinked=options.include_unlinked,
                     sleep_ms=(
                         options.sleep_ms
                         if options.sleep_ms is not None
@@ -155,6 +156,7 @@ EXTRA_FLAGS: Mapping[str, object] = {
     "limit": None,
     "only_uncategorized": False,
     "link_missing_providers": False,
+    "include_unlinked": False,
     "sleep_ms": None,
 }
 
@@ -202,6 +204,17 @@ def add_operator_arguments(parser: argparse.ArgumentParser) -> None:
             "provider-refresh only: also ask every provider this workspace "
             "has credentials for that the part is not linked to, and link it "
             "on an exact-MPN hit. Costs one extra call per part per provider."
+        ),
+    )
+    parser.add_argument(
+        "--include-unlinked",
+        action="store_true",
+        help=(
+            "provider-refresh only: also visit active parts that no "
+            "provider has ever been linked to, trying the primary first "
+            "and then every secondary with credentials. On a hit the "
+            "primary claims the part, filling only the columns it left "
+            "empty. Costs one call per part per provider."
         ),
     )
     parser.add_argument(

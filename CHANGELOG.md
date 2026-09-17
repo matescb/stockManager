@@ -15,6 +15,22 @@ the canonical record.
 
 ## Unreleased
 
+- **`provider-refresh --include-unlinked` links the parts nobody ever
+  asked a vendor about.** The sweep's scope was parts a provider already
+  knows; the flag widens it to active parts with no `part_provider_links`
+  row and no `linked_provider` — 34 of ours carry an MPN, one does not.
+  Each is asked of the workspace primary first and then of every
+  secondary with credentials, exact-MPN only. This is the one case where
+  the PRIMARY may claim a part it has never owned, because such a part
+  has no primary to displace and no provider-written column to
+  overwrite: the claim writes the linkage columns, flips the derived
+  `part_type`, fills a NULL category and writes the canonical specs and
+  assets, while `manufacturer`, `footprint` and `description` are filled
+  only where the part is silent (empty, or holding nothing but its own
+  MPN). A typed description survives, as does
+  `description_locally_edited`. A part with no MPN gets one `skipped`
+  line naming the reason rather than being absent from the report.
+  `docs/runbooks/provider-refresh.md` — "Linking local parts".
 - **A resistor's construction is a canonical spec.** The `resistor`
   schema gained an optional `technology` key reading DigiKey's
   `Composition` — the most frequent unmapped raw key in the catalogue at

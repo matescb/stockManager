@@ -216,6 +216,7 @@ def refresh_part(
     category_index: CategoryIndex | None = None,
     target: ProviderTarget | None = None,
     require_exact_mpn: bool = False,
+    claim_unowned: bool = False,
     fetch_assets: bool = True,
 ) -> RefreshOutcome:
     """Re-run this part's MPN against one provider and write what came back.
@@ -236,6 +237,16 @@ def refresh_part(
     fine for a part a human asked about by name and is NOT fine for the
     sweep's `--link-missing-providers` pass, where a near miss would link
     the part to a different product and import its specs.
+
+    `claim_unowned` says the primary is running on a part NO provider has
+    ever owned — the sweep's `--include-unlinked` pass, and the only
+    caller that passes it. The part still becomes the primary's, because
+    that is the claim; what changes is that `manufacturer`, `footprint`
+    and `description` are filled only where the part is silent (empty, or
+    holding nothing but its own MPN, which is what a scan-created part
+    carries). A refresh of a part the primary already owns keeps driving
+    them, because there the vendor IS the source of those columns; here
+    whoever typed them never asked a vendor to replace their words.
 
     Caller owns the transaction. Nothing here commits.
     """
@@ -264,7 +275,11 @@ def refresh_part(
     would_fetch: tuple[str, ...] = ()
     if is_primary:
         _apply_primary_columns(
-            part, result=result, provider_name=client.name, user_id=user_id
+            part,
+            result=result,
+            provider_name=client.name,
+            user_id=user_id,
+            fill_only=claim_unowned,
         )
         extra_fields, assets, would_fetch = _asset_fields(
             result, ws, fetch=fetch_assets
@@ -365,7 +380,12 @@ def _is_exact(result: dict, mpn: str) -> bool:
 
 
 def _apply_primary_columns(
-    part: Part, *, result: dict, provider_name: str, user_id: UUID | None
+    part: Part,
+    *,
+    result: dict,
+    provider_name: str,
+    user_id: UUID | None,
+    fill_only: bool = False,
 ) -> None:
     """Drive the columns the PRIMARY tier owns.
 
@@ -373,17 +393,33 @@ def _apply_primary_columns(
     download deliberately stays at the call site: it has to run before
     the `part_type` audit flush, and that ordering is load-bearing enough
     to be visible there rather than buried in here.
+
+    `fill_only` is the `claim_unowned` pass: the same columns, written
+    only where the part is silent. The linkage columns are NOT gated on
+    it — `linked_provider`, `linked_external_id` and `last_refresh_at`
+    ARE the claim, and a claim that left them alone would do nothing.
     """
-    part.manufacturer = result.get("manufacturer") or part.manufacturer
+    # Read before `parts.mpn` is rewritten below: "silent" means empty or
+    # equal to the MPN the part arrived with, and comparing against the
+    # value this function has just replaced would make the test depend on
+    # the order of the assignments.
+    was = (part.mpn or "").strip() if fill_only else ""
+    if _claimable(part.manufacturer, was, fill_only):
+        part.manufacturer = result.get("manufacturer") or part.manufacturer
     new_mpn = result.get("mpn") or part.mpn
     if new_mpn:
+        # Not gated: `require_exact_mpn` is what a claim runs under, so
+        # this only ever restates the vendor's own spelling of the MPN
+        # the part already carries.
         part.mpn = new_mpn
     footprint = result.get("footprint")
-    if footprint:
+    if footprint and _claimable(part.footprint, was, fill_only):
         # On every refresh we let the provider drive footprint — same
         # treatment as manufacturer/mpn (provider-owned for linked parts).
         part.footprint = footprint
-    if not part.description_locally_edited:
+    if not part.description_locally_edited and _claimable(
+        part.description, was, fill_only
+    ):
         new_description = result.get("description")
         if new_description:
             part.description = new_description
@@ -391,6 +427,23 @@ def _apply_primary_columns(
     part.linked_external_id = result.get("mpn") or part.linked_external_id
     part.last_refresh_at = utcnow()
     part.updated_by = user_id
+
+
+def _claimable(current: str | None, mpn: str, fill_only: bool) -> bool:
+    """May a claim write over `current`? Always yes when not claiming.
+
+    "Silent" is empty OR equal to `mpn`, the MPN the part arrived with.
+    The second half is not a nicety: a part created from a scan carries
+    its MPN in `description` and often in `manufacturer` too, and
+    treating that as somebody's words would leave the claim unable to
+    fill the very columns it exists to fill.
+    """
+    if not fill_only:
+        return True
+    text = (current or "").strip()
+    if not text:
+        return True
+    return text.casefold() == mpn.casefold()
 
 
 def _asset_fields(

@@ -798,9 +798,10 @@ def test_a_secondary_never_touches_either_asset_column(
 def test_an_unlinked_part_is_out_of_scope(
     client: TestClient, db, tmp_path: Path, providers
 ) -> None:
-    """43 prod parts have neither a link row nor `linked_provider`. This
-    job re-asks the providers a part is already known to; adopting new
-    parts is `--link-missing-providers` on parts that ARE linked."""
+    """35 prod parts have neither a link row nor `linked_provider`. By
+    default this job only re-asks the providers a part is already known
+    to; `--include-unlinked` is what widens the scope to those, and
+    `--link-missing-providers` widens what a LINKED part is asked."""
     ws_id = _signup(client)
     _set_primary(db, ws_id, "mouser")
     providers["mouser"] = StubProvider("mouser", {MPN: _record(MPN, manufacturer="Yageo")})
@@ -881,6 +882,311 @@ def test_limit_caps_the_number_of_parts(
     db.commit()
 
     assert _sweep(db, tmp_path / "dry.csv", limit=1).parts == 1
+
+
+# ---------------------------------------------------------------------------
+# --include-unlinked
+#
+# 34 prod parts carry an MPN and no provider link at all; one carries
+# neither. They were typed in or imported from a BOM, and nothing has ever
+# asked a vendor about them. This is the ONE case where the primary tier
+# may run on a part it has never owned — nobody owns its columns yet — so
+# every test here is also a test that it fills gaps rather than
+# overwriting what somebody typed.
+# ---------------------------------------------------------------------------
+def _local_part(client: TestClient, db, mpn: str | None = MPN, **kwargs) -> uuid.UUID:
+    """A part with no link row, no `linked_provider` and `part_type=local`."""
+    return _part(client, db, mpn, part_type="local", **kwargs)
+
+
+def test_include_unlinked_lets_the_primary_claim_a_local_part(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    """The claim is the whole point: a link row, the `linked_provider`
+    column, the derived `part_type`, a category it did not have and the
+    canonical specs. Reported as `linked`, because the provider had no
+    claim on the part at all."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    providers["mouser"] = StubProvider(
+        "mouser", {MPN: _record(MPN, manufacturer="Yageo")}
+    )
+    # `apply_provider_category` resolves a vendor path against the
+    # workspace's own tree and creates nothing, so the category has to
+    # exist for the part to be filed under it.
+    resistors = _category(client, "Resistors")
+    part_id = _local_part(client, db)
+    db.commit()
+    report = tmp_path / "apply.csv"
+
+    _sweep(db, report, apply=True, include_unlinked=True)
+
+    db.expire_all()
+    part = db.get(Part, part_id)
+    assert part.linked_provider == "mouser"
+    assert part.part_type == "linked"
+    assert part.manufacturer == "Yageo"
+    assert str(part.category_id) == resistors, "a NULL category is filed"
+    assert {
+        row.provider
+        for row in db.execute(
+            select(PartProviderLink).where(PartProviderLink.part_id == part_id)
+        ).scalars()
+    } == {"mouser"}
+    assert _rows(db, part_id)["resistance"].value == "10 kΩ"
+    row = _report_rows(report)[0]
+    assert (row["action"], row["tier"]) == (ACTION_LINKED, "primary")
+    assert row["category_before"] == ""
+    assert row["category_after"] == "Resistors"
+
+
+def test_include_unlinked_keeps_a_description_somebody_typed(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    """The difference between claiming an unowned part and refreshing an
+    owned one. On a part the primary already owns the vendor drives
+    `description`; here it only fills a gap, because the operator who
+    typed it never asked a vendor to replace their words."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    providers["mouser"] = StubProvider(
+        "mouser", {MPN: _record(MPN, manufacturer="Yageo")}
+    )
+    part_id = _local_part(
+        client,
+        db,
+        description="10k 0402 from the drawer by the window",
+        manufacturer="ACME (relabelled)",
+    )
+    db.commit()
+
+    _sweep(db, tmp_path / "apply.csv", apply=True, include_unlinked=True)
+
+    db.expire_all()
+    part = db.get(Part, part_id)
+    assert part.description == "10k 0402 from the drawer by the window"
+    assert part.manufacturer == "ACME (relabelled)"
+    # The claim itself still happened.
+    assert part.linked_provider == "mouser"
+
+
+def test_include_unlinked_fills_a_description_that_is_only_the_mpn(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    """A part created from a scan carries its own MPN as its description.
+    That is a placeholder, not a sentence somebody wrote, so the vendor's
+    text is an improvement rather than a loss."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    providers["mouser"] = StubProvider(
+        "mouser", {MPN: _record(MPN, manufacturer="Yageo")}
+    )
+    part_id = _local_part(client, db, description=MPN)
+    db.commit()
+
+    _sweep(db, tmp_path / "apply.csv", apply=True, include_unlinked=True)
+
+    db.expire_all()
+    assert db.get(Part, part_id).description == f"Yageo {MPN}"
+
+
+def test_include_unlinked_respects_description_locally_edited(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    """Belt and braces with the empty-or-MPN rule: the flag that says "a
+    human wrote this" is honoured even when the text happens to be the
+    MPN."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    providers["mouser"] = StubProvider(
+        "mouser", {MPN: _record(MPN, manufacturer="Yageo")}
+    )
+    part_id = _local_part(client, db, description=MPN)
+    db.get(Part, part_id).description_locally_edited = True
+    db.commit()
+
+    _sweep(db, tmp_path / "apply.csv", apply=True, include_unlinked=True)
+
+    db.expire_all()
+    assert db.get(Part, part_id).description == MPN
+
+
+def test_include_unlinked_reports_a_part_with_no_mpn_as_skipped(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    """One prod part is unlinked AND has no MPN. There is nothing to ask
+    any provider about it, and it is the operator who has to supply the
+    MPN — so it is a line in the CSV naming the reason, not a part
+    silently left out of a run whose whole purpose was to find it."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    providers["mouser"] = StubProvider("mouser", {})
+    part_id = _local_part(client, db, mpn=None)
+    db.commit()
+    report = tmp_path / "dry.csv"
+
+    outcome = _sweep(db, report, include_unlinked=True)
+
+    assert providers["mouser"].calls == [], "nothing to look up"
+    assert outcome.parts == 1
+    rows = _report_rows(report)
+    assert [row["action"] for row in rows] == [ACTION_SKIPPED]
+    assert rows[0]["part_id"] == str(part_id)
+    assert rows[0]["provider"] == "", "no provider was asked"
+    assert "no MPN" in rows[0]["error"]
+
+
+def test_include_unlinked_records_a_miss_per_provider_and_writes_nothing(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    _add_secondary(db, ws_id, "digikey")
+    providers["mouser"] = StubProvider("mouser", {})
+    providers["digikey"] = StubProvider("digikey", {})
+    part_id = _local_part(client, db)
+    db.commit()
+    report = tmp_path / "apply.csv"
+
+    _sweep(db, report, apply=True, include_unlinked=True)
+
+    db.expire_all()
+    part = db.get(Part, part_id)
+    assert part.linked_provider is None
+    assert part.part_type == "local"
+    assert part.category_id is None
+    assert _rows(db, part_id) == {}
+    rows = _report_rows(report)
+    assert {row["provider"]: row["action"] for row in rows} == {
+        "mouser": ACTION_MISS,
+        "digikey": ACTION_MISS,
+    }
+
+
+def test_include_unlinked_asks_every_secondary_with_credentials(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    """The primary is tried first and misses; the secondary answers and
+    links as a secondary always does — no part column, its own namespace.
+    """
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    _add_secondary(db, ws_id, "digikey")
+    providers["mouser"] = StubProvider("mouser", {})
+    providers["digikey"] = StubProvider(
+        "digikey", {MPN: _record(MPN, manufacturer="DIGIKEY-MFR")}
+    )
+    part_id = _local_part(client, db)
+    db.commit()
+    report = tmp_path / "apply.csv"
+
+    _sweep(db, report, apply=True, include_unlinked=True)
+
+    db.expire_all()
+    part = db.get(Part, part_id)
+    assert part.manufacturer != "DIGIKEY-MFR", "a secondary writes no part column"
+    assert part.linked_provider is None
+    assert {
+        row.provider
+        for row in db.execute(
+            select(PartProviderLink).where(PartProviderLink.part_id == part_id)
+        ).scalars()
+    } == {"digikey"}
+    assert [row["provider"] for row in _report_rows(report)] == ["mouser", "digikey"]
+
+
+def test_include_unlinked_refuses_a_fuzzy_hit(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    """Exact-MPN only, the same guard every other pair in the sweep gets.
+    A near miss here would claim a local part for another product
+    entirely and rewrite the columns nobody had filled yet."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    providers["mouser"] = StubProvider(
+        "mouser", {MPN: _record("SOMETHING-ELSE-99", manufacturer="Yageo")}
+    )
+    part_id = _local_part(client, db)
+    db.commit()
+    report = tmp_path / "apply.csv"
+
+    _sweep(db, report, apply=True, include_unlinked=True)
+
+    db.expire_all()
+    part = db.get(Part, part_id)
+    assert part.linked_provider is None
+    assert part.mpn == MPN
+    assert _report_rows(report)[0]["action"] == ACTION_MISS
+
+
+def test_include_unlinked_dry_run_writes_nothing(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    providers["mouser"] = StubProvider(
+        "mouser", {MPN: _record(MPN, manufacturer="Yageo")}
+    )
+    part_id = _local_part(client, db)
+    db.commit()
+    report = tmp_path / "dry.csv"
+
+    outcome = _sweep(db, report, include_unlinked=True)
+
+    assert outcome.applied is False
+    db.expire_all()
+    part = db.get(Part, part_id)
+    assert part.linked_provider is None
+    assert part.part_type == "local"
+    assert part.category_id is None
+    assert _rows(db, part_id) == {}
+    assert db.execute(
+        select(PartProviderLink).where(PartProviderLink.part_id == part_id)
+    ).first() is None
+    # The plan is still produced by the code that would apply it.
+    assert _report_rows(report)[0]["action"] == ACTION_LINKED
+
+
+def test_include_unlinked_leaves_a_secondary_owned_part_to_its_secondary(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    """The widened scope is UNLINKED parts only. A part a secondary
+    already knows is not unowned, so the primary must not claim it —
+    that is still the per-part human decision the runbook describes."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    _add_secondary(db, ws_id, "digikey")
+    providers["mouser"] = StubProvider(
+        "mouser", {MPN: _record(MPN, manufacturer="Yageo")}
+    )
+    providers["digikey"] = StubProvider(
+        "digikey", {MPN: _record(MPN, manufacturer="DIGIKEY-MFR")}
+    )
+    part_id = _part(client, db, MPN, links=("digikey",))
+    db.commit()
+    report = tmp_path / "apply.csv"
+
+    _sweep(db, report, apply=True, include_unlinked=True)
+
+    assert providers["mouser"].calls == [], "the primary was not asked"
+    db.expire_all()
+    assert db.get(Part, part_id).linked_provider is None
+    assert [row["provider"] for row in _report_rows(report)] == ["digikey"]
+
+
+def test_include_unlinked_still_needs_an_active_part(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    providers["mouser"] = StubProvider(
+        "mouser", {MPN: _record(MPN, manufacturer="Yageo")}
+    )
+    part_id = _local_part(client, db)
+    db.get(Part, part_id).archived_at = utcnow()
+    db.commit()
+
+    assert _sweep(db, tmp_path / "dry.csv", include_unlinked=True).parts == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1432,7 +1738,14 @@ def test_apply_without_a_report_is_refused(capsys: pytest.CaptureFixture[str]) -
 
 
 @pytest.mark.parametrize(
-    "flag", ["--limit", "--only-uncategorized", "--link-missing-providers", "--sleep-ms"]
+    "flag",
+    [
+        "--limit",
+        "--only-uncategorized",
+        "--link-missing-providers",
+        "--include-unlinked",
+        "--sleep-ms",
+    ],
 )
 def test_the_job_flags_are_refused_for_other_jobs(
     flag: str, capsys: pytest.CaptureFixture[str]
@@ -1446,6 +1759,21 @@ def test_the_job_flags_are_refused_for_other_jobs(
 
     assert exit_code == 2
     assert f"takes no {flag}" in capsys.readouterr().err
+
+
+def test_include_unlinked_is_refused_for_category_seed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A job that creates categories has no notion of a provider link, so
+    the flag cannot mean anything to it. Refusing by name is the contract
+    every job-specific flag shares — silently ignoring it is the failure
+    mode the whole surface exists to prevent."""
+    exit_code = main(
+        ["category-seed", "--include-unlinked"], session_factory=_unreachable_session
+    )
+
+    assert exit_code == 2
+    assert "takes no --include-unlinked" in capsys.readouterr().err
 
 
 def test_sleep_ms_zero_is_still_refused_elsewhere(
@@ -1513,6 +1841,7 @@ def test_the_flags_reach_the_job_that_declares_them() -> None:
                 "7",
                 "--only-uncategorized",
                 "--link-missing-providers",
+                "--include-unlinked",
                 "--sleep-ms",
                 "10",
             ]
@@ -1524,6 +1853,7 @@ def test_the_flags_reach_the_job_that_declares_them() -> None:
     assert (options.limit, options.sleep_ms) == (7, 10)
     assert options.only_uncategorized is True
     assert options.link_missing_providers is True
+    assert options.include_unlinked is True
 
 
 def test_a_bare_run_through_the_registry_is_a_dry_run(
