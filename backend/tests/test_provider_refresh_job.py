@@ -823,9 +823,49 @@ def test_a_linked_provider_with_no_credentials_is_skipped(
 
     _sweep(db, report)
 
-    actions = {row["provider"]: row["action"] for row in _report_rows(report)}
-    assert actions["digikey"] == ACTION_SKIPPED
-    assert actions["mouser"] == ACTION_REFRESHED
+    rows = {row["provider"]: row for row in _report_rows(report)}
+    assert rows["digikey"]["action"] == ACTION_SKIPPED
+    assert rows["mouser"]["action"] == ACTION_REFRESHED
+    assert "no credentials" in rows["digikey"]["error"]
+
+
+def test_a_skipped_row_still_names_the_tier_it_would_have_run_as(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    """The tier comes from the workspace's `parts_provider`, not from a
+    client we could not build — otherwise a part linked to the PRIMARY
+    whose key was removed would report itself as a secondary."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    # No stub registered for mouser, so `make_provider` hands back None.
+    _part(client, db, MPN, linked_provider="mouser")
+    db.commit()
+    report = tmp_path / "dry.csv"
+
+    _sweep(db, report)
+
+    row = _report_rows(report)[0]
+    assert (row["action"], row["tier"]) == (ACTION_SKIPPED, "primary")
+
+
+def test_a_row_that_changed_nothing_repeats_the_category_rather_than_blanking_it(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    """A blank `category_after` next to a filled `category_before` reads
+    as "the sweep cleared the category"."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    providers["mouser"] = StubProvider("mouser", {})
+    resistors = _category(client, "Resistors")
+    _part(client, db, MPN, linked_provider="mouser", category_id=resistors)
+    db.commit()
+    report = tmp_path / "dry.csv"
+
+    _sweep(db, report)
+
+    row = _report_rows(report)[0]
+    assert row["action"] == ACTION_MISS
+    assert row["category_before"] == row["category_after"] == "Resistors"
 
 
 @pytest.mark.parametrize(
@@ -1073,6 +1113,46 @@ def test_sleep_ms_zero_is_still_refused_elsewhere(
 
     assert exit_code == 2
     assert "takes no --sleep-ms" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("flag", ["--limit", "--sleep-ms"])
+def test_a_negative_value_is_a_usage_error(
+    flag: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A negative limit reaches Postgres as `LIMIT -1`, and a negative
+    pause would clamp to zero without saying so. Both are typos."""
+    exit_code = main([JOB_NAME, flag, "-1"], session_factory=_unreachable_session)
+
+    assert exit_code == 2
+    assert f"{flag} must not be negative" in capsys.readouterr().err
+
+
+def test_the_quota_error_carries_what_the_run_achieved(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    """Raising is how a halt is reported, so the counts have to travel
+    with it — otherwise the only way to read them is to parse the CSV.
+
+    `parts` counts what was VISITED, not what was queued: the batch the
+    quota interrupted is not a batch that happened."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    providers["mouser"] = StubProvider(
+        "mouser", {MPN: "rate limit reached", OTHER_MPN: "rate limit reached"}
+    )
+    _part(client, db, MPN, linked_provider="mouser")
+    _part(client, db, OTHER_MPN, linked_provider="mouser")
+    db.commit()
+
+    with pytest.raises(ProviderQuotaExhausted) as exc_info:
+        _sweep(db, tmp_path / "dry.csv")
+
+    outcome = exc_info.value.outcome
+    assert exc_info.value.provider == "mouser"
+    assert outcome is not None
+    assert outcome.halted_on == "mouser"
+    assert outcome.counts[ACTION_ERROR] == 1
+    assert outcome.parts == 1, "the second part of the batch was never reached"
 
 
 def test_the_flags_reach_the_job_that_declares_them() -> None:

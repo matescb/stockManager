@@ -814,6 +814,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         )
     if args.heartbeat_max_age_seconds is None:
         args.heartbeat_max_age_seconds = HEARTBEAT_MAX_AGE_SECONDS
+    for flag, value in (("--limit", args.limit), ("--sleep-ms", args.sleep_ms)):
+        # A negative limit reaches Postgres as `LIMIT -1` and a negative
+        # pause would silently clamp to zero. Both are typos, and an
+        # operator running a job against a metered API deserves to hear
+        # about a typo rather than discover it in the report.
+        if value is not None and value < 0:
+            parser.error(f"{flag} must not be negative")
     if args.workspace is not None:
         try:
             args.workspace = UUID(args.workspace)

@@ -92,6 +92,11 @@ minutes, and `--link-missing-providers` roughly doubles that.
    | `error` | The lookup raised, or the provider reported it is out of quota. The `error` column says which. |
    | `skipped` | The part is linked to a provider this workspace has no usable credentials for, so there was nothing to ask. |
 
+   `specs_removed` counts both ways a row leaves the Specs tab: a key the
+   provider stopped sending, hard-deleted, and a customs code or `-`
+   placeholder retired with `archived_at`. The `part.specs_reconciled`
+   audit row for that part carries the split if you need it.
+
    `part_columns_changed` lists column NAMES, not values — the values are
    on the part and in the `audit_log`. `tier` says which set of rules
    applied: `primary` owns the part columns and downloads assets,

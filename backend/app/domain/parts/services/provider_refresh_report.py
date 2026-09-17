@@ -83,7 +83,15 @@ REPORT_COLUMNS: tuple[str, ...] = (
     "part_columns_changed",
     "specs_added",
     "specs_updated",
+    # Rows brought back out of `archived_at` because upstream answered
+    # their key again. Counted apart from `updated`: the value may not
+    # have moved at all, but the row reappearing IS the change.
     "specs_restored",
+    # Both ways a row leaves the Specs tab: hard-deleted because the
+    # provider stopped sending the key, and retired with `archived_at`
+    # because it is a customs code or a `-` placeholder. One column,
+    # because the operator's question here is "how much did this part
+    # lose", and the reconcile's own audit row carries the split.
     "specs_removed",
     "category_before",
     "category_after",

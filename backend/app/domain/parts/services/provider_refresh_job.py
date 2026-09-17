@@ -28,6 +28,14 @@ Four properties make a bulk re-import over a live catalogue defensible:
   and `custom_fields.provider` stamps stay put, because the reconcile it
   delegates to is the one that wrote those rules.
 
+The primary tier downloads a part's image and datasheet as it goes, and
+it does so through `fetch_provider_asset` — the allow-listed,
+un-throttled entry point, NOT the backfill's `allow_any_host` one
+(ADR-0033). The courtesy gap between CDN requests is the sweep's own
+`--sleep-ms`, which is paced per part rather than per host; that is
+adequate here and would not be inside a request handler, which is why
+the relaxed path stays opt-in and stays out of this job.
+
 `updated_by` is left NULL on everything this job touches, the same
 choice `part-rename` made and for the same reason: crediting a bulk
 sweep to whoever last edited the part would be a lie, and there is no
@@ -147,9 +155,15 @@ class ProviderQuotaExhausted(RuntimeError):
     committed: the operator gets everything the run achieved plus a
     reason, not a traceback over a half-written file. `run_job` turns it
     into exit 3.
+
+    It carries the `SweepOutcome` the run had reached, because raising is
+    how this function reports a halt and a caller that wanted the counts
+    would otherwise have only the CSV to parse for them.
     """
 
-    def __init__(self, provider: str, message: str) -> None:
+    def __init__(
+        self, provider: str, message: str, *, outcome: "SweepOutcome | None" = None
+    ) -> None:
         super().__init__(
             f"{JOB_NAME} stopped: provider {provider!r} is rate-limited or out of "
             f"quota ({message}). Everything finished before this point was kept; "
@@ -157,6 +171,7 @@ class ProviderQuotaExhausted(RuntimeError):
         )
         self.provider = provider
         self.detail = message
+        self.outcome = outcome
 
 
 @dataclass(frozen=True)
@@ -309,7 +324,11 @@ def _run(
         done = 0
         for batch in _batches(part_ids, batch_size):
             with _batch_transaction(db, apply=apply):
-                _process_batch(
+                # Parts actually VISITED, which is not `len(batch)` when the
+                # quota ran out part-way through it. The audit row and the
+                # outcome both say how far the run got, so they have to
+                # count what happened rather than what was queued.
+                done += _process_batch(
                     db,
                     ws=ws,
                     part_ids=batch,
@@ -324,7 +343,6 @@ def _run(
                     halt=halt,
                 )
             report.flush()
-            done += len(batch)
             logger.info(
                 "%s workspace=%s parts=%d/%d %s apply=%s",
                 JOB_NAME,
@@ -368,7 +386,7 @@ def _run(
         halted_on=halt.provider,
     )
     if halt and halt.provider is not None:
-        raise ProviderQuotaExhausted(halt.provider, halt.detail)
+        raise ProviderQuotaExhausted(halt.provider, halt.detail, outcome=outcome)
     return outcome
 
 
@@ -386,11 +404,15 @@ def _process_batch(
     unmapped: Counter[tuple[str, str]],
     throttle: _Throttle,
     halt: _Halt,
-) -> None:
+) -> int:
+    """Returns how many parts were visited — fewer than the batch when the
+    quota ran out inside it."""
     parts = _parts(db, ws_id=ws.id, part_ids=part_ids)
     links = _links_by_part(db, ws_id=ws.id, part_ids=part_ids)
     primary = primary_provider_name(ws)
+    visited = 0
     for part in parts:
+        visited += 1
         order = _provider_order(
             part,
             links=links.get(part.id, ()),
@@ -406,6 +428,7 @@ def _process_batch(
                 provider_name=provider_name,
                 already_linked=already_linked,
                 target=targets.get(provider_name),
+                primary=primary,
                 index=index,
                 unmapped=unmapped,
                 throttle=throttle,
@@ -415,7 +438,8 @@ def _process_batch(
             counts[row.action] += 1
             per_provider.setdefault((ws.id, provider_name), Counter())[row.action] += 1
             if halt:
-                return
+                return visited
+    return visited
 
 
 def _refresh_one(
@@ -426,19 +450,31 @@ def _refresh_one(
     provider_name: str,
     already_linked: bool,
     target: ProviderTarget | None,
+    primary: str | None,
     index: CategoryIndex,
     unmapped: Counter[tuple[str, str]],
     throttle: _Throttle,
     halt: _Halt,
 ) -> RefreshRow:
     """One (part, provider) pair. Never raises for one part's problem."""
+    category = _path(index, part.category_id)
     base = dict(
         workspace_id=ws.id,
         part_id=part.id,
+        # The MPN we LOOKED UP. The primary may rewrite `parts.mpn` from
+        # the payload, and the column that says which question was asked
+        # has to survive the answer.
         mpn=part.mpn or "",
         provider=provider_name,
-        tier=TIER_PRIMARY if target and target.is_primary else TIER_SECONDARY,
-        category_before=_path(index, part.category_id),
+        # From the name rather than from `target.is_primary`, so a row we
+        # could not build a client for still says which tier it would
+        # have run as. `provider_target` derives it the same way.
+        tier=TIER_PRIMARY if provider_name == primary else TIER_SECONDARY,
+        category_before=category,
+        # Overwritten below when a refresh actually moves it. Equal to
+        # `category_before` everywhere else, because a blank cell next to
+        # a filled one reads as "the sweep cleared the category".
+        category_after=category,
     )
     if target is None:
         # Linked to a provider this workspace has no usable key for.
@@ -512,14 +548,13 @@ def _refreshed_row(
     """
     report = outcome.report
     return RefreshRow(
-        **base,
+        **{**base, "category_after": _path(index, part.category_id)},
         action=ACTION_REFRESHED if already_linked else ACTION_LINKED,
         part_columns_changed=outcome.part_columns_changed,
         specs_added=report.added if report else 0,
         specs_updated=report.updated if report else 0,
         specs_restored=report.restored if report else 0,
         specs_removed=(report.removed + report.archived) if report else 0,
-        category_after=_path(index, part.category_id),
         assets_fetched=outcome.assets_fetched,
     )
 
