@@ -40,6 +40,7 @@ from app.cli.run_job import (
 _OPERATOR_JOBS = (
     "category-seed",
     "part-rename",
+    "provider-refresh",
     "spec-normalize",
     "symbol-collapse",
 )
@@ -265,10 +266,10 @@ def test_the_operator_jobs_are_registered_and_unscheduled(job_name: str) -> None
     assert "--apply" in job.idempotency
 
 
-def test_the_operator_jobs_are_exactly_these_three() -> None:
-    """A set equality, not a subset: a fourth job quietly gaining
+def test_the_operator_jobs_are_exactly_these() -> None:
+    """A set equality, not a subset: another job quietly gaining
     `takes_options` would otherwise slip past every check here, and the
-    deployment docs name these three by hand."""
+    deployment docs name each of them by hand."""
     assert {name for name, job in JOBS.items() if job.takes_options} == set(
         _OPERATOR_JOBS
     )
@@ -618,9 +619,11 @@ def test_a_dry_run_needs_no_report(job_name: str) -> None:
 def test_only_an_in_place_rewrite_requires_a_report() -> None:
     """`category-seed` only creates rows and `symbol-collapse` only clears a
     nullable column, so both are undoable from the schema alone.
-    `part-rename` overwrites `parts.name`, and `spec-normalize` overwrites
-    spec values — for those two the CSV is the record of what was there."""
-    assert _REPORT_REQUIRED == ["part-rename", "spec-normalize"]
+    `part-rename` overwrites `parts.name`, `spec-normalize` overwrites spec
+    values, and `provider-refresh` overwrites both part columns and spec
+    values from a remote payload — for those three the CSV is the record of
+    what was there."""
+    assert _REPORT_REQUIRED == ["part-rename", "provider-refresh", "spec-normalize"]
 
 
 def _unreachable_session() -> Session:

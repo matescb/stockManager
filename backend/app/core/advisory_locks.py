@@ -19,6 +19,11 @@ DATASHEET_BACKFILL_LOCK_CLASSID: Final[int] = 3
 # keeps what it finished, and the xact-scoped run_job lock is gone after the
 # first of those commits.
 SPEC_NORMALIZE_LOCK_CLASSID: Final[int] = 4
+# SESSION-level, same reason again: the `provider-refresh` sweep commits once
+# per batch of 25 parts so a run halted by a provider's daily quota keeps what
+# it finished, and the xact-scoped run_job lock is gone after the first of
+# those commits. Two concurrent sweeps would spend that quota twice.
+PROVIDER_REFRESH_LOCK_CLASSID: Final[int] = 5
 
 ADVISORY_LOCK_CLASSIDS: Final[Mapping[str, int]] = MappingProxyType(
     {
@@ -26,5 +31,6 @@ ADVISORY_LOCK_CLASSIDS: Final[Mapping[str, int]] = MappingProxyType(
         "password_reset_throttle": PASSWORD_RESET_THROTTLE_LOCK_CLASSID,
         "datasheet_backfill": DATASHEET_BACKFILL_LOCK_CLASSID,
         "spec_normalize": SPEC_NORMALIZE_LOCK_CLASSID,
+        "provider_refresh": PROVIDER_REFRESH_LOCK_CLASSID,
     }
 )

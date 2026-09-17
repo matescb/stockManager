@@ -141,6 +141,15 @@ class ReconcileReport:
     #: Surfaced in the refresh response so "the vendor sent it and we did
     #: not store it" is visible rather than merely absent.
     dropped: tuple[str, ...] = ()
+    #: Raw payload keys the schema has no canonical home for. They ARE
+    #: stored, verbatim and under their own name — losing them would cost
+    #: ICs and connectors everything they have — but they sort as text and
+    #: cannot be reported missing. `provider-refresh` aggregates them per
+    #: category so the alias table in `spec_schema_tables.py` can grow
+    #: from what the vendors actually send. Not in `summary()`: the
+    #: frontend has no use for it, and it is a list of key names, not a
+    #: count of anything that happened.
+    unmapped: tuple[str, ...] = ()
 
     def summary(self) -> dict[str, int]:
         """The `summary` object the refresh response has always carried,
@@ -430,6 +439,7 @@ def reconcile_provider_specs(
         kept_manual=tuple(kept_manual),
         kept_other_provider=tuple(kept_other),
         dropped=tuple(norm.dropped),
+        unmapped=tuple(norm.optional),
     )
     _audit_log_ids(
         db,

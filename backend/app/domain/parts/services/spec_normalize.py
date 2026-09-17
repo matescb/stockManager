@@ -52,6 +52,7 @@ from app.domain.parts.services.spec_normalize_report import (
     REPORT_COLUMNS,
     Change,
     NormalizeReport,
+    rank_unmapped,
 )
 from app.domain.parts.services.spec_normalize_rows import normalize_part_rows
 from app.domain.parts.services.spec_reconcile import apply_provider_category
@@ -85,10 +86,6 @@ AUDIT_ACTION = "part.specs_normalized"
 #: Parts per transaction on apply. Small enough that a killed run loses
 #: little, large enough that 324 prod parts are two round trips.
 DEFAULT_BATCH_SIZE = 200
-
-#: How many unmapped raw keys the report lists. The list exists to be
-#: read and turned into alias-table entries, so it is a shortlist.
-UNMAPPED_REPORT_LIMIT = 30
 
 #: Counters that are not actions: they say what the job deliberately did
 #: NOT do, which is the half of the summary a reviewer checks.
@@ -216,7 +213,7 @@ def _run(
         if apply and any(counts[action] for action in ACTIONS):
             _audit(db, ws_id=ws.id, counts=counts, canonical=canonical)
             db.commit()
-    ranked = _rank_unmapped(unmapped)
+    ranked = rank_unmapped(unmapped)
     report.write_summary(per_workspace=per_workspace, unmapped=ranked)
 
     totals: Counter[str] = Counter()
@@ -503,20 +500,6 @@ def _key_list(keys: Sequence[str]) -> str:
     if len(keys) <= _AUDIT_KEY_LIMIT:
         return ",".join(keys)
     return ",".join(keys[:_AUDIT_KEY_LIMIT]) + f",+{len(keys) - _AUDIT_KEY_LIMIT}"
-
-
-def _rank_unmapped(
-    unmapped: Counter[tuple[str, str]],
-) -> tuple[tuple[str, str, int], ...]:
-    """The keys the schema had no home for, most frequent first.
-
-    Tied counts break on `(slug, key)` so two runs over the same data
-    produce the same file.
-    """
-    ranked = sorted(unmapped.items(), key=lambda item: (-item[1], item[0]))
-    return tuple(
-        (slug, key, count) for (slug, key), count in ranked[:UNMAPPED_REPORT_LIMIT]
-    )
 
 
 _LOCK_KEY = JOB_NAME

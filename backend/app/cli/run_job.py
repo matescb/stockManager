@@ -69,6 +69,17 @@ class JobOptions:
     #: that does not declare it and is handed `--include-free` is
     #: refused by name, the same way a scheduled job handed `--apply` is.
     include_free: bool = False
+    #: `provider-refresh` only, all four. They exist because that job
+    #: spends a metered external resource: `limit` caps the parts a run
+    #: touches, `only_uncategorized` narrows it to the parts with the
+    #: most to gain, `link_missing_providers` widens what each part is
+    #: asked, and `sleep_ms` paces the calls. `None` means "not given" for
+    #: the two that take a value — `sleep_ms=0` is a real choice (turn the
+    #: throttle off) and must not read as an absent flag.
+    limit: int | None = None
+    only_uncategorized: bool = False
+    link_missing_providers: bool = False
+    sleep_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -106,6 +117,18 @@ class UnknownJobError(ValueError):
 
 class JobConfigError(ValueError):
     """Raised when a job's settings-backed configuration is invalid."""
+
+
+class JobHaltedError(RuntimeError):
+    """A job stopped early ON PURPOSE and wants a distinct exit code.
+
+    Not a failure: the job has already written its report and, on
+    `--apply`, committed what it finished. `main` reports it as exit 3,
+    which is neither 0 ("done") nor 2 ("you asked for something
+    impossible") — a monitor or a runbook step can tell "stopped, re-run
+    later" from both. `provider-refresh` raises it when a provider says
+    the day's quota is gone.
+    """
 
 
 def _acquire_job_lock(db: Session, job_name: str) -> bool:
@@ -260,6 +283,38 @@ def _run_part_rename(db: Session, options: JobOptions) -> int:
             stream=stream,
         )
     return outcome.counts.renamed
+
+
+def _run_provider_refresh(db: Session, options: JobOptions) -> int:
+    from app.domain.parts.services.provider_refresh_job import (
+        DEFAULT_SLEEP_MS,
+        ProviderQuotaExhausted,
+        refresh_linked_parts,
+    )
+
+    # A `--workspace` that names nothing raises `UnknownWorkspaceError`,
+    # the `LookupError` shape `main` already reports as a usage error.
+    with _report_stream(options) as stream:
+        try:
+            outcome = refresh_linked_parts(
+                db,
+                apply=options.apply,
+                workspace_id=options.workspace_id,
+                stream=stream,
+                limit=options.limit,
+                only_uncategorized=options.only_uncategorized,
+                link_missing_providers=options.link_missing_providers,
+                sleep_ms=(
+                    options.sleep_ms if options.sleep_ms is not None else DEFAULT_SLEEP_MS
+                ),
+            )
+        except ProviderQuotaExhausted as exc:
+            # Translated at the boundary rather than raised from the
+            # domain: `JobHaltedError` is the CLI's vocabulary for "a job
+            # stopped on purpose and the exit code should say so", and a
+            # domain service has no business importing it.
+            raise JobHaltedError(str(exc)) from exc
+    return outcome.refreshed
 
 
 def _printing_is_configured() -> bool:
@@ -422,6 +477,35 @@ JOBS: dict[str, JobSpec] = {
         requires_report=True,
         extra_flags=("include_free",),
     ),
+    "provider-refresh": JobSpec(
+        name="provider-refresh",
+        owner="backend/parts",
+        cadence="manual (operator-run)",
+        idempotency=(
+            "Re-runs the provider MPN lookup for every active, linked part "
+            "with an MPN and writes back what the providers answer now, "
+            "through the same service the refresh route uses. A second run "
+            "over unchanged upstream data rewrites no part column and no "
+            "spec row; `last_refresh_at` and the link's own timestamp move "
+            "every time, because they are the record that the run happened. "
+            "Junk archived by spec-normalize stays archived. Writes nothing "
+            "at all without --apply, which it refuses without --report. "
+            "Stops at exit 3 when a provider reports it is out of quota, "
+            "keeping everything committed up to that point."
+        ),
+        run=_run_provider_refresh,
+        takes_options=True,
+        # It rewrites `parts.manufacturer` / `description` / `footprint`
+        # and spec values in place from a remote payload. The CSV is the
+        # operator's only record of what they were.
+        requires_report=True,
+        extra_flags=(
+            "limit",
+            "only_uncategorized",
+            "link_missing_providers",
+            "sleep_ms",
+        ),
+    ),
     "print-job-reconcile": JobSpec(
         name="print-job-reconcile",
         owner="backend/printing",
@@ -561,6 +645,14 @@ def run_job(
         else:
             affected = job.run(db)
             db.commit()
+    except JobHaltedError:
+        # The job stopped on purpose, after writing its report and (on
+        # --apply) committing what it finished. The rollback is a no-op
+        # on an already-committed session and the correct answer on a dry
+        # run; either way the exception carries the reason to `main`.
+        db.rollback()
+        logger.warning("job=%s status=halted", job.name)
+        raise
     except Exception:
         db.rollback()
         logger.exception("job=%s status=error", job.name)
@@ -669,6 +761,44 @@ def _parser() -> argparse.ArgumentParser:
             "choice — and the report lists them either way."
         ),
     )
+    parser.add_argument(
+        "--limit",
+        metavar="N",
+        type=int,
+        default=None,
+        help=(
+            "provider-refresh only: stop after this many parts, across the "
+            "whole run. Every call it makes comes out of a metered daily "
+            "allowance, so trying ten first is the normal way to start."
+        ),
+    )
+    parser.add_argument(
+        "--only-uncategorized",
+        action="store_true",
+        help=(
+            "provider-refresh only: restrict the sweep to parts with no "
+            "category, which are the ones with the most to gain."
+        ),
+    )
+    parser.add_argument(
+        "--link-missing-providers",
+        action="store_true",
+        help=(
+            "provider-refresh only: also ask every provider this workspace "
+            "has credentials for that the part is not linked to, and link it "
+            "on an exact-MPN hit. Costs one extra call per part per provider."
+        ),
+    )
+    parser.add_argument(
+        "--sleep-ms",
+        metavar="MS",
+        type=int,
+        default=None,
+        help=(
+            "provider-refresh only: milliseconds between provider calls "
+            "(default 750). 0 turns the throttle off."
+        ),
+    )
     return parser
 
 
@@ -696,15 +826,29 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         args.print_interval or args.check_heartbeat or args.check_all_heartbeats
     ):
         parser.error(
-            "--dry-run / --apply / --workspace / --report / --include-free "
-            "cannot be combined with --print-interval or a heartbeat check"
+            "--dry-run / --apply / --workspace / --report and the job-specific "
+            "flags (--include-free, --limit, --only-uncategorized, "
+            "--link-missing-providers, --sleep-ms) cannot be combined with "
+            "--print-interval or a heartbeat check"
         )
     return args
 
 
-#: `JobOptions` attributes a job opts into through `JobSpec.extra_flags`.
-#: One entry per flag the shared parser offers but only some jobs read.
-_EXTRA_FLAGS: tuple[str, ...] = ("include_free",)
+#: `JobOptions` attributes a job opts into through `JobSpec.extra_flags`,
+#: mapped to the parsed value that means "the operator did not pass it".
+#:
+#: A mapping rather than a list of names because "not given" is not the
+#: same as "falsy" for every flag: `--sleep-ms 0` is an operator turning
+#: the throttle off, and reading it as an absent flag would let it be
+#: silently accepted by a job that does not understand it — the exact
+#: failure mode this whole surface exists to avoid.
+_EXTRA_FLAGS: Mapping[str, object] = {
+    "include_free": False,
+    "limit": None,
+    "only_uncategorized": False,
+    "link_missing_providers": False,
+    "sleep_ms": None,
+}
 
 
 def _job_flags_given(args: argparse.Namespace) -> bool:
@@ -719,7 +863,7 @@ def _job_flags_given(args: argparse.Namespace) -> bool:
         or args.dry_run
         or args.workspace is not None
         or args.report is not None
-        or any(getattr(args, flag) for flag in _EXTRA_FLAGS)
+        or any(getattr(args, flag) != unset for flag, unset in _EXTRA_FLAGS.items())
     )
 
 
@@ -735,8 +879,8 @@ def _options_for(
     job = _get_job(job_name, jobs)
     undeclared = [
         flag
-        for flag in _EXTRA_FLAGS
-        if getattr(args, flag) and flag not in job.extra_flags
+        for flag, unset in _EXTRA_FLAGS.items()
+        if getattr(args, flag) != unset and flag not in job.extra_flags
     ]
     if undeclared:
         # By name, not ignored. The parser is shared, so argparse accepts
@@ -756,6 +900,10 @@ def _options_for(
         workspace_id=args.workspace,
         report=args.report,
         include_free=args.include_free,
+        limit=args.limit,
+        only_uncategorized=args.only_uncategorized,
+        link_missing_providers=args.link_missing_providers,
+        sleep_ms=args.sleep_ms,
     )
 
 
@@ -814,6 +962,13 @@ def main(
             heartbeat_dir=heartbeat_dir,
             options=_options_for(args.job_name, args, jobs),
         )
+    except JobHaltedError as exc:
+        # Not 0 and not 2: the run did real work, kept it, and stopped for
+        # a reason that will still be true if it is retried immediately. A
+        # runbook step and a monitor both need to tell that from a clean
+        # finish and from a usage error.
+        print(str(exc), file=sys.stderr)
+        return 3
     except (UnknownJobError, JobConfigError, LookupError) as exc:
         # LookupError is what an operator-run job raises for a
         # `--workspace` that names nothing. Reporting it as a usage error
