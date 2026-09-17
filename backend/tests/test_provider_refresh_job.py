@@ -957,6 +957,9 @@ def test_include_unlinked_keeps_a_description_somebody_typed(
         db,
         description="10k 0402 from the drawer by the window",
         manufacturer="ACME (relabelled)",
+        # The record's footprint is `0402`; this is the value a claim must
+        # not replace, and the third of the three gated columns.
+        footprint="R_0402_1005Metric_Pad0.72x0.64mm_HandSolder",
     )
     db.commit()
 
@@ -966,6 +969,7 @@ def test_include_unlinked_keeps_a_description_somebody_typed(
     part = db.get(Part, part_id)
     assert part.description == "10k 0402 from the drawer by the window"
     assert part.manufacturer == "ACME (relabelled)"
+    assert part.footprint == "R_0402_1005Metric_Pad0.72x0.64mm_HandSolder"
     # The claim itself still happened.
     assert part.linked_provider == "mouser"
 
@@ -1187,6 +1191,74 @@ def test_include_unlinked_still_needs_an_active_part(
     db.commit()
 
     assert _sweep(db, tmp_path / "dry.csv", include_unlinked=True).parts == 0
+
+
+# ---------------------------------------------------------------------------
+# A rejected write is one part's problem
+# ---------------------------------------------------------------------------
+def test_an_mpn_collision_is_one_error_row_and_the_sweep_carries_on(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    """Two parts whose MPNs differ only by case are legal — `uq_parts_ws_mpn`
+    is a plain unique index — until the primary rewrites one of them to
+    the vendor's spelling and it collides with the other. Without a
+    per-pair savepoint the rejected UPDATE poisons the batch's
+    transaction and takes every part in it, turning one bad row into a
+    run that wrote nothing.
+    """
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    record = _record(MPN, manufacturer="Yageo")
+    providers["mouser"] = StubProvider(
+        "mouser",
+        {MPN: record, MPN.lower(): record, OTHER_MPN: _record(OTHER_MPN, manufacturer="Murata")},
+    )
+    upper = _part(client, db, MPN, linked_provider="mouser", links=("mouser",))
+    lower = _part(client, db, MPN.lower(), linked_provider="mouser", links=("mouser",))
+    bystander = _part(client, db, OTHER_MPN, linked_provider="mouser", links=("mouser",))
+    db.commit()
+    report = tmp_path / "apply.csv"
+
+    outcome = _sweep(db, report, apply=True)
+
+    db.expire_all()
+    rows = {row["part_id"]: row for row in _report_rows(report)}
+    assert set(rows) == {str(upper), str(lower), str(bystander)}
+    # The part whose rewrite was rejected keeps the MPN it had.
+    assert rows[str(lower)]["action"] == ACTION_ERROR
+    # The constraint name is the part an operator acts on; the failing
+    # statement and its parameters are deliberately not in the cell.
+    assert rows[str(lower)]["error"] == (
+        "database constraint uq_parts_ws_mpn rejected the write"
+    )
+    assert db.get(Part, lower).mpn == MPN.lower()
+    # Everything else was still written.
+    assert rows[str(upper)]["action"] == ACTION_REFRESHED
+    assert rows[str(bystander)]["action"] == ACTION_REFRESHED
+    assert db.get(Part, bystander).manufacturer == "Murata"
+    assert outcome.counts[ACTION_ERROR] == 1
+    assert outcome.halted_on is None, "a rejected write is not a quota stop"
+
+
+def test_a_padded_provider_mpn_is_stored_stripped(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    """The vendor's spelling is what the primary stores, and it arrives
+    padded often enough to matter: an untrimmed `parts.mpn` reads as a
+    different MPN to `uq_parts_ws_mpn` and to every later exact-match
+    lookup, so the part quietly stops matching itself."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    providers["mouser"] = StubProvider(
+        "mouser", {MPN: _record(f"  {MPN}  ", manufacturer="Yageo")}
+    )
+    part_id = _part(client, db, MPN, linked_provider="mouser", links=("mouser",))
+    db.commit()
+
+    _sweep(db, tmp_path / "apply.csv", apply=True)
+
+    db.expire_all()
+    assert db.get(Part, part_id).mpn == MPN
 
 
 # ---------------------------------------------------------------------------

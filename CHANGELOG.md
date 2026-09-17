@@ -44,7 +44,11 @@ the canonical record.
   vendors file `AEC-Q200` under `Features` rather than `Ratings` or
   `Qualification`, and those rows were left raw. Unlike the other two,
   `Features` was never on the junk denylist, so a value the extractor
-  refuses stays on the Specs tab verbatim instead of being dropped.
+  refuses stays on the Specs tab verbatim instead of being dropped. A
+  refusal is also no longer allowed to win a key: alias resolution walks
+  on to the next spelling present, so `Ratings: Moisture Resistant` next
+  to `Features: Automotive AEC-Q200` reads the qualification off the
+  second instead of leaving the key empty.
 - **`provider-refresh` re-asks the providers about parts imported before
   the importer knew what it knows now.** A new operator-run job sweeps
   every active, linked part with an MPN in a workspace and writes back
@@ -61,6 +65,11 @@ the canonical record.
   part. `--link-missing-providers` also asks the SECONDARY providers a
   part is not linked to; it never promotes one to primary, which would
   rewrite six part columns from a provider nobody chose for that part.
+  Each (part, provider) pair writes inside its own savepoint, so a
+  statement Postgres rejects — most realistically the vendor's spelling
+  of an MPN colliding with a sibling part on `uq_parts_ws_mpn` — is one
+  `error` row and a sweep that carries on, not a 25-part batch that
+  commits nothing. The vendor's MPN is stored stripped.
   `docs/runbooks/provider-refresh.md`; ADR-0021.
 - **The refresh sequence moved out of the route.**
   `domain/parts/services/provider_refresh.py::refresh_part` is now the

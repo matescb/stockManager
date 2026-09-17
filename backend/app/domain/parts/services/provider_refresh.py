@@ -406,7 +406,12 @@ def _apply_primary_columns(
     was = (part.mpn or "").strip() if fill_only else ""
     if _claimable(part.manufacturer, was, fill_only):
         part.manufacturer = result.get("manufacturer") or part.manufacturer
-    new_mpn = result.get("mpn") or part.mpn
+    # Stripped, because the vendor's spelling is what gets stored and it
+    # arrives padded often enough to matter: an untrimmed `parts.mpn`
+    # is a different string to `uq_parts_ws_mpn` and to every later
+    # exact-match lookup, so the part quietly stops matching itself.
+    # `_is_exact` already compares on the stripped value.
+    new_mpn = (result.get("mpn") or "").strip() or part.mpn
     if new_mpn:
         # Not gated: `require_exact_mpn` is what a claim runs under, so
         # this only ever restates the vendor's own spelling of the MPN

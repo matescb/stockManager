@@ -719,6 +719,66 @@ def test_features_loses_the_automotive_key_to_the_dedicated_alias(
     assert "Features" not in result.optional
 
 
+@pytest.mark.parametrize(
+    ("provider", "dedicated"), [("digikey", "Ratings"), ("mouser", "Qualification")]
+)
+def test_a_refused_alias_falls_through_to_the_next_one_present(
+    provider: str, dedicated: str
+) -> None:
+    """A refusal is not an answer, so it cannot win the key.
+
+    This is the shape a second alias made reachable: the
+    highest-precedence spelling is present and its extractor says the
+    value carries no fact about the key, while a lower one carries the
+    fact. Stopping at the first alias would leave `automotive` empty AND
+    archive both rows — the worst of both, since neither the
+    qualification nor the prose would survive anywhere.
+    """
+    result = normalise(
+        "resistor",
+        provider,
+        [(dedicated, "Moisture Resistant"), ("Features", "Automotive AEC-Q200")],
+    )
+
+    assert result.canonical["automotive"].display == "AEC-Q200"
+    assert result.canonical["automotive"].raw_key == "Features"
+    # The prose alias is still retired: it was junk-denylisted until the
+    # extractor gave it a meaning, and it has not got one here.
+    assert result.dropped == [dedicated]
+    assert "Features" not in result.optional
+
+
+@pytest.mark.parametrize(
+    ("provider", "dedicated"), [("digikey", "Ratings"), ("mouser", "Qualification")]
+)
+def test_when_every_alias_refuses_only_the_never_junk_one_survives(
+    provider: str, dedicated: str
+) -> None:
+    result = normalise(
+        "resistor",
+        provider,
+        [(dedicated, "Moisture Resistant"), ("Features", "Moisture Resistant")],
+    )
+
+    assert "automotive" not in result.canonical
+    assert result.optional == {"Features": "Moisture Resistant"}
+    assert result.dropped == [dedicated]
+
+
+def test_a_refused_first_alias_does_not_promote_a_lower_precedence_reading() -> None:
+    """Fall-through is about refusals only. Two aliases that BOTH extract
+    still resolve by schema order — `test_the_first_listed_alias_wins…`
+    pins the general case, and this pins it for an extractor-backed key,
+    which is the one the fall-through touches."""
+    result = normalise(
+        "resistor",
+        "digikey",
+        [("Ratings", "AEC-Q200"), ("Features", "Automotive AEC-Q101")],
+    )
+
+    assert result.canonical["automotive"].display == "AEC-Q200"
+
+
 # ---------------------------------------------------------------------------
 # `technology` — the resistor's construction, and the most frequent
 # unmapped raw key on prod (64 rows under `Composition`)

@@ -99,7 +99,7 @@ minutes, and `--link-missing-providers` roughly doubles that.
    | `refreshed` | The provider answered and its payload was reconciled onto a part it was already linked to. |
    | `linked` | The same, on a provider that had no claim on the part at all. Only `--link-missing-providers` (a secondary joining a linked part) and `--include-unlinked` (any tier claiming a part nothing owned) produce these, and only on an exact-MPN hit. |
    | `miss` | The provider has never heard of this MPN, or answered with a different one. Nothing written, no link created. Not a failure — and the second case is common, because the sweep requires an EXACT MPN match (see below). |
-   | `error` | The lookup raised, or the provider reported it is out of quota. The `error` column says which. |
+   | `error` | The lookup raised, the provider reported it is out of quota, or the database rejected the write. The `error` column says which; a rejected write names the constraint, and `uq_parts_ws_mpn` means another part in the workspace already holds the MPN the payload spelled. |
    | `skipped` | There was nothing to ask: either the part is linked to a provider this workspace has no usable credentials for, or (under `--include-unlinked`) the part has no MPN. The no-MPN case is one line for the part with `provider` and `tier` blank — nobody was asked. |
 
    Exactly one of `assets_fetched` and `assets_would_fetch` is populated
@@ -180,9 +180,12 @@ providers a part is already known to. On our catalogue 34 unlinked parts
 carry an MPN and one does not.
 
 Each unlinked part is asked of the workspace **primary first, then every
-secondary with credentials**, exact-MPN only, and the first provider that
-answers links it. The cost is one call per part per provider, so budget
-it the same way as `--link-missing-providers`.
+secondary with credentials** — all of them, not just until one answers —
+exact-MPN only, and every provider that answers links the part. So a
+part both providers stock ends up with two `linked` lines and two link
+rows, the primary having claimed the columns and the secondary having
+written its own namespace. The cost is one call per part per provider,
+so budget it the same way as `--link-missing-providers`.
 
 **The primary may claim an unlinked part.** This is the one place it
 runs on a part it has never owned, and the exception is narrow on
@@ -209,6 +212,20 @@ different from a refresh of a part the primary already owns, where the
 vendor drives those columns: there the vendor is the source of record,
 here whoever typed them never asked a vendor to replace their words.
 
+**The primary gets one chance per part, so read the misses.** The flag
+offers the primary only while NOTHING is linked to the part. If the
+primary misses tonight and a secondary hits, the part is no longer
+unlinked, and a later `--include-unlinked` run will never offer it the
+primary again — it will only refresh the secondary. That follows from
+the rule above and is the right rule, but it means a `miss` line on the
+primary tier for an unlinked part is a line worth acting on while it is
+in front of you: usually the MPN is stored in a format the vendor does
+not print (see [Two rules worth
+knowing](#two-rules-worth-knowing-before-you-run-it)). The recovery is
+the per-part Refresh button, or `POST
+/api/parts/{id}/refresh-from-provider`, which is the same per-part human
+decision promoting a provider always was — not a re-run of the sweep.
+
 **A part with no MPN** is reported as `skipped` with
 `part has no MPN to look up`, one line, no provider asked. It is in the
 report rather than absent from it because supplying the MPN is the
@@ -227,6 +244,22 @@ one is running exits **2** with `another provider-refresh is already
 running` and touches nothing — including the `--report` file, which the
 running sweep may still be writing. `run_job`'s own transaction-scoped
 lock does not cover this: it is dropped at the first per-batch commit.
+
+## One bad row does not lose the batch
+
+Each (part, provider) pair writes inside its own SAVEPOINT, nested in the
+batch's. A statement Postgres rejects aborts the transaction it runs in,
+so without that a single bad row would take every part in its 25-part
+batch with it and the sweep would commit nothing for them. Instead the
+pair gets an `error` line naming the constraint, the savepoint is rolled
+back, and the run carries on — it is not a halt, because the provider is
+answering fine.
+
+The realistic cause is `uq_parts_ws_mpn`. Two parts whose MPNs differ
+only by case or padding are legal, because that index is exact; they stop
+being legal the moment a refresh rewrites one of them to the vendor's
+spelling. Fix it by hand — merge the duplicates, or correct the MPN on
+the part that should not have it — and re-run.
 
 ## Quota, and exit 3
 

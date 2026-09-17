@@ -59,7 +59,10 @@ one, and replacing it is a per-part human decision.
 Which parts a sweep touches, which providers each one is asked about, and
 the SAVEPOINT-or-COMMIT boundary around each batch of writes live next
 door in `provider_refresh_scope.py` — the seam the 800-line ceiling was
-split on, and the one place to read "what counts as a linked part".
+split on, and the one place to read "what counts as a linked part". How a
+failure is READ lives in `provider_refresh_failures.py`: whether a
+provider message means the day's quota is gone, and what to call a write
+the database rejected.
 
 ADR-0021 owns the job registry; ADR-0031 the tiers; ADR-0034 the specs.
 See `docs/runbooks/provider-refresh.md`.
@@ -67,7 +70,6 @@ See `docs/runbooks/provider-refresh.md`.
 from __future__ import annotations
 
 import logging
-import re
 import time
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -76,6 +78,7 @@ from dataclasses import dataclass
 from typing import TextIO
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.domain.audit.service import log_ids as audit_log_ids
@@ -89,6 +92,10 @@ from app.domain.parts.services.provider_refresh import (
     primary_provider_name,
     provider_target,
     refresh_part,
+)
+from app.domain.parts.services.provider_refresh_failures import (
+    looks_like_quota,
+    rejected_write,
 )
 from app.domain.parts.services.provider_refresh_report import (
     ACTION_ERROR,
@@ -160,30 +167,6 @@ DEFAULT_BATCH_SIZE = 25
 #: near 1,000 calls a day; this is slow enough to be polite and fast
 #: enough that prod's 290 links finish in about four minutes.
 DEFAULT_SLEEP_MS = 750
-
-#: What a provider says when the daily allowance is gone. Matched against
-#: the message of a `found: False` answer AND of a raised `ProviderError`,
-#: because the two providers disagree about which one a 429 is: DigiKey
-#: returns `{"found": False, "message": "DigiKey rate limit reached"}`
-#: while a transport-level 429 arrives as an exception.
-_QUOTA_TOKENS: tuple[str, ...] = (
-    "rate limit",
-    "rate-limit",
-    "ratelimit",
-    "too many request",
-    "quota",
-    "calls exceeded",
-    "limit exceeded",
-)
-
-#: The other half, and it cannot be a bare `"429"` substring: provider
-#: messages quote MPNs, and `no match for MPN SN74HC4290` would then halt
-#: the sweep and blame a provider that is answering fine. It also cannot
-#: be dropped in favour of `status_code` alone — Mouser's transport layer
-#: turns a 429 into a `ProviderUpstreamError` whose `status_code` is 502
-#: and whose MESSAGE is `Mouser upstream returned HTTP 429`, so the
-#: number only survives in the text.
-_HTTP_429 = re.compile(r"\bhttp\b\D{0,3}429\b", re.IGNORECASE)
 
 
 class ProviderQuotaExhausted(RuntimeError):
@@ -610,48 +593,79 @@ def _refresh_one(
 
     throttle.wait()
     try:
-        outcome = refresh_part(
-            db,
-            ws=ws,
-            part=part,
-            provider_name=provider_name,
-            user_id=None,
-            category_index=index,
-            target=target,
-            # ALWAYS, linked or not. DigiKey falls back to a keyword
-            # search when exact-match `ProductDetails` misses and Mouser
-            # matches partially, so a "hit" is not necessarily this part:
-            # a wrong one rewrites the canonical specs and can re-file
-            # the part under another taxonomy. That risk is acceptable
-            # when a human asked about one part by name and is reading
-            # the answer; it is not acceptable unattended across 537
-            # (part, provider) pairs. The cost is that a part whose MPN
-            # is stored in a different format than the vendor prints it
-            # reads as `miss` — which is a line in the CSV an operator
-            # can act on, unlike a silent wrong match.
-            require_exact_mpn=True,
-            # The primary on a part it was not already linked to can only
-            # be `--include-unlinked`: `provider_order` never offers the
-            # primary for a part some provider already knows. Nobody owns
-            # this part's columns, so the primary may claim it — and fills
-            # only what the part left empty.
-            claim_unowned=provider_name == primary and not already_linked,
-            # A dry run downloads nothing. The file would land in
-            # UPLOAD_DIR outside the savepoint this batch rolls back, so
-            # a planning pass would leave content-addressed orphans and
-            # spend ~570 HTTP requests to learn what the payload already
-            # says. The report names them under `assets_would_fetch`.
-            fetch_assets=apply,
-        )
+        # One SAVEPOINT per (part, provider) pair, inside the batch's own
+        # boundary. A statement Postgres rejects — an MPN rewrite that
+        # collides with a sibling on `uq_parts_ws_mpn` is the realistic
+        # one — aborts the whole transaction it runs in, so without this
+        # one bad row would take every part in the batch with it and turn
+        # a 25-part commit into a run that wrote nothing. Cheap at one
+        # savepoint per pair for a job that sleeps 750 ms between calls.
+        with db.begin_nested():
+            outcome = refresh_part(
+                db,
+                ws=ws,
+                part=part,
+                provider_name=provider_name,
+                user_id=None,
+                category_index=index,
+                target=target,
+                # ALWAYS, linked or not. DigiKey falls back to a keyword
+                # search when exact-match `ProductDetails` misses and Mouser
+                # matches partially, so a "hit" is not necessarily this part:
+                # a wrong one rewrites the canonical specs and can re-file
+                # the part under another taxonomy. That risk is acceptable
+                # when a human asked about one part by name and is reading
+                # the answer; it is not acceptable unattended across 537
+                # (part, provider) pairs. The cost is that a part whose MPN
+                # is stored in a different format than the vendor prints it
+                # reads as `miss` — which is a line in the CSV an operator
+                # can act on, unlike a silent wrong match.
+                require_exact_mpn=True,
+                # The primary on a part it was not already linked to can only
+                # be `--include-unlinked`: `provider_order` never offers the
+                # primary for a part some provider already knows. Nobody owns
+                # this part's columns, so the primary may claim it — and fills
+                # only what the part left empty.
+                claim_unowned=provider_name == primary and not already_linked,
+                # A dry run downloads nothing. The file would land in
+                # UPLOAD_DIR outside the savepoint this batch rolls back, so
+                # a planning pass would leave content-addressed orphans and
+                # spend ~570 HTTP requests to learn what the payload already
+                # says. The report names them under `assets_would_fetch`.
+                fetch_assets=apply,
+            )
+            # Force the pending UPDATE and INSERTs out INSIDE this
+            # savepoint. `uq_parts_ws_mpn` is checked by the statement
+            # that writes the row, and a violation that first surfaced at
+            # the batch commit would be outside every savepoint there is.
+            db.flush()
     except ProviderError as exc:
         message = exc.message or str(exc)
-        if _looks_like_quota(message) or exc.status_code == 429:
+        if looks_like_quota(message) or exc.status_code == 429:
             halt.provider, halt.detail = provider_name, message
         return RefreshRow(**base, action=ACTION_ERROR, error=message)
+    except IntegrityError as exc:
+        # One part's problem, reported like a provider failure. The
+        # realistic cause is the payload's spelling of the MPN colliding
+        # with a sibling part on `uq_parts_ws_mpn` — two parts whose MPNs
+        # differ only by case are legal until a refresh rewrites one of
+        # them. The savepoint above has already been rolled back, so the
+        # session is usable and the rest of the batch still commits. NOT
+        # a halt: the provider is answering fine and every other part is
+        # worth asking about.
+        logger.info(
+            "%s workspace=%s part=%s provider=%s write rejected: %s",
+            JOB_NAME,
+            ws.id,
+            part.id,
+            provider_name,
+            exc,
+        )
+        return RefreshRow(**base, action=ACTION_ERROR, error=rejected_write(exc))
 
     if not outcome.found:
         message = outcome.error or "no match"
-        if _looks_like_quota(message):
+        if looks_like_quota(message):
             # DigiKey reports a 429 as a clean `found: False`. Reading it
             # as a miss would mark every remaining part "the provider has
             # never heard of this" and record a catalogue-wide lie.
@@ -684,7 +698,10 @@ def _refreshed_row(
     Calling those `linked` would report a catalogue-wide adoption event
     for what is a backfill of a row the column already implied. `linked`
     is reserved for a provider that had no claim on the part at all,
-    which only `--link-missing-providers` produces.
+    which two flags produce: `--link-missing-providers`, where a
+    secondary joins a part the primary already owns, and
+    `--include-unlinked`, where any tier claims a part nothing owned.
+    Both only on an exact-MPN hit.
     """
     report = outcome.report
     return RefreshRow(
@@ -730,13 +747,6 @@ def _targets_for(db: Session, ws: Workspace) -> dict[str, ProviderTarget]:
                 exc.message,
             )
     return targets
-
-
-def _looks_like_quota(message: str) -> bool:
-    lowered = (message or "").lower()
-    if any(token in lowered for token in _QUOTA_TOKENS):
-        return True
-    return _HTTP_429.search(lowered) is not None
 
 
 def _path(index: CategoryIndex, category_id: UUID | None) -> str:

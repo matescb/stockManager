@@ -142,6 +142,13 @@ typed survives, and so does one flagged `description_locally_edited`. That is
 the difference between claiming an unowned part and refreshing an owned one,
 where the vendor is the source of record for those columns.
 
+The primary is offered an unlinked part exactly once, which follows from the
+scope rule rather than being a separate decision: once any provider has linked
+the part it is no longer unlinked, so a primary that missed while a secondary
+hit never gets a second pass. Promoting it afterwards is the per-part human
+action it always was — `POST /api/parts/{id}/refresh-from-provider`. The
+runbook says which CSV line to watch for.
+
 ## Specs and category on a provider payload
 
 A provider lookup result becomes `custom_fields` rows through exactly one

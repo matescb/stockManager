@@ -338,6 +338,16 @@ alias.** Two data edits and one rule.
   `Qualification` because alias order is precedence order and those two
   are the keys whose whole purpose is the qualification. Some vendors
   file `AEC-Q200` under `Features`, and those rows were left raw.
+- **A refusal cannot win a key.** `_resolve_canonical` walks the
+  present aliases in precedence order and takes the first that
+  *answers*: an extractor returning ``None`` says the value carries no
+  fact about the key, so it is not a competing answer and the next
+  spelling is tried. Stopping at the first present alias would let
+  `Ratings: Moisture Resistant` hide a `Features: Automotive AEC-Q200`
+  on the same part and archive both rows, losing the qualification and
+  the prose together. It changes nothing for a key with no extractor —
+  there `_to_spec_value` never refuses, an unparseable value keeps its
+  text, and the first present alias still wins.
 - **A refused extractor does not always drop the alias.**
   `VERBATIM_IF_UNEXTRACTED` in `spec_schema_tables_more.py` names the
   aliases that keep their value when their extractor returns ``None``,
