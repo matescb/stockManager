@@ -190,7 +190,7 @@ def sweep_lock(db: Session) -> Iterator[None]:
     """Hold the session-level advisory lock for the length of a sweep.
 
     Separate from `refresh_linked_parts` so the CLI can take it before it
-    opens the report file: `_report_stream` truncates on open, and a run
+    opens the report file: `report_stream` truncates on open, and a run
     that turns out not to be allowed to start must not have destroyed the
     CSV of the one that is still going.
     """

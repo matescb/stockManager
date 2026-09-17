@@ -61,14 +61,22 @@ def upsert_link(
     external_id: str | None = None,
     source_url: str | None = None,
     last_refresh_at: datetime | None = None,
-) -> PartProviderLink:
+) -> tuple[PartProviderLink, bool]:
     """Create or refresh the link row for (part, provider).
+
+    Returns `(row, created)`. `created` is True only when this call
+    INSERTED the row, which is the one question the caller cannot answer
+    afterwards — the row looks identical either way. It is reported here
+    rather than left to a `get_link` before the call, because that is a
+    second SELECT for something this function already knows, once per
+    (part, provider) pair across a whole sweep.
 
     A None `external_id` / `source_url` leaves the stored value alone —
     a lookup that came back without a product URL must not blank the one
     a previous refresh recorded. Caller owns the transaction.
     """
     row = get_link(db, workspace_id=workspace_id, part_id=part_id, provider=provider)
+    created = row is None
     if row is None:
         row = PartProviderLink(
             workspace_id=workspace_id,
@@ -85,7 +93,7 @@ def upsert_link(
     row.last_refresh_at = last_refresh_at or utcnow()
     row.updated_by = user_id
     db.flush()
-    return row
+    return row, created
 
 
 def delete_link(db: Session, row: PartProviderLink) -> None:

@@ -116,7 +116,7 @@ def _run(db: Any, report_path: Path, **kwargs: Any) -> RenameOutcome:
     """Run the job with its CSV going to `report_path`.
 
     The stream belongs to the caller — in production that is
-    `run_job._report_stream`, which also owns the 0700 directory and the
+    `run_job_options.report_stream`, which also owns the 0700 directory and the
     0600 file. Here it is just a file the assertions can read back.
     """
     with report_path.open("w", encoding="utf-8", newline="") as handle:

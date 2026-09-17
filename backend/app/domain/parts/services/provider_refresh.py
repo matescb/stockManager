@@ -36,7 +36,7 @@ from app.domain.parts.provider_fields import (
     KNOWN_PROVIDER_NAMES,
     PROVIDER_ASSET_CUSTOM_FIELD_KINDS,
 )
-from app.domain.parts.provider_links import get_link, upsert_link
+from app.domain.parts.provider_links import upsert_link
 from app.domain.parts.providers import PartsProvider, make_provider
 from app.domain.parts.services.assets import fetch_provider_asset
 from app.domain.parts.services.provider_cache import lookup_fresh
@@ -49,6 +49,7 @@ from app.domain.parts.services.spec_reconcile import (
 
 __all__ = [
     "MissingMpnError",
+    "ensure_refreshable",
     "ProviderNotConfiguredError",
     "ProviderTarget",
     "RefreshError",
@@ -144,6 +145,21 @@ class RefreshOutcome:
     error: str | None
 
 
+def ensure_refreshable(part: Part) -> str:
+    """The MPN to look up, or `MissingMpnError`.
+
+    Public so the route can ask BEFORE it builds the workspace's category
+    tree: that is a full `part_categories` read, and paying for it to
+    then answer 400 is work nobody asked for. `refresh_part` calls it
+    too, so the precondition still has exactly one definition and a
+    caller that skips the pre-flight is not in a different contract.
+    """
+    mpn = (part.mpn or "").strip()
+    if not mpn:
+        raise MissingMpnError("part has no MPN to look up")
+    return mpn
+
+
 def primary_provider_name(ws) -> str | None:
     """The workspace's primary provider, normalised, or None."""
     return (ws.parts_provider or "").strip().lower() or None
@@ -223,9 +239,7 @@ def refresh_part(
 
     Caller owns the transaction. Nothing here commits.
     """
-    mpn = (part.mpn or "").strip()
-    if not mpn:
-        raise MissingMpnError("part has no MPN to look up")
+    mpn = ensure_refreshable(part)
 
     resolved = target if target is not None else provider_target(db, ws, provider_name)
     client = resolved.client
@@ -295,10 +309,7 @@ def refresh_part(
         category_assigned=category.assigned,
     )
 
-    existing = get_link(
-        db, workspace_id=ws.id, part_id=part.id, provider=client.name
-    )
-    link = upsert_link(
+    link, created = upsert_link(
         db,
         workspace_id=ws.id,
         part_id=part.id,
@@ -313,7 +324,7 @@ def refresh_part(
         provider=client.name,
         is_primary=is_primary,
         found=True,
-        linked=existing is None,
+        linked=created,
         part_columns_changed=tuple(
             name
             for name in _TRACKED_PART_COLUMNS

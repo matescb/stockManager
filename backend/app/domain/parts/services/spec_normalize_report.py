@@ -117,7 +117,7 @@ class Change:
 class NormalizeReport:
     """Streaming CSV writer over a stream the CALLER owns.
 
-    `stream` is what `run_job._report_stream` yields: the file `--report`
+    `stream` is what `run_job_options.report_stream` yields: the file `--report`
     named, or ``None`` for stdout. Opening and closing belong to that
     context manager, not here — every operator-run job gets its report
     file on the same terms, including the `newline=""` the `csv` module

@@ -127,7 +127,7 @@ def normalize_specs(
     `workspace_id` limits the run to one workspace; omitted, every
     workspace is processed in id order. `stream` is where the review CSV
     goes — the file `--report` named, or ``None`` for stdout. The CLI
-    opens and closes it (`run_job._report_stream`), so every operator-run
+    opens and closes it (`run_job_options.report_stream`), so every operator-run
     job reports on the same terms.
 
     Caller owns the session. On apply this function commits per batch, so

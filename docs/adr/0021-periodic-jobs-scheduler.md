@@ -22,7 +22,7 @@ The periodic job set now includes:
 
 ## Decision
 
-Periodic jobs run through `backend-cron*` sidecar containers that invoke a shared backend CLI entry point, for example `python -m app.cli.run_job <job-name>`. The sidecars use the same backend image and database settings as `backend`, but they do not serve HTTP and do not run uvicorn.
+Periodic jobs run through `backend-cron*` sidecar containers that invoke a shared backend CLI entry point, for example `python -m app.cli.run_job <job-name>`. The CLI is three modules on one seam the registry already draws: `run_job.py` holds the registry, the transaction rules and `main`; `run_job_operator.py` holds the adapters for the jobs a human runs by hand and the flags only some of them read; `run_job_options.py` holds what both need — `JobOptions`, the report file it names, and the errors `main` turns into exit codes. The arrows point one way, and no module imports the ORM at top level, because the compose healthchecks import this CLI on a 0.5-CPU sidecar. The sidecars use the same backend image and database settings as `backend`, but they do not serve HTTP and do not run uvicorn.
 
 Each job must be registered in the CLI allow-list with a clear owner, cadence, and idempotency expectations. The sidecar owns scheduling; the FastAPI request process does not grow a second scheduler.
 

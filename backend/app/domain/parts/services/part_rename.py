@@ -176,7 +176,7 @@ class RenameOutcome:
 class RenameReport:
     """Streaming CSV writer over a stream the CALLER owns.
 
-    `stream` is what `run_job._report_stream` yields: the file
+    `stream` is what `run_job_options.report_stream` yields: the file
     `--report` named, or None for stdout. Opening, closing, the
     directory mode and the readable error when the path cannot be
     written all belong to that context manager — every operator-run job
@@ -212,7 +212,7 @@ def rename_parts(
     """Classify every active part, report the renames, optionally do them.
 
     `stream` is where the review CSV goes; the caller opens and closes it
-    (`run_job._report_stream`). `run_job` also owns the transaction, and
+    (`run_job_options.report_stream`). `run_job` also owns the transaction, and
     ends a dry run in ROLLBACK, so a run without `--apply` cannot write
     even if this function were wrong about which mode it is in.
     """

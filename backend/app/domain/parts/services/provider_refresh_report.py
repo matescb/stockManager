@@ -133,7 +133,7 @@ class RefreshRow:
 class RefreshReport:
     """Streaming CSV writer over a stream the CALLER owns.
 
-    `stream` is what `run_job._report_stream` yields: the file `--report`
+    `stream` is what `run_job_options.report_stream` yields: the file `--report`
     named, or ``None`` for stdout. Opening, closing, the 0600 mode and
     the readable error when the path cannot be written all belong to
     that context manager — every operator-run job reports on the same

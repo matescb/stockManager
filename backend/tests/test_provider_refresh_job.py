@@ -1073,6 +1073,55 @@ def test_a_quota_answer_stops_the_sweep(
     assert len(providers["mouser"].calls) == 1, "the sweep stopped at the first refusal"
 
 
+def test_a_message_naming_http_429_stops_the_sweep(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    """Mouser's transport layer turns a 429 into a `ProviderUpstreamError`
+    whose `status_code` is 502 — the number survives only in the text, so
+    the status code alone is not enough."""
+    from app.domain.parts.providers.base import ProviderUpstreamError
+
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    providers["mouser"] = StubProvider(
+        "mouser",
+        {MPN: ProviderUpstreamError("mouser", "Mouser upstream returned HTTP 429")},
+    )
+    _part(client, db, MPN, linked_provider="mouser")
+    db.commit()
+
+    with pytest.raises(ProviderQuotaExhausted):
+        _sweep(db, tmp_path / "dry.csv")
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "no match for MPN SN74HC4290",
+        "no match for MPN LM429",
+        "DigiKey returned HTTP 4290",
+    ],
+)
+def test_a_part_number_containing_429_is_not_read_as_a_quota_refusal(
+    client: TestClient, db, tmp_path: Path, providers, message: str
+) -> None:
+    """A bare `429` substring would halt the sweep on an ordinary miss and
+    blame a provider that is answering fine."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    providers["mouser"] = StubProvider(
+        "mouser", {MPN: message, OTHER_MPN: _record(OTHER_MPN, manufacturer="Murata")}
+    )
+    _part(client, db, MPN, linked_provider="mouser")
+    _part(client, db, OTHER_MPN, linked_provider="mouser")
+    db.commit()
+
+    outcome = _sweep(db, tmp_path / "dry.csv")
+
+    assert outcome.halted_on is None
+    assert outcome.parts == 2, "the sweep carried on past the miss"
+
+
 def test_a_429_exception_also_stops_the_sweep(
     client: TestClient, db, tmp_path: Path, providers
 ) -> None:
@@ -1244,6 +1293,53 @@ def test_a_dry_run_writes_no_audit_row(
         ).scalars().first()
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# What the sweep shares with the route
+# ---------------------------------------------------------------------------
+def test_upsert_link_reports_whether_it_inserted(
+    client: TestClient, db, providers
+) -> None:
+    """The sweep's `linked` vs `refreshed` action turns on this, and the
+    row looks identical afterwards either way. Reported by the writer, so
+    a sweep does not pay a second SELECT per (part, provider) pair to
+    re-ask a question it just answered."""
+    from app.domain.parts.provider_links import upsert_link
+
+    ws_id = _signup(client)
+    part_id = _part(client, db, MPN)
+
+    _, created_first = upsert_link(
+        db, workspace_id=ws_id, part_id=part_id, user_id=None, provider="mouser"
+    )
+    _, created_again = upsert_link(
+        db, workspace_id=ws_id, part_id=part_id, user_id=None, provider="mouser"
+    )
+
+    assert (created_first, created_again) == (True, False)
+
+
+def test_the_route_answers_400_for_a_missing_mpn_without_reading_the_tree(
+    client: TestClient, db, providers, monkeypatch
+) -> None:
+    """The category snapshot is a full `part_categories` read. Paying for
+    it only to answer 400 is work nobody asked for, so the precondition
+    runs first — and it is the service's own, not a second copy."""
+    monkeypatch.setattr(
+        "app.api.routes.parts_refresh.category_index",
+        lambda db, ws_id: pytest.fail("the tree was read before the precondition"),
+    )
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    part_id = _part(client, db, MPN)
+    db.get(Part, part_id).mpn = "   "
+    db.commit()
+
+    r = client.post(f"/api/parts/{part_id}/refresh-from-provider")
+
+    assert r.status_code == 400, r.text
+    assert "no MPN" in r.json()["status"]["message"]
 
 
 # ---------------------------------------------------------------------------
@@ -1452,7 +1548,7 @@ def test_a_bare_run_through_the_registry_is_a_dry_run(
 # ---------------------------------------------------------------------------
 def _sweep(db, path: Path, **kwargs):
     """`refresh_linked_parts` with the report opened the way the CLI opens
-    it — `run_job._report_stream` owns the handle in production."""
+    it — `run_job_options.report_stream` owns the handle in production."""
     with path.open("w", encoding="utf-8", newline="") as stream:
         return refresh_linked_parts(db, stream=stream, **kwargs)
 

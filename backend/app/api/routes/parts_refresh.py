@@ -53,6 +53,7 @@ from app.domain.parts.services.provider_refresh import (
     MissingMpnError,
     ProviderNotConfiguredError,
     UnknownProviderError,
+    ensure_refreshable,
     refresh_part,
 )
 from app.domain.stock.service import reserved_quantity, total_for_part
@@ -86,15 +87,20 @@ def refresh_from_provider(
     """
     p = _get_part(db, ws.id, part_id)
 
-    # One snapshot of the workspace's tree for the whole request. Both
-    # readers need it — `apply_provider_category` inside the service asks
-    # it three questions, and the `missing_specs` badge on the response
-    # asks it a fourth — and building it per caller made a plain refresh
-    # scan `part_categories` three times over. Nothing in the refresh
-    # creates a category, so the snapshot cannot go stale under itself.
-    categories = category_index(db, ws_id=ws.id)
-
     try:
+        # The MPN precondition first: the snapshot below is a full
+        # `part_categories` read, and paying for it only to answer 400 is
+        # work nobody asked for. The service checks it again, so there is
+        # still one definition of the rule.
+        ensure_refreshable(p)
+        # One snapshot of the workspace's tree for the whole request. Both
+        # readers need it — `apply_provider_category` inside the service
+        # asks it three questions, and the `missing_specs` badge on the
+        # response asks it a fourth — and building it per caller made a
+        # plain refresh scan `part_categories` three times over. Nothing
+        # in the refresh creates a category, so the snapshot cannot go
+        # stale under itself.
+        categories = category_index(db, ws_id=ws.id)
         outcome = refresh_part(
             db,
             ws=ws,

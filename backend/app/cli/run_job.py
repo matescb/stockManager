@@ -4,18 +4,50 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 import time
-from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, TextIO
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
+
+# Re-exported: every existing caller and test imports these from here,
+# and which of the three CLI modules a name is DEFINED in is not a fact
+# they should have to track.
+from app.cli.run_job_operator import (
+    EXTRA_FLAGS as _EXTRA_FLAGS,
+)
+from app.cli.run_job_operator import (
+    add_operator_arguments,
+    run_category_seed_job,
+    run_part_rename_job,
+    run_provider_refresh_job,
+    run_spec_normalize_job,
+    run_symbol_collapse_job,
+)
+from app.cli.run_job_options import (
+    JobConfigError,
+    JobHaltedError,
+    JobOptions,
+    UnknownJobError,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+__all__ = [
+    "JOBS",
+    "JobConfigError",
+    "JobHaltedError",
+    "JobOptions",
+    "JobSpec",
+    "UnknownJobError",
+    "heartbeat_is_fresh",
+    "job_interval_seconds",
+    "main",
+    "run_job",
+]
 
 # Nothing from sqlalchemy or app.core is imported at module level on purpose.
 # The compose healthchecks for backend-cron-sessions and backend-cron-datasheets
@@ -37,49 +69,6 @@ OperatorJob = Callable[["Session", "JobOptions"], int]
 JobCallable = ScheduledJob | OperatorJob
 HEARTBEAT_DIR = Path("/tmp/stockmanager-job-heartbeats")
 HEARTBEAT_MAX_AGE_SECONDS = 90 * 60
-
-
-@dataclass(frozen=True)
-class JobOptions:
-    """The flags an operator-run job accepts.
-
-    Only jobs that set `JobSpec.takes_options` receive one; the
-    scheduled sidecar jobs take no arguments at all and their signature
-    stays `run(db)`.
-
-    `apply` is False by default and that is the whole point: these jobs
-    change data nobody asked them to change on a timer, so the operator
-    reads a report first. `run_job` rolls the transaction back after a
-    dry run, so "the job forgot to check the flag" is not a way to write
-    to production.
-
-    `report` is where the job writes its CSV instead of stdout. Both
-    jobs here honour it, and it lives on the shared options object
-    rather than in either job because the two branches queued behind
-    this one (`feat/spec-normalize-job` and `feat/part-naming-convention`)
-    register operator jobs that want the same flag — a job opts in by
-    passing `_report_stream(options)` to whatever already takes a
-    `stream`, and adds nothing to the parser.
-    """
-
-    apply: bool = False
-    workspace_id: UUID | None = None
-    report: Path | None = None
-    #: `part-rename` only, declared through `JobSpec.extra_flags`. A job
-    #: that does not declare it and is handed `--include-free` is
-    #: refused by name, the same way a scheduled job handed `--apply` is.
-    include_free: bool = False
-    #: `provider-refresh` only, all four. They exist because that job
-    #: spends a metered external resource: `limit` caps the parts a run
-    #: touches, `only_uncategorized` narrows it to the parts with the
-    #: most to gain, `link_missing_providers` widens what each part is
-    #: asked, and `sleep_ms` paces the calls. `None` means "not given" for
-    #: the two that take a value — `sleep_ms=0` is a real choice (turn the
-    #: throttle off) and must not read as an absent flag.
-    limit: int | None = None
-    only_uncategorized: bool = False
-    link_missing_providers: bool = False
-    sleep_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -109,26 +98,6 @@ class JobSpec:
     #: every job that does not list it here — silently ignoring it is the
     #: failure mode this whole surface is built to avoid.
     extra_flags: tuple[str, ...] = ()
-
-
-class UnknownJobError(ValueError):
-    """Raised when the requested job name is not registered."""
-
-
-class JobConfigError(ValueError):
-    """Raised when a job's settings-backed configuration is invalid."""
-
-
-class JobHaltedError(RuntimeError):
-    """A job stopped early ON PURPOSE and wants a distinct exit code.
-
-    Not a failure: the job has already written its report and, on
-    `--apply`, committed what it finished. `main` reports it as exit 3,
-    which is neither 0 ("done") nor 2 ("you asked for something
-    impossible") — a monitor or a runbook step can tell "stopped, re-run
-    later" from both. `provider-refresh` raises it when a provider says
-    the day's quota is gone.
-    """
 
 
 def _acquire_job_lock(db: Session, job_name: str) -> bool:
@@ -188,148 +157,6 @@ def _run_datasheet_backfill(db: Session) -> int:
     from app.domain.parts.services.datasheets import backfill_missing_datasheets
 
     return backfill_missing_datasheets(db)
-
-
-@contextmanager
-def _report_stream(options: JobOptions) -> Iterator[TextIO | None]:
-    """The file `--report` named, or None for "write to stdout".
-
-    `newline=""` because the payload is CSV: `csv` writes its own line
-    terminator, and letting the text layer translate it again produces
-    CRLFCRLF on a platform that does.
-
-    The file is written even on a dry run, and that is the point — the
-    report IS the deliverable of a dry run. The transaction rolls back;
-    the operator still has the CSV to read.
-
-    It is written 0600, in a 0700 directory when the job has to create
-    one. These reports name every workspace, part, key and value they
-    touch, and they land wherever the operator pointed — which on the
-    prod container is a world-readable `/tmp`. `exist_ok=True` does not
-    re-mode a directory that already exists, so `--report /tmp/x.csv`
-    hardens the file and never touches `/tmp` itself.
-    """
-    if options.report is None:
-        yield None
-        return
-    try:
-        options.report.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        handle = options.report.open("w", encoding="utf-8", newline="")
-    except OSError as exc:
-        # Same contract as a `--workspace` that names nothing: a usage
-        # error the operator can read and fix, not a traceback. Only the
-        # open is wrapped — an OSError raised later, from inside the job,
-        # is a real failure and must keep its stack.
-        raise JobConfigError(f"cannot write --report {options.report}: {exc}") from exc
-    with handle:
-        # After the open, so the mode applies to the file that exists
-        # rather than racing whatever umask the operator's shell carries.
-        os.chmod(options.report, 0o600)
-        yield handle
-
-
-def _run_category_seed(db: Session, options: JobOptions) -> int:
-    from app.domain.categories.seed import run_category_seed
-
-    with _report_stream(options) as stream:
-        return run_category_seed(
-            db,
-            apply=options.apply,
-            workspace_id=options.workspace_id,
-            stream=stream,
-        )
-
-
-def _run_symbol_collapse(db: Session, options: JobOptions) -> int:
-    from app.domain.eda.symbol_collapse import run_symbol_collapse
-
-    with _report_stream(options) as stream:
-        return run_symbol_collapse(
-            db,
-            apply=options.apply,
-            workspace_id=options.workspace_id,
-            stream=stream,
-        )
-
-
-def _run_spec_normalize(db: Session, options: JobOptions) -> int:
-    from app.domain.parts.services.spec_normalize import normalize_specs
-
-    # A `--workspace` that names nothing raises `UnknownWorkspaceError`,
-    # a `LookupError` — the shape `main` already turns into exit 2 for the
-    # other operator-run jobs. Nothing to translate here.
-    with _report_stream(options) as stream:
-        outcome = normalize_specs(
-            db,
-            apply=options.apply,
-            workspace_id=options.workspace_id,
-            stream=stream,
-        )
-    return outcome.changes
-
-
-def _run_part_rename(db: Session, options: JobOptions) -> int:
-    from app.domain.parts.services.part_rename import rename_parts
-
-    # A `--workspace` that names nothing raises `UnknownWorkspaceError`,
-    # the same `LookupError` the other operator-run jobs raise and `main`
-    # already reports as a usage error.
-    with _report_stream(options) as stream:
-        outcome = rename_parts(
-            db,
-            apply=options.apply,
-            include_free=options.include_free,
-            workspace_id=options.workspace_id,
-            stream=stream,
-        )
-    return outcome.counts.renamed
-
-
-def _run_provider_refresh(db: Session, options: JobOptions) -> int:
-    from app.domain.parts.services.provider_refresh_job import (
-        DEFAULT_SLEEP_MS,
-        ProviderQuotaExhausted,
-        SweepAlreadyRunning,
-        refresh_linked_parts,
-        sweep_lock,
-    )
-
-    # A `--workspace` that names nothing raises `UnknownWorkspaceError`,
-    # the `LookupError` shape `main` already reports as a usage error.
-    try:
-        # The lock is taken OUTSIDE `_report_stream`, and the order is the
-        # point: opening the report truncates it, so a run that is not
-        # allowed to start would otherwise destroy the CSV belonging to
-        # the sweep that IS running before finding out it may not run.
-        with sweep_lock(db), _report_stream(options) as stream:
-            try:
-                outcome = refresh_linked_parts(
-                    db,
-                    apply=options.apply,
-                    workspace_id=options.workspace_id,
-                    stream=stream,
-                    limit=options.limit,
-                    only_uncategorized=options.only_uncategorized,
-                    link_missing_providers=options.link_missing_providers,
-                    sleep_ms=(
-                        options.sleep_ms
-                        if options.sleep_ms is not None
-                        else DEFAULT_SLEEP_MS
-                    ),
-                    lock_held=True,
-                )
-            except ProviderQuotaExhausted as exc:
-                # Translated at the boundary rather than raised from the
-                # domain: `JobHaltedError` is the CLI's vocabulary for "a
-                # job stopped on purpose and the exit code should say so",
-                # and a domain service has no business importing it.
-                raise JobHaltedError(str(exc)) from exc
-    except SweepAlreadyRunning as exc:
-        # Exit 2 with a message, not exit 0 with an empty report: for a
-        # job whose purpose is to change a few hundred parts, "nothing to
-        # do" is the most misleading answer available.
-        raise JobConfigError(str(exc)) from exc
-    return outcome.refreshed
 
 
 def _printing_is_configured() -> bool:
@@ -437,7 +264,7 @@ JOBS: dict[str, JobSpec] = {
             "or overwrites. A second run creates nothing. Writes nothing at "
             "all without --apply."
         ),
-        run=_run_category_seed,
+        run=run_category_seed_job,
         takes_options=True,
     ),
     "symbol-collapse": JobSpec(
@@ -450,7 +277,7 @@ JOBS: dict[str, JobSpec] = {
             "fall back to. A cleared row no longer matches, so a second run "
             "finds nothing. Writes nothing at all without --apply."
         ),
-        run=_run_symbol_collapse,
+        run=run_symbol_collapse_job,
         takes_options=True,
     ),
     "spec-normalize": JobSpec(
@@ -466,7 +293,7 @@ JOBS: dict[str, JobSpec] = {
             "placeholder values are archived. Writes nothing at all without "
             "--apply, which it refuses without --report."
         ),
-        run=_run_spec_normalize,
+        run=run_spec_normalize_job,
         takes_options=True,
         requires_report=True,
     ),
@@ -484,7 +311,7 @@ JOBS: dict[str, JobSpec] = {
             "nothing at all without --apply, which it refuses without "
             "--report."
         ),
-        run=_run_part_rename,
+        run=run_part_rename_job,
         takes_options=True,
         # It rewrites `parts.name` in place. The CSV is the operator's
         # record of what those names were — the `alias` field covers most
@@ -508,7 +335,7 @@ JOBS: dict[str, JobSpec] = {
             "Stops at exit 3 when a provider reports it is out of quota, "
             "keeping everything committed up to that point."
         ),
-        run=_run_provider_refresh,
+        run=run_provider_refresh_job,
         takes_options=True,
         # It rewrites `parts.manufacturer` / `description` / `footprint`
         # and spec values in place from a remote payload. The CSV is the
@@ -767,53 +594,7 @@ def _parser() -> argparse.ArgumentParser:
             "stdout. Written on a dry run too — the report is the point of one."
         ),
     )
-    parser.add_argument(
-        "--include-free",
-        action="store_true",
-        help=(
-            "part-rename only: also rename parts whose name is free text. "
-            "Off by default — a hand-typed name is somebody's deliberate "
-            "choice — and the report lists them either way."
-        ),
-    )
-    parser.add_argument(
-        "--limit",
-        metavar="N",
-        type=int,
-        default=None,
-        help=(
-            "provider-refresh only: stop after this many parts, across the "
-            "whole run. Every call it makes comes out of a metered daily "
-            "allowance, so trying ten first is the normal way to start."
-        ),
-    )
-    parser.add_argument(
-        "--only-uncategorized",
-        action="store_true",
-        help=(
-            "provider-refresh only: restrict the sweep to parts with no "
-            "category, which are the ones with the most to gain."
-        ),
-    )
-    parser.add_argument(
-        "--link-missing-providers",
-        action="store_true",
-        help=(
-            "provider-refresh only: also ask every provider this workspace "
-            "has credentials for that the part is not linked to, and link it "
-            "on an exact-MPN hit. Costs one extra call per part per provider."
-        ),
-    )
-    parser.add_argument(
-        "--sleep-ms",
-        metavar="MS",
-        type=int,
-        default=None,
-        help=(
-            "provider-refresh only: milliseconds between provider calls "
-            "(default 750). 0 turns the throttle off."
-        ),
-    )
+    add_operator_arguments(parser)
     return parser
 
 
@@ -854,23 +635,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "--print-interval or a heartbeat check"
         )
     return args
-
-
-#: `JobOptions` attributes a job opts into through `JobSpec.extra_flags`,
-#: mapped to the parsed value that means "the operator did not pass it".
-#:
-#: A mapping rather than a list of names because "not given" is not the
-#: same as "falsy" for every flag: `--sleep-ms 0` is an operator turning
-#: the throttle off, and reading it as an absent flag would let it be
-#: silently accepted by a job that does not understand it — the exact
-#: failure mode this whole surface exists to avoid.
-_EXTRA_FLAGS: Mapping[str, object] = {
-    "include_free": False,
-    "limit": None,
-    "only_uncategorized": False,
-    "link_missing_providers": False,
-    "sleep_ms": None,
-}
 
 
 def _job_flags_given(args: argparse.Namespace) -> bool:
@@ -917,15 +681,15 @@ def _options_for(
             f"job {job.name!r} requires --report with --apply: it rewrites "
             "values in place, and the CSV is the only record of what they were"
         )
+    # Built from `_EXTRA_FLAGS` rather than named one by one: the
+    # mapping already has to list every job-specific flag for the refusal
+    # check above, and a flag present there and missing here would be
+    # accepted, validated, and then silently dropped.
     return JobOptions(
         apply=args.apply,
         workspace_id=args.workspace,
         report=args.report,
-        include_free=args.include_free,
-        limit=args.limit,
-        only_uncategorized=args.only_uncategorized,
-        link_missing_providers=args.link_missing_providers,
-        sleep_ms=args.sleep_ms,
+        **{flag: getattr(args, flag) for flag in _EXTRA_FLAGS},
     )
 
 

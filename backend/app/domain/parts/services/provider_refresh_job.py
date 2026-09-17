@@ -57,6 +57,7 @@ See `docs/runbooks/provider-refresh.md`.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -162,8 +163,16 @@ _QUOTA_TOKENS: tuple[str, ...] = (
     "quota",
     "calls exceeded",
     "limit exceeded",
-    "429",
 )
+
+#: The other half, and it cannot be a bare `"429"` substring: provider
+#: messages quote MPNs, and `no match for MPN SN74HC4290` would then halt
+#: the sweep and blame a provider that is answering fine. It also cannot
+#: be dropped in favour of `status_code` alone — Mouser's transport layer
+#: turns a 429 into a `ProviderUpstreamError` whose `status_code` is 502
+#: and whose MESSAGE is `Mouser upstream returned HTTP 429`, so the
+#: number only survives in the text.
+_HTTP_429 = re.compile(r"\bhttp\b\D{0,3}429\b", re.IGNORECASE)
 
 
 class ProviderQuotaExhausted(RuntimeError):
@@ -231,7 +240,7 @@ def refresh_linked_parts(
     across the whole run, which is what an operator means by "try ten
     first". `stream` is where the review CSV goes — the file `--report`
     named, or ``None`` for stdout; the CLI opens and closes it
-    (`run_job._report_stream`).
+    (`run_job_options.report_stream`).
 
     Caller owns the session. On apply this commits per batch, so it takes
     a SESSION-level advisory lock rather than relying on `run_job`'s
@@ -708,7 +717,9 @@ def _targets_for(db: Session, ws: Workspace) -> dict[str, ProviderTarget]:
 
 def _looks_like_quota(message: str) -> bool:
     lowered = (message or "").lower()
-    return any(token in lowered for token in _QUOTA_TOKENS)
+    if any(token in lowered for token in _QUOTA_TOKENS):
+        return True
+    return _HTTP_429.search(lowered) is not None
 
 
 def _path(index: CategoryIndex, category_id: UUID | None) -> str:
