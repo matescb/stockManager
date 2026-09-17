@@ -25,6 +25,8 @@ from app.domain.parts.spec_key import SpecKey
 from app.domain.parts.spec_schema_tables_more import (
     EXTRA_COMMON_SPECS,
     MORE_CANONICAL_SPECS,
+    MORE_CLASS_DEFAULT_SLUG,
+    MORE_CLASS_RULES,
 )
 
 # ---------------------------------------------------------------------------
@@ -352,6 +354,10 @@ CLASS_RULES: tuple[tuple[frozenset[str], str], ...] = (
         frozenset({"diode", "diodes", "rectifier", "rectifiers", "zener", "schottky", "tvs"}),
         "diode",
     ),
+    # ICs, connectors, crystals, fuses, switches, transformers, mechanical —
+    # in `spec_schema_tables_more.py`, next to their spec keys, with the
+    # three taxonomy overlaps their order decides written out there.
+    *MORE_CLASS_RULES,
 )
 
 # class -> ((modifier words, slug), …). First match wins within a class.
@@ -385,6 +391,7 @@ CLASS_DEFAULT_SLUG: dict[str, str | None] = {
     "diode": "diode",
     "capacitor": None,
     "transistor": None,
+    **MORE_CLASS_DEFAULT_SLUG,
 }
 
 PATH_SEPARATOR_RE = re.compile(r"[/>|»]")

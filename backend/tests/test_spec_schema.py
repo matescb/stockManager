@@ -378,8 +378,8 @@ def test_category_slug_for_maps_our_names(name_path: str, slug: str) -> None:
     [
         None,
         "",
-        "Connectors",
-        "Microcontrollers",
+        "Thermistors",
+        "Potentiometers",
         # Ambiguous on purpose: the dielectric / channel type changes the
         # whole spec set, so a bare root must not pick one.
         "Capacitors",
@@ -388,6 +388,28 @@ def test_category_slug_for_maps_our_names(name_path: str, slug: str) -> None:
 )
 def test_category_slug_for_refuses_what_it_cannot_place(name_path: str | None) -> None:
     assert category_slug_for(name_path) is None
+
+
+@pytest.mark.parametrize(
+    ("name_path", "slug"),
+    [
+        ("ICs", "ic"),
+        ("Microcontrollers", "ic"),
+        ("Connectors", "connector"),
+        ("Crystals & Oscillators", "crystal"),
+        ("Fuses", "fuse"),
+        ("Switches", "switch"),
+        ("Transformers", "transformer"),
+        ("Mechanical", "mechanical"),
+    ],
+)
+def test_category_slug_for_maps_the_active_component_roots(
+    name_path: str, slug: str
+) -> None:
+    """Unlike Capacitors and Transistors, none of these roots is ambiguous
+    in a way that changes the spec set, so the root itself carries a slug
+    and the seed can hang `kicad_fields` off it."""
+    assert category_slug_for(name_path) == slug
 
 
 # ---------------------------------------------------------------------------
@@ -449,7 +471,10 @@ def test_an_adjective_never_outvotes_the_component_noun(
 
 
 def test_ceramic_without_a_component_noun_is_not_a_capacitor() -> None:
-    assert category_slug_for("Ceramic Resonators") is None
+    """"Ceramic" is an adjective. A ceramic resonator is a resonator, and
+    now that the schema has a class for those it lands there rather than
+    on the nothing it used to."""
+    assert category_slug_for("Ceramic Resonators") == "crystal"
 
 
 def test_a_real_mouser_attribute_beats_a_description_derived_key() -> None:

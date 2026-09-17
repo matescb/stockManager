@@ -280,3 +280,91 @@ MORE_CANONICAL_SPECS: dict[str, tuple[SpecKey, ...]] = {
     "transformer": _TRANSFORMER,
     "mechanical": _MECHANICAL,
 }
+
+
+# ---------------------------------------------------------------------------
+# Class-noun triggers for the seven classes above, appended to `CLASS_RULES`
+# in `spec_schema_tables.py` — which is where the two-pass rule they obey is
+# documented: the component NOUN fixes the class, and only then does a
+# modifier refine it.
+#
+# Order inside this tuple is first-match-wins, like the passive rules it is
+# appended to, and it decides three real overlaps in DigiKey's own taxonomy:
+#
+# * `Interface - Analog Switches, Multiplexers` names an interface and a
+#   switch. It is an IC, so `ic` comes first.
+# * `Clock/Timing - … Frequency Synthesizers` names timing and frequency.
+#   It is an IC too — hence `timing` on the IC side and NOT `clock`, which
+#   would otherwise capture Mouser's `Clock Oscillators`.
+# * `mechanical` is last because its words ("thermal", "screws") are the
+#   ones most likely to turn up in a Mouser DESCRIPTION, which is the
+#   fallback text `category_for_provider` classifies when the category is
+#   missing. A class that appears in prose must not outrank one that only
+#   appears in a taxonomy.
+#
+# Known gap: DigiKey's `Thermal Interface Materials` reads as an IC, because
+# `interface` is an IC trigger and `mechanical` is last. It is not one of the
+# category names this table was written for; file it by hand.
+# ---------------------------------------------------------------------------
+MORE_CLASS_RULES: tuple[tuple[frozenset[str], str], ...] = (
+    (
+        frozenset({
+            "ic", "ics", "integrated", "microcontroller", "microcontrollers",
+            "mcu", "microprocessor", "microprocessors", "embedded", "fpga",
+            "fpgas", "cpld", "logic", "interface", "memory", "eeprom", "sram",
+            "dram", "pmic", "regulator", "regulators", "ldo", "amplifier",
+            "amplifiers", "opamp", "opamps", "acquisition", "adc", "dac",
+            "comparator", "comparators", "timing", "timer", "timers", "dsp",
+        }),
+        "ic",
+    ),
+    (
+        frozenset({
+            "connector", "connectors", "interconnect", "interconnects",
+            "header", "headers", "socket", "sockets", "receptacle",
+            "receptacles", "terminal", "terminals", "jack", "jacks", "usb",
+            "hdmi", "dvi", "ffc", "fpc",
+        }),
+        "connector",
+    ),
+    (
+        frozenset({
+            "crystal", "crystals", "oscillator", "oscillators", "resonator",
+            "resonators", "frequency", "xtal", "tcxo", "vcxo", "ocxo",
+        }),
+        "crystal",
+    ),
+    (frozenset({"fuse", "fuses", "fuseholder", "pptc", "polyfuse"}), "fuse"),
+    (
+        frozenset({
+            "switch", "switches", "pushbutton", "pushbuttons", "tactile",
+            "keypad", "keypads",
+        }),
+        "switch",
+    ),
+    (frozenset({"transformer", "transformers"}), "transformer"),
+    (
+        frozenset({
+            "hardware", "fastener", "fasteners", "standoff", "standoffs",
+            "spacer", "spacers", "screw", "screws", "bolt", "bolts", "nut",
+            "nuts", "washer", "washers", "bracket", "brackets", "enclosure",
+            "enclosures", "heatsink", "heatsinks", "sinks", "thermal", "ties",
+            "mechanical",
+        }),
+        "mechanical",
+    ),
+)
+
+# What each new class resolves to when no modifier matches. Unlike
+# `Capacitors` and `Transistors`, none of these roots is ambiguous in a way
+# that changes the spec set — a bare `Connectors` is still a connector — so
+# each carries its own slug and the seed can hang `kicad_fields` off the root.
+MORE_CLASS_DEFAULT_SLUG: dict[str, str | None] = {
+    "ic": "ic",
+    "connector": "connector",
+    "crystal": "crystal",
+    "fuse": "fuse",
+    "switch": "switch",
+    "transformer": "transformer",
+    "mechanical": "mechanical",
+}
