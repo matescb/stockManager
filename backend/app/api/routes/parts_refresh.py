@@ -10,6 +10,13 @@ to serving content-addressed assets only. Mounted under the same
 A workspace has ONE primary provider and any number of secondaries, and
 each reconciles strictly inside its own custom-field namespace. See
 ADR-0031 and `domain/parts/provider_fields.py`.
+
+The refresh sequence itself lives in
+`domain/parts/services/provider_refresh.py`: the `provider-refresh`
+operator job runs the same one over a whole workspace, and two copies of
+it would be two answers to the questions ADR-0031 and ADR-0034 settled
+once. What is left here is HTTP — the status codes, the envelope, the
+rate limit and the `missing_specs` badge.
 """
 from __future__ import annotations
 
@@ -31,65 +38,27 @@ from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import ok
-from app.core.secrets import decrypt
-from app.core.time import utcnow
 from app.domain.audit.service import log as _audit_log
 from app.domain.categories.service import category_index
 from app.domain.custom_fields.models import CustomField
-from app.domain.parts.part_type import sync_part_type_and_log
-from app.domain.parts.provider_credentials import credentials_for
-from app.domain.parts.provider_fields import (
-    KNOWN_PROVIDER_NAMES,
-    PROVIDER_ASSET_CUSTOM_FIELD_KINDS,
-    provider_wrote_custom_field_row,
-)
+from app.domain.parts.provider_fields import provider_wrote_custom_field_row
 from app.domain.parts.provider_links import (
     delete_link,
     get_link,
     links_for_part,
     serialize_link,
-    upsert_link,
 )
-from app.domain.parts.providers import make_provider
 from app.domain.parts.providers.base import ProviderUpstreamError
-from app.domain.parts.services.assets import fetch_provider_asset
-from app.domain.parts.services.provider_cache import lookup_fresh
-from app.domain.parts.services.spec_reconcile import (
-    apply_provider_category,
-    reconcile_provider_specs,
+from app.domain.parts.services.provider_refresh import (
+    MissingMpnError,
+    ProviderNotConfiguredError,
+    UnknownProviderError,
+    ensure_refreshable,
+    refresh_part,
 )
 from app.domain.stock.service import reserved_quantity, total_for_part
 
 router = APIRouter()
-
-
-def _asset_fields(r: dict, ws) -> dict[str, str]:
-    """The primary's non-spec rows: image, datasheet, source URL.
-
-    Assets are downloaded locally with the same fallback bulk-import
-    uses — a failed download keeps the upstream URL. A SECONDARY gets
-    none of this on purpose (ADR-0031): the primary already owns the
-    part's image and datasheet, so a second content-addressed copy would
-    cost a request per refresh to produce a field nothing renders.
-    """
-    fields: dict[str, str] = {}
-    for key, asset_kind in PROVIDER_ASSET_CUSTOM_FIELD_KINDS.items():
-        if r.get(key):
-            local = fetch_provider_asset(r[key], str(ws.id), asset_kind)
-            fields[key] = local or r[key]
-    if r.get("source_url"):
-        fields["source_url"] = str(r["source_url"])
-    return fields
-
-
-def _secondary_fields(r: dict) -> dict[str, str]:
-    """A secondary's non-spec rows, still bare here — `reconcile_provider_specs`
-    applies the `"{provider}:"` prefix and the key-width guard."""
-    return {
-        key: str(r[key])
-        for key in ("source_url", "datasheet_url", "category")
-        if r.get(key)
-    }
 
 
 @router.post("/{part_id}/refresh-from-provider")
@@ -117,55 +86,50 @@ def refresh_from_provider(
     other's rows.
     """
     p = _get_part(db, ws.id, part_id)
-    if not (p.mpn or "").strip():
+
+    try:
+        # The MPN precondition first: the snapshot below is a full
+        # `part_categories` read, and paying for it only to answer 400 is
+        # work nobody asked for. The service checks it again, so there is
+        # still one definition of the rule.
+        ensure_refreshable(p)
+        # One snapshot of the workspace's tree for the whole request. Both
+        # readers need it — `apply_provider_category` inside the service
+        # asks it three questions, and the `missing_specs` badge on the
+        # response asks it a fourth — and building it per caller made a
+        # plain refresh scan `part_categories` three times over. Nothing
+        # in the refresh creates a category, so the snapshot cannot go
+        # stale under itself.
+        categories = category_index(db, ws_id=ws.id)
+        outcome = refresh_part(
+            db,
+            ws=ws,
+            part=p,
+            provider_name=provider,
+            user_id=user.id,
+            request_id=getattr(request.state, "request_id", None),
+            category_index=categories,
+        )
+    except MissingMpnError as exc:
         raise_http(
             400,
             code=ErrorCodes.PART_PROVIDER_MISSING_MPN,
-            message="part has no MPN to look up",
+            message=exc.message,
         )
-
-    primary_name = (ws.parts_provider or "").strip().lower() or None
-    requested = (provider or "").strip().lower() or None
-    is_primary = requested is None or requested == primary_name
-
-    if is_primary:
-        client = make_provider(
-            ws.parts_provider,
-            decrypt(ws.parts_provider_api_key),
-            decrypt(ws.parts_provider_api_secret),
+    except UnknownProviderError as exc:
+        raise_http(
+            422,
+            code=ErrorCodes.PART_PROVIDER_UNKNOWN,
+            message=exc.message,
+            provider=exc.provider,
         )
-        if client is None:
-            raise_http(
-                400,
-                code=ErrorCodes.PART_PROVIDER_NOT_CONFIGURED,
-                message="no parts provider configured (set one in Workspace settings)",
-            )
-    else:
-        if requested not in KNOWN_PROVIDER_NAMES:
-            raise_http(
-                422,
-                code=ErrorCodes.PART_PROVIDER_UNKNOWN,
-                message=f"unknown parts provider '{requested}'",
-                provider=requested,
-            )
-        creds = credentials_for(db, ws, requested)
-        client = make_provider(requested, *creds) if creds is not None else None
-        if client is None:
-            raise_http(
-                400,
-                code=ErrorCodes.PART_PROVIDER_NOT_CONFIGURED,
-                message=(
-                    f"no credentials configured for '{requested}' "
-                    "(set them in Workspace settings)"
-                ),
-                provider=requested,
-            )
-
-    # Use lookup_fresh (not lookup_with_cache) — the operator explicitly
-    # triggered a refresh, so we always hit upstream.  The fresh result is
-    # written back to the cache so subsequent lookup_with_cache calls see it.
-    try:
-        out = lookup_fresh(client, p.mpn.strip())
+    except ProviderNotConfiguredError as exc:
+        raise_http(
+            400,
+            code=ErrorCodes.PART_PROVIDER_NOT_CONFIGURED,
+            message=exc.message,
+            **({"provider": exc.provider} if exc.provider else {}),
+        )
     except ProviderUpstreamError as exc:
         raise_http(
             exc.status_code,
@@ -173,122 +137,34 @@ def refresh_from_provider(
             message=exc.message,
             provider=exc.provider,
         )
-    if not out.get("found") or not out.get("result"):
+
+    if not outcome.found:
         # No link row is created for a miss — a part the provider has
         # never heard of is not linked to it.
         return ok(
             {
                 "found": False,
-                "message": out.get("message") or "no match",
-                "provider": client.name,
+                "message": outcome.error or "no match",
+                "provider": outcome.provider,
             }
         )
-
-    r = out["result"]
-    if is_primary:
-        p.manufacturer = r.get("manufacturer") or p.manufacturer
-        new_mpn = r.get("mpn") or p.mpn
-        if new_mpn:
-            p.mpn = new_mpn
-        fp = r.get("footprint")
-        if fp:
-            # On every refresh we let the provider drive footprint — same
-            # treatment as manufacturer/mpn (provider-owned for linked parts).
-            p.footprint = fp
-        if not p.description_locally_edited:
-            new_desc = r.get("description")
-            if new_desc:
-                p.description = new_desc
-        p.linked_provider = client.name
-        p.linked_external_id = r.get("mpn") or p.linked_external_id
-        p.last_refresh_at = utcnow()
-        p.updated_by = user.id
-        extra_fields = _asset_fields(r, ws)
-        # A part created `local` that the primary now owns IS linked;
-        # leaving the column behind is what put 160 prod parts in the
-        # wrong bucket. `meta` / `sub_assembly` are left alone.
-        #
-        # AFTER `_asset_fields`, not before: the audit write flushes, and
-        # flushing here would hold the row lock on this `parts` row across
-        # that call's two remote asset downloads (image + datasheet, up to
-        # 45s each).
-        sync_part_type_and_log(
-            db,
-            ws=ws,
-            user=user,
-            part=p,
-            request_id=getattr(request.state, "request_id", None),
-        )
-    else:
-        # Secondary: the part's own columns belong to the primary. Not one
-        # of them is touched here.
-        extra_fields = _secondary_fields(r)
-
-    # One snapshot of the workspace's tree for the whole request. Both
-    # readers below need it — `apply_provider_category` asks it three
-    # questions, and the `missing_specs` badge on the response asks it a
-    # fourth — and building it per caller made a plain refresh scan
-    # `part_categories` three times over. Nothing here creates a category,
-    # so the snapshot cannot go stale under itself.
-    categories = category_index(db, ws_id=ws.id)
-
-    # Category before specs — it selects the spec schema, and both tiers
-    # may fill a category the part does not have yet. One the user chose
-    # is never overruled.
-    category = apply_provider_category(
-        db,
-        ws_id=ws.id,
-        part=p,
-        provider_name=client.name,
-        provider_category=r.get("category"),
-        description=r.get("description"),
-        user_id=user.id,
-        index=categories,
-    )
-    report = reconcile_provider_specs(
-        db,
-        ws_id=ws.id,
-        part=p,
-        provider_name=client.name,
-        raw_specs=[
-            ((s.get("key") or ""), (s.get("value") or "")) for s in (r.get("specs") or [])
-        ],
-        category_slug=category.slug,
-        is_primary=is_primary,
-        user_id=user.id,
-        description=r.get("description"),
-        extra_fields=extra_fields,
-        request_id=getattr(request.state, "request_id", None),
-        category_assigned=category.assigned,
-    )
-
-    link = upsert_link(
-        db,
-        workspace_id=ws.id,
-        part_id=p.id,
-        user_id=user.id,
-        provider=client.name,
-        external_id=r.get("mpn"),
-        source_url=str(r["source_url"]) if r.get("source_url") else None,
-        last_refresh_at=p.last_refresh_at if is_primary else None,
-    )
 
     return ok(
         {
             "found": True,
-            "provider": client.name,
+            "provider": outcome.provider,
             # `summary` counts what the reconcile did: `skipped` is fields
             # this payload could not be written under (a key too wide for
             # the column, or a bare key that spells a canonical one),
             # `archived` junk rows retired from the part, `restored` rows
             # brought back because upstream answered their key again, and
             # `dropped` payload keys refused outright as junk.
-            "summary": report.summary(),
+            "summary": outcome.report.summary(),
             # The category the provider's taxonomy named when this
             # workspace has nowhere to file the part. Null when the part
             # was filed, or when the taxonomy said nothing we recognise.
-            "category_suggestion": category.suggestion,
-            "link": serialize_link(link),
+            "category_suggestion": outcome.category.suggestion,
+            "link": serialize_link(outcome.link),
             "part": _serialize(
                 p,
                 on_hand=total_for_part(db, workspace_id=ws.id, part_id=p.id),

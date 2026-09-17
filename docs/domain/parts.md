@@ -104,6 +104,29 @@ Three fields cooperate (`backend/app/domain/parts/models.py:78-88`):
 
 The provider lookup pipeline lives in `backend/app/domain/parts/providers/`; see [providers](providers.md).
 
+### Refreshing a part, one at a time or a catalogue at a time
+
+One (part, provider) refresh is one function,
+`domain/parts/services/provider_refresh.py::refresh_part`: resolve the client,
+look up the MPN, drive the part columns on the primary tier, file the category,
+reconcile the specs, upsert the link. `POST /api/parts/{id}/refresh-from-provider`
+calls it once and keeps only its HTTP concerns; the `provider-refresh` operator
+job calls it for every active, linked part with an MPN in a workspace. Sharing
+the function is the point — the rules about which tier owns which column and
+whose namespace a key sits in are decided once, in one place.
+
+The job exists because the catalogue was imported before the importer knew what
+it knows now. It is `--dry-run` by default, throttled between provider calls,
+commits per batch so a run cut short keeps what it finished, and stops at exit 3
+when a provider reports it is out of quota. Two rules make it safe to run
+unattended: every pair needs an EXACT MPN match, because DigiKey falls back to a
+fuzzy keyword search and a near miss would write another product's specs onto
+the part and re-file it under that product's taxonomy; and
+`--link-missing-providers` adds SECONDARIES only, because promoting a provider
+to a part's primary rewrites six columns from a provider nobody chose for that
+part and is a per-part human decision. See
+[the runbook](../runbooks/provider-refresh.md).
+
 ## Specs and category on a provider payload
 
 A provider lookup result becomes `custom_fields` rows through exactly one
@@ -258,6 +281,8 @@ There is no dedicated `parts/service.py`. Logic for parts splits across the rout
 | Download provider asset | `domain/parts/services/assets.py::fetch_provider_asset` | SSRF-hardened download to UPLOAD_DIR. |
 | Create a linked part from a lookup | `domain/parts/services/provider_import.py::create_from_provider_lookup` | Returns `ProviderImportOutcome(part, report, category_suggestion)`. |
 | Write a provider payload onto a part | `domain/parts/services/spec_reconcile.py::reconcile_provider_specs` | The single writer for create AND refresh. |
+| Refresh one part from one provider | `domain/parts/services/provider_refresh.py::refresh_part` | Shared by the refresh route and the `provider-refresh` job. |
+| Sweep a workspace's linked parts | `domain/parts/services/provider_refresh_job.py::refresh_linked_parts` | Operator-run; throttled, quota-aware, commits per batch. |
 | File an uncategorized part | `domain/parts/services/spec_reconcile.py::apply_provider_category` | Never overrules a category the user chose; creates nothing. |
 | Build a configured provider | `domain/parts/providers/base.py::make_provider` | Factory keyed on `workspaces.parts_provider`. |
 | Archive / restore / bulk-archive | `api/routes/parts_core.py::archive_part`, `unarchive_part`, `bulk_archive_parts` | Inline; no dedicated service. |

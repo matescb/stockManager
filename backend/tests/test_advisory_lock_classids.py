@@ -7,6 +7,7 @@ from app.core.advisory_locks import (
     ADVISORY_LOCK_CLASSIDS,
     DATASHEET_BACKFILL_LOCK_CLASSID,
     PASSWORD_RESET_THROTTLE_LOCK_CLASSID,
+    PROVIDER_REFRESH_LOCK_CLASSID,
     RUN_JOB_LOCK_CLASSID,
     SPEC_NORMALIZE_LOCK_CLASSID,
 )
@@ -24,6 +25,7 @@ def test_classids_disjoint() -> None:
         "password_reset_throttle": PASSWORD_RESET_THROTTLE_LOCK_CLASSID,
         "datasheet_backfill": DATASHEET_BACKFILL_LOCK_CLASSID,
         "spec_normalize": SPEC_NORMALIZE_LOCK_CLASSID,
+        "provider_refresh": PROVIDER_REFRESH_LOCK_CLASSID,
     }
     assert len(set(classids.values())) == len(classids)
     assert all(INT4_MIN <= classid <= INT4_MAX for classid in classids.values())
@@ -95,3 +97,26 @@ def test_hashtext_lock_sites_use_two_arg_namespaces() -> None:
     assert "SPEC_NORMALIZE_LOCK_CLASSID" in spec_normalize_source
     assert "CAST(:classid AS int4)" in spec_normalize_source
     assert "CAST(hashtext(:key) AS int4)" in spec_normalize_source
+
+    # And for the provider-refresh sweep, which commits per batch of parts
+    # so a run the daily quota cut short keeps what it finished. The lock
+    # lives beside the sweep's other run boundaries, in `_scope`, because
+    # the CLI has to take it before it opens (and truncates) the report.
+    provider_refresh_source = (
+        REPO_ROOT
+        / "backend"
+        / "app"
+        / "domain"
+        / "parts"
+        / "services"
+        / "provider_refresh_scope.py"
+    ).read_text(encoding="utf-8")
+
+    assert "pg_try_advisory_xact_lock" not in provider_refresh_source, (
+        "the sweep lock must survive its own commits"
+    )
+    assert "pg_try_advisory_lock(" in provider_refresh_source
+    assert "pg_advisory_unlock(" in provider_refresh_source
+    assert "PROVIDER_REFRESH_LOCK_CLASSID" in provider_refresh_source
+    assert "CAST(:classid AS int4)" in provider_refresh_source
+    assert "CAST(hashtext(:key) AS int4)" in provider_refresh_source

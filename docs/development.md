@@ -178,6 +178,7 @@ before adding a new hashtext-backed advisory lock.
 | `2` | `password_reset_throttle` | `hashtext("reset:" || email_hash)` for password-reset request throttling. |
 | `3` | `datasheet_backfill` | `hashtext("datasheet-backfill")`. SESSION-scoped, not xact-scoped: the job commits per candidate and must keep the lock across those commits (ADR-0033). |
 | `4` | `spec_normalize` | `hashtext("spec-normalize")`. SESSION-scoped for the same reason: the backfill commits once per batch of parts (ADR-0034). |
+| `5` | `provider_refresh` | `hashtext("provider-refresh")`. SESSION-scoped for the same reason again: the sweep commits once per batch of 25 parts, and two concurrent runs would spend the day's provider quota twice. |
 
 ### Polymorphic cleanup
 

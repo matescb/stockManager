@@ -31,15 +31,21 @@ from app.cli.run_job import (
     JobSpec,
     _options_for,
     _parse_args,
-    _report_stream,
     heartbeat_is_fresh,
     main,
     run_job,
 )
 
+# The report file an operator-run job writes into. It lives beside
+# `JobOptions` in `run_job_options.py`, which is the module both the
+# runner and the operator-job adapters depend on; `run_job.py` itself no
+# longer opens one.
+from app.cli.run_job_options import report_stream as _report_stream
+
 _OPERATOR_JOBS = (
     "category-seed",
     "part-rename",
+    "provider-refresh",
     "spec-normalize",
     "symbol-collapse",
 )
@@ -265,10 +271,10 @@ def test_the_operator_jobs_are_registered_and_unscheduled(job_name: str) -> None
     assert "--apply" in job.idempotency
 
 
-def test_the_operator_jobs_are_exactly_these_three() -> None:
-    """A set equality, not a subset: a fourth job quietly gaining
+def test_the_operator_jobs_are_exactly_these() -> None:
+    """A set equality, not a subset: another job quietly gaining
     `takes_options` would otherwise slip past every check here, and the
-    deployment docs name these three by hand."""
+    deployment docs name each of them by hand."""
     assert {name for name, job in JOBS.items() if job.takes_options} == set(
         _OPERATOR_JOBS
     )
@@ -488,30 +494,30 @@ def test_the_report_flag_actually_writes_the_csv(tmp_path, db) -> None:
     file instead of stdout. A sidecar-less operator run on a VPS wants
     the CSV on disk, not scrolled past in an SSH session.
     """
-    from app.cli.run_job import _run_category_seed
+    from app.cli.run_job_operator import run_category_seed_job
 
     target = tmp_path / "nested" / "seed.csv"
 
-    _run_category_seed(db, JobOptions(report=target))
+    run_category_seed_job(db, JobOptions(report=target))
 
     assert target.exists()
     assert target.read_text(encoding="utf-8").startswith("workspace_id,")
 
 
 def test_the_report_flag_works_for_symbol_collapse_too(tmp_path, db) -> None:
-    from app.cli.run_job import _run_symbol_collapse
+    from app.cli.run_job_operator import run_symbol_collapse_job
 
     target = tmp_path / "collapse.csv"
 
-    _run_symbol_collapse(db, JobOptions(report=target))
+    run_symbol_collapse_job(db, JobOptions(report=target))
 
     assert target.read_text(encoding="utf-8").startswith("workspace_id,")
 
 
 def test_without_the_flag_the_report_still_goes_to_stdout(tmp_path, db, capsys) -> None:
-    from app.cli.run_job import _run_category_seed
+    from app.cli.run_job_operator import run_category_seed_job
 
-    _run_category_seed(db, JobOptions())
+    run_category_seed_job(db, JobOptions())
 
     assert "workspace_id," in capsys.readouterr().out
 
@@ -526,13 +532,13 @@ def test_an_unwritable_report_path_reaches_the_operator_through_a_job(
     this one — the one that proves a JOB surfaces the error rather than
     swallowing it — never ran.
     """
-    from app.cli.run_job import _run_category_seed
+    from app.cli.run_job_operator import run_category_seed_job
 
     blocker = tmp_path / "not-a-dir"
     blocker.write_text("", encoding="utf-8")
 
     with pytest.raises(JobConfigError, match="cannot write --report"):
-        _run_category_seed(db, JobOptions(report=blocker / "seed.csv"))
+        run_category_seed_job(db, JobOptions(report=blocker / "seed.csv"))
 
 
 # ---------------------------------------------------------------------------
@@ -618,9 +624,11 @@ def test_a_dry_run_needs_no_report(job_name: str) -> None:
 def test_only_an_in_place_rewrite_requires_a_report() -> None:
     """`category-seed` only creates rows and `symbol-collapse` only clears a
     nullable column, so both are undoable from the schema alone.
-    `part-rename` overwrites `parts.name`, and `spec-normalize` overwrites
-    spec values — for those two the CSV is the record of what was there."""
-    assert _REPORT_REQUIRED == ["part-rename", "spec-normalize"]
+    `part-rename` overwrites `parts.name`, `spec-normalize` overwrites spec
+    values, and `provider-refresh` overwrites both part columns and spec
+    values from a remote payload — for those three the CSV is the record of
+    what was there."""
+    assert _REPORT_REQUIRED == ["part-rename", "provider-refresh", "spec-normalize"]
 
 
 def _unreachable_session() -> Session:
@@ -693,6 +701,20 @@ def test_include_free_cannot_be_combined_with_a_heartbeat_check(
     # Assert
     assert exit_code == 2
     assert "--include-free" in capsys.readouterr().err
+
+
+def test_every_extra_flag_names_a_real_job_options_field() -> None:
+    """`_options_for` builds `JobOptions(**{flag: ...})` straight from
+    this mapping, so a key that is not a field is a `TypeError` the first
+    time an operator passes any flag — and a field renamed without the
+    mapping is a flag that is parsed, validated and then dropped."""
+    import dataclasses
+
+    from app.cli.run_job import _EXTRA_FLAGS
+
+    fields = {field.name for field in dataclasses.fields(JobOptions)}
+
+    assert set(_EXTRA_FLAGS) <= fields
 
 
 def test_every_extra_flag_is_declared_by_at_least_one_job() -> None:

@@ -31,9 +31,11 @@ not what it is — so a link event must leave those two alone. See
 """
 from __future__ import annotations
 
+from uuid import UUID
+
 from sqlalchemy.orm import Session
 
-from app.domain.audit.service import log as audit_log
+from app.domain.audit.service import log_ids as audit_log_ids
 from app.domain.parts.models import Part
 from app.domain.users.models import User
 from app.domain.workspaces.models import Workspace
@@ -86,20 +88,46 @@ def sync_part_type_and_log(
     both values are fixed vocabulary, so no user or provider data can
     reach `audit_log.comment` through here.
     """
-    if part.workspace_id != ws.id:
-        # Both callers hand over a part already scoped by `_get_part`.
-        # This is the guard for the next one: the audit row would
-        # otherwise be filed under a workspace that doesn't own the part.
+    return sync_part_type_and_log_ids(
+        db,
+        ws_id=ws.id,
+        user_id=user.id if user else None,
+        part=part,
+        request_id=request_id,
+    )
+
+
+def sync_part_type_and_log_ids(
+    db: Session,
+    *,
+    ws_id: UUID,
+    user_id: UUID | None,
+    part: Part,
+    request_id: str | None = None,
+) -> bool:
+    """`sync_part_type_and_log` for a caller that holds ids, not ORM rows.
+
+    Same row, same rules. The split exists for the same reason
+    `audit/service.py` has `log` and `log_ids`: the provider refresh is
+    now a domain service (`services/provider_refresh.py`) called from a
+    route AND from the `provider-refresh` job, and the job has no `User`
+    to thread through for the sake of reading `.id` off it.
+    """
+    if part.workspace_id != ws_id:
+        # Both route callers hand over a part already scoped by
+        # `_get_part`, and the job scopes its own query. This is the
+        # guard for the next one: the audit row would otherwise be filed
+        # under a workspace that doesn't own the part.
         raise ValueError("part_type sync: part does not belong to this workspace")
 
     previous = part.part_type
     if not sync_part_type_with_link(part):
         return False
 
-    audit_log(
+    audit_log_ids(
         db,
-        ws=ws,
-        user=user,
+        workspace_id=ws_id,
+        user_id=user_id,
         action="part.type_synced",
         target_type="part",
         target_ids=[part.id],

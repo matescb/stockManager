@@ -38,6 +38,8 @@ __all__ = [
     "REPORT_COLUMNS",
     "Change",
     "NormalizeReport",
+    "UNMAPPED_REPORT_LIMIT",
+    "rank_unmapped",
 ]
 
 #: The row now carries its canonical key and the parsed display value.
@@ -115,7 +117,7 @@ class Change:
 class NormalizeReport:
     """Streaming CSV writer over a stream the CALLER owns.
 
-    `stream` is what `run_job._report_stream` yields: the file `--report`
+    `stream` is what `run_job_options.report_stream` yields: the file `--report`
     named, or ``None`` for stdout. Opening and closing belong to that
     context manager, not here — every operator-run job gets its report
     file on the same terms, including the `newline=""` the `csv` module
@@ -176,3 +178,26 @@ class NormalizeReport:
         for category_slug, key, count in unmapped:
             self._writer.writerow(("unmapped", category_slug, key, count))
         self._handle.flush()
+
+
+#: How many unmapped raw keys a report lists. The list exists to be read
+#: and turned into alias-table entries, so it is a shortlist. Shared with
+#: `provider-refresh`, whose summary section means the same thing and had
+#: better be the same length.
+UNMAPPED_REPORT_LIMIT = 30
+
+
+def rank_unmapped(
+    unmapped: Mapping[tuple[str, str], int],
+    *,
+    limit: int = UNMAPPED_REPORT_LIMIT,
+) -> tuple[tuple[str, str, int], ...]:
+    """The `(category_slug, raw_key)` pairs the schema had no home for,
+    most frequent first.
+
+    Tied counts break on `(slug, key)` so two runs over the same data
+    produce the same file — a report that is diffable against the
+    previous one is worth more than one that is merely correct.
+    """
+    ranked = sorted(unmapped.items(), key=lambda item: (-item[1], item[0]))
+    return tuple((slug, key, count) for (slug, key), count in ranked[:limit])

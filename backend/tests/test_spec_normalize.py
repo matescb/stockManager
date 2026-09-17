@@ -132,7 +132,7 @@ def _legacy_row(
 
 def _normalize(db, path: Path | None = None, **kwargs):
     """`normalize_specs` with the report file opened the way the CLI opens
-    it — `run_job._report_stream` owns the handle in production, so the
+    it — `run_job_options.report_stream` owns the handle in production, so the
     tests do too rather than pretending the job takes a path."""
     if path is None:
         return normalize_specs(db, **kwargs)
