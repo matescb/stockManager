@@ -118,10 +118,13 @@ whose namespace a key sits in are decided once, in one place.
 The job exists because the catalogue was imported before the importer knew what
 it knows now. It is `--dry-run` by default, throttled between provider calls,
 commits per batch so a run cut short keeps what it finished, and stops at exit 3
-when a provider reports it is out of quota. `--link-missing-providers` also asks
-the providers a part is NOT linked to and links it on an exact-MPN hit only,
-because DigiKey falls back to a fuzzy keyword search and a near miss would
-import a different product's specs. See
+when a provider reports it is out of quota. Two rules make it safe to run
+unattended: every pair needs an EXACT MPN match, because DigiKey falls back to a
+fuzzy keyword search and a near miss would write another product's specs onto
+the part and re-file it under that product's taxonomy; and
+`--link-missing-providers` adds SECONDARIES only, because promoting a provider
+to a part's primary rewrites six columns from a provider nobody chose for that
+part and is a per-part human decision. See
 [the runbook](../runbooks/provider-refresh.md).
 
 ## Specs and category on a provider payload

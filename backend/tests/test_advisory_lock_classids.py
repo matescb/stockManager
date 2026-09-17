@@ -99,7 +99,9 @@ def test_hashtext_lock_sites_use_two_arg_namespaces() -> None:
     assert "CAST(hashtext(:key) AS int4)" in spec_normalize_source
 
     # And for the provider-refresh sweep, which commits per batch of parts
-    # so a run the daily quota cut short keeps what it finished.
+    # so a run the daily quota cut short keeps what it finished. The lock
+    # lives beside the sweep's other run boundaries, in `_scope`, because
+    # the CLI has to take it before it opens (and truncates) the report.
     provider_refresh_source = (
         REPO_ROOT
         / "backend"
@@ -107,7 +109,7 @@ def test_hashtext_lock_sites_use_two_arg_namespaces() -> None:
         / "domain"
         / "parts"
         / "services"
-        / "provider_refresh_job.py"
+        / "provider_refresh_scope.py"
     ).read_text(encoding="utf-8")
 
     assert "pg_try_advisory_xact_lock" not in provider_refresh_source, (

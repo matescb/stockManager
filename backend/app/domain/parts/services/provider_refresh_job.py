@@ -13,9 +13,12 @@ about tiers, namespaces or ownership is decided twice.
 Four properties make a bulk re-import over a live catalogue defensible:
 
 * **`--dry-run` is the default and writes nothing.** The provider
-  lookups are done for real — they are reads, and they warm the cache
-  the apply will use — but every DB write lands in a SAVEPOINT that is
-  rolled back. The CSV is produced by the code that would apply it.
+  lookups are done for real — they are reads, and doing them is what
+  makes the CSV a plan rather than a guess — but every DB write lands in
+  a SAVEPOINT that is rolled back and no asset is downloaded. The plan is
+  produced by the code that would apply it. It does NOT make the apply
+  cheaper: `provider_cache` is per-process and the apply is a separate
+  `exec`, so budget two full passes against the day's allowance.
 * **it is throttled and it stops when told to.** DigiKey and Mouser both
   cap the free tier near 1,000 calls a day; 290 links at the default
   750 ms is about four minutes. A rate-limited answer ends the sweep
@@ -57,14 +60,13 @@ import logging
 import time
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import TextIO
 from uuid import UUID
 
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.core.advisory_locks import PROVIDER_REFRESH_LOCK_CLASSID
 from app.domain.audit.service import log_ids as audit_log_ids
 from app.domain.categories.service import CategoryIndex, category_index
 from app.domain.parts.models import Part, PartProviderLink
@@ -91,12 +93,14 @@ from app.domain.parts.services.provider_refresh_report import (
     RefreshRow,
 )
 from app.domain.parts.services.provider_refresh_scope import (
+    SweepAlreadyRunning,
     UnknownWorkspaceError,
     batch_transaction,
     batches,
     links_by_part,
     part_ids_in_scope,
     parts_by_id,
+    sweep_lock,
     workspaces_in_scope,
 )
 from app.domain.parts.services.spec_normalize_report import rank_unmapped
@@ -117,7 +121,13 @@ __all__ = [
     "JOB_NAME",
     "REPORT_COLUMNS",
     "ProviderQuotaExhausted",
+    # Both defined in `provider_refresh_scope.py` with the lock they
+    # guard, and re-exported here: a caller reaches for them because of
+    # the JOB, and should not have to know which of the two modules the
+    # advisory lock happens to live in.
+    "SweepAlreadyRunning",
     "SweepOutcome",
+    "sweep_lock",
     # Defined in `provider_refresh_scope.py` and re-exported here: it is
     # raised by a `--workspace` that names nothing, which is a fact about
     # the JOB, and callers should not have to know which of the two
@@ -212,6 +222,7 @@ def refresh_linked_parts(
     link_missing_providers: bool = False,
     sleep_ms: int = DEFAULT_SLEEP_MS,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    lock_held: bool = False,
 ) -> SweepOutcome:
     """Re-run every linked part's MPN against every provider that knows it.
 
@@ -227,12 +238,43 @@ def refresh_linked_parts(
     transaction-scoped one, which Postgres drops at the first COMMIT.
     Two concurrent sweeps would spend the day's quota twice.
 
-    Raises `ProviderQuotaExhausted` when a provider refuses for quota —
-    after the report is written and the finished work committed.
+    `lock_held` says the caller is already inside `sweep_lock`. The CLI
+    is, because it has to know whether the sweep may run BEFORE it opens
+    — and truncates — the report file; a caller that does not care about
+    that leaves it False and the lock is taken here.
+
+    Raises `SweepAlreadyRunning` when another sweep holds the lock, and
+    `ProviderQuotaExhausted` when a provider refuses for quota — the
+    latter only after the report is written and the finished work
+    committed.
     """
-    if not _try_acquire_lock(db):
-        logger.info("%s skipped: another run holds the lock", JOB_NAME)
-        return SweepOutcome(apply, 0, 0, Counter(), {}, (), None)
+    with nullcontext() if lock_held else sweep_lock(db):
+        return _run_guarded(
+            db,
+            apply=apply,
+            workspace_id=workspace_id,
+            stream=stream,
+            limit=limit,
+            only_uncategorized=only_uncategorized,
+            link_missing_providers=link_missing_providers,
+            sleep_ms=sleep_ms,
+            batch_size=batch_size,
+        )
+
+
+def _run_guarded(
+    db: Session,
+    *,
+    apply: bool,
+    workspace_id: UUID | None,
+    stream: TextIO | None,
+    limit: int | None,
+    only_uncategorized: bool,
+    link_missing_providers: bool,
+    sleep_ms: int,
+    batch_size: int,
+) -> SweepOutcome:
+    """`_run` plus the rollback rule the advisory lock depends on."""
     try:
         return _run(
             db,
@@ -251,14 +293,13 @@ def refresh_linked_parts(
         # discard the report's last flush-worth of truth.
         raise
     except Exception:
-        # Ahead of the unlock, not after it: the unlock is a statement,
-        # and a statement on a session left in a failed transaction
-        # raises `PendingRollbackError` — which would replace whatever
-        # actually went wrong with a message about the lock.
+        # Inside `sweep_lock`, so this runs BEFORE the unlock — and it has
+        # to. The unlock is a statement, and a statement on a session left
+        # in a failed transaction raises `PendingRollbackError`, which
+        # would replace whatever actually went wrong with a message about
+        # the lock.
         db.rollback()
         raise
-    finally:
-        _release_lock(db)
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +310,7 @@ class _Throttle:
 
     The first lookup of a run pays nothing, so a one-part sweep never
     sleeps at all. `sleep_ms=0` turns it off entirely, which is what the
-    tests and a re-run against a warm cache want.
+    tests want, and an operator who knows the provider has headroom.
 
     It bounds the calls this job makes, not the ones a provider client
     makes internally: DigiKey may spend an OAuth token request and a
@@ -349,6 +390,7 @@ def _run(
                     unmapped=unmapped,
                     throttle=throttle,
                     halt=halt,
+                    apply=apply,
                 )
             report.flush()
             logger.info(
@@ -412,6 +454,7 @@ def _process_batch(
     unmapped: Counter[tuple[str, str]],
     throttle: _Throttle,
     halt: _Halt,
+    apply: bool,
 ) -> int:
     """Returns how many parts were visited — fewer than the batch when the
     quota ran out inside it."""
@@ -441,6 +484,7 @@ def _process_batch(
                 unmapped=unmapped,
                 throttle=throttle,
                 halt=halt,
+                apply=apply,
             )
             report.write(row)
             counts[row.action] += 1
@@ -463,6 +507,7 @@ def _refresh_one(
     unmapped: Counter[tuple[str, str]],
     throttle: _Throttle,
     halt: _Halt,
+    apply: bool,
 ) -> RefreshRow:
     """One (part, provider) pair. Never raises for one part's problem."""
     category = _path(index, part.category_id)
@@ -503,13 +548,24 @@ def _refresh_one(
             user_id=None,
             category_index=index,
             target=target,
-            # A provider the part is NOT linked to yet may only claim it
-            # on an exact MPN: DigiKey falls back to a fuzzy keyword
-            # search and Mouser matches partially, and a near miss here
-            # would link the part to a different product and import its
-            # specs. A provider that already owns the link keeps the
-            # route's behaviour.
-            require_exact_mpn=not already_linked,
+            # ALWAYS, linked or not. DigiKey falls back to a keyword
+            # search when exact-match `ProductDetails` misses and Mouser
+            # matches partially, so a "hit" is not necessarily this part:
+            # a wrong one rewrites the canonical specs and can re-file
+            # the part under another taxonomy. That risk is acceptable
+            # when a human asked about one part by name and is reading
+            # the answer; it is not acceptable unattended across 537
+            # (part, provider) pairs. The cost is that a part whose MPN
+            # is stored in a different format than the vendor prints it
+            # reads as `miss` — which is a line in the CSV an operator
+            # can act on, unlike a silent wrong match.
+            require_exact_mpn=True,
+            # A dry run downloads nothing. The file would land in
+            # UPLOAD_DIR outside the savepoint this batch rolls back, so
+            # a planning pass would leave content-addressed orphans and
+            # spend ~570 HTTP requests to learn what the payload already
+            # says. The report names them under `assets_would_fetch`.
+            fetch_assets=apply,
         )
     except ProviderError as exc:
         message = exc.message or str(exc)
@@ -564,6 +620,7 @@ def _refreshed_row(
         specs_restored=report.restored if report else 0,
         specs_removed=(report.removed + report.archived) if report else 0,
         assets_fetched=outcome.assets_fetched,
+        assets_would_fetch=outcome.assets_would_fetch,
     )
 
 
@@ -582,33 +639,39 @@ def _provider_order(
     predates the table, and a part carrying one without the other is
     exactly the drift this sweep exists to close.
 
-    `--link-missing-providers` appends the providers this workspace has
-    credentials for that the part is NOT linked to. It does not widen the
-    set of PARTS — a part nothing has ever linked is out of scope for
-    this job either way.
+    **`--link-missing-providers` adds SECONDARIES only.** Adding the
+    workspace's primary would run the primary path on a part it has never
+    owned and rewrite `manufacturer`, `mpn`, `footprint`, `description`,
+    `linked_provider` and `part_type` from a provider nobody chose for
+    it — on icicle, where Mouser is primary and 252 of 290 links are
+    DigiKey secondaries, that is most of the catalogue. It is also not
+    reversible the way the runbook describes: `DELETE /provider-links/
+    {provider}` refuses the primary, and releasing those columns is a
+    `PATCH … unlink_provider=true` per part. Promoting a provider to a
+    part's primary is a per-part human decision, taken through
+    `POST /api/parts/{id}/refresh-from-provider`, not something a sweep
+    does to 252 parts at once.
+
+    It does not widen the set of PARTS either — a part nothing has ever
+    linked is out of scope for this job whatever the flag says.
+
+    The whole list is ordered primary-first in ONE sort rather than
+    linked-then-unlinked, so the primary cannot end up behind a
+    secondary: it is the tier that fills a NULL category, and the
+    category picks the spec schema every later payload is read through.
     """
     linked = {row.provider for row in links}
     own = (part.linked_provider or "").strip().lower()
     if own:
         linked.add(own)
-    order = [(name, True) for name in _primary_first(linked, primary)]
+    candidates = dict.fromkeys(linked, True)
     if link_missing_providers:
-        order += [
-            (name, False)
-            for name in _primary_first(set(targets) - linked, primary)
-        ]
-    return order
-
-
-def _primary_first(names: set[str], primary: str | None) -> list[str]:
-    """The primary, then everything else alphabetically.
-
-    Primary first because it is the tier that owns the part's columns and
-    may fill its category, and the category picks the spec schema every
-    later provider's payload is read through.
-    """
-    rest = sorted(name for name in names if name != primary)
-    return ([primary] if primary is not None and primary in names else []) + rest
+        for name in set(targets) - linked - ({primary} if primary else set()):
+            candidates[name] = False
+    return [
+        (name, candidates[name])
+        for name in sorted(candidates, key=lambda name: (name != primary, name))
+    ]
 
 
 def _targets_for(db: Session, ws: Workspace) -> dict[str, ProviderTarget]:
@@ -686,40 +749,4 @@ def _audit(
             f"job={JOB_NAME} parts={parts} {_summary(counts)} "
             f"providers={','.join(sorted(targets)) or 'none'}"
         ),
-    )
-
-
-_LOCK_KEY = JOB_NAME
-
-
-def _try_acquire_lock(db: Session) -> bool:
-    """Take the SESSION-level advisory lock guarding this job.
-
-    `run_job` wraps every job in a transaction-scoped lock, which
-    Postgres drops at the first COMMIT — and this job commits per batch.
-    Two concurrent sweeps would spend the day's provider quota twice and
-    interleave two sets of writes over the same parts, so the lock has to
-    outlive those commits. Same shape, and the same known limit about
-    pooled connections, as `spec_normalize.py`.
-    """
-    return bool(
-        db.execute(
-            text(
-                "SELECT pg_try_advisory_lock("
-                "CAST(:classid AS int4), CAST(hashtext(:key) AS int4)"
-                ")"
-            ),
-            {"classid": PROVIDER_REFRESH_LOCK_CLASSID, "key": _LOCK_KEY},
-        ).scalar()
-    )
-
-
-def _release_lock(db: Session) -> None:
-    db.execute(
-        text(
-            "SELECT pg_advisory_unlock("
-            "CAST(:classid AS int4), CAST(hashtext(:key) AS int4)"
-            ")"
-        ),
-        {"classid": PROVIDER_REFRESH_LOCK_CLASSID, "key": _LOCK_KEY},
     )

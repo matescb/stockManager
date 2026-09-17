@@ -135,6 +135,11 @@ class RefreshOutcome:
     #: Asset kinds stored locally this time (`image`, `datasheet`). A
     #: secondary never fetches any — the primary owns the part's files.
     assets_fetched: tuple[str, ...]
+    #: Asset kinds the payload offers that this call did NOT download,
+    #: because `fetch_assets=False`. Always empty on the request path;
+    #: it is how a dry-run sweep reports what an apply would pull without
+    #: pulling it. Never both this and `assets_fetched` on one outcome.
+    assets_would_fetch: tuple[str, ...]
     link: PartProviderLink | None
     error: str | None
 
@@ -195,6 +200,7 @@ def refresh_part(
     category_index: CategoryIndex | None = None,
     target: ProviderTarget | None = None,
     require_exact_mpn: bool = False,
+    fetch_assets: bool = True,
 ) -> RefreshOutcome:
     """Re-run this part's MPN against one provider and write what came back.
 
@@ -241,11 +247,14 @@ def refresh_part(
 
     before = {name: getattr(part, name, None) for name in _TRACKED_PART_COLUMNS}
     assets: tuple[str, ...] = ()
+    would_fetch: tuple[str, ...] = ()
     if is_primary:
         _apply_primary_columns(
             part, result=result, provider_name=client.name, user_id=user_id
         )
-        extra_fields, assets = _asset_fields(result, ws)
+        extra_fields, assets, would_fetch = _asset_fields(
+            result, ws, fetch=fetch_assets
+        )
         # AFTER the asset downloads, not before: the audit write flushes,
         # and flushing here would hold this `parts` row's lock across two
         # remote downloads (image + datasheet, up to 45s each).
@@ -313,6 +322,7 @@ def refresh_part(
         report=report,
         category=category,
         assets_fetched=assets if is_primary else (),
+        assets_would_fetch=would_fetch if is_primary else (),
         link=link,
         error=None,
     )
@@ -333,6 +343,7 @@ def _miss(provider: str, is_primary: bool, message: str) -> RefreshOutcome:
         report=None,
         category=None,
         assets_fetched=(),
+        assets_would_fetch=(),
         link=None,
         error=message,
     )
@@ -371,26 +382,43 @@ def _apply_primary_columns(
     part.updated_by = user_id
 
 
-def _asset_fields(result: dict, ws) -> tuple[dict[str, str], tuple[str, ...]]:
-    """The primary's non-spec rows, and which assets landed locally.
+def _asset_fields(
+    result: dict, ws, *, fetch: bool
+) -> tuple[dict[str, str], tuple[str, ...], tuple[str, ...]]:
+    """The primary's non-spec rows, plus what was (or would be) downloaded.
 
-    A failed download keeps the upstream URL — the same fallback
-    bulk-import uses. A SECONDARY gets none of this on purpose
-    (ADR-0031): the primary already owns the part's image and datasheet,
-    so a second content-addressed copy would cost a request per refresh
-    to produce a field nothing renders.
+    Returns `(fields, fetched, would_fetch)`. A failed download keeps the
+    upstream URL — the same fallback bulk-import uses. A SECONDARY gets
+    none of this on purpose (ADR-0031): the primary already owns the
+    part's image and datasheet, so a second content-addressed copy would
+    cost a request per refresh to produce a field nothing renders.
+
+    `fetch=False` is the planning pass. It stores the upstream URL, which
+    is what a failed download would have stored anyway, and names the
+    kinds it skipped. This is the ONE side effect in the refresh that a
+    transaction cannot take back: a downloaded file is on disk in
+    `UPLOAD_DIR` whatever the session does afterwards, so a dry run that
+    did it would leave content-addressed orphans behind and spend a real
+    HTTP request per asset to learn nothing it could not report from the
+    payload.
     """
     fields: dict[str, str] = {}
     fetched: list[str] = []
+    skipped: list[str] = []
     for key, asset_kind in PROVIDER_ASSET_CUSTOM_FIELD_KINDS.items():
-        if result.get(key):
-            local = fetch_provider_asset(result[key], str(ws.id), asset_kind)
-            fields[key] = local or result[key]
-            if local:
-                fetched.append(asset_kind)
+        if not result.get(key):
+            continue
+        if not fetch:
+            fields[key] = str(result[key])
+            skipped.append(asset_kind)
+            continue
+        local = fetch_provider_asset(result[key], str(ws.id), asset_kind)
+        fields[key] = local or result[key]
+        if local:
+            fetched.append(asset_kind)
     if result.get("source_url"):
         fields["source_url"] = str(result["source_url"])
-    return fields, tuple(fetched)
+    return fields, tuple(fetched), tuple(skipped)
 
 
 def _secondary_fields(result: dict) -> dict[str, str]:

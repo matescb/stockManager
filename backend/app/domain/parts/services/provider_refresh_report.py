@@ -95,7 +95,12 @@ REPORT_COLUMNS: tuple[str, ...] = (
     "specs_removed",
     "category_before",
     "category_after",
+    # Exactly one of the two is ever populated on a row: an apply
+    # downloads and fills `assets_fetched`; a dry run downloads nothing —
+    # a file in UPLOAD_DIR is the one thing a rolled-back savepoint
+    # cannot take back — and names what it would have pulled here.
     "assets_fetched",
+    "assets_would_fetch",
     "error",
 )
 
@@ -121,6 +126,7 @@ class RefreshRow:
     category_before: str = ""
     category_after: str = ""
     assets_fetched: tuple[str, ...] = ()
+    assets_would_fetch: tuple[str, ...] = ()
     error: str = ""
 
 
@@ -158,6 +164,7 @@ class RefreshReport:
                 row.category_before,
                 row.category_after,
                 " ".join(row.assets_fetched),
+                " ".join(row.assets_would_fetch),
                 row.error,
             )
         )

@@ -41,8 +41,9 @@ minutes, and `--link-missing-providers` roughly doubles that.
 
 - **Know the quota.** DigiKey and Mouser free tiers sit near 1,000 calls
   a day, shared with every lookup the app itself makes. A dry run and an
-  apply are two full passes — budget both. `--limit N` runs the first N
-  parts and is the normal way to start.
+  apply are two full passes and neither makes the other cheaper — budget
+  both. `--limit N` runs the first N parts and is the normal way to
+  start.
 - **Nobody should be mid-import.** The job takes a session-level advisory
   lock against itself, but a provider refresh from the UI landing while
   it runs simply wins the keys it touches, which makes the CSV you
@@ -59,8 +60,13 @@ minutes, and `--link-missing-providers` roughly doubles that.
 ## Steps
 
 1. **Dry run.** The default, so a missing flag cannot write anything. The
-   lookups are still real — that is what makes the CSV a plan rather
-   than a guess, and it warms the cache the apply will read.
+   lookups are still real — that is what makes the CSV a plan rather than
+   a guess — but nothing is written and no image or datasheet is
+   downloaded.
+
+   It does **not** make the apply cheaper. `provider_cache` lives in the
+   process that ran, and the apply is a separate `exec`, so the two
+   passes cost their calls independently. Budget both.
 
    ```bash
    cd /srv/stockmanager
@@ -82,15 +88,21 @@ minutes, and `--link-missing-providers` roughly doubles that.
    One line per (part, provider) pair. Columns: `workspace_id, part_id,
    mpn, provider, tier, action, part_columns_changed, specs_added,
    specs_updated, specs_restored, specs_removed, category_before,
-   category_after, assets_fetched, error`. The actions are
+   category_after, assets_fetched, assets_would_fetch, error`. The
+   actions are
 
    | Action | What it means |
    |---|---|
    | `refreshed` | The provider answered and its payload was reconciled onto a part it was already linked to. |
    | `linked` | The same, on a provider that had no claim on the part at all. Only `--link-missing-providers` produces these, and only on an exact-MPN hit. |
-   | `miss` | The provider has never heard of this MPN, or answered with a different one. Nothing written, no link created. Not a failure. |
+   | `miss` | The provider has never heard of this MPN, or answered with a different one. Nothing written, no link created. Not a failure — and the second case is common, because the sweep requires an EXACT MPN match (see below). |
    | `error` | The lookup raised, or the provider reported it is out of quota. The `error` column says which. |
    | `skipped` | The part is linked to a provider this workspace has no usable credentials for, so there was nothing to ask. |
+
+   Exactly one of `assets_fetched` and `assets_would_fetch` is populated
+   per row: a dry run downloads nothing and names what an apply would
+   pull; an apply names what it stored. A secondary fills neither — the
+   primary owns the part's files (ADR-0031).
 
    `specs_removed` counts both ways a row leaves the Specs tab: a key the
    provider stopped sending, hard-deleted, and a customs code or `-`
@@ -129,8 +141,39 @@ minutes, and `--link-missing-providers` roughly doubles that.
 |---|---|
 | `--limit N` | Stop after N parts, across the whole run. Start here. |
 | `--only-uncategorized` | Restrict the sweep to parts with no category — the cheapest way to file them without spending calls on parts that are already filed. |
-| `--link-missing-providers` | Also ask every provider the workspace has credentials for that the part is not linked to, and link it on an exact-MPN hit. One extra call per part per provider. It does NOT widen the set of parts: a part nothing has ever linked stays out of scope. |
-| `--sleep-ms MS` | Milliseconds between provider calls, default 750. `0` turns the throttle off; only do that against a warm cache or a provider you know has headroom. |
+| `--link-missing-providers` | Also ask every SECONDARY provider the workspace has credentials for that the part is not linked to, and link it on an exact-MPN hit. One extra call per part per provider. It does NOT widen the set of parts (a part nothing has ever linked stays out of scope) and it never adds the workspace's PRIMARY — see below. |
+| `--sleep-ms MS` | Milliseconds between provider calls, default 750. `0` turns the throttle off; only do that against a provider you know has headroom. |
+
+## Two rules worth knowing before you run it
+
+**Only an exact MPN counts.** DigiKey falls back to a keyword search when
+its exact-match endpoint misses, and Mouser matches partially, so a "hit"
+is not necessarily this part. A human refreshing one part by name reads
+the answer and catches that; a sweep across several hundred pairs does
+not. So the job requires the provider to answer with the same MPN it was
+asked, case-insensitively, and records anything else as `miss`. A part
+whose MPN is stored in a different format than the vendor prints it
+(`98266-0897` vs `0982660897`) will therefore show up as a `miss` line —
+that is a row to fix by hand, not a bug.
+
+**`--link-missing-providers` adds SECONDARIES only.** It never promotes
+a provider to a part's primary. Doing so would run the primary path on a
+part it has never owned and rewrite `manufacturer`, `mpn`, `footprint`,
+`description`, `linked_provider` and `part_type` from a provider nobody
+chose for that part — on our catalogue, where Mouser is primary and most
+links are DigiKey secondaries, that would be most of the parts. It is
+also not reversible the way [Rollback](#rollback) describes, because the
+unlink route refuses the primary. Promoting a provider onto a part is a
+per-part decision: use the Refresh button, or `POST
+/api/parts/{id}/refresh-from-provider`.
+
+## Concurrency
+
+The job takes a session-level advisory lock. A second sweep started while
+one is running exits **2** with `another provider-refresh is already
+running` and touches nothing — including the `--report` file, which the
+running sweep may still be writing. `run_job`'s own transaction-scoped
+lock does not cover this: it is dropped at the first per-batch commit.
 
 ## Quota, and exit 3
 

@@ -361,10 +361,17 @@ them, that's the bug.
   DigiKey reports a 429 as a clean `{"found": false, "message":
   "DigiKey rate limit reached"}`; reading that as a miss would record
   "the provider has never heard of this part" for the whole rest of the
-  catalogue. `--link-missing-providers` links only on an EXACT MPN —
-  DigiKey falls back to a fuzzy keyword search and Mouser matches
-  partially, so a near miss would link the part to a different product
-  and import its specs. Don't relax either rule.
+  catalogue. The sweep requires an EXACT MPN match on EVERY pair, linked
+  or not — DigiKey falls back to a fuzzy keyword search and Mouser
+  matches partially, so a near miss would write another product's specs
+  onto the part and re-file it under that product's taxonomy. A
+  reformatted MPN reading as `miss` in the CSV is the intended cost.
+  `--link-missing-providers` adds SECONDARIES only: adding the primary
+  would run the primary path on parts it has never owned, rewriting six
+  columns from a provider nobody chose for them, and the unlink route
+  refuses a primary so the runbook's rollback would not work. A dry run
+  downloads NO assets — a file in `UPLOAD_DIR` is the one side effect a
+  rolled-back savepoint cannot take back. Don't relax any of these.
 - **One refresh implementation, two callers.**
   `domain/parts/services/provider_refresh.py::refresh_part` is used by
   `POST /api/parts/{id}/refresh-from-provider` and by the

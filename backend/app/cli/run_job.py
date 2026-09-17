@@ -289,31 +289,46 @@ def _run_provider_refresh(db: Session, options: JobOptions) -> int:
     from app.domain.parts.services.provider_refresh_job import (
         DEFAULT_SLEEP_MS,
         ProviderQuotaExhausted,
+        SweepAlreadyRunning,
         refresh_linked_parts,
+        sweep_lock,
     )
 
     # A `--workspace` that names nothing raises `UnknownWorkspaceError`,
     # the `LookupError` shape `main` already reports as a usage error.
-    with _report_stream(options) as stream:
-        try:
-            outcome = refresh_linked_parts(
-                db,
-                apply=options.apply,
-                workspace_id=options.workspace_id,
-                stream=stream,
-                limit=options.limit,
-                only_uncategorized=options.only_uncategorized,
-                link_missing_providers=options.link_missing_providers,
-                sleep_ms=(
-                    options.sleep_ms if options.sleep_ms is not None else DEFAULT_SLEEP_MS
-                ),
-            )
-        except ProviderQuotaExhausted as exc:
-            # Translated at the boundary rather than raised from the
-            # domain: `JobHaltedError` is the CLI's vocabulary for "a job
-            # stopped on purpose and the exit code should say so", and a
-            # domain service has no business importing it.
-            raise JobHaltedError(str(exc)) from exc
+    try:
+        # The lock is taken OUTSIDE `_report_stream`, and the order is the
+        # point: opening the report truncates it, so a run that is not
+        # allowed to start would otherwise destroy the CSV belonging to
+        # the sweep that IS running before finding out it may not run.
+        with sweep_lock(db), _report_stream(options) as stream:
+            try:
+                outcome = refresh_linked_parts(
+                    db,
+                    apply=options.apply,
+                    workspace_id=options.workspace_id,
+                    stream=stream,
+                    limit=options.limit,
+                    only_uncategorized=options.only_uncategorized,
+                    link_missing_providers=options.link_missing_providers,
+                    sleep_ms=(
+                        options.sleep_ms
+                        if options.sleep_ms is not None
+                        else DEFAULT_SLEEP_MS
+                    ),
+                    lock_held=True,
+                )
+            except ProviderQuotaExhausted as exc:
+                # Translated at the boundary rather than raised from the
+                # domain: `JobHaltedError` is the CLI's vocabulary for "a
+                # job stopped on purpose and the exit code should say so",
+                # and a domain service has no business importing it.
+                raise JobHaltedError(str(exc)) from exc
+    except SweepAlreadyRunning as exc:
+        # Exit 2 with a message, not exit 0 with an empty report: for a
+        # job whose purpose is to change a few hundred parts, "nothing to
+        # do" is the most misleading answer available.
+        raise JobConfigError(str(exc)) from exc
     return outcome.refreshed
 
 

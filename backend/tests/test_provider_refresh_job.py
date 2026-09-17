@@ -5,10 +5,11 @@ The route refreshes one part from one provider. This sweeps a whole
 workspace, and prod is 285 linked parts across 290 links, of which 252
 go through the SECONDARY path. What is pinned here:
 
-* **a dry run writes nothing.** The provider lookups are real — they are
-  reads, and warming the cache is the point — but every DB write lands
-  in a savepoint that is rolled back, so the CSV is produced by the code
-  that would apply it rather than by a second implementation.
+* **a dry run writes nothing.** The provider lookups are real — doing
+  them is what makes the CSV a plan rather than a guess — but every DB
+  write lands in a savepoint that is rolled back and no asset is
+  downloaded, because a file in `UPLOAD_DIR` is the one thing a rollback
+  cannot take back.
 * **the tier rules survive the sweep.** A primary-linked part gets its
   columns driven; a secondary-linked one gets canonical specs and its
   own namespaced catalog keys and NOT ONE part column.
@@ -25,13 +26,15 @@ from __future__ import annotations
 
 import csv
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.cli.run_job import JOBS, JobOptions, main, run_job
+from app.core.advisory_locks import PROVIDER_REFRESH_LOCK_CLASSID
 from app.core.time import utcnow
 from app.domain.audit.models import AuditLog
 from app.domain.custom_fields.models import CustomField
@@ -47,6 +50,7 @@ from app.domain.parts.services.provider_refresh_job import (
     JOB_NAME,
     REPORT_COLUMNS,
     ProviderQuotaExhausted,
+    SweepAlreadyRunning,
     UnknownWorkspaceError,
     refresh_linked_parts,
 )
@@ -296,8 +300,8 @@ def test_a_dry_run_writes_nothing_to_the_database(
 def test_a_dry_run_still_calls_the_provider_and_writes_the_csv(
     primary_workspace, db, tmp_path: Path, providers
 ) -> None:
-    """The lookups are reads. Doing them for real is what makes the CSV a
-    plan rather than a guess — and it warms the cache for the apply."""
+    """The lookups are reads, and doing them for real is what makes the
+    CSV a plan rather than a guess."""
     _, part_id = primary_workspace
     report = tmp_path / "dry.csv"
 
@@ -478,6 +482,35 @@ def test_link_missing_providers_records_a_miss_rather_than_an_error(
     assert "no match" in miss["error"]
 
 
+def test_a_fuzzy_hit_is_refused_on_a_provider_the_part_is_already_linked_to(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    """The guard is unconditional in a sweep, not just for new links.
+
+    DigiKey falls back to a keyword search when exact-match
+    `ProductDetails` misses, so a "hit" on a part the sweep never asked a
+    human about can be a different product — and writing its canonical
+    specs would also re-file the part under that product's taxonomy.
+    A reformatted MPN reads as `miss`, which is a CSV line an operator
+    can act on; a wrong match is silent."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    providers["mouser"] = StubProvider(
+        "mouser", {MPN: _record("SOMETHING-ELSE-99", manufacturer="Yageo")}
+    )
+    part_id = _part(client, db, MPN, linked_provider="mouser", links=("mouser",))
+    db.commit()
+    report = tmp_path / "apply.csv"
+
+    _sweep(db, report, apply=True)
+
+    db.expire_all()
+    part = db.get(Part, part_id)
+    assert part.mpn == MPN, "a fuzzy hit must not rewrite the MPN"
+    assert part.manufacturer != "Yageo"
+    assert _report_rows(report)[0]["action"] == ACTION_MISS
+
+
 def test_link_missing_providers_refuses_a_fuzzy_hit(
     client: TestClient, db, tmp_path: Path, providers
 ) -> None:
@@ -507,6 +540,67 @@ def test_link_missing_providers_refuses_a_fuzzy_hit(
     } == {"mouser"}
     miss = [row for row in _report_rows(report) if row["provider"] == "digikey"][0]
     assert miss["action"] == ACTION_MISS
+
+
+def test_link_missing_providers_never_runs_the_primary_on_a_secondary_part(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    """The flag adds SECONDARIES only.
+
+    On icicle Mouser is primary and 252 of 290 links are DigiKey
+    secondaries. Letting the flag add Mouser to those parts would run the
+    PRIMARY path on each of them and rewrite manufacturer, mpn,
+    footprint, description, `linked_provider` and `part_type` from a
+    provider nobody chose for that part — and it is not reversible the
+    way the runbook describes, because the unlink route refuses the
+    primary. Promoting a provider onto a part stays a per-part human
+    action through the refresh route."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    _add_secondary(db, ws_id, "digikey")
+    providers["mouser"] = StubProvider("mouser", {MPN: _record(MPN, manufacturer="Yageo")})
+    providers["digikey"] = StubProvider(
+        "digikey", {MPN: _record(MPN, manufacturer="DIGIKEY-MFR")}
+    )
+    part_id = _part(client, db, MPN, links=("digikey",))
+    part = db.get(Part, part_id)
+    part.manufacturer = "ORIGINAL-MFR"
+    db.commit()
+    report = tmp_path / "apply.csv"
+
+    _sweep(db, report, apply=True, link_missing_providers=True)
+
+    assert providers["mouser"].calls == [], "the primary was not asked"
+    db.expire_all()
+    part = db.get(Part, part_id)
+    assert part.manufacturer == "ORIGINAL-MFR"
+    assert part.linked_provider is None
+    assert [row["provider"] for row in _report_rows(report)] == ["digikey"]
+
+
+def test_the_primary_is_ordered_first_even_when_a_secondary_is_being_added(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    """One sorted list, not linked-then-unlinked. The primary is the tier
+    that fills a NULL category, and the category picks the spec schema
+    every later payload is read through, so it cannot end up behind a
+    secondary the flag happened to append."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    _add_secondary(db, ws_id, "digikey")
+    providers["mouser"] = StubProvider("mouser", {MPN: _record(MPN, manufacturer="Yageo")})
+    providers["digikey"] = StubProvider(
+        "digikey", {MPN: _record(MPN, manufacturer="DIGIKEY-MFR")}
+    )
+    # Linked to the SECONDARY only, so a naive "linked first, then the
+    # flag's additions" order would put digikey ahead of mouser.
+    _part(client, db, MPN, linked_provider="mouser", links=("digikey",))
+    db.commit()
+    report = tmp_path / "apply.csv"
+
+    _sweep(db, report, apply=True, link_missing_providers=True)
+
+    assert [row["provider"] for row in _report_rows(report)] == ["mouser", "digikey"]
 
 
 def test_without_the_flag_a_credentialed_provider_is_not_asked(
@@ -612,6 +706,90 @@ def test_a_second_apply_changes_nothing(
         key: (row.value, row.value_num, row.provider, row.archived_at)
         for key, row in _rows(db, part_id).items()
     } == before_rows
+
+
+# ---------------------------------------------------------------------------
+# Assets — the one side effect a savepoint cannot take back
+# ---------------------------------------------------------------------------
+def _with_assets(mpn: str) -> dict:
+    return _record(
+        mpn,
+        manufacturer="Yageo",
+        image_url="https://example.com/i.jpg",
+        datasheet_url="https://example.com/d.pdf",
+    )
+
+
+def test_a_dry_run_downloads_no_assets_and_reports_what_it_would_pull(
+    client: TestClient, db, tmp_path: Path, providers, monkeypatch
+) -> None:
+    """A downloaded file lands in UPLOAD_DIR, outside the savepoint the
+    batch rolls back. A dry run that fetched would leave orphans behind
+    and spend one real HTTP request per asset to learn what the payload
+    already told it."""
+    fetched: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "app.domain.parts.services.provider_refresh.fetch_provider_asset",
+        lambda url, ws_id, kind: fetched.append((url, kind)) or "/api/parts/assets/x",
+    )
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    providers["mouser"] = StubProvider("mouser", {MPN: _with_assets(MPN)})
+    _part(client, db, MPN, linked_provider="mouser", links=("mouser",))
+    db.commit()
+    report = tmp_path / "dry.csv"
+
+    _sweep(db, report)
+
+    assert fetched == [], "a dry run must not download"
+    row = _report_rows(report)[0]
+    assert row["assets_fetched"] == ""
+    assert set(row["assets_would_fetch"].split()) == {"image", "datasheet"}
+
+
+def test_apply_downloads_the_assets_and_reports_them(
+    client: TestClient, db, tmp_path: Path, providers, monkeypatch
+) -> None:
+    fetched: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "app.domain.parts.services.provider_refresh.fetch_provider_asset",
+        lambda url, ws_id, kind: fetched.append((url, kind)) or "/api/parts/assets/x",
+    )
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    providers["mouser"] = StubProvider("mouser", {MPN: _with_assets(MPN)})
+    _part(client, db, MPN, linked_provider="mouser", links=("mouser",))
+    db.commit()
+    report = tmp_path / "apply.csv"
+
+    _sweep(db, report, apply=True)
+
+    assert {kind for _, kind in fetched} == {"image", "datasheet"}
+    row = _report_rows(report)[0]
+    assert set(row["assets_fetched"].split()) == {"image", "datasheet"}
+    assert row["assets_would_fetch"] == ""
+
+
+def test_a_secondary_never_touches_either_asset_column(
+    client: TestClient, db, tmp_path: Path, providers, monkeypatch
+) -> None:
+    """ADR-0031: the primary owns the part's files."""
+    monkeypatch.setattr(
+        "app.domain.parts.services.provider_refresh.fetch_provider_asset",
+        lambda url, ws_id, kind: pytest.fail("a secondary must not download"),
+    )
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    _add_secondary(db, ws_id, "digikey")
+    providers["digikey"] = StubProvider("digikey", {MPN: _with_assets(MPN)})
+    _part(client, db, MPN, links=("digikey",))
+    db.commit()
+    report = tmp_path / "apply.csv"
+
+    _sweep(db, report, apply=True)
+
+    row = _report_rows(report)[0]
+    assert (row["assets_fetched"], row["assets_would_fetch"]) == ("", "")
 
 
 # ---------------------------------------------------------------------------
@@ -1066,6 +1244,78 @@ def test_a_dry_run_writes_no_audit_row(
         ).scalars().first()
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# The advisory lock
+# ---------------------------------------------------------------------------
+@contextmanager
+def _lock_held_elsewhere(engine):
+    """Hold the sweep's advisory lock on a SEPARATE connection.
+
+    It has to be a different session: Postgres session-level advisory
+    locks are re-entrant, so a second `pg_try_advisory_lock` from the
+    connection that already holds one succeeds and merely bumps a
+    counter. The contention this guards against is between two `run_job`
+    processes, which is what a second connection models. Same pattern as
+    `test_spec_normalize.py`.
+    """
+    holder = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+    try:
+        holder.execute(
+            text(
+                "SELECT pg_advisory_lock("
+                "CAST(:classid AS int4), CAST(hashtext(:key) AS int4))"
+            ),
+            {"classid": PROVIDER_REFRESH_LOCK_CLASSID, "key": JOB_NAME},
+        )
+        yield
+    finally:
+        holder.execute(text("SELECT pg_advisory_unlock_all()"))
+        holder.close()
+
+
+def test_the_two_modules_agree_on_the_lock_key() -> None:
+    """`provider_refresh_scope` spells `JOB_NAME` itself, because the job
+    module imports it and the arrow may only point one way. A rename on
+    one side would silently give the sweep a lock nothing else takes."""
+    from app.domain.parts.services import provider_refresh_scope
+
+    assert provider_refresh_scope.JOB_NAME == JOB_NAME
+
+
+def test_a_second_sweep_is_refused_rather_than_reporting_an_empty_run(
+    primary_workspace, db, engine, tmp_path: Path, providers
+) -> None:
+    """Returning an empty outcome and exit 0 would read as "nothing to
+    do", which for a job whose purpose is to change a few hundred parts
+    is the most misleading answer available."""
+    with _lock_held_elsewhere(engine):
+        with pytest.raises(SweepAlreadyRunning):
+            _sweep(db, tmp_path / "second.csv")
+
+    assert providers["mouser"].calls == [], "no quota was spent on a refused run"
+
+
+def test_a_refused_sweep_exits_2_and_leaves_the_report_file_alone(
+    primary_workspace, db, engine, tmp_path: Path, providers, capsys
+) -> None:
+    """The lock is taken BEFORE the report is opened, because opening it
+    truncates — a run that may not start must not destroy the CSV of the
+    one that is still going."""
+    report = tmp_path / "held.csv"
+    report.write_text("the running sweep's report\n", encoding="utf-8")
+
+    with _lock_held_elsewhere(engine):
+        exit_code = main(
+            [JOB_NAME, "--apply", "--report", str(report)],
+            session_factory=lambda: db,
+            heartbeat_dir=tmp_path / "heartbeats",
+        )
+
+    assert exit_code == 2
+    assert "already running" in capsys.readouterr().err
+    assert report.read_text(encoding="utf-8") == "the running sweep's report\n"
 
 
 # ---------------------------------------------------------------------------

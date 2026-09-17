@@ -25,9 +25,13 @@ the canonical record.
   default with the lookups done for real inside a rolled-back savepoint,
   sleeps 750 ms between calls, commits per batch of 25 parts, and stops
   at exit 3 when a provider reports it is out of quota with everything
-  finished so far kept. `--link-missing-providers` also asks the
-  providers a part is not linked to and links it on an exact-MPN hit
-  only. `docs/runbooks/provider-refresh.md`; ADR-0021.
+  finished so far kept, and downloads no assets at all on a dry run. Every
+  pair needs an EXACT MPN match, because DigiKey falls back to a keyword
+  search and a near miss would write another product's specs onto the
+  part. `--link-missing-providers` also asks the SECONDARY providers a
+  part is not linked to; it never promotes one to primary, which would
+  rewrite six part columns from a provider nobody chose for that part.
+  `docs/runbooks/provider-refresh.md`; ADR-0021.
 - **The refresh sequence moved out of the route.**
   `domain/parts/services/provider_refresh.py::refresh_part` is now the
   one implementation, and `POST /api/parts/{id}/refresh-from-provider`
