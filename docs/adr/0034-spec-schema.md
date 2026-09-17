@@ -211,6 +211,19 @@ reconciler of its own. Three decisions landed with it:
     it would write specs with no existing row behind them and therefore
     nothing for the operator to review in the CSV.
 
+  **Amended 2026-09-17.** A one-to-many alias needs an INSERT, not a
+  second rename. `Size / Dimension` answers both `length` and `width` and
+  a part carries one row for it; renaming that row for `length` and then
+  again for `width` left the part with `width` alone and the raw value
+  gone, and — because a second run then found nothing to do — reported
+  clean. The first canonical key to claim a source row renames it; every
+  later key claiming the SAME row gets a copy, reported as the new `add`
+  action. `normalize_part_rows` still takes no session, so the rows come
+  back on `PartOutcome.new_rows` and the caller adds them inside the batch
+  transaction, which is what keeps a dry run writing nothing. The refresh
+  path was never affected: it builds rows from a payload rather than
+  moving the ones a part already has.
+
   A row this schema has already re-keyed is invisible to `normalise()` —
   `resistance` is not one of `Resistance`'s aliases — so
   `spec_schema.canonical_value` re-parses it by canonical key instead. Without
@@ -278,11 +291,23 @@ roots. Four decisions landed with it:
   first, so `PMIC - Thermal Management` is an IC. Then `fuse`, so a thermal
   fuse is a fuse. Then `thermal`, so a thermal pad is hardware — without
   that rule `Thermal Interface Materials` read as an IC, because
-  `interface` is in the weaker half of the IC vocabulary that follows it.
-  That weaker half still precedes `switch` and `crystal`, which is what
-  makes `Interface - Analog Switches` and `Clock/Timing - … Frequency
+  `interface` is in the weaker half of the IC vocabulary. Then
+  `connector`, so `Memory Connectors - PC Card Sockets` is a socket. Then
+  that weaker half, which still precedes `switch` and `crystal`, and is
+  what makes `Interface - Analog Switches` and `Clock/Timing - … Frequency
   Synthesizers` ICs. `mechanical` is last, because its words turn up in
   Mouser DESCRIPTIONS, which this function also classifies.
+- **Don't read two different ratings into one canonical key.** A switch's
+  `Mechanical Life` and its `Electrical Life` are different numbers —
+  a switch survives far more mechanical operations than switched-load
+  ones — so `electrical_life` takes the Mouser attribute alone and
+  DigiKey's is kept verbatim. The `value_num` index on a canonical key
+  exists so that key sorts as one quantity.
+- **A category that overrides a common key inherits its aliases.** The
+  connector `pitch` that replaces `pin_pitch` reads `Pitch`,
+  `Lead Spacing` and `Pin Pitch`, in that order. Dropping the common key
+  without taking its spellings would lose `Lead Spacing` on exactly the
+  class that uses it most.
 
 **Landed since**: A6/B3 (the `category-seed` job and the `Device:*` defaults
 it carries) and B4 (`symbol-collapse`). The seed is where the canonical keys

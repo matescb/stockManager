@@ -160,7 +160,8 @@ Three of them take *part* of a value, through a transform named on the
 A category may answer a common key with one of its own — a connector's
 `pitch` is the common `pin_pitch` under the same upstream name — in which
 case the common key is dropped for that category, so one value writes one
-row.
+row. The override takes the dropped key's aliases with it, so a
+connector's `Lead Spacing` still lands somewhere.
 
 Two rules follow from canonical keys being shared:
 

@@ -27,6 +27,7 @@ from typing import Any, Iterable, Mapping, TextIO
 from uuid import UUID
 
 __all__ = [
+    "ACTION_ADD",
     "ACTION_ARCHIVE",
     "ACTION_CATEGORY",
     "ACTION_DROP",
@@ -57,6 +58,14 @@ ACTION_STAMP = "stamp"
 ACTION_VALUE_NUM = "value_num"
 #: A part with no category, filed from its provider's taxonomy.
 ACTION_CATEGORY = "category"
+#: A NEW `custom_fields` row, inserted rather than renamed. The one case
+#: is the schema's one-to-many alias: `Size / Dimension` answers both
+#: `length` and `width`, and the part has a single row for it. The first
+#: canonical key renames that row; the second cannot, so it gets a copy.
+#: `old_key` names the upstream key the value was read from, which is how
+#: an operator ties the insert back to the rename on the line above it.
+#: Reversal is a DELETE of this row, not a rename — see the runbook.
+ACTION_ADD = "add"
 
 ACTIONS: tuple[str, ...] = (
     ACTION_REKEY,
@@ -65,6 +74,7 @@ ACTIONS: tuple[str, ...] = (
     ACTION_STAMP,
     ACTION_VALUE_NUM,
     ACTION_CATEGORY,
+    ACTION_ADD,
 )
 
 REPORT_COLUMNS: tuple[str, ...] = (

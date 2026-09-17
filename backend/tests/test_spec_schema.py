@@ -845,7 +845,20 @@ def test_a_digikey_switch_payload_maps_to_the_switch_schema() -> None:
     assert result.canonical["current_rating"].display == "50 mA"
     assert result.canonical["current_rating"].value_num == Decimal("0.05")
     assert result.canonical["operating_force"].display == "1.6 N"
-    assert result.canonical["electrical_life"].display == "1000000 cycles"
+    # `Mechanical Life` is NOT `electrical_life`. A switch is rated for far
+    # more mechanical operations than switched-load ones, so reading one
+    # into the other would put two incomparable numbers under a key whose
+    # `value_num` index exists so it sorts as one quantity. It is kept
+    # verbatim instead, which loses nothing.
+    assert "electrical_life" not in result.canonical
+    assert result.optional["Mechanical Life"] == "1,000,000 Cycles"
+
+
+def test_a_mouser_switch_electrical_life_is_canonical() -> None:
+    result = normalise("switch", "mouser", [("Electrical Life", "50000 Cycles")])
+
+    assert result.canonical["electrical_life"].display == "50000 cycles"
+    assert result.canonical["electrical_life"].value_num == Decimal("50000")
 
 
 def test_a_digikey_transformer_payload_maps_to_the_transformer_schema() -> None:
@@ -899,3 +912,29 @@ def test_every_declared_extractor_exists() -> None:
     }
     assert declared
     assert declared <= set(EXTRACTORS)
+
+
+@pytest.mark.parametrize(
+    "alias", ["Pitch", "Pin Pitch", "Lead Spacing"]
+)
+def test_a_connector_reads_every_pitch_spelling_onto_its_own_key(alias: str) -> None:
+    """The connector slug drops the common `pin_pitch`, so its own `pitch`
+    has to answer every spelling that key answered — otherwise dropping it
+    loses `Lead Spacing` on exactly the class that uses it most."""
+    result = normalise("connector", "digikey", [(alias, '0.100" (2.54mm)')])
+
+    assert result.canonical["pitch"].display == "2.54 mm"
+    assert "pin_pitch" not in result.canonical
+    assert result.dropped == []
+
+
+def test_a_connector_payload_with_two_pitch_spellings_writes_one_row() -> None:
+    result = normalise(
+        "connector",
+        "digikey",
+        [("Pitch", '0.100" (2.54mm)'), ("Lead Spacing", '0.200" (5.08mm)')],
+    )
+
+    assert [k for k in result.canonical if "pitch" in k] == ["pitch"]
+    assert result.canonical["pitch"].raw_key == "Pitch"
+    assert result.dropped == ["Lead Spacing"]

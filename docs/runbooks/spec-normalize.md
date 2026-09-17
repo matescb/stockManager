@@ -67,6 +67,7 @@ seconds at prod's scale (324 parts, 9,377 rows).
    | `stamp` | A canonical row that had the right key and value but no `provider`. It may have filled an empty `value_num` in the same pass. |
    | `value_num` | A canonical row that had its `provider` already and only the numeric sidecar missing. |
    | `category` | A part with no category, filed from its provider's taxonomy. `category_path` names where. |
+   | `add` | A NEW row. Only the schema's one-to-many alias produces these: `Size / Dimension` answers both `length` and `width`, and the part has one row for it, so the first key renames that row and the second gets a copy. `old_key` names the upstream key both were read from. |
 
    Two summary sections follow the changes, each after a blank line: counts
    per action per workspace, and the 30 most frequent raw keys the schema had
@@ -109,8 +110,10 @@ sudo -u deploy docker compose -f docker-compose.prod.yml --env-file .env.prod \
 ## Rollback
 
 Nothing was deleted, so most of a run can be undone from the CSV without
-touching the dump. Every line describes exactly one row, identified by
-`part_id` + `old_key`:
+touching the dump. Every line describes exactly one row. A line is
+identified by `part_id` + `old_key`, except an `add`, which is the one line
+whose row did not exist before the run and is therefore found by `part_id`
++ `key`:
 
 - An `archive` or `drop` line is reversed by clearing `archived_at` on that
   part's row for that `key`.
@@ -122,6 +125,12 @@ touching the dump. Every line describes exactly one row, identified by
   only on a row whose displayed value did not change, so clearing both is the
   right reversal for either line.
 - A `category` line is reversed by clearing `parts.category_id`.
+- An `add` line is the one line reversed by a DELETE, of that part's row for
+  that `key`. It is safe because the row is new — nothing else has ever
+  pointed at it — but it is a delete, so check `part_id` + `key` before you
+  run it. Reverse it together with the `rekey` line above it that carries
+  the same `old_key`: the two describe one upstream value split across two
+  rows, and undoing half leaves the part with a `width` and no `length`.
 
 Two rows answering one canonical key produce two lines — a `rekey` on the row
 that kept the key and an `archive` on the one that was retired. Reverse both

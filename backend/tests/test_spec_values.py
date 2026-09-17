@@ -347,3 +347,93 @@ def test_a_nano_prefixed_value_still_reads_as_nano() -> None:
     assert parsed is not None
     assert parsed.value_num == Decimal("4.7E-9")
     assert parsed.display == "4.7 nF"
+
+
+# ---------------------------------------------------------------------------
+# Conditioned values — "this rating, under these conditions"
+#
+# The leading term is the one the schema key is asking about, the same
+# reading `0.063W, 1/16W` already gets. `@` was the only separator handled;
+# these are the other two vendors use, both from switch and relay contact
+# ratings.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("text", "hint", "expected_num", "expected_display"),
+    [
+        # The separator already handled, kept here as the reference case.
+        ("50mA @ 24VDC", None, Decimal("0.05"), "50 mA"),
+        # Spelled out.
+        ("50mA at 12VDC", None, Decimal("0.05"), "50 mA"),
+        ("2 A at 125 VAC", None, Decimal("2"), "2 A"),
+        ("1.5A AT 30VDC", None, Decimal("1.5"), "1.5 A"),
+        # Slashed, which is how a contact rating is usually printed.
+        ("3A/250VAC", None, Decimal("3"), "3 A"),
+        ("10 A / 250 V", None, Decimal("10"), "10 A"),
+        ("0.5A/125VAC, 0.25A/250VAC", None, Decimal("0.5"), "500 mA"),
+    ],
+)
+def test_parse_si_takes_the_leading_term_of_a_conditioned_value(
+    text: str, hint: str | None, expected_num: Decimal, expected_display: str
+) -> None:
+    parsed = parse_si(text, unit_hint=hint)
+
+    assert parsed is not None, text
+    assert parsed.value_num == expected_num
+    assert parsed.display == expected_display
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_num", "expected_unit"),
+    [
+        # A fraction is a division, not a condition. `1/16W` must stay one
+        # sixteenth of a watt — splitting on the slash would read it as 1.
+        ("1/16W", Decimal("0.0625"), "W"),
+        ("1/4 W", Decimal("0.25"), "W"),
+        ("1/3 W", None, "W"),
+    ],
+)
+def test_a_fraction_is_not_a_conditioned_value(
+    text: str, expected_num: Decimal | None, expected_unit: str
+) -> None:
+    parsed = parse_si(text)
+
+    assert parsed is not None, text
+    assert parsed.unit == expected_unit
+    if expected_num is not None:
+        assert parsed.value_num == expected_num
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_unit", "expected_display"),
+    [
+        # A slash INSIDE a unit symbol is not a condition separator. This
+        # is the one that would have broken every resistor in the library.
+        ("±100ppm/°C", "ppm/°C", "100 ppm/°C"),
+        ("100 ppm/C", "ppm/°C", "100 ppm/°C"),
+    ],
+)
+def test_a_slash_inside_a_unit_is_not_a_condition(
+    text: str, expected_unit: str, expected_display: str
+) -> None:
+    parsed = parse_si(text)
+
+    assert parsed is not None, text
+    assert parsed.unit == expected_unit
+    assert parsed.display == expected_display
+
+
+@pytest.mark.parametrize("text", ["1.8 A Saturation", "26mOhm Max at 25C"])
+def test_at_only_separates_as_a_whole_word(text: str) -> None:
+    """`\bat\b`, not a substring: "Saturation" and "Rated" carry the
+    letters and are not conditions."""
+    parsed = parse_si(text)
+
+    assert parsed is None or parsed.value_num is not None
+
+
+def test_a_temperature_range_is_still_a_range_not_a_condition() -> None:
+    parsed = parse_si("-55°C ~ 125°C", unit_hint="°C")
+
+    assert parsed is not None
+    assert parsed.value_num is None
+    assert parsed.display == "-55°C ~ 125°C"

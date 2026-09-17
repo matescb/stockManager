@@ -348,3 +348,32 @@ def test_thermal_does_not_capture_a_class_that_names_itself(
     provider_category, expected
 ):
     assert category_for_provider("digikey", provider_category) == expected
+
+
+@pytest.mark.parametrize(
+    "provider_category",
+    [
+        "Memory Connectors - PC Card Sockets",
+        "Memory Connectors - Inline Module Sockets",
+        "Card Edge Connectors - Memory",
+    ],
+)
+def test_a_memory_connector_is_a_connector(provider_category):
+    """"Memory" is in the weaker half of the IC vocabulary and a socket is
+    not an IC, so the connector rule comes first. It is safe there: no IC
+    category names a connector."""
+    assert category_for_provider("digikey", provider_category) == "Connectors"
+
+
+@pytest.mark.parametrize(
+    ("provider_category", "expected"),
+    [
+        ("Interface ICs - Transceivers", "ICs"),
+        ("Memory ICs - EEPROM", "ICs"),
+        ("Logic ICs - Gates", "ICs"),
+    ],
+)
+def test_putting_connectors_first_does_not_cost_the_ic_categories(
+    provider_category, expected
+):
+    assert category_for_provider("mouser", provider_category) == expected

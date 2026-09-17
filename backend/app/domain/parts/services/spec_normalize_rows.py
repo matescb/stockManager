@@ -55,6 +55,7 @@ from app.domain.parts.services.provider_field_values import (
     truncate_provider_field_value,
 )
 from app.domain.parts.services.spec_normalize_report import (
+    ACTION_ADD,
     ACTION_ARCHIVE,
     ACTION_DROP,
     ACTION_REKEY,
@@ -94,6 +95,12 @@ class PartOutcome:
     unmapped: tuple[tuple[str, str], ...] = ()
     #: Canonical keys this part now carries, for the audit comment.
     canonical: tuple[str, ...] = field(default=())
+    #: Rows that have to be INSERTED, unattached to any session — this
+    #: module has none by design. The caller adds them inside its own
+    #: batch transaction, so a dry run's savepoint discards them like
+    #: every other mutation here. Only the schema's one-to-many alias
+    #: produces any; see `_apply_canonical`.
+    new_rows: tuple[CustomField, ...] = field(default=())
 
 
 def normalize_part_rows(
@@ -159,7 +166,9 @@ def normalize_part_rows(
             superseded.extend(rows_by_raw_key.get(raw_key, ()))
         unmapped.extend((slug_label, key) for key in norm.optional)
 
-    canonical, kept_manual, kept_other = _apply_canonical(part_rows, contests, changes)
+    canonical, kept_manual, kept_other, new_rows = _apply_canonical(
+        part_rows, contests, changes
+    )
     _archive_superseded(superseded, changes)
     _retire_placeholders(placeholders, changes)
     return PartOutcome(
@@ -169,6 +178,7 @@ def normalize_part_rows(
         unattributed=unattributed,
         unmapped=tuple(unmapped),
         canonical=tuple(canonical),
+        new_rows=tuple(new_rows),
     )
 
 
@@ -326,22 +336,52 @@ def _apply_canonical(
     part_rows: Sequence[CustomField],
     contests: dict[str, _Candidate],
     changes: list[Change],
-) -> tuple[list[str], int, int]:
-    """Write each canonical winner, and say what was left to somebody else."""
+) -> tuple[list[str], int, int, list[CustomField]]:
+    """Write each canonical winner, and say what was left to somebody else.
+
+    **A source row can only be renamed once.** `Size / Dimension` answers
+    both `length` and `width` — the schema's one one-to-many alias — and
+    the part has a single row carrying it. Renaming that row for `length`
+    and then again for `width` leaves the part with `width` alone, the
+    raw value gone, and a second run reporting nothing, which is what
+    would make the loss invisible. So the first canonical key renames the
+    row and every later key claiming the SAME row gets a copy to insert.
+    """
     by_key = {row.key: row for row in part_rows}
     canonical: list[str] = []
     kept_manual = kept_other = 0
+    #: Source rows an earlier canonical key already renamed, by identity —
+    #: two distinct rows can carry equal values, and it is the ROW that
+    #: can only move once.
+    claimed: set[int] = set()
+    new_rows: list[CustomField] = []
 
     for key in sorted(contests):
         candidate = contests[key]
         source_row = candidate.source_row
         target = by_key.get(key)
 
-        if target is None:
+        if target is None and id(source_row) in claimed:
+            row = _copy_for(source_row, candidate, new_key=key)
+            new_rows.append(row)
+            by_key[key] = row
+            changes.append(
+                Change(
+                    action=ACTION_ADD,
+                    key=key,
+                    old_key=candidate.value.raw_key,
+                    provider=candidate.provider,
+                    old_value=candidate.value.raw_value,
+                    new_value=row.value or "",
+                )
+            )
+            canonical.append(key)
+        elif target is None:
             # Rename in place: one UPDATE, and the row keeps its id and
             # its created_at rather than being retired next to a copy.
             change = _rekey(source_row, candidate, new_key=key)
             by_key[key] = source_row
+            claimed.add(id(source_row))
             changes.append(change)
             canonical.append(key)
         elif target is source_row:
@@ -377,8 +417,36 @@ def _apply_canonical(
                 )
             _archive(source_row)
             changes.append(_retired(source_row, ACTION_ARCHIVE))
+            claimed.add(id(source_row))
             canonical.append(key)
-    return canonical, kept_manual, kept_other
+    return canonical, kept_manual, kept_other, new_rows
+
+
+def _copy_for(
+    source_row: CustomField, candidate: _Candidate, *, new_key: str
+) -> CustomField:
+    """A second canonical row for a source row that has already moved.
+
+    Unattached: this module takes no session. It carries the parsed value
+    and sidecar for THIS key — the extractor gives `length` and `width`
+    different numbers out of one string — and it is `source='provider'`
+    with the provider named, because an unstamped canonical row is
+    claimable by whoever refreshes next.
+
+    `original_value` is deliberately left NULL. It means "what upstream
+    said before a user edited this row", and nobody has edited a row that
+    did not exist a moment ago.
+    """
+    return CustomField(
+        workspace_id=source_row.workspace_id,
+        object_type=source_row.object_type,
+        object_id=source_row.object_id,
+        key=new_key,
+        value=truncate_provider_field_value(candidate.value.display),
+        value_num=candidate.value.value_num,
+        source="provider",
+        provider=candidate.provider,
+    )
 
 
 def _archive_superseded(rows: Sequence[CustomField], changes: list[Change]) -> None:

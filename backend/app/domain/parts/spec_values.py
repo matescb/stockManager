@@ -127,6 +127,23 @@ _WHITESPACE_RE = re.compile(r"\s+")
 # is refused outright instead of silently read as `4`.
 _THOUSANDS_RE = re.compile(r"(?<=\d),(?=\d{3}(?:\D|$))")
 _VALUE_SPLIT_RE = re.compile(r",(?!\d)")
+# "This rating, under these conditions": `2A @ 125VAC`, `50mA at 12VDC`,
+# `3A/250VAC`. The leading term is the one a schema key is asking about.
+#
+# Two things the slash arm must NOT cut, both of which would silently
+# change a number rather than fail:
+#
+# * a FRACTION — `1/16W` is a sixteenth of a watt, and every chip-resistor
+#   datasheet writes power that way. Refused by the lookbehind: the
+#   character before the slash is a digit.
+# * a slash INSIDE a unit symbol — `±100ppm/°C` is one quantity. Refused
+#   by the lookahead: what follows the slash is not a digit.
+#
+# `at` is matched as a whole word with whitespace on both sides, so
+# "Saturation" and "Rated" keep their letters.
+_CONDITION_SPLIT_RE = re.compile(
+    r"@|\s+at\s+|(?<=[^\d\s])\s*/\s*(?=\d)", re.IGNORECASE
+)
 
 _DASHES = {"-", "–", "—", "--"}
 _MAX_INPUT_CHARS = 200
@@ -208,9 +225,11 @@ def _parse(text: str | None, unit_hint: str | None) -> ParsedValue | None:
     if ranged is not None:
         return ranged
 
-    # Multi-valued ("0.063W, 1/16W") and conditioned ("1.8 A @ 100 kHz")
-    # values: the leading term is the one the schema is asking about.
-    head = _VALUE_SPLIT_RE.split(body)[0].split("@")[0].strip()
+    # Multi-valued ("0.063W, 1/16W") and conditioned ("1.8 A @ 100 kHz",
+    # "3A/250VAC") values: the leading term is the one the schema is
+    # asking about.
+    head = _CONDITION_SPLIT_RE.split(_VALUE_SPLIT_RE.split(body)[0], maxsplit=1)[0]
+    head = head.strip()
     head = _PLUS_MINUS_RE.sub("", head).strip()
     while True:
         stripped = _QUALIFIER_RE.sub("", head).strip()

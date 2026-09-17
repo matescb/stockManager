@@ -131,7 +131,17 @@ _CONNECTOR: tuple[SpecKey, ...] = (
     SpecKey("rows", None, "Rows", False, ("Number of Rows",), ("Number of Rows",)),
     # The class's own name for the common `pin_pitch`, which
     # `COMMON_OVERRIDES` removes here so one `Pitch` value writes one row.
-    SpecKey("pitch", "m", "Pitch", False, ("Pitch",), ("Pitch",), extract="metric"),
+    # It therefore has to answer every spelling that key answered —
+    # `Lead Spacing` most of all, which is a through-hole header's word
+    # for exactly this and would otherwise be lost on the class that uses
+    # it most. Same alias order, so a payload carrying two resolves the
+    # same way on a connector as anywhere else.
+    SpecKey(
+        "pitch", "m", "Pitch", False,
+        ("Pitch", "Lead Spacing", "Pin Pitch"),
+        ("Pitch", "Pin Pitch"),
+        extract="metric",
+    ),
     SpecKey("gender", None, "Gender", False, ("Gender",), ("Gender",)),
     SpecKey(
         "current_rating", "A", "Current rating", False,
@@ -224,9 +234,16 @@ _SWITCH: tuple[SpecKey, ...] = (
         "operating_force", "N", "Operating force", False,
         ("Operating Force",), ("Actuation Force",),
     ),
+    # Mouser only, on purpose. DigiKey's comparable attribute is
+    # `Mechanical Life`, and the two are different ratings: a switch is
+    # specified for far more mechanical operations than switched-load
+    # ones. Reading one into the other would put two incomparable numbers
+    # under a key whose `value_num` index exists so it sorts as one
+    # quantity. DigiKey has no electrical-life attribute to give a second
+    # key, so there is one key and it means what Mouser means.
     SpecKey(
-        "electrical_life", "cycles", "Life", False,
-        ("Mechanical Life",), ("Electrical Life",),
+        "electrical_life", "cycles", "Electrical life", False,
+        (), ("Electrical Life",),
     ),
 )
 
@@ -302,12 +319,15 @@ MORE_CANONICAL_SPECS: dict[str, tuple[SpecKey, ...]] = {
 #    a gap filler are parts you screw on, not parts you solder.
 #    `Thermal Interface Materials` read as an IC until this rule existed,
 #    because `interface` is in the IC vocabulary below.
-# 4. **Then the rest of the IC vocabulary**, which is the weaker half:
+# 4. **Then connectors.** `Memory Connectors - PC Card Sockets` is a
+#    socket, and `memory` is in the weaker half of the IC vocabulary
+#    below. Safe here because no IC category names a connector.
+# 5. **Then the rest of the IC vocabulary**, which is that weaker half:
 #    `Interface - Analog Switches, Multiplexers` is an IC, so these words
 #    come before `switch`. `Clock/Timing - … Frequency Synthesizers` is an
 #    IC too, so `timing` is here and bare `clock` is NOT — it would
 #    otherwise capture Mouser's `Clock Oscillators`.
-# 5. **Then the remaining classes**, with `mechanical` last because its
+# 6. **Then the remaining classes**, with `mechanical` last because its
 #    words ("screws", "enclosures") are the ones most likely to turn up in
 #    a Mouser DESCRIPTION, which is the fallback text
 #    `category_for_provider` classifies when the category is missing. A
@@ -315,6 +335,12 @@ MORE_CANONICAL_SPECS: dict[str, tuple[SpecKey, ...]] = {
 #    a taxonomy.
 # ---------------------------------------------------------------------------
 _IC_EXPLICIT = frozenset({"ic", "ics", "integrated", "pmic"})
+
+_CONNECTOR_WORDS = frozenset({
+    "connector", "connectors", "interconnect", "interconnects", "header",
+    "headers", "socket", "sockets", "receptacle", "receptacles", "terminal",
+    "terminals", "jack", "jacks", "usb", "hdmi", "dvi", "ffc", "fpc",
+})
 
 _IC_REST = frozenset({
     "microcontroller", "microcontrollers", "mcu", "microprocessor",
@@ -325,7 +351,9 @@ _IC_REST = frozenset({
     "timer", "timers", "dsp",
 })
 
-_FUSE_WORDS = frozenset({"fuse", "fuses", "fuseholder", "pptc", "polyfuse"})
+_FUSE_WORDS = frozenset({
+    "fuse", "fuses", "fuseholder", "fuseholders", "pptc", "polyfuse",
+})
 
 _THERMAL_WORDS = frozenset({"thermal", "thermoelectric", "heatsink", "heatsinks"})
 
@@ -340,16 +368,8 @@ MORE_CLASS_RULES: tuple[tuple[frozenset[str], str], ...] = (
     (_IC_EXPLICIT, "ic"),
     (_FUSE_WORDS, "fuse"),
     (_THERMAL_WORDS, "mechanical"),
+    (_CONNECTOR_WORDS, "connector"),
     (_IC_REST, "ic"),
-    (
-        frozenset({
-            "connector", "connectors", "interconnect", "interconnects",
-            "header", "headers", "socket", "sockets", "receptacle",
-            "receptacles", "terminal", "terminals", "jack", "jacks", "usb",
-            "hdmi", "dvi", "ffc", "fpc",
-        }),
-        "connector",
-    ),
     (
         frozenset({
             "crystal", "crystals", "oscillator", "oscillators", "resonator",

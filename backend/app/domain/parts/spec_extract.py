@@ -34,8 +34,9 @@ Two contracts every extractor keeps, both pinned by
   the extractor a second time. A second pass that moved the value would
   make the job rewrite every row on every run.
 
-Pure functions — no DB, no I/O, no config. The data that names them lives
-in `spec_schema_tables.py`; the call site is `spec_schema._to_spec_value`.
+Pure functions — no DB, no I/O, no config. The keys that name them are in
+`spec_schema_tables_more.py`, which is where every `SpecKey.extract` in
+the schema lives; the call site is `spec_schema._to_spec_value`.
 """
 from __future__ import annotations
 
@@ -111,8 +112,10 @@ EXTRACTORS: dict[str, Callable[[str], str | None]] = {
 def extract_for(name: str, value: str) -> str | None:
     """Run the named extractor. Unknown name -> `KeyError`.
 
-    The name comes from `spec_schema_tables.py`, never from user input or
-    a provider payload, so a typo is a programming error and must fail at
-    the call rather than quietly drop a canonical key for every part.
+    The name comes from a `SpecKey` in `spec_schema_tables_more.py`, never
+    from user input or a provider payload, so a typo is a programming
+    error and must fail at the call rather than quietly drop a canonical
+    key for every part. `test_spec_schema.py` catches it before an import
+    does.
     """
     return EXTRACTORS[name](value)

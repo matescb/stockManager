@@ -36,7 +36,16 @@ the canonical record.
   its AEC-Q qualification or nothing. `Ratings` and `Qualification` came
   off the junk denylist for that last one; a value with no AEC-Q token in
   it is still dropped rather than kept as prose.
-- The value parser reads newtons, volt-amperes and cycle counts.
+- The value parser reads newtons, volt-amperes and cycle counts, and
+  takes the leading term of a conditioned rating however the vendor
+  separated it (`2A @ 125VAC`, `50mA at 12VDC`, `3A/250VAC`). A
+  fraction and a slash inside a unit symbol are not conditions: `1/16W`
+  is still a sixteenth of a watt and `100ppm/°C` is still one quantity.
+- **`spec-normalize` gained an `add` action.** The schema's one-to-many
+  alias needs an INSERT, not a second rename: `Size / Dimension` answers
+  both `length` and `width` and a part carries one row for it. The first
+  canonical key renames that row, the second gets a copy. Reversing an
+  `add` line is a DELETE — see the runbook.
 
 - **Part names now say what the part is.** `parts.name` is the canonical
   identity: a part whose category carries a `value_template` is named by

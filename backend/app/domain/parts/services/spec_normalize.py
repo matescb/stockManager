@@ -256,6 +256,12 @@ def _process_batch(
         outcome = normalize_part_rows(
             part_rows=rows, category_slug=slug, default_provider=provider
         )
+        # `normalize_part_rows` takes no session, so the rows it wants
+        # INSERTED come back on the outcome. Adding them here puts them
+        # inside `_batch_transaction`, which is what makes a dry run
+        # discard them along with every rename it planned.
+        for new_row in outcome.new_rows:
+            db.add(new_row)
         for change in ((filed,) if filed else ()) + outcome.changes:
             report.write(
                 workspace_id=ws.id, part_id=part.id, mpn=part.mpn, change=change
