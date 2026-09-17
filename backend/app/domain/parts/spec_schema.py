@@ -47,7 +47,10 @@ from app.domain.parts.spec_schema_tables import (
     WORD_RE,
     SpecKey,
 )
-from app.domain.parts.spec_schema_tables_more import COMMON_OVERRIDES
+from app.domain.parts.spec_schema_tables_more import (
+    COMMON_OVERRIDES,
+    VERBATIM_IF_UNEXTRACTED,
+)
 from app.domain.parts.spec_values import parse_si
 
 # Re-exported read-only: the schema is process-wide state and an importer
@@ -336,10 +339,20 @@ def _resolve_canonical(
     attributes: dict[str, str],
     mined: dict[str, str],
 ) -> tuple[dict[str, SpecValue], set[str]]:
-    """First alias present wins, attributes before description-mined rows.
+    """First alias present that ANSWERS wins, attributes before mined rows.
 
     Every alias of a filled key is consumed, whichever source it came
     from, so a losing spelling never reappears as a second Specs row.
+
+    "Answers" rather than "is present", because an extractor returning
+    ``None`` is the value saying it carries no fact about this key — not
+    an answer, so it cannot win. A payload with `Ratings: Moisture
+    Resistant` next to `Features: Automotive AEC-Q200` has to read the
+    qualification off the second one; stopping at the first would leave
+    the key empty and archive both rows, losing the qualification AND
+    the prose. It changes nothing for a key with no extractor: for those
+    `_to_spec_value` never returns ``None``, an unparseable value keeps
+    its text, and the first present alias is still the winner.
     """
     canonical: dict[str, SpecValue] = {}
     consumed: set[str] = set()
@@ -351,17 +364,39 @@ def _resolve_canonical(
             continue
         consumed.update(from_attributes)
         consumed.update(from_mined)
-        source, present = (
-            (attributes, from_attributes) if from_attributes else (mined, from_mined)
+        # Attributes before description-mined rows, and alias order
+        # within each: both halves of the precedence rule, in one list to
+        # walk. A real attribute still beats a mined one — but only when
+        # it answers, because a refusal is not a competing answer.
+        candidates = [(attributes, a) for a in from_attributes]
+        candidates += [(mined, a) for a in from_mined]
+        value = next(
+            (
+                found
+                for found in (
+                    _to_spec_value(spec, alias, source[alias])
+                    for source, alias in candidates
+                )
+                if found is not None
+            ),
+            None,
         )
-        winner = present[0]
-        value = _to_spec_value(spec, winner, source[winner])
-        # ``None`` is an extractor saying the value carries no fact about
-        # this key ("Moisture Resistant" under `Ratings`). The alias stays
-        # consumed, so it is recorded as dropped rather than kept verbatim
-        # — which is the behaviour the junk denylist used to give it.
+        # ``None`` here means EVERY present alias refused ("Moisture
+        # Resistant" under `Ratings`). They stay consumed, so they are
+        # recorded as dropped rather than kept verbatim — which is the
+        # behaviour the junk denylist used to give them.
         if value is not None:
             canonical[spec.key] = value
+            continue
+        # …except for an alias that was never junk. `Features` feeds
+        # `automotive` because some vendors file `AEC-Q200` there, and it
+        # also carries ordinary prose that nothing else answers; dropping
+        # that would remove a row prod parts have had for months. Safe to
+        # discard rather than to skip adding, because an alias belongs to
+        # one canonical key per category (`test_spec_schema.py` pins it).
+        for alias in (*from_attributes, *from_mined):
+            if alias in VERBATIM_IF_UNEXTRACTED:
+                consumed.discard(alias)
     return canonical, consumed
 
 

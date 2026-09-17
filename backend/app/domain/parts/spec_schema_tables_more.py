@@ -71,9 +71,16 @@ EXTRA_COMMON_SPECS: tuple[SpecKey, ...] = (
     # `Ratings` and `Qualification` were on the junk denylist, and most of
     # what they carry still is. The extractor keeps the AEC-Q token and
     # drops the prose, which is the whole reason they came off it.
+    #
+    # `Features` is listed last — alias order is precedence order, and
+    # the two keys whose whole purpose is the qualification answer it
+    # first. It is here because a prod resistor carried
+    # `Features: Automotive AEC-Q200` and the row stayed raw. It is also
+    # in `VERBATIM_IF_UNEXTRACTED`: unlike the other two it was never
+    # junk, so a value the extractor refuses stays on the Specs tab.
     SpecKey(
         "automotive", None, "Automotive qualification", False,
-        ("Ratings",), ("Qualification",),
+        ("Ratings", "Features"), ("Qualification", "Features"),
         extract="aec_qualification",
     ),
     SpecKey(
@@ -287,6 +294,27 @@ _MECHANICAL: tuple[SpecKey, ...] = (
 COMMON_OVERRIDES: dict[str, frozenset[str]] = {
     "connector": frozenset({"pin_pitch"}),
 }
+
+
+# Upstream alias names whose value survives verbatim when the extractor
+# refuses it, instead of being recorded as dropped.
+#
+# The default is the other way round, and deliberately: `Ratings` and
+# `Qualification` were on the junk denylist, `spec_extract.aec_qualification`
+# returning ``None`` is the only reason they came off it, and letting a
+# refused value through would put "Moisture Resistant" back on the Specs
+# tab of every part that has one — the exact thing ADR-0034 forbids.
+#
+# `Features` is the opposite case. It was never junk: "Moisture
+# Resistant" under it is an ordinary parametric row that prod parts have
+# carried for months and that nothing else answers. It is an `automotive`
+# alias only because some vendors file `AEC-Q200` there, so refusing the
+# AEC reading has to leave the row exactly where it was rather than
+# retire it.
+#
+# A key belongs here when it carries real data of its own AND feeds an
+# extractor-backed canonical key; a key that is only ever prose does not.
+VERBATIM_IF_UNEXTRACTED: frozenset[str] = frozenset({"Features"})
 
 
 # Category slug -> the keys that category adds on top of the common set.

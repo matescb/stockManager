@@ -62,6 +62,8 @@ Owns the `Part` aggregate (linked / local / meta / sub-assembly), MPN uniqueness
 | A part's provider links | `provider_links.py::links_for_part`, `::upsert_link` |
 | Refresh one part from one provider | `services/provider_refresh.py::refresh_part` (the route AND the job) |
 | Sweep a workspace's linked parts | `services/provider_refresh_job.py::refresh_linked_parts` (`run_job provider-refresh`) |
+| Which parts and providers a sweep asks | `services/provider_refresh_scope.py::part_ids_in_scope`, `::provider_order` |
+| Read a sweep's failure | `services/provider_refresh_failures.py::looks_like_quota`, `::rejected_write` |
 | Keep `part_type` in step with the link | `part_type.py::sync_part_type_and_log` |
 
 ## Hard rules (this module)

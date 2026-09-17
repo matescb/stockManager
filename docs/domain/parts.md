@@ -127,6 +127,28 @@ to a part's primary rewrites six columns from a provider nobody chose for that
 part and is a per-part human decision. See
 [the runbook](../runbooks/provider-refresh.md).
 
+`--include-unlinked` widens the SCOPE rather than what a part is asked, to the
+parts no provider has ever been linked to — typed in, or imported from a BOM.
+Each is asked of the primary first and then of every secondary with
+credentials, and it is the one case where the primary may claim a part it has
+never owned: a part with no link row and no `linked_provider` has no primary to
+displace and no provider-written column to overwrite. The claim writes the
+linkage columns and the derived `part_type`, fills a NULL `category_id`, and
+writes the canonical specs and assets like any primary refresh — but
+`manufacturer`, `footprint` and `description` are filled only where the part is
+silent, meaning the column is empty or holds nothing but the part's own MPN (a
+scan-created part carries its MPN as its description). A description somebody
+typed survives, and so does one flagged `description_locally_edited`. That is
+the difference between claiming an unowned part and refreshing an owned one,
+where the vendor is the source of record for those columns.
+
+The primary is offered an unlinked part exactly once, which follows from the
+scope rule rather than being a separate decision: once any provider has linked
+the part it is no longer unlinked, so a primary that missed while a secondary
+hit never gets a second pass. Promoting it afterwards is the per-part human
+action it always was — `POST /api/parts/{id}/refresh-from-provider`. The
+runbook says which CSV line to watch for.
+
 ## Specs and category on a provider payload
 
 A provider lookup result becomes `custom_fields` rows through exactly one

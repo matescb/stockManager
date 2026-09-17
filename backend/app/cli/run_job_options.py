@@ -61,16 +61,18 @@ class JobOptions:
     #: that does not declare it and is handed `--include-free` is
     #: refused by name, the same way a scheduled job handed `--apply` is.
     include_free: bool = False
-    #: `provider-refresh` only, all four. They exist because that job
+    #: `provider-refresh` only, all five. They exist because that job
     #: spends a metered external resource: `limit` caps the parts a run
     #: touches, `only_uncategorized` narrows it to the parts with the
     #: most to gain, `link_missing_providers` widens what each part is
-    #: asked, and `sleep_ms` paces the calls. `None` means "not given" for
+    #: asked, `include_unlinked` widens WHICH parts are asked about, and
+    #: `sleep_ms` paces the calls. `None` means "not given" for
     #: the two that take a value — `sleep_ms=0` is a real choice (turn the
     #: throttle off) and must not read as an absent flag.
     limit: int | None = None
     only_uncategorized: bool = False
     link_missing_providers: bool = False
+    include_unlinked: bool = False
     sleep_ms: int | None = None
 
 
