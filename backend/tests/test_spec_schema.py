@@ -872,3 +872,19 @@ def test_a_mechanical_part_has_a_subtype_and_no_mandatory_class_key() -> None:
 )
 def test_the_new_classes_are_in_the_schema(slug: str) -> None:
     assert slug in CANONICAL_SPECS
+
+
+def test_every_declared_extractor_exists() -> None:
+    """`extract_for` raises on an unknown name rather than quietly dropping
+    a canonical key — which is only safe because this test catches the typo
+    before a provider import does."""
+    from app.domain.parts.spec_extract import EXTRACTORS
+
+    declared = {
+        spec.extract
+        for specs in (CANONICAL_SPECS["common"], *CANONICAL_SPECS.values())
+        for spec in specs
+        if spec.extract is not None
+    }
+    assert declared
+    assert declared <= set(EXTRACTORS)

@@ -109,10 +109,13 @@ class SpecValue:
 class NormalisedSpecs:
     """The four buckets one provider payload sorts into.
 
-    Every key in the payload lands in exactly one of them, with two
+    Every key in the payload lands in exactly one of them, with three
     documented exceptions: a pair whose key is blank or whitespace is
-    ignored entirely, and a key repeated with two real values keeps the
-    first and discards the rest silently.
+    ignored entirely, a key repeated with two real values keeps the first
+    and discards the rest silently, and a one-to-many alias backs two
+    canonical entries from a single raw key (`Size / Dimension` is a
+    length AND a width). The partition holds on RAW keys in all three
+    cases; only `canonical` can carry one raw key twice.
     """
 
     canonical: dict[str, SpecValue]
