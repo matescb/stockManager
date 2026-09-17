@@ -1035,3 +1035,23 @@ def test_a_one_to_many_dry_run_writes_nothing(
     assert "length" not in rows
     assert "width" not in rows
     assert rows["Size / Dimension"].value == SIZE_DIMENSION
+
+
+def test_a_dry_run_then_an_apply_over_a_one_to_many_alias_agree(
+    sized_resistor: tuple[uuid.UUID, uuid.UUID], db, tmp_path: Path
+) -> None:
+    """The dry run's savepoint has to discard an INSERTED row cleanly
+    enough for the apply that follows it in the same session to redo it.
+    A pending instance left attached after the rollback would make the
+    apply write a duplicate or fail outright."""
+    _, part_id = sized_resistor
+    dry = tmp_path / "dry.csv"
+    wet = tmp_path / "wet.csv"
+
+    _normalize(db, dry)
+    _normalize(db, wet, apply=True)
+
+    assert _report_rows(dry) == _report_rows(wet)
+    rows = _rows_by_key(db, part_id)
+    assert rows["length"].value == "3.2 mm"
+    assert rows["width"].value == "1.6 mm"

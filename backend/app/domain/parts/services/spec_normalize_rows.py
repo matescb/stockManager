@@ -388,6 +388,9 @@ def _apply_canonical(
             action = _write_canonical(target, candidate)
             if action is not None:
                 changes.append(_rekeyed(target, candidate, action, old_key=key))
+            # It holds this canonical key now, so a later key that reads
+            # the same row gets a copy rather than renaming this one away.
+            claimed.add(id(source_row))
             canonical.append(key)
         elif target.source != "provider":
             # The user owns this key. Leave both rows exactly as they are.
