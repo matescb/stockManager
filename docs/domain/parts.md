@@ -184,7 +184,7 @@ has always had.
 
 ### The categories the schema models
 
-Nineteen slugs: the passive and discrete classes (`resistor`, four
+Twenty slugs: the passive and discrete classes (`resistor`, four
 capacitor dielectrics, `inductor`, four diode types, `led`, two transistor
 types) and seven active-component classes — `ic`, `connector`, `crystal`,
 `fuse`, `switch`, `transformer`, `mechanical`. Before the second group
