@@ -69,6 +69,12 @@ _UNITS: dict[str, tuple[str, bool, bool]] = {
     "s": ("s", True, True),
     "m": ("m", True, True),
     "cd": ("cd", True, True),
+    "va": ("VA", True, True),
+    # A count of operations (switch/relay life). Deliberately NOT scalable:
+    # no datasheet writes "1 Mcycles", and a lone prefix under it ("5 k")
+    # is unreadable rather than five thousand.
+    "cycle": ("cycles", False, True),
+    "cycles": ("cycles", False, True),
     "%": ("%", False, False),
     "ppm": ("ppm", False, True),
     "ppm/°c": ("ppm/°C", False, True),
@@ -81,8 +87,17 @@ _UNITS: dict[str, tuple[str, bool, bool]] = {
     "degc": ("°C", False, False),
 }
 
+# Unit tokens matched CASE-SENSITIVELY, before the case-folded table above.
+# Only units whose symbol collides with an SI prefix belong here: `N`
+# (newton) folds onto `n` (nano) exactly the way `M` (mega) folds onto `m`
+# (metre), so a `_UNITS` entry for it would read `10n` as ten newtons.
+_EXACT_UNITS: dict[str, tuple[str, bool, bool]] = {
+    "N": ("N", True, True),
+}
+
 _UNIT_BY_SYMBOL: dict[str, tuple[str, bool, bool]] = {
-    sym: (sym, scalable, space) for sym, scalable, space in _UNITS.values()
+    sym: (sym, scalable, space)
+    for sym, scalable, space in (*_UNITS.values(), *_EXACT_UNITS.values())
 }
 
 # Multipliers accepted on input. Case matters: `M` is mega, `m` is milli.
@@ -288,6 +303,11 @@ def _resolve_unit(rest: str, unit_hint: str | None) -> tuple[str, int] | None:
             # lookup is exact, not case-folded: lower-case `m` is the metre
             # entry and falls through, upper-case `M` is only ever mega.
             return None
+    # Case-sensitive units next, for the same reason the branch above is
+    # case-sensitive: `N` is a newton and `n` is nano.
+    exact = _EXACT_UNITS.get(token)
+    if exact is not None:
+        return (exact[0], 0)
     # Whole-token next: `Hz` is hertz, not hecto-z.
     direct = _UNITS.get(token.lower())
     if direct is not None:
@@ -295,7 +315,8 @@ def _resolve_unit(rest: str, unit_hint: str | None) -> tuple[str, int] | None:
     exponent = _PREFIX_EXPONENTS.get(token[0])
     if exponent is None or len(token) == 1:
         return None
-    prefixed = _UNITS.get(token[1:].lower())
+    tail = token[1:]
+    prefixed = _EXACT_UNITS.get(tail) or _UNITS.get(tail.lower())
     if prefixed is None:
         return None
     return (prefixed[0], exponent)

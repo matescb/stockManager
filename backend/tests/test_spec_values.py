@@ -268,3 +268,82 @@ def test_parse_si_keeps_a_sub_picofarad_exactly() -> None:
 
     assert parsed is not None
     assert parsed.value_num == Decimal("5E-13")
+
+
+# ---------------------------------------------------------------------------
+# Units added for the IC / connector / crystal / fuse / switch / transformer
+# schema. Each one is a quantity some new canonical key is declared in, and
+# `_to_spec_value` throws the number away when the parsed unit is not the
+# schema's — so an unparsed unit is a silently number-less column.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("text", "hint", "expected_num", "expected_unit", "expected_display"),
+    [
+        # Frequency. `Hz` was already in the table; these pin the prefixes
+        # a crystal is actually specified in.
+        ("16 MHz", None, Decimal("16000000"), "Hz", "16 MHz"),
+        ("32.768 kHz", None, Decimal("32768"), "Hz", "32.768 kHz"),
+        ("2.4GHz", None, Decimal("2400000000"), "Hz", "2.4 GHz"),
+        ("8000000", "Hz", Decimal("8000000"), "Hz", "8 MHz"),
+        # Frequency tolerance / stability.
+        ("±50ppm", None, Decimal("50"), "ppm", "50 ppm"),
+        ("30 ppm", None, Decimal("30"), "ppm", "30 ppm"),
+        # Switch actuation force.
+        ("1.6 N", None, Decimal("1.6"), "N", "1.6 N"),
+        # Engineering notation applies to newtons like any other scalable
+        # unit: sub-newton actuation forces render in millinewtons.
+        ("0.98N", None, Decimal("0.98"), "N", "980 mN"),
+        ("160 mN", None, Decimal("0.16"), "N", "160 mN"),
+        ("2.55", "N", Decimal("2.55"), "N", "2.55 N"),
+        # Transformer apparent power.
+        ("2.5 VA", None, Decimal("2.5"), "VA", "2.5 VA"),
+        ("500mVA", None, Decimal("0.5"), "VA", "500 mVA"),
+        # Switch life, in operations. Never scaled: "1 Mcycles" is not a
+        # thing anyone writes on a datasheet.
+        ("1,000,000 Cycles", None, Decimal("1000000"), "cycles", "1000000 cycles"),
+        ("200000 cycles", None, Decimal("200000"), "cycles", "200000 cycles"),
+        ("50000", "cycles", Decimal("50000"), "cycles", "50000 cycles"),
+    ],
+)
+def test_parse_si_reads_the_new_quantities(
+    text: str,
+    hint: str | None,
+    expected_num: Decimal,
+    expected_unit: str,
+    expected_display: str,
+) -> None:
+    parsed = parse_si(text, unit_hint=hint)
+
+    assert parsed is not None, text
+    assert parsed.value_num == expected_num
+    assert parsed.unit == expected_unit
+    assert parsed.display == expected_display
+
+
+@pytest.mark.parametrize(
+    ("text", "hint"),
+    [
+        # `N` (newton) case-folds onto `n` (nano) exactly the way `M` folds
+        # onto `m`. A case-insensitive newton entry would read `10n` as ten
+        # newtons — the same silent factor this parser already guards for.
+        ("10n", None),
+        ("4.7n", None),
+        # A count never scales, so a lone prefix under it is unreadable.
+        ("5 k", "cycles"),
+    ],
+)
+def test_the_new_units_do_not_case_fold_onto_an_si_prefix(
+    text: str, hint: str | None
+) -> None:
+    assert parse_si(text, unit_hint=hint) is None
+
+
+def test_a_nano_prefixed_value_still_reads_as_nano() -> None:
+    # Arrange / Act — lower-case `n` keeps its prefix meaning under a
+    # hinted, scalable unit.
+    parsed = parse_si("4.7n", unit_hint="F")
+
+    # Assert
+    assert parsed is not None
+    assert parsed.value_num == Decimal("4.7E-9")
+    assert parsed.display == "4.7 nF"
