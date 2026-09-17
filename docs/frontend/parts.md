@@ -91,6 +91,58 @@ accessor unit-testable without mounting the route
 Source: `web/src/routes/parts/preview/`,
 `web/src/routes/parts/__dom__/PartsList.preview.dom.test.tsx`.
 
+### Per-category spec columns
+
+With a category selected in the rail, a **Spec columns** control appears
+above the table listing that category's canonical spec keys. Ticking one adds
+a column; the choice is saved **on the category** and everyone in the
+workspace sees it.
+
+That is the whole point of the feature, and it is why this does not reuse
+`DataTable`'s Columns menu: that menu persists to `localStorage`
+(`dataTableStorageKey`), so it is per viewer, per device, and invisible to
+anybody else. "Resistors show resistance, tolerance and power" is a fact
+about resistors. The two controls coexist — the picker decides which spec
+columns *exist* on the table, the Columns menu decides which of them *this*
+viewer is currently looking at, and hiding one there writes no PATCH.
+
+Four rules the implementation depends on:
+
+- **The key vocabulary comes from the server.** Which specs a category has
+  is application data in `backend/app/domain/parts/spec_schema_tables.py`,
+  not something the client can derive from a category name.
+  `useCategorySpecSchema` (`web/src/routes/parts/useCategorySpecSchema.ts`)
+  fetches `GET /api/categories/{id}/spec-schema`, which also answers the
+  stored choice resolved up the tree and which ancestor it came from. Keyed
+  under `["categories", id, "spec-schema"]`, so the picker's PATCH
+  invalidates it by the `["categories"]` prefix like everything else.
+- **The unit lives in the header, once.** `Resistance (Ω)` over cells
+  reading `10 kΩ`, built by `specColumnHeader`. The `accessor` returns the
+  display string — that is what search matches and what CSV exports — and
+  numeric keys are right-aligned explicitly, because
+  `DataTable`'s `defaultAlignFor` samples `typeof accessor(row) ===
+  "number"` and would left-align every one of them.
+- **Sorting a spec column is a SERVER sort.** `DataTable`'s own sort is
+  client-side over the rows it holds, which is right for everything
+  derivable from a row and wrong for a cursor-paged list ordered by a value
+  the row does not carry: ordering by resistance means `ORDER BY
+  custom_fields.value_num` across every page, not within the fifty rows that
+  happen to be loaded. `Column.onSort` / `Column.sortDir` are the seam —
+  when `onSort` is set the header click calls it, clears any client-side
+  sort (a local reorder on top of a server order would scramble it), and
+  `sortDir` draws the arrow.
+- **The sort rides the URL, the default rides the category.** `?sort=<key>`
+  / `?dir=desc` keep a sorted list linkable, exactly like `?category=`, and
+  changing category drops them because a spec key belongs to one category's
+  schema. With no `sort` param the server applies the category's saved
+  `list_sort` on its own — so the header arrow reads the *effective* sort,
+  not the URL, or a saved default would look like no sort at all.
+  **Save as default sort** appears only when the two differ.
+
+Source: `web/src/routes/parts/SpecColumnsPicker.tsx`,
+`web/src/routes/parts/__dom__/PartsList.specColumns.dom.test.tsx`,
+[Categories API](../api/categories.md#parts-list-spec-columns).
+
 ### Collapsing the category rail
 
 The rail has a toggle in its header that collapses it to a 44px strip

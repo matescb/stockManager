@@ -193,6 +193,11 @@ def create_category(
         footprint_filters=payload.footprint_filters,
         value_template=payload.value_template,
         kicad_fields=payload.kicad_fields,
+        list_columns=payload.list_columns,
+        # JSONB wants a plain dict, not the Pydantic record — `psycopg`
+        # would refuse the model. `update_category` gets this for free from
+        # `model_dump`, which recurses; a direct field read does not.
+        list_sort=payload.list_sort.model_dump() if payload.list_sort else None,
         library_slug=library_slug,
         parent_id=payload.parent_id,
         created_by=user_id,

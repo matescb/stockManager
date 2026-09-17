@@ -101,6 +101,20 @@ Linked parts show a banner with the supplier name and "last refreshed". Click **
 
 In **Settings**, enter a number in **Low-stock report quantity**. Parts that drop below this number show up in the Low-stock report.
 
+## Show specs as columns
+
+Pick a category on the Parts list and a **Spec columns** button appears:
+tick a spec — resistance, tolerance, package — and it becomes a column you
+can sort by. The choice is saved on the category, so everyone in your
+workspace sees the same columns next time they open it, and a subcategory
+picks up whatever its parent uses unless you give it its own.
+
+Clicking a spec column heading sorts the whole list by that spec, not just
+the rows on screen, and by value rather than by text — so 100 Ω comes
+before 1 kΩ. Parts with no value for that spec go to the bottom either way.
+Click **Save as default sort** if you want the list to open that way from
+now on.
+
 ## Archive a part
 
 Archiving hides a part from lists but preserves its history and stock.

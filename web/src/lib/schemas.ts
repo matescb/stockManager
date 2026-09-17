@@ -54,6 +54,18 @@ export const ProviderLinkSchema = z.object({
 });
 export type ProviderLink = z.infer<typeof ProviderLinkSchema>;
 
+/**
+ * One spec cell on a parts-list row: the display string and the SI
+ * base-unit number behind it. `value_num` is a fixed-point STRING because
+ * `NUMERIC(36,18)` is exact and a JS double is not — render `value`, sort
+ * server-side, never compare `value_num` in JS.
+ */
+export const SpecColumnValueSchema = z.object({
+  value: nullableString,
+  value_num: nullableString,
+});
+export type SpecColumnValue = z.infer<typeof SpecColumnValueSchema>;
+
 export const PartSchema = z.object({
   id: uuid,
   part_type: z.enum(["linked", "local", "meta", "sub_assembly"]),
@@ -96,6 +108,12 @@ export const PartSchema = z.object({
   // rather than send an empty array: `[]` means "looked, found none",
   // absent means "did not look". Optional so both still parse.
   provider_links: z.array(ProviderLinkSchema).optional(),
+  // The per-category spec columns this request asked for
+  // (`?spec_columns=resistance,tolerance`). Absent when it asked for none,
+  // so the shape is unchanged for every other consumer of this endpoint.
+  // Every requested key IS here even when the part has no value, which is
+  // what lets a blank cell mean "no value" rather than "column dropped".
+  specs: z.record(z.string(), SpecColumnValueSchema).optional(),
 });
 export type Part = z.infer<typeof PartSchema>;
 
@@ -120,6 +138,13 @@ export const PartCreateSchema = z.object({
 }).strict();
 export type PartCreate = z.infer<typeof PartCreateSchema>;
 
+/** `{key, dir}` — a category's saved default sort for its parts listing. */
+export const CategoryListSortSchema = z.object({
+  key: z.string(),
+  dir: z.enum(["asc", "desc"]),
+});
+export type CategoryListSort = z.infer<typeof CategoryListSortSchema>;
+
 /**
  * A workspace-scoped bucket for parts. `library_slug` is the stable,
  * URL- and KiCad-library-safe identifier; the server derives it from
@@ -141,6 +166,14 @@ export const PartCategorySchema = z.object({
   // Spec keys emitted as hidden KiCad symbol fields. Null inherits; an
   // empty array is an explicit "emit none".
   kicad_fields: z.array(z.string()).nullable(),
+  // Which spec keys the parts list shows as columns when it is filtered to
+  // this category, in order. Null inherits from the nearest ancestor that
+  // sets one; `[]` is an explicit "no spec columns" that stops the walk.
+  // The RESOLVED value (and where it was inherited from) comes from
+  // `GET /api/categories/{id}/spec-schema`, not from here.
+  list_columns: z.array(z.string()).nullable().optional().default(null),
+  // That listing's default sort. Same null-vs-`[]` inheritance rule.
+  list_sort: CategoryListSortSchema.nullable().optional().default(null),
   library_slug: z.string(),
   // Adjacency-list parent; null is a root of the tree. Cycles and depth
   // are the server's problem (`domain/categories/tree.py`), but
@@ -152,6 +185,43 @@ export const PartCategorySchema = z.object({
 export type PartCategory = z.infer<typeof PartCategorySchema>;
 
 export const PartCategoriesListSchema = z.array(PartCategorySchema);
+
+/** One canonical spec key a category's parts can carry. */
+export const CategorySpecKeySchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  // SI base-unit symbol ("Ω", "F", "%"), or null for a value that is not
+  // a quantity — a package code, a dielectric name.
+  unit: nullableString,
+  mandatory: z.boolean(),
+  // A display hint: numeric keys right-align. NOT a promise that the sort
+  // is numeric — a unitless count has no `value_num` and sorts as text.
+  numeric: z.boolean(),
+  // True for the keys every category carries, so the picker can group
+  // them apart from the category's own.
+  common: z.boolean(),
+});
+export type CategorySpecKey = z.infer<typeof CategorySpecKeySchema>;
+
+/**
+ * `GET /api/categories/{id}/spec-schema` — what this category's parts
+ * list CAN show and what it IS configured to show.
+ *
+ * `slug` is null for a category the spec schema does not recognise, which
+ * is not an error: it means the common keys only. `list_columns` /
+ * `list_sort` are resolved up the tree, and `inherited_from` /
+ * `sort_inherited_from` name the ancestor each came from (null when this
+ * category owns it, or when nobody has set one).
+ */
+export const CategorySpecSchemaSchema = z.object({
+  slug: nullableString,
+  keys: z.array(CategorySpecKeySchema),
+  list_columns: z.array(z.string()).nullable(),
+  list_sort: CategoryListSortSchema.nullable(),
+  inherited_from: uuid.nullable(),
+  sort_inherited_from: uuid.nullable(),
+});
+export type CategorySpecSchema = z.infer<typeof CategorySpecSchemaSchema>;
 
 // ---------------------------------------------------------------------
 // API tokens (PATs) — the non-cookie credential for KiCad and agents.

@@ -300,6 +300,11 @@ class ErrorCodes:
     CATEGORY_FIELD_NOT_NULLABLE = "category.field_not_nullable"
     CATEGORY_PARENT_CYCLE = "category.parent_cycle"
     CATEGORY_TOO_DEEP = "category.too_deep"
+    # Per-category parts-list spec columns (`list_columns` / `list_sort`,
+    # and the `spec_columns=` / `sort=spec:…` query params on GET /parts).
+    # The detail carries the offending `key` so the client can name it.
+    CATEGORY_UNKNOWN_SPEC_KEY = "category.unknown_spec_key"
+    CATEGORY_TOO_MANY_SPEC_COLUMNS = "category.too_many_spec_columns"
 
     # EDA router (symbols / footprints / 3D + SPICE data files / part_eda).
     EDA_SYMBOL_NOT_FOUND = "eda_symbol.not_found"

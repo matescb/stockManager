@@ -72,6 +72,28 @@ class PartCategory(WorkspaceOwned, Base):
     # migration. Inherits through `parent_id` the same way, and
     # independently of `value_template`.
     kicad_fields = Column(JSONB, nullable=True)
+    # Which canonical spec keys the parts list shows as columns when it is
+    # filtered to this category, in order — ["resistance", "tolerance"]
+    # becomes a Resistance and a Tolerance column. Alembic 0083.
+    #
+    # JSONB rather than a text array for the reason 0082 gives for
+    # `kicad_fields`: a later phase will want per-key display options
+    # (width, unit override) and JSONB takes them without a migration.
+    # Validated against the category's effective spec schema by
+    # `domain/parts/services/spec_columns.py`, not by a CHECK constraint —
+    # the vocabulary of legal keys is application data.
+    #
+    # NULL means "inherit": the spec-schema endpoint walks `parent_id` for
+    # the nearest ancestor that has one, so a choice made on *Resistors*
+    # covers *Resistors / Thin film*. An EMPTY list is an explicit "no spec
+    # columns" and stops the walk — the same NULL-vs-`[]` split
+    # `kicad_fields` uses.
+    list_columns = Column(JSONB, nullable=True)
+    # The default sort that same listing applies when the request names
+    # none — `{"key": "resistance", "dir": "asc"}`. Inherits through
+    # `parent_id` the same way, and independently of `list_columns`.
+    list_sort = Column(JSONB, nullable=True)
+
     # URL- and library-safe identifier, derived from `name` when the caller
     # doesn't supply one. Unique per workspace among active rows.
     #

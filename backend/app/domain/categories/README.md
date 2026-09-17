@@ -43,6 +43,8 @@ REST surface: `backend/app/api/routes/categories.py` (`/api/categories`).
 
 8. **`value_template` and `kicad_fields` are NULL-means-inherit (alembic 0082).** Both resolve up `parent_id` to the nearest ancestor that sets them, independently of each other, so a template on *Capacitors* covers *Capacitors / Ceramic*. An explicit `[]` on `kicad_fields` means "emit none" and stops the walk; so does an archived ancestor. They are validated in `schemas.py` rather than by a CHECK constraint — the vocabulary of legal keys is application data. Nothing outside `domain/eda/` reads them.
 
+8b. **`list_columns` and `list_sort` (alembic 0083) follow the same NULL-means-inherit rule, and nothing outside the parts list reads them.** They say which canonical spec keys the parts list shows as columns when it is filtered to this category, and which one it sorts by. `schemas.py` fixes the shape; the key VOCABULARY is checked against the category's effective spec schema in `domain/parts/services/spec_columns.py`, which is also where the schema's own tree walk lives — this module must not grow a second one.
+
 9. **The seed never renames, re-parents or overwrites.** `seed.py` creates a category only where the workspace has no active one of that name under that parent, and fills a column only where it is still NULL/blank. A name or slug already used elsewhere is *reported*, not worked around — resolving it would mean touching something a user made. A dry run is the default and writes nothing; `run_job` rolls a dry run back as a second guard.
 
 ## See also
@@ -58,4 +60,5 @@ REST surface: `backend/app/api/routes/categories.py` (`/api/categories`).
 - Don't hard-delete a category to "clear" it from parts — archive it, so the audit trail and `parts.category_id` survive.
 - Don't add a recursive CTE for ancestors/descendants; `tree.py` exists so the walks stay in one reviewable place. See rule 6.
 - Don't give `category-seed` or `symbol-collapse` a cron sidecar. They are operator-run by design (see `docs/deployment.md` — "Operator-run jobs"); a timer that re-created categories a user deleted would be a bug, not a feature.
+- Don't store the parts-list spec columns per browser. `DataTable`'s hidden-column map is `localStorage` and invisible to everyone else; `list_columns` is on the row precisely so a curated library reads the same way for the whole workspace.
 - Don't let the DB trigger try to detect cycles — a BEFORE ROW trigger sees one row and cannot see the rest of a multi-statement reparent. It only checks workspace consistency.

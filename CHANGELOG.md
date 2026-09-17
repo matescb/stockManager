@@ -49,6 +49,32 @@ the canonical record.
   on to the next spelling present, so `Ratings: Moisture Resistant` next
   to `Features: Automotive AEC-Q200` reads the qualification off the
   second instead of leaving the key empty.
+
+- **The parts list can show a category's specs as columns, and sort by
+  them.** Filter `/parts` to a category and a "Spec columns" control lists
+  that category's canonical spec keys; ticking one adds a column, and the
+  choice is saved on the category (`part_categories.list_columns`, alembic
+  0083) so everyone in the workspace sees it rather than one browser. A
+  spec column's header carries its unit (`Resistance (Ω)`) and clicking it
+  sorts **server-side** across every page: `GET /api/parts` grew
+  `spec_columns=key1,key2` and `sort=spec:<key>&dir=asc|desc`, which LEFT
+  JOIN the part's `custom_fields` row and order `value_num NULLS LAST,
+  value NULLS LAST, id` — so `10 kΩ` sorts before `100 kΩ` instead of after
+  it, a unitless key still sorts alphabetically, and a part with no such
+  spec is last either way. The cursor carries the whole `(value_num, value,
+  id)` seek position plus a signed scope naming the key, the direction and
+  the category filter, so paging a sorted list neither repeats nor drops
+  rows and a cursor from a different sort is a 400 rather than a silent
+  wrong walk. The sort is a scan and a top-N sort, not an index read —
+  0.35 ms at 400 parts, 18.5 ms at 20,400, accepted deliberately because
+  no index can order an OUTER join's NULL-extended rows. A category can
+  also save a default sort
+  (`list_sort`), and both settings inherit from the nearest ancestor that
+  sets them. `GET /api/categories/{id}/spec-schema` is the new read that
+  says which keys a category has, resolved up the tree. Values for a whole
+  page cost one query; without `spec_columns` the response is unchanged.
+  ADR-0034.
+
 - **`provider-refresh` re-asks the providers about parts imported before
   the importer knew what it knows now.** A new operator-run job sweeps
   every active, linked part with an MPN in a workspace and writes back

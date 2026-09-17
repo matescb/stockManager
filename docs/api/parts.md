@@ -26,6 +26,9 @@ List parts. Two response shapes selected by query (not by route):
 | `mpn` | string | Exact match. |
 | `category_id` | UUID | Filter to one category. **Includes the whole subtree by default** — see below. A category from another workspace (or one that does not exist) is `404 code=category.not_found`, never a silently empty list. |
 | `include_descendants` | bool | Default **`true`**. `false` restricts the filter to an exact `category_id` match. |
+| `spec_columns` | string | Comma-separated canonical spec keys to return per row (max 12). **Needs `category_id`** and is ignored without it. Validated against that category's effective spec schema — see below. |
+| `sort` | string | `spec:<key>`. Orders the whole result set by that spec. Needs `category_id`; ignored without it. Anything not of that form is `422`. |
+| `dir` | string | `asc` (default) or `desc`. Only meaningful with `sort`. |
 | `limit` | int | Default `50`, max `200`. |
 | `cursor` | string | HMAC-signed; tampering returns 400 from `decode_cursor` (`parts_core.py:85`). |
 | `paged` | bool | Force the paged envelope without supplying a cursor. |
@@ -44,7 +47,7 @@ List parts. Two response shapes selected by query (not by route):
 
 `PartOut` is built by `serialize_part` (`backend/app/api/routes/_parts_shared.py`); includes `id`, `part_type`, `name`, `manufacturer`, `mpn`, `internal_part_number`, `description`, `footprint`, `notes_markdown`, `low_stock_report_quantity`, `attrition_percentage`, `attrition_min_quantity`, `default_storage_location_id`, `default_storage_mandatory`, `serialized`, `published`, `linked_provider`, `linked_external_id`, `last_refresh_at`, `updated_at`, `description_locally_edited`, `archived_at`, `on_hand`, `reserved`, `available`, `image_url`.
 
-List rows additionally carry `provider_links`, `missing_specs` and `spec_incomplete` — see the notes below. `updated_at` is the mixin-maintained "last change" timestamp; it needs no column of its own and is what the parts table's *Last change* column sorts on.
+List rows additionally carry `provider_links`, `missing_specs`, `spec_incomplete` and — only when `spec_columns` asked for them — `specs`; see the notes below. `updated_at` is the mixin-maintained "last change" timestamp; it needs no column of its own and is what the parts table's *Last change* column sorts on.
 
 **Notes**
 
@@ -57,8 +60,99 @@ List rows additionally carry `provider_links`, `missing_specs` and `spec_incompl
 - **`missing_specs` / `spec_incomplete` are on list rows and on detail, batched.** `missing_specs` lists the canonical spec keys this part's category says it must have and nobody supplied, in schema order; `spec_incomplete` is `missing_specs != []` and is derived rather than stored, so the two cannot disagree. The whole page costs two statements (`missing_specs_for_parts`): one for the workspace's categories, to turn `category_id` into the name path `spec_schema.category_slug_for` reads, and one for the parts' `custom_fields` narrowed to the canonical key set. Pinned by `backend/tests/test_spec_reconcile.py::test_the_list_flag_does_not_scale_with_row_count`. See [ADR-0034](../adr/0034-spec-schema.md).
 - **"Supplied" means a row exists, whoever wrote it.** A `manual` or `override` value counts — the flag answers "does this part have the data", not "did a provider send it". An archived row does not. A part with **no** category gets the common schema, whose only mandatory key is `package`, so an uncategorized part reads as incomplete until it is filed.
 - **`[]` and *absent* mean different things.** A list row that has no links carries `"provider_links": []` — "looked, found none". A response that never loaded them (create-part, for one) omits the key entirely; the same rule governs `missing_specs` / `spec_incomplete`, which only the list, the detail and the refresh responses carry. `PartSchema` on the frontend keeps these fields optional so both parse.
-- Every per-row extra is assembled by `serialize_part_rows` (`_parts_shared.py`): one query each for image URLs, on-hand, reserved, provider links, and two for spec completeness, for the whole page.
-- Source: `backend/app/api/routes/parts_core.py:55-135`.
+- Every per-row extra is assembled by `serialize_part_rows` (`_parts_shared.py`): one query each for image URLs, on-hand, reserved, provider links, spec-column values, and two for spec completeness, for the whole page.
+
+#### Per-category spec columns
+
+`?spec_columns=resistance,tolerance` adds one block per row:
+
+```json
+"specs": {
+  "resistance": { "value": "10 kΩ", "value_num": "10000" },
+  "tolerance":  { "value": null,    "value_num": null }
+}
+```
+
+- **Only the requested keys, and all of them.** A key with no live
+  `custom_fields` row comes back with both fields `null` rather than being
+  omitted — otherwise a blank cell would be indistinguishable from a column
+  the request never asked for. With no `spec_columns` the key is **absent**,
+  so the response is byte-identical to what it was before this feature
+  (pinned by `tests/test_spec_columns.py::test_no_spec_columns_means_no_specs_key`).
+- **`value_num` is a fixed-point string**, the SI base-unit number behind
+  `value` — `Numeric(36,18)` is exact and a JS double is not. Sort and
+  range-filter it server-side; never compare it in JS. Same serialization as
+  `GET /api/custom-fields/by-object/...` (both go through
+  `domain/custom_fields/serialize.py::value_num_out`).
+- **One query for the whole page**, via
+  `spec_columns.specs_for_parts` — twelve columns over a 200-row page is
+  2,400 values, so anything per-row or per-cell is a non-starter. Rows of any
+  `source` count (a value the user typed is still the value); archived rows
+  do not. Pinned by
+  `tests/test_spec_columns.py::test_spec_values_do_not_scale_with_row_count`.
+- **Validation.** Every key must be in the category's effective spec schema
+  (see [Categories API](./categories.md#get-apicategoriesidspec-schema));
+  one that is not is `422 code=category.unknown_spec_key` with the offending
+  `key`. Over 12 is `422 code=category.too_many_spec_columns`. Repeats are
+  deduped rather than doubling the payload.
+
+#### Sorting by a spec
+
+`?sort=spec:resistance&dir=desc` orders the **whole result set**, not the
+returned page:
+
+- The query LEFT JOINs the live `custom_fields` row for that key and orders
+  `value_num <dir> NULLS LAST, value <dir> NULLS LAST, parts.id ASC`.
+  `value_num` first so `10 kΩ` sorts before `100 kΩ` instead of after it the
+  way the display strings would; `value` second so a unitless key
+  (`package`, `dielectric`) still sorts alphabetically rather than
+  collapsing into one NULL block. A part without the spec is last **both
+  ways** — it belongs at the end of the list however it is ordered.
+- The cursor carries the full `(value_num, value, id)` seek position **and
+  a signed `scope`** naming which sort it belongs to — the key, the
+  direction, and the category filter (`core/pagination.py::paginate_keyset`).
+  The seek values alone cannot identify their own sort: `10000` is a legal
+  `resistance` and a legal `voltage_rating`, and the same pair read
+  backwards is a legal descending seek. A cursor from any other sort is
+  **`400`**, not a silent restart at page one: a client that keeps paging
+  appends what it gets to what it has, so restarting would show page one
+  twice and never reach the end. `q`, `mpn` and `archived` are deliberately
+  **not** in the scope — they narrow the row set without changing the
+  ordering, so a cursor across a change to one of them gives a shorter walk
+  rather than a wrong one, and putting them in would 400 the common case of
+  typing in the search box mid-scroll.
+- **The ordering is not delivered by an index, and cannot be.** Measured,
+  the plan is `Limit -> Sort (top-N heapsort) -> Hash Right Join` over a
+  seq scan of each table, at both sizes below;
+  `ix_custom_fields_ws_key_value_num` is never used.
+
+  | workspace | exec |
+  |---|---|
+  | 400 parts, 400 spec rows | 0.35 ms |
+  | 20,400 parts, 20,400 spec rows | 18.5 ms |
+
+  The reason is the OUTER join rather than the index's shape: a part with
+  no `custom_fields` row for the key has no row to index and still has to
+  sort into the NULLS-LAST tail, so the full ordering only exists *after*
+  the join. This is an **accepted** cost at the size any workspace here
+  is. If a category ever holds tens of thousands of parts, the next step is
+  a composite `(workspace_id, key, value_num, object_id) WHERE archived_at
+  IS NULL` as a new migration — which makes the join side index-only and
+  lets the non-NULL prefix be read in order — plus a query shaped so that
+  prefix drives. Pinned by
+  `tests/test_spec_columns.py::test_the_spec_sort_plan_is_a_scan_and_a_sort`.
+- **With no `sort`, the category's saved `list_sort` applies** (resolved up
+  `parent_id`). That is the only way this endpoint behaves differently from
+  before the feature, and only for a category somebody has configured. A
+  saved sort whose key the category's schema no longer has is dropped rather
+  than raising — the caller did not ask for it, and a stale default must not
+  make the category unreadable.
+- A unitless **count** key (`pin_count`, `positions`, …) has no `value_num`,
+  so it sorts as text. `numeric` on the spec-schema payload is an alignment
+  hint, not a promise about the sort.
+
+- Source: `backend/app/api/routes/parts_core.py`,
+  `backend/app/domain/parts/services/spec_columns.py`.
 
 ### `POST /api/parts`
 

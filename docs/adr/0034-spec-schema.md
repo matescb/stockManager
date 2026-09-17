@@ -80,6 +80,51 @@ reconciler of its own. Three decisions landed with it:
   something, and a manual upsert un-archives rather than writing into a row the
   user can no longer see — `uq_cf_unique` does not exclude archived rows.
 
+**Per-category spec columns (2026-09-17) are the first read-side payoff.**
+`part_categories` gained `list_columns` and `list_sort` (alembic 0083), so a
+category states which of its canonical keys the parts list shows and which
+one it sorts by, and `GET /api/parts` grew `spec_columns=` and
+`sort=spec:<key>`. Three decisions landed with it:
+
+- **The choice is stored on the category, not in the browser.** `DataTable`
+  persists hidden columns to `localStorage`, which is per viewer and per
+  device; a curated library is read by the whole workspace, so "a resistor
+  shows resistance, tolerance and power" belongs next to the refdes prefix
+  and the value template. It inherits up `parent_id` exactly as
+  `value_template` and `kicad_fields` do, independently of them.
+- **Sorting is a database operation, which is what `value_num` was for.**
+  `ORDER BY value_num <dir> NULLS LAST, value <dir> NULLS LAST, parts.id` on
+  an OUTER-JOINed `custom_fields` row: the number orders a unit-bearing key
+  numerically, the text orders a unitless one alphabetically, and a part
+  without the spec is last either way. **It is a scan and a top-N sort, not
+  an index read** — measured at 0.35 ms for 400 parts and 18.5 ms for
+  20,400, with `ix_custom_fields_ws_key_value_num` unused at both sizes.
+  No index can remove that sort while the join is an OUTER one, because a
+  part with no row for the key has no row to index and still has to land in
+  the NULLS-LAST tail. Accepted deliberately at this scale; the escape
+  hatch, if a category ever holds tens of thousands of parts, is a
+  composite `(workspace_id, key, value_num, object_id) WHERE archived_at IS
+  NULL` plus a query shaped so the non-NULL prefix drives.
+  The cursor had to grow — `core/pagination.py::paginate_keyset` carries
+  the whole `(value_num, value, id)` seek position plus a signed `scope`
+  naming the key, the direction and the category filter. The seek position
+  is needed because an `id`-only cursor over a non-`id` ordering repeats
+  and drops rows at every page boundary; the scope is needed because the
+  seek values are structurally valid under *any* spec key and in either
+  direction, so without it a cursor minted under one sort was honoured
+  under another — measured, a `dir` flip mid-walk served one row of six and
+  then reported end-of-list.
+- **A unitless count still sorts as text.** `pin_count`, `positions`,
+  `rows`, `channels` and `hfe` have no `unit`, so `parse_si` never runs on
+  them and `value_num` is NULL. The spec-schema endpoint reports them
+  `numeric: true` for right-alignment only; giving them a real numeric sort
+  means adding a unit to the `SpecKey` and re-running `spec-normalize`, which
+  is a separate change. This is the same "refuse rather than guess" trade the
+  parser makes.
+
+Nothing about the write side changed. `spec_columns.py` reads
+`spec_schema.spec_keys_for` and `custom_fields`; it writes nothing.
+
 ## Consequences
 
 - **Good**: one place answers "what is a resistor supposed to have", so

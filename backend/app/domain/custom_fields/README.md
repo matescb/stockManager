@@ -9,6 +9,7 @@ Owns the key/value custom fields attached to entities. Polymorphic — one row t
 | File | What |
 |---|---|
 | `models.py` | `CustomField` (the field definition), incl. `provider` + `value_num` (alembic 0081) |
+| `serialize.py` | `value_num_out` — the one way a `Numeric(36,18)` spec number goes onto the wire (fixed-point string). Shared by the custom-fields route and the parts list's `specs` block |
 | `schemas.py` | Pydantic shapes for field CRUD + value patch |
 
 There is no separate definition table and no JSON column on the entity: one `custom_fields` row IS one key/value pair on one object.
@@ -34,5 +35,5 @@ This module's surface is its model + schemas. Rows are CRUD'd via `backend/app/a
 
 - Don't add a separate "custom field definitions" table — free-form keys on one polymorphic row are the design.
 - Don't add a catalog key on one side only — `spec_schema_tables.py::CATALOG_LITERAL_KEYS` and `web/src/lib/providerCatalog.ts` are checked against each other. The Specs / Sourcing tab split breaks otherwise.
-- Don't sort or filter on `value_num` without `value_num IS NOT NULL` in the query; the supporting index is partial.
+- Don't sort or filter on `value_num` without accounting for the NULLs. `ix_custom_fields_ws_key_value_num` is partial (`WHERE value_num IS NOT NULL`), so a filter has to repeat that predicate to use it at all. An ORDER BY needs `NULLS LAST` plus a text tiebreaker, and — measured — gets **no** help from the index: the parts list's spec sort orders `value_num NULLS LAST, value NULLS LAST, id` over an OUTER join and plans as a scan and a top-N sort, because a part with no row for the key has no row to index and still has to land in the tail (`domain/parts/services/spec_columns.py::sorted_page`).
 - Don't query custom-field values across workspaces; each definition is workspace-scoped.
