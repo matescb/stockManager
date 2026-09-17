@@ -15,8 +15,10 @@ classified correctly by it. So the mapping here is
 * **what to refuse.** "Resistor Networks, Arrays" classifies as a
   resistor because "Resistor" is a component noun, but an array has no
   single resistance — filing it under Resistors would make every
-  mandatory key on it permanently missing. `_EXCLUDED_WORDS` refuses
-  those outright rather than filing them wrong.
+  mandatory key on it permanently missing. Two word lists refuse those
+  outright rather than filing them wrong: `_ASSORTMENT_WORDS`, which no
+  class is exempt from, and `_MULTIPART_WORDS`, which ICs are — an IC
+  array is still one IC with one supply voltage and one function.
 * **which text to trust, per provider.** DigiKey's `Category.Name` is
   the leaf of its taxonomy and its description is a terse part string
   ("RES SMD 10K OHM 1% 1/16W 0402") that names no class, so only the
@@ -69,22 +71,44 @@ CATEGORY_PATH_FOR_SLUG: dict[str, str] = {
     "led": "Diodes / LED",
     "transistor_bjt": "Transistors / BJT",
     "transistor_mosfet": "Transistors / MOSFET",
+    # The active-component roots. Each is its own leaf: none of them is
+    # ambiguous the way a bare "Capacitors" is, so there is no sub-category
+    # for the vendor string to be too coarse for.
+    "ic": "ICs",
+    "connector": "Connectors",
+    "crystal": "Crystals & Oscillators",
+    "fuse": "Fuses",
+    "switch": "Switches",
+    "transformer": "Transformers",
+    "mechanical": "Mechanical",
 }
 
-# Words that mean "several of these in one package", which is a different
-# part from the one the component noun names. They win over the class
-# because they are nouns too, and the schema has no key that survives the
-# plural ("resistance" of a 4-way array is four numbers).
-_EXCLUDED_WORDS: frozenset[str] = frozenset({
+# "Several of these in one package": a different part from the one the
+# component noun names, because the schema has no key that survives the
+# plural — the "resistance" of a 4-way array is four numbers.
+#
+# NOT applied to ICs. An IC array is still one IC with one supply voltage
+# and one function, and DigiKey's own name for an FPGA is "Embedded -
+# FPGAs (Field Programmable Gate Array)" — the guard would refuse the
+# whole family over the word "Array" in a parenthetical.
+_MULTIPART_WORDS: frozenset[str] = frozenset({
     "array",
     "arrays",
+    "network",
+    "networks",
+})
+
+# A bag of assorted parts is not a part of any class, so this one has no
+# exemptions.
+_ASSORTMENT_WORDS: frozenset[str] = frozenset({
     "assortment",
     "assortments",
     "kit",
     "kits",
-    "network",
-    "networks",
 })
+
+# Classes where a multi-part package is still a part of that class.
+_MULTIPART_OK_SLUGS: frozenset[str] = frozenset({"ic"})
 
 # Providers whose description is worth classifying. See the module
 # docstring: this is a statement about the two vendors' data, not a
@@ -122,7 +146,11 @@ def _path_for_text(text: str | None) -> str | None:
     if not text or not text.strip():
         return None
     words = set(WORD_RE.findall(PATH_SEPARATOR_RE.sub(" ", text.lower())))
-    if words & _EXCLUDED_WORDS:
+    if words & _ASSORTMENT_WORDS:
         return None
     slug = category_slug_for(text)
-    return CATEGORY_PATH_FOR_SLUG.get(slug) if slug else None
+    if slug is None:
+        return None
+    if words & _MULTIPART_WORDS and slug not in _MULTIPART_OK_SLUGS:
+        return None
+    return CATEGORY_PATH_FOR_SLUG.get(slug)

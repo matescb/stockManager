@@ -268,3 +268,172 @@ def test_parse_si_keeps_a_sub_picofarad_exactly() -> None:
 
     assert parsed is not None
     assert parsed.value_num == Decimal("5E-13")
+
+
+# ---------------------------------------------------------------------------
+# Units added for the IC / connector / crystal / fuse / switch / transformer
+# schema. Each one is a quantity some new canonical key is declared in, and
+# `_to_spec_value` throws the number away when the parsed unit is not the
+# schema's — so an unparsed unit is a silently number-less column.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("text", "hint", "expected_num", "expected_unit", "expected_display"),
+    [
+        # Frequency. `Hz` was already in the table; these pin the prefixes
+        # a crystal is actually specified in.
+        ("16 MHz", None, Decimal("16000000"), "Hz", "16 MHz"),
+        ("32.768 kHz", None, Decimal("32768"), "Hz", "32.768 kHz"),
+        ("2.4GHz", None, Decimal("2400000000"), "Hz", "2.4 GHz"),
+        ("8000000", "Hz", Decimal("8000000"), "Hz", "8 MHz"),
+        # Frequency tolerance / stability.
+        ("±50ppm", None, Decimal("50"), "ppm", "50 ppm"),
+        ("30 ppm", None, Decimal("30"), "ppm", "30 ppm"),
+        # Switch actuation force.
+        ("1.6 N", None, Decimal("1.6"), "N", "1.6 N"),
+        # Engineering notation applies to newtons like any other scalable
+        # unit: sub-newton actuation forces render in millinewtons.
+        ("0.98N", None, Decimal("0.98"), "N", "980 mN"),
+        ("160 mN", None, Decimal("0.16"), "N", "160 mN"),
+        ("2.55", "N", Decimal("2.55"), "N", "2.55 N"),
+        # Transformer apparent power.
+        ("2.5 VA", None, Decimal("2.5"), "VA", "2.5 VA"),
+        ("500mVA", None, Decimal("0.5"), "VA", "500 mVA"),
+        # Switch life, in operations. Never scaled: "1 Mcycles" is not a
+        # thing anyone writes on a datasheet.
+        ("1,000,000 Cycles", None, Decimal("1000000"), "cycles", "1000000 cycles"),
+        ("200000 cycles", None, Decimal("200000"), "cycles", "200000 cycles"),
+        ("50000", "cycles", Decimal("50000"), "cycles", "50000 cycles"),
+    ],
+)
+def test_parse_si_reads_the_new_quantities(
+    text: str,
+    hint: str | None,
+    expected_num: Decimal,
+    expected_unit: str,
+    expected_display: str,
+) -> None:
+    parsed = parse_si(text, unit_hint=hint)
+
+    assert parsed is not None, text
+    assert parsed.value_num == expected_num
+    assert parsed.unit == expected_unit
+    assert parsed.display == expected_display
+
+
+@pytest.mark.parametrize(
+    ("text", "hint"),
+    [
+        # `N` (newton) case-folds onto `n` (nano) exactly the way `M` folds
+        # onto `m`. A case-insensitive newton entry would read `10n` as ten
+        # newtons — the same silent factor this parser already guards for.
+        ("10n", None),
+        ("4.7n", None),
+        # A count never scales, so a lone prefix under it is unreadable.
+        ("5 k", "cycles"),
+    ],
+)
+def test_the_new_units_do_not_case_fold_onto_an_si_prefix(
+    text: str, hint: str | None
+) -> None:
+    assert parse_si(text, unit_hint=hint) is None
+
+
+def test_a_nano_prefixed_value_still_reads_as_nano() -> None:
+    # Arrange / Act — lower-case `n` keeps its prefix meaning under a
+    # hinted, scalable unit.
+    parsed = parse_si("4.7n", unit_hint="F")
+
+    # Assert
+    assert parsed is not None
+    assert parsed.value_num == Decimal("4.7E-9")
+    assert parsed.display == "4.7 nF"
+
+
+# ---------------------------------------------------------------------------
+# Conditioned values — "this rating, under these conditions"
+#
+# The leading term is the one the schema key is asking about, the same
+# reading `0.063W, 1/16W` already gets. `@` was the only separator handled;
+# these are the other two vendors use, both from switch and relay contact
+# ratings.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("text", "hint", "expected_num", "expected_display"),
+    [
+        # The separator already handled, kept here as the reference case.
+        ("50mA @ 24VDC", None, Decimal("0.05"), "50 mA"),
+        # Spelled out.
+        ("50mA at 12VDC", None, Decimal("0.05"), "50 mA"),
+        ("2 A at 125 VAC", None, Decimal("2"), "2 A"),
+        ("1.5A AT 30VDC", None, Decimal("1.5"), "1.5 A"),
+        # Slashed, which is how a contact rating is usually printed.
+        ("3A/250VAC", None, Decimal("3"), "3 A"),
+        ("10 A / 250 V", None, Decimal("10"), "10 A"),
+        ("0.5A/125VAC, 0.25A/250VAC", None, Decimal("0.5"), "500 mA"),
+    ],
+)
+def test_parse_si_takes_the_leading_term_of_a_conditioned_value(
+    text: str, hint: str | None, expected_num: Decimal, expected_display: str
+) -> None:
+    parsed = parse_si(text, unit_hint=hint)
+
+    assert parsed is not None, text
+    assert parsed.value_num == expected_num
+    assert parsed.display == expected_display
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_num", "expected_unit"),
+    [
+        # A fraction is a division, not a condition. `1/16W` must stay one
+        # sixteenth of a watt — splitting on the slash would read it as 1.
+        ("1/16W", Decimal("0.0625"), "W"),
+        ("1/4 W", Decimal("0.25"), "W"),
+        ("1/3 W", None, "W"),
+    ],
+)
+def test_a_fraction_is_not_a_conditioned_value(
+    text: str, expected_num: Decimal | None, expected_unit: str
+) -> None:
+    parsed = parse_si(text)
+
+    assert parsed is not None, text
+    assert parsed.unit == expected_unit
+    if expected_num is not None:
+        assert parsed.value_num == expected_num
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_unit", "expected_display"),
+    [
+        # A slash INSIDE a unit symbol is not a condition separator. This
+        # is the one that would have broken every resistor in the library.
+        ("±100ppm/°C", "ppm/°C", "100 ppm/°C"),
+        ("100 ppm/C", "ppm/°C", "100 ppm/°C"),
+    ],
+)
+def test_a_slash_inside_a_unit_is_not_a_condition(
+    text: str, expected_unit: str, expected_display: str
+) -> None:
+    parsed = parse_si(text)
+
+    assert parsed is not None, text
+    assert parsed.unit == expected_unit
+    assert parsed.display == expected_display
+
+
+@pytest.mark.parametrize("text", ["1.8 A Saturation", "26mOhm Max at 25C"])
+def test_at_only_separates_as_a_whole_word(text: str) -> None:
+    """`\bat\b`, not a substring: "Saturation" and "Rated" carry the
+    letters and are not conditions."""
+    parsed = parse_si(text)
+
+    assert parsed is None or parsed.value_num is not None
+
+
+def test_a_temperature_range_is_still_a_range_not_a_condition() -> None:
+    parsed = parse_si("-55°C ~ 125°C", unit_hint="°C")
+
+    assert parsed is not None
+    assert parsed.value_num is None
+    assert parsed.display == "-55°C ~ 125°C"

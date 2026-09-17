@@ -45,12 +45,37 @@ symbol per class — and ships no symbol bytes at all, because a
 ## `category-seed`
 
 An operator-run [backend job](../deployment.md#operator-run-jobs) that gives
-a workspace the passive tree those defaults hang off: Resistors; Capacitors
-with Ceramic / Electrolytic / Tantalum / Film; Inductors with Power /
-Ferrite bead / Common-mode choke; Diodes with Rectifier / Schottky / Zener /
-TVS / LED; Transistors with BJT NPN / BJT PNP / MOSFET N / MOSFET P. Each
-row carries `refdes_prefix`, a `Device:*` symbol, footprint filters, a
-`value_template` and `kicad_fields`.
+a workspace the tree those defaults hang off — 28 rows, twelve of them
+roots. Each carries `refdes_prefix`, footprint filters, `kicad_fields`, and
+(where the class has a generic symbol) a `Device:*` `default_symbol_ref` and
+a `value_template`.
+
+The passive roots have children, because the sub-class changes the spec set:
+
+| Root | Refdes | Children |
+|---|---|---|
+| Resistors | `R` | — |
+| Capacitors | `C` | Ceramic / Electrolytic / Tantalum / Film |
+| Inductors | `L` | Power / Ferrite bead / Common-mode choke |
+| Diodes | `D` | Rectifier / Schottky / Zener / TVS / LED |
+| Transistors | `Q` | BJT NPN / BJT PNP / MOSFET N / MOSFET P |
+
+The active-component roots have none. A bare "Connectors" is still a
+connector, so the root itself carries the slug and the fields:
+
+| Root | Refdes | Symbol | Why that symbol |
+|---|---|---|---|
+| ICs | `U` | — | There is no `Device:U`; an IC's symbol is drawn per part. |
+| Connectors | `J` | — | Depends on the pin count. |
+| Crystals & Oscillators | `Y` | `Device:Crystal` | KiCad uses `Y` for crystals and `X` for oscillators. One category covers both, because no vendor taxonomy separates them reliably and the spec keys overlap; it takes the commoner prefix and an oscillator part overrides it on itself. |
+| Fuses | `F` | `Device:Fuse` | Generic member of its family, like `Device:D`. |
+| Switches | `SW` | — | A SPDT and a DIP-8 are not the same drawing. |
+| Transformers | `T` | — | Winding count is part of the symbol. |
+| Mechanical | `H` | — | Nothing to draw. Its `kicad_fields` is an explicit `[]`, so `package` is never emitted on a mounting hole. |
+
+A default symbol that is wrong for every part in a class is worse than no
+default: with none, the chooser falls through to the part's own symbol
+instead of offering a two-pin box.
 
 ```bash
 # dry run — prints a CSV of what it would do, writes nothing

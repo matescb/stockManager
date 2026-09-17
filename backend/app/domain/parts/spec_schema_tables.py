@@ -15,36 +15,32 @@ Where the names come from:
 * Alias order is precedence order: the first alias present in a payload
   wins, and the rest are recorded as superseded.
 
+`spec_schema_tables_more.py` holds the other half — the common optional
+keys and the seven active-component classes, merged in below. Every rule
+above applies to it unchanged.
+
 See ADR-0034.
 """
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
 
-
-@dataclass(frozen=True)
-class SpecKey:
-    """One canonical spec on one category.
-
-    `unit` is the SI base-unit symbol used to parse and render the value
-    (`"Ω"`, `"F"`, `"W"`, `"%"`, `"ppm/°C"`). ``None`` means the value is
-    not a quantity — a package code, a dielectric name, a colour — and
-    is kept verbatim.
-    """
-
-    key: str
-    unit: str | None
-    label: str
-    mandatory: bool
-    digikey_aliases: tuple[str, ...] = field(default=())
-    mouser_aliases: tuple[str, ...] = field(default=())
-
+from app.domain.parts.spec_key import SpecKey
+from app.domain.parts.spec_schema_tables_more import (
+    EXTRA_COMMON_SPECS,
+    MORE_CANONICAL_SPECS,
+    MORE_CLASS_DEFAULT_SLUG,
+    MORE_CLASS_RULES,
+)
 
 # ---------------------------------------------------------------------------
 # Common keys — merged into every category, including unknown ones.
+#
+# The three below have been on every part since the schema shipped;
+# `EXTRA_COMMON_SPECS` adds the optional geometry, pin and qualification
+# keys.
 # ---------------------------------------------------------------------------
-COMMON_SPECS: tuple[SpecKey, ...] = (
+_BASE_COMMON_SPECS: tuple[SpecKey, ...] = (
     SpecKey(
         "package", None, "Package", True,
         ("Package / Case", "Supplier Device Package", "Package"),
@@ -61,6 +57,8 @@ COMMON_SPECS: tuple[SpecKey, ...] = (
         ("Operating Temperature", "Operating Temperature Range"),
     ),
 )
+
+COMMON_SPECS: tuple[SpecKey, ...] = _BASE_COMMON_SPECS + EXTRA_COMMON_SPECS
 
 _RESISTOR: tuple[SpecKey, ...] = (
     SpecKey("resistance", "Ω", "Resistance", True, ("Resistance",), ("Resistance",)),
@@ -269,6 +267,7 @@ CANONICAL_SPECS: dict[str, tuple[SpecKey, ...]] = {
     "led": _LED,
     "transistor_bjt": _TRANSISTOR_BJT,
     "transistor_mosfet": _TRANSISTOR_MOSFET,
+    **MORE_CANONICAL_SPECS,
 }
 
 
@@ -276,12 +275,18 @@ CANONICAL_SPECS: dict[str, tuple[SpecKey, ...]] = {
 # Junk denylist — compliance codes and packaging trivia that are not specs.
 # Measured on prod 2026-09-15: HTS code 246 rows, ECCN 277, MSL 246, plus
 # eight per-country HTS variants and ~1,000 rows whose value is "-".
+#
+# `Ratings` (DigiKey) and `Qualification` (Mouser) were on this list and
+# are not any more: they feed the common `automotive` key, whose extractor
+# keeps the AEC-Q token and drops everything else under them. Taking a key
+# off this list is only safe when something downstream refuses the prose —
+# here, `spec_extract.aec_qualification` returning ``None``.
 # ---------------------------------------------------------------------------
 DROP_KEY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"^(?:TARIC|CNHTS|BRHTS|USHTS|JPHTS|KRHTS|MXHTS|CAHTS|HTS code|ECCN"
         r"|Conflict Minerals|MSL|NCNR|IPC code|Base Product Number"
-        r"|Number of Terminations|Qualification|Ratings|Restriction"
+        r"|Number of Terminations|Restriction"
         r"|Suggested replacement|Unit weight)$",
         re.IGNORECASE,
     ),
@@ -351,6 +356,10 @@ CLASS_RULES: tuple[tuple[frozenset[str], str], ...] = (
         frozenset({"diode", "diodes", "rectifier", "rectifiers", "zener", "schottky", "tvs"}),
         "diode",
     ),
+    # ICs, connectors, crystals, fuses, switches, transformers, mechanical —
+    # in `spec_schema_tables_more.py`, next to their spec keys, with the
+    # three taxonomy overlaps their order decides written out there.
+    *MORE_CLASS_RULES,
 )
 
 # class -> ((modifier words, slug), …). First match wins within a class.
@@ -384,6 +393,7 @@ CLASS_DEFAULT_SLUG: dict[str, str | None] = {
     "diode": "diode",
     "capacitor": None,
     "transistor": None,
+    **MORE_CLASS_DEFAULT_SLUG,
 }
 
 PATH_SEPARATOR_RE = re.compile(r"[/>|»]")

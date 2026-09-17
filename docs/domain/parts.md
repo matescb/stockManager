@@ -123,6 +123,46 @@ is literally `-`.
 | optional | the upstream key, namespaced per ADR-0031 | Anything else parametric, kept verbatim, so ICs and connectors lose nothing. |
 | dropped | nothing | Customs codes, `-` values, and aliases a higher-precedence alias already answered. |
 
+### The common keys
+
+Ten keys are merged into every category, including one the schema does not
+model. `package` is the only mandatory one — a resistor with no published
+height is not an incomplete resistor.
+
+| Key | Unit | From |
+|---|---|---|
+| `package` | — | `Package / Case`, `Supplier Device Package` |
+| `mounting` | — | `Mounting Type` |
+| `operating_temp` | °C | `Operating Temperature` |
+| `height` | m | `Height - Seated (Max)`, `Height (Max)` |
+| `length` | m | `Size / Dimension` (first dimension), Mouser `Length` |
+| `width` | m | `Size / Dimension` (last dimension), Mouser `Width` |
+| `pin_count` | — | `Number of Pins` |
+| `pin_pitch` | m | `Pitch`, `Lead Spacing` |
+| `automotive` | — | `Ratings` / `Qualification`, AEC-Q token only |
+| `device_marking` | — | `Part Marking`, `Marking` |
+
+Three of them take *part* of a value, through a transform named on the
+`SpecKey` and defined in `parts/spec_extract.py`:
+
+- **`Size / Dimension` feeds two keys.** `0.126" L x 0.063" W (3.20mm x
+  1.60mm)` is a length AND a width. It is the only one-to-many alias in the
+  schema; everywhere else, one upstream name feeding two canonical keys is
+  a bug, because the winner would depend on tuple order.
+- **Dimensions prefer the vendor's metric equivalent.** `parse_si` has no
+  inch entry and is not getting one — a unit conversion is a different
+  thing from an SI prefix — so `0.087" (2.20mm)` is read as 2.2 mm.
+- **`Ratings` yields the AEC-Q token or nothing.** The key was on the junk
+  denylist because most of what it carries is prose. A value with no
+  AEC-Q in it is *dropped*, not kept verbatim: the transform returning
+  `None` is what keeps the prose off the Specs tab.
+
+A category may answer a common key with one of its own — a connector's
+`pitch` is the common `pin_pitch` under the same upstream name — in which
+case the common key is dropped for that category, so one value writes one
+row. The override takes the dropped key's aliases with it, so a
+connector's `Lead Spacing` still lands somewhere.
+
 Two rules follow from canonical keys being shared:
 
 - **Precedence, not recency, decides a contested key.** `digikey` >
@@ -142,6 +182,22 @@ Junk rows already on a part are **archived** rather than deleted, and the
 read paths (`GET /api/custom-fields/by-object/...`, the MCP part-detail tool)
 filter `archived_at IS NULL`. A stale-but-real row keeps the hard delete it
 has always had.
+
+### The categories the schema models
+
+Twenty slugs: the passive and discrete classes (`resistor`, four
+capacitor dielectrics, `inductor`, four diode types, `led`, two transistor
+types) and seven active-component classes — `ic`, `connector`, `crystal`,
+`fuse`, `switch`, `transformer`, `mechanical`. Before the second group
+existed, every value on an IC or a connector was kept verbatim under
+`optional`, so nothing sorted and no key could be reported missing.
+
+`crystal` covers crystals, oscillators and resonators together, because no
+vendor taxonomy separates them reliably and the keys overlap. `frequency`
+is its only mandatory key, and it is the one all three have:
+`load_capacitance` belongs to a crystal alone, so requiring it would flag
+every oscillator in the workspace forever — noise, not a finding. It is
+still on the class's `value_template`, where an absent key renders nothing.
 
 `parts.category_id` is filled on the same pass when it is NULL, from the
 provider's own taxonomy (`spec_schema.category_for_provider` →

@@ -47,15 +47,23 @@ def test_aliases_are_unique_within_a_category(slug: str, provider: str) -> None:
     # make the winner depend on tuple order, i.e. on nothing.
     owner_of: dict[str, str] = {}
 
+    shared_ok: dict[str, bool] = {}
+
     # Act / Assert
     for spec in spec_keys_for(slug):
         aliases = spec.mouser_aliases if provider == "mouser" else spec.digikey_aliases
         for alias in aliases:
-            assert alias not in owner_of, (
-                f"{slug}/{provider}: '{alias}' claimed by both "
-                f"'{owner_of.get(alias)}' and '{spec.key}'"
-            )
+            # The one legal exception: two keys may share an alias when BOTH
+            # declare an extractor, because then each takes a different part
+            # of one value (`Size / Dimension` is a length AND a width) and
+            # the outcome does not depend on tuple order. See ADR-0034.
+            if alias in owner_of:
+                assert shared_ok.get(alias) and spec.extract, (
+                    f"{slug}/{provider}: '{alias}' claimed by both "
+                    f"'{owner_of.get(alias)}' and '{spec.key}'"
+                )
             owner_of[alias] = spec.key
+            shared_ok[alias] = bool(spec.extract)
 
 
 @pytest.mark.parametrize("slug", sorted(CANONICAL_SPECS))
@@ -71,13 +79,23 @@ def test_every_category_carries_the_common_keys(slug: str) -> None:
     }
 
 
+COMMON_KEYS = [
+    "package",
+    "mounting",
+    "operating_temp",
+    "height",
+    "length",
+    "width",
+    "pin_count",
+    "pin_pitch",
+    "automotive",
+    "device_marking",
+]
+
+
 def test_unknown_category_falls_back_to_the_common_keys() -> None:
-    assert [s.key for s in spec_keys_for("not_a_category")] == [
-        "package",
-        "mounting",
-        "operating_temp",
-    ]
-    assert [s.key for s in spec_keys_for(None)] == ["package", "mounting", "operating_temp"]
+    assert [s.key for s in spec_keys_for("not_a_category")] == COMMON_KEYS
+    assert [s.key for s in spec_keys_for(None)] == COMMON_KEYS
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +107,7 @@ def test_unknown_category_falls_back_to_the_common_keys() -> None:
         "TARIC", "CNHTS", "BRHTS", "USHTS", "JPHTS", "KRHTS", "MXHTS", "CAHTS",
         "HTS code", "ECCN", "MSL", "Unit weight", "NCNR", "IPC code",
         "Conflict Minerals", "Base Product Number", "Number of Terminations",
-        "Qualification", "Ratings", "Restriction", "Suggested replacement",
+        "Restriction", "Suggested replacement",
     ],
 )
 def test_is_junk_key_catches_the_keys_measured_on_prod(key: str) -> None:
@@ -360,8 +378,8 @@ def test_category_slug_for_maps_our_names(name_path: str, slug: str) -> None:
     [
         None,
         "",
-        "Connectors",
-        "Microcontrollers",
+        "Thermistors",
+        "Potentiometers",
         # Ambiguous on purpose: the dielectric / channel type changes the
         # whole spec set, so a bare root must not pick one.
         "Capacitors",
@@ -370,6 +388,28 @@ def test_category_slug_for_maps_our_names(name_path: str, slug: str) -> None:
 )
 def test_category_slug_for_refuses_what_it_cannot_place(name_path: str | None) -> None:
     assert category_slug_for(name_path) is None
+
+
+@pytest.mark.parametrize(
+    ("name_path", "slug"),
+    [
+        ("ICs", "ic"),
+        ("Microcontrollers", "ic"),
+        ("Connectors", "connector"),
+        ("Crystals & Oscillators", "crystal"),
+        ("Fuses", "fuse"),
+        ("Switches", "switch"),
+        ("Transformers", "transformer"),
+        ("Mechanical", "mechanical"),
+    ],
+)
+def test_category_slug_for_maps_the_active_component_roots(
+    name_path: str, slug: str
+) -> None:
+    """Unlike Capacitors and Transistors, none of these roots is ambiguous
+    in a way that changes the spec set, so the root itself carries a slug
+    and the seed can hang `kicad_fields` off it."""
+    assert category_slug_for(name_path) == slug
 
 
 # ---------------------------------------------------------------------------
@@ -431,7 +471,10 @@ def test_an_adjective_never_outvotes_the_component_noun(
 
 
 def test_ceramic_without_a_component_noun_is_not_a_capacitor() -> None:
-    assert category_slug_for("Ceramic Resonators") is None
+    """"Ceramic" is an adjective. A ceramic resonator is a resonator, and
+    now that the schema has a class for those it lands there rather than
+    on the nothing it used to."""
+    assert category_slug_for("Ceramic Resonators") == "crystal"
 
 
 def test_a_real_mouser_attribute_beats_a_description_derived_key() -> None:
@@ -507,3 +550,391 @@ def test_the_schema_table_cannot_be_mutated_by_an_importer() -> None:
     # change every workspace at once.
     with pytest.raises(TypeError):
         CANONICAL_SPECS["resistor"] = ()  # type: ignore[index]
+
+
+# ---------------------------------------------------------------------------
+# Common optional keys — physical dimensions, pin geometry, qualification
+#
+# These sit alongside `package` / `mounting` / `operating_temp` on EVERY
+# category, including ones the schema does not model. They are what makes a
+# connector or an IC row sortable at all.
+# ---------------------------------------------------------------------------
+def test_a_size_dimension_value_fills_both_the_length_and_the_width() -> None:
+    # Arrange — one upstream key carrying two numbers. The only one-to-many
+    # alias in the schema; see ADR-0034.
+    payload = [("Size / Dimension", '0.126" L x 0.063" W (3.20mm x 1.60mm)')]
+
+    # Act
+    result = normalise("resistor", "digikey", payload)
+
+    # Assert — metric equivalents, parsed, in the base unit.
+    assert result.canonical["length"].display == "3.2 mm"
+    assert result.canonical["length"].value_num == Decimal("0.00320")
+    assert result.canonical["width"].display == "1.6 mm"
+    assert result.canonical["width"].value_num == Decimal("0.00160")
+    # One raw key, so it is a winner and never also a dropped alias.
+    assert result.dropped == []
+    assert result.optional == {}
+
+
+def test_the_one_to_many_alias_is_still_one_key_in_the_payload() -> None:
+    # Arrange / Act — the partition rule holds on the raw keys, which is
+    # what "nothing is lost and nothing is duplicated" means here.
+    payload = [("Size / Dimension", '0.126" L x 0.063" W (3.20mm x 1.60mm)')]
+    result = normalise("resistor", "digikey", payload)
+
+    # Assert
+    raw_keys = {spec.raw_key for spec in result.canonical.values()}
+    assert raw_keys | set(result.optional) | set(result.catalog) | set(
+        result.dropped
+    ) == {"Size / Dimension"}
+
+
+def test_mouser_sends_length_and_width_as_two_keys_and_both_survive() -> None:
+    # Arrange — "the last of one part" has to be that same part, or Mouser
+    # loses its width.
+    result = normalise("resistor", "mouser", [("Length", "3.2 mm"), ("Width", "1.6 mm")])
+
+    # Assert
+    assert result.canonical["length"].display == "3.2 mm"
+    assert result.canonical["width"].display == "1.6 mm"
+
+
+def test_an_imperial_height_is_stored_as_the_vendors_metric_equivalent() -> None:
+    # Arrange / Act — `parse_si` has no inch entry and is not getting one;
+    # the metric figure DigiKey already prints is used instead.
+    result = normalise("resistor", "digikey", [("Height - Seated (Max)", '0.087" (2.20mm)')])
+
+    # Assert
+    assert result.canonical["height"].display == "2.2 mm"
+    assert result.canonical["height"].value_num == Decimal("0.00220")
+
+
+def test_a_lead_spacing_lands_on_the_common_pin_pitch_key() -> None:
+    result = normalise("resistor", "digikey", [("Lead Spacing", '0.100" (2.54mm)')])
+
+    assert result.canonical["pin_pitch"].display == "2.54 mm"
+
+
+# ---------------------------------------------------------------------------
+# `Ratings` — off the junk denylist, and worth exactly one fact
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("key", ["Ratings", "Qualification"])
+def test_the_qualification_keys_are_no_longer_junk(key: str) -> None:
+    """They were denylisted because most of what they carry is prose. They
+    now feed `automotive`, and the extractor is what drops the prose."""
+    assert is_junk_key(key) is False
+
+
+@pytest.mark.parametrize(
+    ("provider", "key"), [("digikey", "Ratings"), ("mouser", "Qualification")]
+)
+def test_an_aec_rating_becomes_the_automotive_key(provider: str, key: str) -> None:
+    result = normalise("resistor", provider, [(key, "AEC-Q200")])
+
+    assert result.canonical["automotive"].display == "AEC-Q200"
+    assert result.canonical["automotive"].raw_key == key
+
+
+@pytest.mark.parametrize(
+    ("provider", "key"), [("digikey", "Ratings"), ("mouser", "Qualification")]
+)
+def test_a_non_automotive_rating_is_dropped_rather_than_stored(
+    provider: str, key: str
+) -> None:
+    """The whole point of taking the key off the denylist was the AEC-Q
+    token. "Moisture Resistant" under it is the prose the denylist existed
+    to refuse, and must not come back as a verbatim Specs row."""
+    result = normalise("resistor", provider, [(key, "Moisture Resistant")])
+
+    assert "automotive" not in result.canonical
+    assert result.optional == {}
+    assert result.dropped == [key]
+
+
+def test_number_of_terminations_stays_junk() -> None:
+    """It reads like a pin count and is not one: DigiKey files a two-pad
+    chip resistor's `2` under it. `pin_count` takes `Number of Pins` only,
+    so a passive does not acquire a pin count it has no use for."""
+    assert is_junk_key("Number of Terminations") is True
+    result = normalise("resistor", "digikey", [("Number of Terminations", "2")])
+    assert result.canonical == {}
+    assert result.dropped == ["Number of Terminations"]
+
+
+def test_a_number_of_pins_is_a_pin_count() -> None:
+    # Arrange / Act — a count has no unit, so it is kept verbatim with no
+    # numeric sidecar, the way `hfe` and `unidirectional` already are.
+    result = normalise("resistor", "digikey", [("Number of Pins", "8")])
+
+    # Assert
+    assert result.canonical["pin_count"].display == "8"
+    assert result.canonical["pin_count"].value_num is None
+
+
+# ---------------------------------------------------------------------------
+# The active-component classes
+#
+# ICs, connectors, crystals, fuses, switches, transformers and mechanical
+# parts had no canonical schema at all: every value on them was kept
+# verbatim under `optional`, so nothing sorted and nothing could be missing.
+# The payloads below are the DigiKey `ParameterText` and Mouser
+# `ProductAttributes` names the tables were written against.
+# ---------------------------------------------------------------------------
+def test_a_digikey_ic_payload_maps_to_the_ic_schema() -> None:
+    payload = [
+        ("Type", "Microcontroller"),
+        ("Voltage - Supply (Vcc/Vdd)", "1.8V ~ 3.6V"),
+        ("Number of Channels", "4"),
+        ("Speed", "48MHz"),
+        ("Interface", "I2C, SPI, UART"),
+        ("Package / Case", "32-VFQFN Exposed Pad"),
+        ("Number of Pins", "32"),
+    ]
+
+    result = normalise("ic", "digikey", payload)
+
+    assert result.canonical["ic_type"].display == "Microcontroller"
+    assert result.canonical["f_max"].display == "48 MHz"
+    assert result.canonical["f_max"].value_num == Decimal("48000000")
+    assert result.canonical["channels"].display == "4"
+    assert result.canonical["interface"].display == "I2C, SPI, UART"
+    assert result.canonical["pin_count"].display == "32"
+    # A supply range has a display and no single number to sort on.
+    assert result.canonical["supply_voltage"].display == "1.8 V ~ 3.6 V"
+    assert result.canonical["supply_voltage"].value_num is None
+    assert missing_mandatory("ic", result.canonical) == []
+
+
+def test_a_digikey_connector_payload_maps_to_the_connector_schema() -> None:
+    payload = [
+        ("Connector Type", "Header, Shrouded"),
+        ("Number of Positions", "10"),
+        ("Number of Rows", "2"),
+        ("Pitch", '0.100" (2.54mm)'),
+        ("Gender", "Male Pin"),
+        ("Current Rating (Amps)", "3"),
+        ("Voltage Rating", "250V"),
+        ("Orientation", "Vertical"),
+        ("Mounting Type", "Through Hole"),
+        ("Package / Case", "-"),
+    ]
+
+    result = normalise("connector", "digikey", payload)
+
+    assert result.canonical["connector_type"].display == "Header, Shrouded"
+    assert result.canonical["positions"].display == "10"
+    assert result.canonical["rows"].display == "2"
+    assert result.canonical["pitch"].display == "2.54 mm"
+    assert result.canonical["gender"].display == "Male Pin"
+    assert result.canonical["current_rating"].display == "3 A"
+    assert result.canonical["voltage_rating"].display == "250 V"
+    assert result.canonical["orientation"].display == "Vertical"
+    # `Mounting Type` is the common `mounting`, not the orientation: a
+    # through-hole right-angle header is both, and they are two facts.
+    assert result.canonical["mounting"].display == "Through Hole"
+
+
+def test_a_connector_gets_a_pitch_or_a_pin_pitch_and_never_both() -> None:
+    """`pitch` and `pin_pitch` are one fact under one upstream name. Two
+    canonical rows for it is the thing ADR-0034 forbids most plainly."""
+    result = normalise("connector", "digikey", [("Pitch", '0.100" (2.54mm)')])
+
+    assert "pitch" in result.canonical
+    assert "pin_pitch" not in result.canonical
+    assert [s.key for s in spec_keys_for("connector")].count("pitch") == 1
+    assert "pin_pitch" not in {s.key for s in spec_keys_for("connector")}
+
+
+def test_every_other_category_keeps_the_common_pin_pitch() -> None:
+    assert "pin_pitch" in {s.key for s in spec_keys_for("ic")}
+    assert "pin_pitch" in {s.key for s in spec_keys_for("resistor")}
+
+
+def test_a_digikey_crystal_payload_maps_to_the_crystal_schema() -> None:
+    payload = [
+        ("Frequency", "16MHz"),
+        ("Load Capacitance", "18pF"),
+        ("Frequency Tolerance", "±10ppm"),
+        ("Frequency Stability", "±30ppm"),
+        ("Type", "Crystal"),
+        ("Package / Case", "4-SMD, No Lead"),
+    ]
+
+    result = normalise("crystal", "digikey", payload)
+
+    assert result.canonical["frequency"].value_num == Decimal("16000000")
+    assert result.canonical["frequency"].display == "16 MHz"
+    assert result.canonical["load_capacitance"].display == "18 pF"
+    assert result.canonical["frequency_tolerance"].display == "10 ppm"
+    assert result.canonical["frequency_stability"].display == "30 ppm"
+    assert result.canonical["crystal_type"].display == "Crystal"
+    assert missing_mandatory("crystal", result.canonical) == []
+
+
+def test_an_oscillator_is_not_incomplete_for_having_no_load_capacitance() -> None:
+    """One slug covers crystals, oscillators and resonators, and only a
+    crystal has a load capacitance. Mandatory would flag every oscillator
+    in the workspace forever, which is noise rather than a finding — so
+    `frequency` carries the class and `load_capacitance` is optional."""
+    payload = [
+        ("Frequency", "25MHz"),
+        ("Voltage - Supply", "3.3V"),
+        ("Type", "XO"),
+        ("Package / Case", "4-SMD"),
+    ]
+
+    result = normalise("crystal", "digikey", payload)
+
+    assert result.canonical["supply_voltage"].display == "3.3 V"
+    assert missing_mandatory("crystal", result.canonical) == []
+
+
+def test_a_crystal_still_has_to_have_a_frequency() -> None:
+    result = normalise("crystal", "digikey", [("Load Capacitance", "18pF")])
+
+    assert missing_mandatory("crystal", result.canonical) == ["package", "frequency"]
+
+
+def test_a_digikey_fuse_payload_maps_to_the_fuse_schema() -> None:
+    payload = [
+        ("Current Rating (Amps)", "2A"),
+        ("Voltage Rating - DC", "32VDC"),
+        ("Fuse Type", "Fast Acting"),
+        ("Response Time", "Fast"),
+        ("Package / Case", "1206 (3216 Metric)"),
+    ]
+
+    result = normalise("fuse", "digikey", payload)
+
+    assert result.canonical["current_rating"].display == "2 A"
+    assert result.canonical["voltage_rating"].display == "32 V"
+    assert result.canonical["fuse_type"].display == "Fast Acting"
+    assert result.canonical["response_time"].display == "Fast"
+    assert missing_mandatory("fuse", result.canonical) == []
+
+
+def test_a_resettable_fuse_carries_its_hold_and_trip_currents() -> None:
+    payload = [
+        ("Current - Hold (Ih) (Max)", "500mA"),
+        ("Current - Trip (It)", "1A"),
+    ]
+
+    result = normalise("fuse", "digikey", payload)
+
+    assert result.canonical["hold_current"].value_num == Decimal("0.5")
+    assert result.canonical["trip_current"].value_num == Decimal("1")
+
+
+def test_a_digikey_switch_payload_maps_to_the_switch_schema() -> None:
+    payload = [
+        ("Switch Function", "SPST-NO"),
+        ("Circuit", "SPST-NO"),
+        ("Contact Rating @ Voltage", "50mA @ 24VDC"),
+        ("Operating Force", "1.6N"),
+        ("Mechanical Life", "1,000,000 Cycles"),
+        ("Package / Case", "-"),
+    ]
+
+    result = normalise("switch", "digikey", payload)
+
+    assert result.canonical["switch_type"].display == "SPST-NO"
+    assert result.canonical["contact_config"].display == "SPST-NO"
+    # A conditioned rating: the leading term is what the key is asking
+    # about, exactly as `0.063W, 1/16W` is already read as 63 mW.
+    assert result.canonical["current_rating"].display == "50 mA"
+    assert result.canonical["current_rating"].value_num == Decimal("0.05")
+    assert result.canonical["operating_force"].display == "1.6 N"
+    # `Mechanical Life` is NOT `electrical_life`. A switch is rated for far
+    # more mechanical operations than switched-load ones, so reading one
+    # into the other would put two incomparable numbers under a key whose
+    # `value_num` index exists so it sorts as one quantity. It is kept
+    # verbatim instead, which loses nothing.
+    assert "electrical_life" not in result.canonical
+    assert result.optional["Mechanical Life"] == "1,000,000 Cycles"
+
+
+def test_a_mouser_switch_electrical_life_is_canonical() -> None:
+    result = normalise("switch", "mouser", [("Electrical Life", "50000 Cycles")])
+
+    assert result.canonical["electrical_life"].display == "50000 cycles"
+    assert result.canonical["electrical_life"].value_num == Decimal("50000")
+
+
+def test_a_digikey_transformer_payload_maps_to_the_transformer_schema() -> None:
+    payload = [
+        ("Type", "Pulse"),
+        ("Power - Rated", "2.5VA"),
+        ("Turns Ratio", "1:1.5"),
+        ("Isolation Voltage", "1500V"),
+        ("Primary Inductance", "350µH"),
+    ]
+
+    result = normalise("transformer", "digikey", payload)
+
+    assert result.canonical["transformer_type"].display == "Pulse"
+    assert result.canonical["power_rating"].display == "2.5 VA"
+    assert result.canonical["turns_ratio"].display == "1:1.5"
+    assert result.canonical["isolation_voltage"].display == "1.5 kV"
+    assert result.canonical["primary_inductance"].display == "350 µH"
+
+
+def test_a_mechanical_part_has_a_subtype_and_no_mandatory_class_key() -> None:
+    """A screw has no parametric spec set. `package` is still mandatory
+    because it is common to every category; nothing else is, which is the
+    honest answer for a class whose specs are a thread and a length."""
+    result = normalise("mechanical", "digikey", [("Type", "Standoff"), ("Length", "10mm")])
+
+    assert result.canonical["subtype"].display == "Standoff"
+    assert missing_mandatory("mechanical", result.canonical) == ["package"]
+    assert [s.key for s in spec_keys_for("mechanical") if s.mandatory] == ["package"]
+
+
+@pytest.mark.parametrize(
+    "slug",
+    ["ic", "connector", "crystal", "fuse", "switch", "transformer", "mechanical"],
+)
+def test_the_new_classes_are_in_the_schema(slug: str) -> None:
+    assert slug in CANONICAL_SPECS
+
+
+def test_every_declared_extractor_exists() -> None:
+    """`extract_for` raises on an unknown name rather than quietly dropping
+    a canonical key — which is only safe because this test catches the typo
+    before a provider import does."""
+    from app.domain.parts.spec_extract import EXTRACTORS
+
+    declared = {
+        spec.extract
+        for specs in (CANONICAL_SPECS["common"], *CANONICAL_SPECS.values())
+        for spec in specs
+        if spec.extract is not None
+    }
+    assert declared
+    assert declared <= set(EXTRACTORS)
+
+
+@pytest.mark.parametrize(
+    "alias", ["Pitch", "Pin Pitch", "Lead Spacing"]
+)
+def test_a_connector_reads_every_pitch_spelling_onto_its_own_key(alias: str) -> None:
+    """The connector slug drops the common `pin_pitch`, so its own `pitch`
+    has to answer every spelling that key answered — otherwise dropping it
+    loses `Lead Spacing` on exactly the class that uses it most."""
+    result = normalise("connector", "digikey", [(alias, '0.100" (2.54mm)')])
+
+    assert result.canonical["pitch"].display == "2.54 mm"
+    assert "pin_pitch" not in result.canonical
+    assert result.dropped == []
+
+
+def test_a_connector_payload_with_two_pitch_spellings_writes_one_row() -> None:
+    result = normalise(
+        "connector",
+        "digikey",
+        [("Pitch", '0.100" (2.54mm)'), ("Lead Spacing", '0.200" (5.08mm)')],
+    )
+
+    assert [k for k in result.canonical if "pitch" in k] == ["pitch"]
+    assert result.canonical["pitch"].raw_key == "Pitch"
+    assert result.dropped == ["Lead Spacing"]

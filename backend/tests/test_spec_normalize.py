@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import csv
 import uuid
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -32,8 +33,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
 from app.cli.run_job import JobOptions, main, run_job
-from app.core.time import utcnow
 from app.core.advisory_locks import SPEC_NORMALIZE_LOCK_CLASSID
+from app.core.time import utcnow
 from app.domain.audit.models import AuditLog
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts.models import Part
@@ -43,6 +44,7 @@ from app.domain.parts.services.spec_normalize import (
     UnknownWorkspaceError,
     normalize_specs,
 )
+from app.domain.parts.services.spec_normalize_report import ACTION_ADD, ACTION_REKEY
 from app.domain.workspaces.models import Workspace
 from app.main import app
 from tests._factories import signup_user
@@ -937,3 +939,119 @@ def test_the_job_runs_through_the_registry(
 
     assert affected > 0
     assert "Resistance" in _rows_by_key(db, part_id), "a bare run is a dry run"
+
+
+# ---------------------------------------------------------------------------
+# One row, two canonical keys
+#
+# `Size / Dimension` is the schema's only one-to-many alias: it answers
+# both `length` and `width`. The refresh path writes two rows and is fine.
+# This job re-keys the rows a part ALREADY has, so the second key has no
+# row of its own — and renaming the one source row twice would leave the
+# part with `width` alone, the raw value gone, and a second run reporting
+# nothing, which is what would make the loss invisible.
+# ---------------------------------------------------------------------------
+SIZE_DIMENSION = '0.126" L x 0.063" W (3.20mm x 1.60mm)'
+
+
+@pytest.fixture
+def sized_resistor(client: TestClient, db) -> tuple[uuid.UUID, uuid.UUID]:
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "digikey")
+    category_id = _category(client, "Resistors")
+    part_id = _part(client, db, category_id=category_id, linked_provider="digikey")
+    _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Resistance", value="10 kOhms")
+    _legacy_row(
+        db, ws_id=ws_id, part_id=part_id, key="Size / Dimension", value=SIZE_DIMENSION
+    )
+    db.commit()
+    return ws_id, part_id
+
+
+def test_a_one_to_many_alias_ends_as_one_row_per_canonical_key(
+    sized_resistor: tuple[uuid.UUID, uuid.UUID], db, tmp_path: Path
+) -> None:
+    _, part_id = sized_resistor
+
+    _normalize(db, tmp_path / "report.csv", apply=True)
+
+    rows = _rows_by_key(db, part_id)
+    assert {"resistance", "length", "width"} <= set(rows)
+    assert rows["length"].value == "3.2 mm"
+    assert rows["length"].value_num == Decimal("0.00320")
+    assert rows["width"].value == "1.6 mm"
+    assert rows["width"].value_num == Decimal("0.00160")
+    # Both are live, both name their provider, and neither is the other.
+    for key in ("length", "width"):
+        assert rows[key].archived_at is None, key
+        assert rows[key].provider == "digikey", key
+        assert rows[key].source == "provider", key
+    assert rows["length"].id != rows["width"].id
+    assert "Size / Dimension" not in rows
+
+
+def test_the_second_canonical_key_is_reported_as_its_own_row(
+    sized_resistor: tuple[uuid.UUID, uuid.UUID], db, tmp_path: Path
+) -> None:
+    """One CSV line per physical row. A line claiming `Size / Dimension →
+    length` next to one claiming `Size / Dimension → width` would say two
+    rows were renamed when only one was, and the runbook's reversal reads
+    these lines."""
+    report = tmp_path / "report.csv"
+
+    _normalize(db, report, apply=True)
+
+    lines = [r for r in _report_rows(report) if r["key"] in ("length", "width")]
+
+    assert sorted(r["key"] for r in lines) == ["length", "width"]
+    # Both lines cite the upstream key the value was read from, which is
+    # what ties the insert to the rename above it. Only one of them is a
+    # rename, because only one row moved.
+    assert {r["old_key"] for r in lines} == {"Size / Dimension"}
+    assert sorted(r["action"] for r in lines) == [ACTION_ADD, ACTION_REKEY]
+
+
+def test_a_second_apply_over_a_one_to_many_alias_changes_nothing(
+    sized_resistor: tuple[uuid.UUID, uuid.UUID], db, tmp_path: Path
+) -> None:
+    _normalize(db, tmp_path / "first.csv", apply=True)
+
+    _normalize(db, tmp_path / "second.csv", apply=True)
+
+    assert _report_rows(tmp_path / "second.csv") == []
+
+
+def test_a_one_to_many_dry_run_writes_nothing(
+    sized_resistor: tuple[uuid.UUID, uuid.UUID], db, tmp_path: Path
+) -> None:
+    """The inserted row has to be inside the savepoint like every other
+    mutation, or a dry run leaves half the change behind."""
+    _, part_id = sized_resistor
+
+    outcome = _normalize(db, tmp_path / "report.csv")
+
+    assert outcome.changes > 0
+    rows = _rows_by_key(db, part_id)
+    assert "length" not in rows
+    assert "width" not in rows
+    assert rows["Size / Dimension"].value == SIZE_DIMENSION
+
+
+def test_a_dry_run_then_an_apply_over_a_one_to_many_alias_agree(
+    sized_resistor: tuple[uuid.UUID, uuid.UUID], db, tmp_path: Path
+) -> None:
+    """The dry run's savepoint has to discard an INSERTED row cleanly
+    enough for the apply that follows it in the same session to redo it.
+    A pending instance left attached after the rollback would make the
+    apply write a duplicate or fail outright."""
+    _, part_id = sized_resistor
+    dry = tmp_path / "dry.csv"
+    wet = tmp_path / "wet.csv"
+
+    _normalize(db, dry)
+    _normalize(db, wet, apply=True)
+
+    assert _report_rows(dry) == _report_rows(wet)
+    rows = _rows_by_key(db, part_id)
+    assert rows["length"].value == "3.2 mm"
+    assert rows["width"].value == "1.6 mm"
