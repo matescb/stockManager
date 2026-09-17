@@ -15,8 +15,10 @@ classified correctly by it. So the mapping here is
 * **what to refuse.** "Resistor Networks, Arrays" classifies as a
   resistor because "Resistor" is a component noun, but an array has no
   single resistance — filing it under Resistors would make every
-  mandatory key on it permanently missing. `_EXCLUDED_WORDS` refuses
-  those outright rather than filing them wrong.
+  mandatory key on it permanently missing. Two word lists refuse those
+  outright rather than filing them wrong: `_ASSORTMENT_WORDS`, which no
+  class is exempt from, and `_MULTIPART_WORDS`, which ICs are — an IC
+  array is still one IC with one supply voltage and one function.
 * **which text to trust, per provider.** DigiKey's `Category.Name` is
   the leaf of its taxonomy and its description is a terse part string
   ("RES SMD 10K OHM 1% 1/16W 0402") that names no class, so only the
