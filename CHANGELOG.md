@@ -15,6 +15,30 @@ the canonical record.
 
 ## Unreleased
 
+- **`provider-refresh` re-asks the providers about parts imported before
+  the importer knew what it knows now.** A new operator-run job sweeps
+  every active, linked part with an MPN in a workspace and writes back
+  what the providers answer today — part columns on the primary tier, a
+  category where there was none, canonical specs, missing assets —
+  through exactly the same `refresh_part` the refresh route calls, so
+  the tier and namespace rules are decided once. It is `--dry-run` by
+  default with the lookups done for real inside a rolled-back savepoint,
+  sleeps 750 ms between calls, commits per batch of 25 parts, and stops
+  at exit 3 when a provider reports it is out of quota with everything
+  finished so far kept. `--link-missing-providers` also asks the
+  providers a part is not linked to and links it on an exact-MPN hit
+  only. `docs/runbooks/provider-refresh.md`; ADR-0021.
+- **The refresh sequence moved out of the route.**
+  `domain/parts/services/provider_refresh.py::refresh_part` is now the
+  one implementation, and `POST /api/parts/{id}/refresh-from-provider`
+  keeps only its status codes, envelope and rate limit. No response
+  changed.
+- **`run_job` grew a third exit code.** Exit 3 means "a job stopped on
+  purpose and can be re-run later", which a runbook step has to tell
+  from a clean finish and from a usage error. `JobSpec.extra_flags` now
+  records, per flag, the value that means "not given": `--sleep-ms 0` is
+  a real choice, so "not given" could no longer be spelled as "falsy".
+
 - **The spec schema covers active components.** ICs, connectors, crystals,
   fuses, switches, transformers and mechanical parts had no canonical
   schema at all: every value on them was kept verbatim, so nothing sorted

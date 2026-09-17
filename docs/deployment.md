@@ -450,12 +450,12 @@ resolves jobs orphaned in `sent` even after printing is turned back off).
 
 ### Operator-run jobs
 
-Four jobs in the same registry are **not** scheduled and must never be given a
+Five jobs in the same registry are **not** scheduled and must never be given a
 sidecar: they change data on a judgement call, so a human runs them, reads the
 report, and then decides. They take `--apply` (default is a dry run), an
-optional `--workspace <uuid>`, and an optional `--report <path>`. One of them,
-`part-rename`, reads a fourth flag of its own; passing it to any other job is
-a usage error rather than a flag quietly ignored.
+optional `--workspace <uuid>`, and an optional `--report <path>`. Two of them,
+`part-rename` and `provider-refresh`, read flags of their own; passing one to
+any other job is a usage error rather than a flag quietly ignored.
 
 | Job | What it changes | Report |
 |---|---|---|
@@ -463,6 +463,7 @@ a usage error rather than a flag quietly ignored.
 | `symbol-collapse` | Clears `part_eda.symbol_id` where the symbol came from a vendor zip and the part's category has a non-empty `default_symbol_ref`, so one `Device:R` replaces one symbol per part. | CSV: `workspace_id, workspace_name, part_id, part_name, category, symbol_name, symbol_source, before, after, action, detail` |
 | `part-rename` | Renames parts to the convention in [`docs/domain/parts.md`](domain/parts.md#naming-convention) — a spec-rendered value behind the category's class letter (`R 10 kΩ 1% 0603`), else the MPN. Text the rename would overwrite is parked in the part's `alias` custom field. | CSV: `workspace_id, part_id, mpn, old_name, new_name, class, alias_written, old_name_preserved_in, skip_reason` |
 | `spec-normalize` | Re-keys the provider `custom_fields` rows that pre-date the spec schema (ADR-0034) onto their canonical key with a parsed value and a `value_num` sidecar, archives customs codes and `-` placeholders, stamps `provider`, and files uncategorized parts from the provider's taxonomy. A one-off backfill, not a recurring cleanup. | CSV: `workspace_id, part_id, mpn, action, key, old_key, provider, old_value, new_value, category_path`, plus counts per workspace and the raw keys the schema had no alias for |
+| `provider-refresh` | Re-runs the provider MPN lookup for every active, linked part with an MPN and writes back what the providers answer now, through the same service the refresh route uses. Drives the part columns on the primary tier, fills a NULL category, normalises the specs, fetches missing assets. Reads flags of its own: `--limit N`, `--only-uncategorized`, `--link-missing-providers`, `--sleep-ms MS`. | CSV: `workspace_id, part_id, mpn, provider, tier, action, part_columns_changed, specs_added, specs_updated, specs_restored, specs_removed, category_before, category_after, assets_fetched, error`, plus counts per provider per workspace and the raw keys the schema had no alias for |
 
 The report goes to **stdout** and the logging to **stderr**, so redirecting
 gives a clean CSV:
@@ -484,10 +485,19 @@ two guards — the jobs also plan without writing. `--apply` commits and writes
 one `audit_log` row per changed workspace. Take a `pg_dump` first anyway
 (see [Backups](#backups)); there is no staging environment.
 
-Neither job is on a heartbeat: they have no cadence to be late for, so
+None of them is on a heartbeat: they have no cadence to be late for, so
 `--check-heartbeat` reports them healthy and they write no heartbeat file. A
 `--workspace` naming no workspace exits 2 rather than printing an empty
 report.
+
+`provider-refresh` is the one job that spends a metered external resource —
+DigiKey and Mouser free tiers sit near 1,000 calls a day — so it sleeps between
+calls (750 ms by default) and **stops at exit 3** when a provider reports it is
+out of quota, having committed everything it finished and written the CSV.
+Exit 3 is neither 0 nor 2 on purpose: a wrapper can tell "stopped, re-run
+later" from a clean finish and from a usage error. Read
+[`runbooks/provider-refresh.md`](runbooks/provider-refresh.md) before running
+it, and start with `--limit`.
 
 Passing `--apply`, `--workspace` or `--report` to a *scheduled* job exits 2
 rather than being ignored. Details and the seed's exact rules:

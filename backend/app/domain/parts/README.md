@@ -60,6 +60,8 @@ Owns the `Part` aggregate (linked / local / meta / sub-assembly), MPN uniqueness
 | Parse a spec value | `spec_values.py::parse_si`, `::format_si` |
 | Take part of a value for one key | `spec_extract.py::extract_for` |
 | A part's provider links | `provider_links.py::links_for_part`, `::upsert_link` |
+| Refresh one part from one provider | `services/provider_refresh.py::refresh_part` (the route AND the job) |
+| Sweep a workspace's linked parts | `services/provider_refresh_job.py::refresh_linked_parts` (`run_job provider-refresh`) |
 | Keep `part_type` in step with the link | `part_type.py::sync_part_type_and_log` |
 
 ## Hard rules (this module)

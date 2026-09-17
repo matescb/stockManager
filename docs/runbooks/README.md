@@ -31,6 +31,7 @@ How to handle ops scenarios. Each runbook follows the template in [STYLE.md](../
 | [workspace-recovery](workspace-recovery.md) | SEV-2 | Restore a disabled workspace, audit a suspected isolation leak |
 | [analytics-umami](analytics-umami.md) | Routine / SEV-3 | Self-hosted Umami: rotate website ID, disable tracking, debug a missing pageview |
 | [spec-normalize](spec-normalize.md) | Routine | One-off backfill: re-key legacy provider specs onto the canonical schema, dry-run → review CSV → `pg_dump` → `--apply` |
+| [provider-refresh](provider-refresh.md) | Routine | Re-ask every provider a part is linked to and write back what they answer now; throttled, quota-aware (exit 3), dry-run → review CSV → `pg_dump` → `--apply` |
 
 ## Where dashboards live
 
