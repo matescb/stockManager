@@ -645,3 +645,205 @@ def test_a_number_of_pins_is_a_pin_count() -> None:
     # Assert
     assert result.canonical["pin_count"].display == "8"
     assert result.canonical["pin_count"].value_num is None
+
+
+# ---------------------------------------------------------------------------
+# The active-component classes
+#
+# ICs, connectors, crystals, fuses, switches, transformers and mechanical
+# parts had no canonical schema at all: every value on them was kept
+# verbatim under `optional`, so nothing sorted and nothing could be missing.
+# The payloads below are the DigiKey `ParameterText` and Mouser
+# `ProductAttributes` names the tables were written against.
+# ---------------------------------------------------------------------------
+def test_a_digikey_ic_payload_maps_to_the_ic_schema() -> None:
+    payload = [
+        ("Type", "Microcontroller"),
+        ("Voltage - Supply (Vcc/Vdd)", "1.8V ~ 3.6V"),
+        ("Number of Channels", "4"),
+        ("Speed", "48MHz"),
+        ("Interface", "I2C, SPI, UART"),
+        ("Package / Case", "32-VFQFN Exposed Pad"),
+        ("Number of Pins", "32"),
+    ]
+
+    result = normalise("ic", "digikey", payload)
+
+    assert result.canonical["ic_type"].display == "Microcontroller"
+    assert result.canonical["f_max"].display == "48 MHz"
+    assert result.canonical["f_max"].value_num == Decimal("48000000")
+    assert result.canonical["channels"].display == "4"
+    assert result.canonical["interface"].display == "I2C, SPI, UART"
+    assert result.canonical["pin_count"].display == "32"
+    # A supply range has a display and no single number to sort on.
+    assert result.canonical["supply_voltage"].display == "1.8 V ~ 3.6 V"
+    assert result.canonical["supply_voltage"].value_num is None
+    assert missing_mandatory("ic", result.canonical) == []
+
+
+def test_a_digikey_connector_payload_maps_to_the_connector_schema() -> None:
+    payload = [
+        ("Connector Type", "Header, Shrouded"),
+        ("Number of Positions", "10"),
+        ("Number of Rows", "2"),
+        ("Pitch", '0.100" (2.54mm)'),
+        ("Gender", "Male Pin"),
+        ("Current Rating (Amps)", "3"),
+        ("Voltage Rating", "250V"),
+        ("Orientation", "Vertical"),
+        ("Mounting Type", "Through Hole"),
+        ("Package / Case", "-"),
+    ]
+
+    result = normalise("connector", "digikey", payload)
+
+    assert result.canonical["connector_type"].display == "Header, Shrouded"
+    assert result.canonical["positions"].display == "10"
+    assert result.canonical["rows"].display == "2"
+    assert result.canonical["pitch"].display == "2.54 mm"
+    assert result.canonical["gender"].display == "Male Pin"
+    assert result.canonical["current_rating"].display == "3 A"
+    assert result.canonical["voltage_rating"].display == "250 V"
+    assert result.canonical["orientation"].display == "Vertical"
+    # `Mounting Type` is the common `mounting`, not the orientation: a
+    # through-hole right-angle header is both, and they are two facts.
+    assert result.canonical["mounting"].display == "Through Hole"
+
+
+def test_a_connector_gets_a_pitch_or_a_pin_pitch_and_never_both() -> None:
+    """`pitch` and `pin_pitch` are one fact under one upstream name. Two
+    canonical rows for it is the thing ADR-0034 forbids most plainly."""
+    result = normalise("connector", "digikey", [("Pitch", '0.100" (2.54mm)')])
+
+    assert "pitch" in result.canonical
+    assert "pin_pitch" not in result.canonical
+    assert [s.key for s in spec_keys_for("connector")].count("pitch") == 1
+    assert "pin_pitch" not in {s.key for s in spec_keys_for("connector")}
+
+
+def test_every_other_category_keeps_the_common_pin_pitch() -> None:
+    assert "pin_pitch" in {s.key for s in spec_keys_for("ic")}
+    assert "pin_pitch" in {s.key for s in spec_keys_for("resistor")}
+
+
+def test_a_digikey_crystal_payload_maps_to_the_crystal_schema() -> None:
+    payload = [
+        ("Frequency", "16MHz"),
+        ("Load Capacitance", "18pF"),
+        ("Frequency Tolerance", "±10ppm"),
+        ("Frequency Stability", "±30ppm"),
+        ("Type", "Crystal"),
+        ("Package / Case", "4-SMD, No Lead"),
+    ]
+
+    result = normalise("crystal", "digikey", payload)
+
+    assert result.canonical["frequency"].value_num == Decimal("16000000")
+    assert result.canonical["frequency"].display == "16 MHz"
+    assert result.canonical["load_capacitance"].display == "18 pF"
+    assert result.canonical["frequency_tolerance"].display == "10 ppm"
+    assert result.canonical["frequency_stability"].display == "30 ppm"
+    assert result.canonical["crystal_type"].display == "Crystal"
+    assert missing_mandatory("crystal", result.canonical) == []
+
+
+def test_an_oscillator_is_missing_the_load_capacitance_a_crystal_needs() -> None:
+    """One slug covers crystals, oscillators and resonators, and only a
+    crystal has a load capacitance. The flag is the point: an oscillator
+    reads as incomplete on the Specs tab rather than being filed
+    somewhere the rest of its keys do not exist."""
+    payload = [("Frequency", "25MHz"), ("Voltage - Supply", "3.3V"), ("Type", "XO")]
+
+    result = normalise("crystal", "digikey", payload)
+
+    assert result.canonical["supply_voltage"].display == "3.3 V"
+    assert missing_mandatory("crystal", result.canonical) == ["package", "load_capacitance"]
+
+
+def test_a_digikey_fuse_payload_maps_to_the_fuse_schema() -> None:
+    payload = [
+        ("Current Rating (Amps)", "2A"),
+        ("Voltage Rating - DC", "32VDC"),
+        ("Fuse Type", "Fast Acting"),
+        ("Response Time", "Fast"),
+        ("Package / Case", "1206 (3216 Metric)"),
+    ]
+
+    result = normalise("fuse", "digikey", payload)
+
+    assert result.canonical["current_rating"].display == "2 A"
+    assert result.canonical["voltage_rating"].display == "32 V"
+    assert result.canonical["fuse_type"].display == "Fast Acting"
+    assert result.canonical["response_time"].display == "Fast"
+    assert missing_mandatory("fuse", result.canonical) == []
+
+
+def test_a_resettable_fuse_carries_its_hold_and_trip_currents() -> None:
+    payload = [
+        ("Current - Hold (Ih) (Max)", "500mA"),
+        ("Current - Trip (It)", "1A"),
+    ]
+
+    result = normalise("fuse", "digikey", payload)
+
+    assert result.canonical["hold_current"].value_num == Decimal("0.5")
+    assert result.canonical["trip_current"].value_num == Decimal("1")
+
+
+def test_a_digikey_switch_payload_maps_to_the_switch_schema() -> None:
+    payload = [
+        ("Switch Function", "SPST-NO"),
+        ("Circuit", "SPST-NO"),
+        ("Contact Rating @ Voltage", "50mA @ 24VDC"),
+        ("Operating Force", "1.6N"),
+        ("Mechanical Life", "1,000,000 Cycles"),
+        ("Package / Case", "-"),
+    ]
+
+    result = normalise("switch", "digikey", payload)
+
+    assert result.canonical["switch_type"].display == "SPST-NO"
+    assert result.canonical["contact_config"].display == "SPST-NO"
+    # A conditioned rating: the leading term is what the key is asking
+    # about, exactly as `0.063W, 1/16W` is already read as 63 mW.
+    assert result.canonical["current_rating"].display == "50 mA"
+    assert result.canonical["current_rating"].value_num == Decimal("0.05")
+    assert result.canonical["operating_force"].display == "1.6 N"
+    assert result.canonical["electrical_life"].display == "1000000 cycles"
+
+
+def test_a_digikey_transformer_payload_maps_to_the_transformer_schema() -> None:
+    payload = [
+        ("Type", "Pulse"),
+        ("Power - Rated", "2.5VA"),
+        ("Turns Ratio", "1:1.5"),
+        ("Isolation Voltage", "1500V"),
+        ("Primary Inductance", "350µH"),
+    ]
+
+    result = normalise("transformer", "digikey", payload)
+
+    assert result.canonical["transformer_type"].display == "Pulse"
+    assert result.canonical["power_rating"].display == "2.5 VA"
+    assert result.canonical["turns_ratio"].display == "1:1.5"
+    assert result.canonical["isolation_voltage"].display == "1.5 kV"
+    assert result.canonical["primary_inductance"].display == "350 µH"
+
+
+def test_a_mechanical_part_has_a_subtype_and_no_mandatory_class_key() -> None:
+    """A screw has no parametric spec set. `package` is still mandatory
+    because it is common to every category; nothing else is, which is the
+    honest answer for a class whose specs are a thread and a length."""
+    result = normalise("mechanical", "digikey", [("Type", "Standoff"), ("Length", "10mm")])
+
+    assert result.canonical["subtype"].display == "Standoff"
+    assert missing_mandatory("mechanical", result.canonical) == ["package"]
+    assert [s.key for s in spec_keys_for("mechanical") if s.mandatory] == ["package"]
+
+
+@pytest.mark.parametrize(
+    "slug",
+    ["ic", "connector", "crystal", "fuse", "switch", "transformer", "mechanical"],
+)
+def test_the_new_classes_are_in_the_schema(slug: str) -> None:
+    assert slug in CANONICAL_SPECS
