@@ -15,6 +15,29 @@ the canonical record.
 
 ## Unreleased
 
+- **The spec schema covers active components.** ICs, connectors, crystals,
+  fuses, switches, transformers and mechanical parts had no canonical
+  schema at all: every value on them was kept verbatim, so nothing sorted
+  and no key could be reported missing. Seven slugs now name what each
+  class is supposed to have, and `category-seed` grew the seven matching
+  roots (21 seed rows to 28) with their reference designators, footprint
+  filters and `kicad_fields`. Crystals and fuses get a stock
+  `Device:Crystal` / `Device:Fuse`; ICs, connectors, switches,
+  transformers and mechanical parts deliberately get none, because a
+  default that is wrong for every part in the class is worse than falling
+  through to the part's own symbol. Importing a DigiKey connector now
+  files it under Connectors and normalises its pitch to `2.54 mm`.
+- **Seven optional spec keys common to every category**: `height`,
+  `length`, `width`, `pin_count`, `pin_pitch`, `automotive` and
+  `device_marking`. Three of them read part of a value rather than all of
+  it — a `Size / Dimension` of `0.126" L x 0.063" W (3.20mm x 1.60mm)`
+  fills both the length and the width, dimensions prefer the metric
+  equivalent the vendor printed next to the inches, and `Ratings` yields
+  its AEC-Q qualification or nothing. `Ratings` and `Qualification` came
+  off the junk denylist for that last one; a value with no AEC-Q token in
+  it is still dropped rather than kept as prose.
+- The value parser reads newtons, volt-amperes and cycle counts.
+
 - **Part names now say what the part is.** `parts.name` is the canonical
   identity: a part whose category carries a `value_template` is named by
   that template behind the category's class letter (`R 10 kΩ 1% 0603`),

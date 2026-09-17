@@ -120,10 +120,26 @@ reconciler of its own. Three decisions landed with it:
     `spec_schema_tables.py` and in `web/src/lib/providerCatalog.ts` are checked
     against each other by `tests/test_spec_schema.py`; a one-sided edit puts
     the row on the wrong tab.
-  - **Don't reuse one upstream alias for two canonical keys in one category.**
-    The winner would depend on tuple order. Across categories it is fine and
-    necessary: DigiKey files a ceramic capacitor's `X7R` under the same
-    `Temperature Coefficient` name a resistor uses for its ppm/°C figure.
+  - **Don't reuse one upstream alias for two canonical keys in one category
+    unless BOTH of them extract.** Otherwise the winner depends on tuple
+    order. The one exception, added with the common geometry keys, is
+    `Size / Dimension`: `0.126" L x 0.063" W (3.20mm x 1.60mm)` is a length
+    AND a width, and each key names a different transform in
+    `spec_extract.py`, so neither is racing the other for the whole value.
+    Across categories a shared alias is fine and necessary: DigiKey files a
+    ceramic capacitor's `X7R` under the same `Temperature Coefficient` name
+    a resistor uses for its ppm/°C figure.
+  - **Don't take a key off the junk denylist without something downstream
+    that refuses its prose.** `Ratings` and `Qualification` came off it to
+    feed `automotive`, and most of what they carry is still prose:
+    `spec_extract.aec_qualification` returns `None` for anything without an
+    AEC-Q token, which leaves the alias consumed and therefore dropped
+    rather than kept verbatim. Without that the two keys would put
+    "Moisture Resistant" back on the Specs tab of every part that has one.
+  - **Don't give the parser a unit that case-folds onto an SI prefix.**
+    `N` (newton) folds onto `n` (nano) exactly the way `M` folds onto `m`.
+    It lives in `_EXACT_UNITS`, matched case-sensitively before the folded
+    table, so `10n` is still nano and not ten newtons.
   - **Don't infer provenance from the key prefix.** A3 has landed: a secondary
     writes canonical keys, so the prefix no longer identifies the writer.
     `custom_fields.provider` does, through
@@ -228,6 +244,34 @@ reconciler of its own. Three decisions landed with it:
 - **B1/B2** add `part_categories.value_template` and render the KiCad `Value`
   from canonical specs.
 
+**Amended 2026-09-17 — seven more classes.** The schema modelled passives
+and discretes only, so every value on an IC or a connector was kept verbatim
+under `optional`: nothing sorted and no key could be reported missing.
+`spec_schema_tables_more.py` adds `ic`, `connector`, `crystal`, `fuse`,
+`switch`, `transformer` and `mechanical`, plus seven optional keys common to
+every category (`height`, `length`, `width`, `pin_count`, `pin_pitch`,
+`automotive`, `device_marking`), and `category-seed` grew the seven matching
+roots. Four decisions landed with it:
+
+- **One slug for crystals, oscillators and resonators.** No vendor taxonomy
+  separates them reliably and the keys overlap. `load_capacitance` is
+  mandatory on it, so an oscillator reads as incomplete on the Specs tab
+  rather than being filed somewhere the rest of its keys do not exist.
+- **`SpecKey.extract` names a value transform** in the new
+  `spec_extract.py`, applied before the parser. It is what lets one
+  upstream key feed two canonical keys, what prefers a vendor's
+  parenthesised metric equivalent over the inch figure in front of it, and
+  what takes one fact out of a prose list. A transform returning `None`
+  leaves the key unfilled and the alias dropped.
+- **A category may override a common key.** A connector's `pitch` IS the
+  common `pin_pitch`, under the same upstream `Pitch`. `COMMON_OVERRIDES`
+  drops the common one for that slug so a single value writes a single row.
+- **The array/network guard is per class.** "Several of these in one
+  package" breaks a passive's spec set — a 4-way resistor array has four
+  resistances — but not an IC's, and DigiKey's own name for the FPGA family
+  is `Embedded - FPGAs (Field Programmable Gate Array)`. The kit/assortment
+  guard keeps no exemption: a bag of parts is not one part of any class.
+
 **Landed since**: A6/B3 (the `category-seed` job and the `Device:*` defaults
 it carries) and B4 (`symbol-collapse`). The seed is where the canonical keys
 in this ADR become per-category `value_template` and `kicad_fields` values,
@@ -263,6 +307,9 @@ Neither job re-keys existing `custom_fields` rows; that is still A5.
 
 - Source: `backend/app/domain/parts/spec_schema.py`,
   `backend/app/domain/parts/spec_schema_tables.py`,
+  `backend/app/domain/parts/spec_schema_tables_more.py`,
+  `backend/app/domain/parts/spec_key.py`,
+  `backend/app/domain/parts/spec_extract.py`,
   `backend/app/domain/parts/spec_values.py`,
   `backend/app/domain/parts/spec_category_map.py`,
   `backend/app/domain/parts/services/spec_reconcile.py`,
@@ -275,6 +322,7 @@ Neither job re-keys existing `custom_fields` rows; that is still A5.
 - Migration: `backend/alembic/versions/0081_custom_field_provider_value_num.py`
 - Tests: `backend/tests/test_spec_schema.py`,
   `backend/tests/test_spec_values.py`,
+  `backend/tests/test_spec_extract.py`,
   `backend/tests/test_custom_field_provider_value_num.py`,
   `backend/tests/test_spec_reconcile.py`,
   `backend/tests/test_category_for_provider.py`,

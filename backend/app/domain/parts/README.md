@@ -14,6 +14,9 @@ Owns the `Part` aggregate (linked / local / meta / sub-assembly), MPN uniqueness
 | `part_type.py` | Re-derives `part_type` (`linked` / `local`) from `linked_provider` at every link/unlink, and audits the change |
 | `spec_schema.py` | Maps one provider spec payload onto the canonical per-category schema — `canonical` / `optional` / `catalog` / `dropped` |
 | `spec_schema_tables.py` | The schema data: canonical keys + provider aliases per category, the junk denylist, the catalog key list, our-category-name → slug rules |
+| `spec_schema_tables_more.py` | The same data for the common optional keys and the seven active-component classes (IC, connector, crystal, fuse, switch, transformer, mechanical) |
+| `spec_key.py` | The `SpecKey` row type both table modules are written in |
+| `spec_extract.py` | Per-key value transforms — one `Size / Dimension` into a length and a width, a vendor's metric equivalent out of an inch figure, an AEC-Q token out of `Ratings` |
 | `spec_values.py` | SI value parser/formatter — `10 kOhms` → `(10000, "Ω", "10 kΩ")`. Never raises |
 | `spec_category_map.py` | Provider category string → our category name path (`Ceramic Capacitors` → `Capacitors / Ceramic`) |
 | `provider_credentials.py` | `credentials_for` / `upsert` / `clear` for per-workspace provider keys |
@@ -55,6 +58,7 @@ Owns the `Part` aggregate (linked / local / meta / sub-assembly), MPN uniqueness
 | Our category name → schema slug | `spec_schema.py::category_slug_for` |
 | Provider category → our category path | `spec_schema.py::category_for_provider` |
 | Parse a spec value | `spec_values.py::parse_si`, `::format_si` |
+| Take part of a value for one key | `spec_extract.py::extract_for` |
 | A part's provider links | `provider_links.py::links_for_part`, `::upsert_link` |
 | Keep `part_type` in step with the link | `part_type.py::sync_part_type_and_log` |
 
