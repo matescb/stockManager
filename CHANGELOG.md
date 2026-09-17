@@ -15,6 +15,20 @@ the canonical record.
 
 ## Unreleased
 
+- **A resistor's construction is a canonical spec.** The `resistor`
+  schema gained an optional `technology` key reading DigiKey's
+  `Composition` — the most frequent unmapped raw key in the catalogue at
+  64 rows — and Mouser's `Technology` / `Resistor Type` / `Composition`.
+  The value is the vendor's own words ("Thick Film", "Wirewound", …):
+  these are names rather than quantities, so there is no normalisation
+  table and no numeric sidecar. It is a seeded `kicad_fields` entry for
+  Resistors and deliberately NOT in the `value_template`. `spec-normalize`
+  re-keys the existing rows on its next run.
+- **`Features` feeds `automotive` when it carries an AEC-Q token.** Some
+  vendors file `AEC-Q200` under `Features` rather than `Ratings` or
+  `Qualification`, and those rows were left raw. Unlike the other two,
+  `Features` was never on the junk denylist, so a value the extractor
+  refuses stays on the Specs tab verbatim instead of being dropped.
 - **`provider-refresh` re-asks the providers about parts imported before
   the importer knew what it knows now.** A new operator-run job sweeps
   every active, linked part with an MPN in a workspace and writes back

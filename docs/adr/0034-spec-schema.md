@@ -129,6 +129,15 @@ reconciler of its own. Three decisions landed with it:
     Across categories a shared alias is fine and necessary: DigiKey files a
     ceramic capacitor's `X7R` under the same `Temperature Coefficient` name
     a resistor uses for its ppm/°C figure.
+  - **Don't put a key that is only ever prose in
+    `VERBATIM_IF_UNEXTRACTED`.** That set names the aliases whose value
+    survives verbatim when their extractor refuses it, and it exists for
+    exactly one shape: a key that carries real data of its own AND
+    happens to also carry the fact a canonical key is about. `Features`
+    is that shape. `Ratings` and `Qualification` are not — adding either
+    would put "Moisture Resistant" back on the Specs tab of every part
+    that has one, which is the thing taking them off the junk denylist
+    was allowed to do only because the extractor refuses them.
   - **Don't take a key off the junk denylist without something downstream
     that refuses its prose.** `Ratings` and `Qualification` came off it to
     feed `automotive`, and most of what they carry is still prose:
@@ -308,6 +317,36 @@ roots. Four decisions landed with it:
   `Lead Spacing` and `Pin Pitch`, in that order. Dropping the common key
   without taking its spellings would lose `Lead Spacing` on exactly the
   class that uses it most.
+
+**Amended 2026-09-17 — the resistor's `technology`, and a second AEC
+alias.** Two data edits and one rule.
+
+- **`resistor.technology`** reads DigiKey's `Composition` and Mouser's
+  `Technology` / `Resistor Type` / `Composition`. `Composition` was the
+  most frequent unmapped raw key in the catalogue (64 rows), which is
+  what the CSV's unmapped tally is for. It has **no unit and no
+  normalisation table**: "Thick Film", "Wirewound" and "Metal Oxide" are
+  names rather than quantities, and a table mapping them onto a
+  vocabulary of ours would rewrite values nobody asked us to interpret.
+  Optional, because a resistor whose vendor publishes no composition is
+  not an incomplete resistor. It is a seeded `kicad_fields` entry for
+  Resistors — a thin-film part and a thick-film one are not
+  interchangeable at the bench — and deliberately NOT in the
+  `value_template`, which is already at the length a schematic value
+  field can carry.
+- **`Features` is a second `automotive` alias**, listed after `Ratings` /
+  `Qualification` because alias order is precedence order and those two
+  are the keys whose whole purpose is the qualification. Some vendors
+  file `AEC-Q200` under `Features`, and those rows were left raw.
+- **A refused extractor does not always drop the alias.**
+  `VERBATIM_IF_UNEXTRACTED` in `spec_schema_tables_more.py` names the
+  aliases that keep their value when their extractor returns ``None``,
+  and `Features` is its only member. The default stays the other way
+  round for the reason the forbidden-rule list gives: `Ratings` and
+  `Qualification` were junk until the extractor gave them a meaning, so
+  refusing one has to remove it. `Features` was never junk — dropping
+  "Moisture Resistant" would delete a row prod parts have carried for
+  months and that nothing else answers.
 
 **Landed since**: A6/B3 (the `category-seed` job and the `Device:*` defaults
 it carries) and B4 (`symbol-collapse`). The seed is where the canonical keys

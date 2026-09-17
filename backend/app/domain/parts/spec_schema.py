@@ -47,7 +47,10 @@ from app.domain.parts.spec_schema_tables import (
     WORD_RE,
     SpecKey,
 )
-from app.domain.parts.spec_schema_tables_more import COMMON_OVERRIDES
+from app.domain.parts.spec_schema_tables_more import (
+    COMMON_OVERRIDES,
+    VERBATIM_IF_UNEXTRACTED,
+)
 from app.domain.parts.spec_values import parse_si
 
 # Re-exported read-only: the schema is process-wide state and an importer
@@ -362,6 +365,16 @@ def _resolve_canonical(
         # — which is the behaviour the junk denylist used to give it.
         if value is not None:
             canonical[spec.key] = value
+            continue
+        # …except for an alias that was never junk. `Features` feeds
+        # `automotive` because some vendors file `AEC-Q200` there, and it
+        # also carries ordinary prose that nothing else answers; dropping
+        # that would remove a row prod parts have had for months. Safe to
+        # discard rather than to skip adding, because an alias belongs to
+        # one canonical key per category (`test_spec_schema.py` pins it).
+        for alias in (*from_attributes, *from_mined):
+            if alias in VERBATIM_IF_UNEXTRACTED:
+                consumed.discard(alias)
     return canonical, consumed
 
 
