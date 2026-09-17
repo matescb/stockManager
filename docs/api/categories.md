@@ -20,7 +20,8 @@ writes need member+, GETs pass for viewers). Writes are rate-limited
 `refdes_prefix` (≤10, nullable), `default_symbol_ref` / `default_footprint_ref`
 (≤200, nullable — KiCad `LibNick:Entry` refs), `footprint_filters`
 (≤50 globs, nullable), `value_template` / `kicad_fields` (nullable —
-see below), `library_slug` (lowercase `[a-z0-9-]`, ≤60, derived from
+see below), `list_columns` / `list_sort` (nullable — see
+**Parts-list spec columns**), `library_slug` (lowercase `[a-z0-9-]`, ≤60, derived from
 `name` when omitted, stable across renames), `parent_id` (nullable —
 see below), `archived_at`.
 
@@ -94,6 +95,91 @@ nothing and falls back to `parts.name` — so a workspace whose specs still
 hold the provider's verbatim attribute names (`Resistance`, not
 `resistance`) sees no change until those rows are re-keyed.
 
+## Parts-list spec columns
+
+Two more columns (migration `0083`) decide what the **parts list** shows when
+it is filtered to this category. Neither has any effect on the KiCad surface.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `list_columns` | JSONB list, nullable | Canonical spec keys to show as table columns, in order — `["resistance", "tolerance", "power"]`. At most **12**. |
+| `list_sort` | JSONB record, nullable | `{"key": "<spec key>", "dir": "asc"\|"desc"}` — the sort `GET /api/parts` applies when the request names none. |
+
+They live on the category rather than in the browser because
+`DataTable`'s hidden-column map is `localStorage` (per viewer, per device,
+invisible to everyone else) and "resistors show resistance, tolerance and
+power" is a fact about resistors.
+
+Validation is the same shape as the KiCad columns above — Pydantic for the
+form (`^[a-z_]+$`, ≤64, deduped, capped), the service for the vocabulary.
+Every key must be in **this category's effective spec schema**; one that is
+not is `422 code=category.unknown_spec_key` with the offending `key` in the
+detail, because a key outside the schema can only ever render a blank
+column. Over the cap is `422 code=category.too_many_spec_columns` with
+`max_columns`. The check runs on `POST` as well as `PATCH`, against the
+schema of the row being created, so create never accepts what the next
+`PATCH` refuses.
+
+**Null means inherit, `[]` does not** — the same rule, and the same
+independent walks, as `value_template` / `kicad_fields`. A `PATCH` with an
+explicit `null` clears the override.
+
+Audit rides the existing `category.updated` / `category.created` rows, whose
+comment is `fields=<names>` — field names only, never the values.
+
+### `GET /api/categories/{id}/spec-schema`
+
+Which canonical spec keys this category's parts carry, and which of them the
+parts list is configured to show. Read-only; writes go through `PATCH` above.
+
+**Response** — `200 OK`
+
+```json
+{
+  "data": {
+    "slug": "capacitor_ceramic",
+    "keys": [
+      { "key": "package", "label": "Package", "unit": null,
+        "mandatory": true, "numeric": false, "common": true },
+      { "key": "capacitance", "label": "Capacitance", "unit": "F",
+        "mandatory": true, "numeric": true, "common": false }
+    ],
+    "list_columns": ["capacitance", "voltage_rating"],
+    "list_sort": { "key": "capacitance", "dir": "asc" },
+    "inherited_from": null,
+    "sort_inherited_from": "…uuid…"
+  },
+  "status": { … }
+}
+```
+
+| Field | Notes |
+|---|---|
+| `slug` | The [ADR-0034](../adr/0034-spec-schema.md) schema slug, or `null` — which is **not** an error: it means the common keys only. |
+| `keys` | Common keys plus the slug's own, in schema order. |
+| `unit` | SI base-unit symbol (`"Ω"`, `"F"`, `"%"`), or `null` for a value that is not a quantity. |
+| `numeric` | A **display** hint (right-align). `unit != null`, plus an allow-list of unitless counts (`pin_count`, `positions`, `rows`, `channels`, `hfe`) in `spec_columns.NUMERIC_UNITLESS_KEYS`. NOT a promise that the sort is numeric — a count has no `value_num` and sorts as text. |
+| `mandatory` | This category says a part must carry the key; drives `missing_specs` too. |
+| `common` | True for the keys every category carries, so a picker can group them apart. |
+| `list_columns` / `list_sort` | The **resolved** stored choice, walked up `parent_id`. |
+| `inherited_from` / `sort_inherited_from` | Which ancestor each came from, or `null` when this category owns it (or nobody does). |
+
+**How the slug is resolved.** `spec_schema.category_slug_for` reads a
+` / `-joined **name path**, so the leaf's own path answers most cases —
+*Capacitors / Ceramic* is `capacitor_ceramic`. When it does not, the walk
+retries with trailing segments dropped, leaf first, up to the root, and
+takes the first slug that resolves; a leaf whose own words name a different
+component class than its parent therefore still lands on the parent's
+schema. A bare root *Capacitors* deliberately resolves to `null`
+(`CLASS_DEFAULT_SLUG["capacitor"]` is `None`): a capacitor whose category
+does not say ceramic, film, tantalum or electrolytic has no canonical key
+set of its own.
+
+A category from another workspace is `404 code=category.not_found`.
+
+Source: `backend/app/domain/parts/services/spec_columns.py`, tests in
+`backend/tests/test_spec_columns.py`.
+
 ## Routes
 
 ### `GET /api/categories`
@@ -137,12 +223,16 @@ trigger (`parts_category_workspace_check`, migration `0067`, SQLSTATE `WS001`)
 backstops raw SQL.
 
 `GET /api/parts` filters on it — see
-[Parts API](./parts.md#list-parts) for `category_id` /
-`include_descendants`.
+[Parts API](./parts.md#get-apiparts) for `category_id` /
+`include_descendants`, and for `spec_columns` / `sort=spec:<key>`, which
+read the schema and the stored choice described above.
 
 ## Source
 
 `backend/app/api/routes/categories.py`, `backend/app/domain/categories/`
-(`tree.py` owns the hierarchy walks), tests in
-`backend/tests/test_categories.py` and
-`backend/tests/test_category_tree.py`.
+(`tree.py` owns the hierarchy walks),
+`backend/app/domain/parts/services/spec_columns.py` (the spec-column
+resolution, validation and sort), tests in
+`backend/tests/test_categories.py`,
+`backend/tests/test_category_tree.py` and
+`backend/tests/test_spec_columns.py`.

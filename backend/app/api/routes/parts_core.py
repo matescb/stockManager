@@ -63,6 +63,7 @@ from app.domain.parts.schemas import (
     PartIn,
     PartPatch,
 )
+from app.domain.parts.services import spec_columns as _spec_columns
 from app.domain.parts.services.create_part import (
     create_part as _create_part,
 )
@@ -87,6 +88,9 @@ def list_parts(
     mpn: str | None = Query(default=None),
     category_id: UUID | None = Query(default=None),
     include_descendants: bool = Query(default=True),
+    spec_columns: str | None = Query(default=None),
+    sort: str | None = Query(default=None),
+    dir: str = Query(default="asc", pattern="^(asc|desc)$"),
     limit: int = Query(default=50, le=200),
     cursor: str | None = Query(default=None),
     paged: bool = Query(default=False),
@@ -115,10 +119,20 @@ def list_parts(
     a branch node and seeing nothing because every part is filed on a leaf
     is what makes a tree feel broken. See ``docs/api/parts.md``.
 
+    ``spec_columns`` / ``sort=spec:<key>`` / ``dir`` add and order the
+    category's per-category spec columns. All three need ``category_id``
+    — the legal key vocabulary IS the category's — and are ignored
+    without it. Validation, the batched value fetch and the JOINed sort
+    live in ``domain/parts/services/spec_columns.py``.
+
     Every query is scoped to the current workspace (CLAUDE.md invariant).
     """
     use_paged = paged or cursor is not None
     decoded_cursor = decode_cursor(cursor) if cursor else None
+    spec = _spec_columns.resolve_request(
+        db, ws=ws, category_id=category_id, columns=spec_columns,
+        sort=sort, direction=dir,
+    )
 
     stmt = select(Part).where(Part.workspace_id == ws.id)
     stmt = stmt.where(Part.archived_at.is_(None) if not archived else Part.archived_at.is_not(None))
@@ -146,7 +160,14 @@ def list_parts(
             include_descendants=include_descendants,
         )))
 
-    if use_paged:
+    if spec.sort is not None:
+        # Ordering by a spec JOINs `custom_fields` and seeks on
+        # `(value_num, value, id)`. The page shape is unchanged.
+        parts, next_cursor = _spec_columns.sorted_page(
+            db, stmt, ws_id=ws.id, sort=spec.sort,
+            cursor=decoded_cursor, limit=limit,
+        )
+    elif use_paged:
         parts, next_cursor = paginate(
             db,
             stmt,
@@ -171,7 +192,7 @@ def list_parts(
 
     # One batched query per extra, for the whole page — see
     # `_parts_shared.serialize_part_rows`.
-    items = _serialize_rows(db, ws_id=ws.id, parts=parts)
+    items = _serialize_rows(db, ws_id=ws.id, parts=parts, spec_keys=spec.columns)
     if use_paged:
         return ok({"items": items, "next_cursor": next_cursor})
     return ok(items)

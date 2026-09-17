@@ -39,9 +39,10 @@ import { categoryPath } from "@/lib/categoryTree";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { partTypeLabel } from "@/lib/partType";
 import { providerLabel } from "@/lib/providers";
-import type { Part, PartCategory } from "@/lib/schemas";
+import type { CategoryListSort, CategorySpecKey, Part, PartCategory } from "@/lib/schemas";
 import { isSafeHttpOrSameOriginUrl } from "@/lib/url";
 import { type Column, quantityColumn } from "@/components/DataTable";
+import { specColumnHeader } from "./SpecColumnsPicker";
 
 /** Booleans read better as words than as `true` / `false` in a CSV. */
 function yesNo(value: boolean | null | undefined): string {
@@ -106,9 +107,59 @@ export type PartsColumnOptions = {
    * default.
    */
   categories: readonly PartCategory[];
+  /**
+   * The category's configured spec columns, in display order, already
+   * resolved against its schema (so each carries its label, unit and
+   * numeric flag). Empty for an unfiltered list — spec columns only exist
+   * relative to a category.
+   */
+  specColumns?: readonly CategorySpecKey[];
+  /**
+   * The spec sort the server is currently applying, whether the URL asked
+   * for it or the category's saved default supplied it. Drives the header
+   * arrow; the table cannot work it out because it never did the sort.
+   */
+  specSort?: CategoryListSort | null;
+  /** Header click on a spec column. The caller owns the toggle. */
+  onSpecSort?: (key: string) => void;
 };
 
-export function partsListColumns({ categories }: PartsColumnOptions): Column<Part>[] {
+/**
+ * One spec column.
+ *
+ * `accessor` returns the display STRING, not `value_num`: it is what
+ * search matches and what CSV exports, and `"10 kΩ"` is the answer to
+ * both. It is deliberately NOT what sorts — `onSort` takes the header
+ * click to the server, where the parsed number lives and where the order
+ * can span pages. Alignment is explicit because `defaultAlignFor` samples
+ * `typeof accessor(row) === "number"` and would left-align every one of
+ * these.
+ */
+function specColumn(
+  spec: CategorySpecKey,
+  specSort: CategoryListSort | null | undefined,
+  onSpecSort: ((key: string) => void) | undefined,
+): Column<Part> {
+  const header = specColumnHeader(spec);
+  return {
+    // Namespaced so a spec key can never collide with a part field's
+    // column key — they share the `DataTable` hidden-column map.
+    key: `spec:${spec.key}`,
+    header,
+    headerLabel: header,
+    accessor: r => r.specs?.[spec.key]?.value ?? "",
+    align: spec.numeric ? "right" : "left",
+    sortDir: specSort?.key === spec.key ? specSort.dir : null,
+    onSort: onSpecSort ? () => onSpecSort(spec.key) : undefined,
+  };
+}
+
+export function partsListColumns({
+  categories,
+  specColumns = [],
+  specSort = null,
+  onSpecSort,
+}: PartsColumnOptions): Column<Part>[] {
   const categoryNames = new Map(categories.map(c => [c.id, c.name] as const));
 
   return [
@@ -245,5 +296,8 @@ export function partsListColumns({ categories }: PartsColumnOptions): Column<Par
       width: "120px",
       hidden: true,
     },
+    // Appended last, and visible by default — unlike everything above,
+    // these are here because somebody explicitly picked them.
+    ...specColumns.map(spec => specColumn(spec, specSort, onSpecSort)),
   ];
 }

@@ -127,9 +127,22 @@ vi.mock("@/lib/api", () => {
     api: {
       get,
       parsed: {
-        get: vi.fn((url: string) =>
-          Promise.resolve(url.startsWith("/categories") ? CATEGORIES : []),
-        ),
+        get: vi.fn((url: string) => {
+          // `/categories/{id}/spec-schema` is a different shape from the
+          // categories listing and must not be answered with it — the
+          // parts list reads `.keys` off it.
+          if (url.includes("/spec-schema")) {
+            return Promise.resolve({
+              slug: null,
+              keys: [],
+              list_columns: null,
+              list_sort: null,
+              inherited_from: null,
+              sort_inherited_from: null,
+            });
+          }
+          return Promise.resolve(url.startsWith("/categories") ? CATEGORIES : []);
+        }),
       },
       post: vi.fn(),
       patch: vi.fn(),

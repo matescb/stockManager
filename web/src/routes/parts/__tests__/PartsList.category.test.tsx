@@ -62,7 +62,20 @@ function LocationProbe() {
 
 function renderList(initialUrl = "/parts") {
   requestedUrls = [];
-  vi.spyOn(apiModule.api.parsed, "get").mockResolvedValue(CATEGORIES);
+  vi.spyOn(apiModule.api.parsed, "get").mockImplementation(async (url: string) =>
+    // `/categories/{id}/spec-schema` answers a different shape from the
+    // listing; the parts list reads `.keys` off it.
+    url.includes("/spec-schema")
+      ? {
+          slug: null,
+          keys: [],
+          list_columns: null,
+          list_sort: null,
+          inherited_from: null,
+          sort_inherited_from: null,
+        }
+      : CATEGORIES,
+  );
   vi.spyOn(apiModule, "getPaged").mockImplementation(async (url: string) => {
     requestedUrls.push(url);
     return { items: [], next_cursor: null };

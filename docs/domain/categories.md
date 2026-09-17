@@ -19,6 +19,19 @@ rules, plus the `category-seed` job that fills a workspace's tree in.
 | `footprint_filters` | Footprint-chooser globs. |
 | `value_template` | Renders the schematic `Value` from the part's canonical specs. NULL inherits. |
 | `kicad_fields` | Canonical spec keys emitted as hidden symbol fields. NULL inherits; `[]` means "emit none". |
+| `list_columns` | Canonical spec keys the parts list shows as columns when filtered to this category, in order. Max 12. NULL inherits; `[]` means "no spec columns". Alembic 0083. |
+| `list_sort` | `{"key": …, "dir": "asc"\|"desc"}` — that listing's default sort. NULL inherits. Alembic 0083. |
+
+The last four columns all **inherit up `parent_id`, independently of each
+other**, and all four read an explicit `[]` / a set value as a child
+overriding its ancestors. `list_columns` and `list_sort` are the only two
+that have nothing to do with KiCad: they exist because `DataTable`'s
+hidden-column map is per-browser `localStorage`, and "resistors show
+resistance, tolerance and power" is a fact about resistors that the whole
+workspace should see. Their key vocabulary is validated against the
+category's effective spec schema by
+`backend/app/domain/parts/services/spec_columns.py`, which is also where the
+schema's tree walk, the batched value fetch and the JOINed sort live.
 
 Source: `backend/app/domain/categories/models.py`. The module's own rules —
 uniqueness, slug stability, why the tree walks live in Python — are in
@@ -212,5 +225,8 @@ Source: `backend/app/domain/eda/symbol_collapse.py`, pinned by
 
 - [`api/categories.md`](../api/categories.md) — the REST surface
 - [`eda.md`](eda.md) — the KiCad library tables and the naming contract
-- [ADR-0034](../adr/0034-spec-schema.md) — canonical specs, value templates
+- [ADR-0034](../adr/0034-spec-schema.md) — canonical specs, value templates,
+  per-category spec columns
+- [`api/parts.md`](../api/parts.md#per-category-spec-columns) — the
+  `spec_columns` / `sort=spec:<key>` query surface
 - `backend/app/domain/categories/README.md` — the module's own hard rules

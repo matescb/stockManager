@@ -6,7 +6,7 @@ import { Boxes, Loader2, Printer, Trash2 } from "lucide-react";
 import { api, ApiError, getPaged } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
 import { PagedPartsSchema } from "@/lib/schemas";
-import type { Part } from "@/lib/schemas";
+import type { CategoryListSort, Part } from "@/lib/schemas";
 import { useCategories } from "@/lib/useCategories";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
@@ -22,6 +22,8 @@ import PartsCategoryRail, {
   PartsCategoryBar,
 } from "./PartsCategoryRail";
 import { partsListColumns } from "./partsColumns";
+import SpecColumnsPicker from "./SpecColumnsPicker";
+import { useCategorySpecSchema } from "./useCategorySpecSchema";
 import PartsPreviewLayout from "@/routes/parts/preview/PartsPreviewLayout";
 import { usePartPreview } from "@/routes/parts/preview/usePartPreview";
 
@@ -39,6 +41,11 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
   const [searchParams, setSearchParams] = useSearchParams();
   const categoryId = searchParams.get("category");
   const includeDescendants = searchParams.get("exact") !== "1";
+  // The spec sort is server-side and lives in the URL for the same reason
+  // the category filter does: a colleague who is sent "resistors by
+  // resistance, descending" should get that list, not the default one.
+  const sortKey = searchParams.get("sort");
+  const sortDir = searchParams.get("dir") === "desc" ? "desc" : "asc";
 
   function updateCategoryParams(next: { id?: string | null; exact?: boolean }) {
     setSearchParams(
@@ -50,6 +57,11 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
             params.delete("category");
             params.delete("exact");
           }
+          // A spec key belongs to one category's schema, so carrying the
+          // sort across a category change would ask the server to sort by
+          // a key the new category does not have — a 422 on the listing.
+          params.delete("sort");
+          params.delete("dir");
         }
         if ("exact" in next) {
           if (next.exact === false) params.set("exact", "1");
@@ -61,14 +73,21 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
     );
   }
 
-  // Use a distinct key so archived/active lists don't share cache entries,
-  // and so a category filter is its own cache entry rather than a filtered
-  // view of an unfiltered one.
-  const partsKey = useWsKey("parts", "paged", {
-    archived,
-    categoryId,
-    includeDescendants,
-  });
+  /** Header click on a spec column: sort by it, or flip the direction. */
+  function toggleSpecSort(key: string) {
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        const flip = params.get("sort") === key && params.get("dir") !== "desc";
+        params.set("sort", key);
+        if (flip) params.set("dir", "desc");
+        else params.delete("dir");
+        return params;
+      },
+      { replace: true },
+    );
+  }
+
   // Parts carry `category_id`, not the name — one list query resolves every
   // row's label. Archived categories are included so a part that still
   // points at one doesn't render a blank cell.
@@ -79,11 +98,58 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
     () => categoriesQuery.data ?? [],
     [categoriesQuery.data],
   );
+  // Which of the selected category's spec keys are configured as columns,
+  // and which one it sorts by. Resolved server-side (the choice inherits
+  // through the category tree), so the list never has to walk it.
+  const specSchemaQuery = useCategorySpecSchema(categoryId);
+  const specSchema = specSchemaQuery.data;
+  const specColumns = useMemo(() => {
+    const chosen = specSchema?.list_columns ?? [];
+    if (chosen.length === 0) return [];
+    const byKey = new Map(specSchema?.keys.map(k => [k.key, k]) ?? []);
+    // Ordered by the stored list, and silently dropping a key the schema
+    // no longer has — a category renamed away from its schema should lose
+    // the column, not render a permanently blank one.
+    return chosen.flatMap(key => {
+      const spec = byKey.get(key);
+      return spec ? [spec] : [];
+    });
+  }, [specSchema]);
+  // What the server is actually ordering by: the URL when it says, and
+  // otherwise the category's saved default, which the server applies on
+  // its own. The header arrow has to reflect both or a saved default looks
+  // like no sort at all.
+  const specSort: CategoryListSort | null = sortKey
+    ? { key: sortKey, dir: sortDir }
+    : specSchema?.list_sort ?? null;
+  const specColumnParam = specColumns.map((spec) => spec.key).join(",");
+
+  // A distinct key per view so archived/active lists don't share cache
+  // entries, and so a filtered or sorted list is its own entry rather than
+  // a rearranged view of an unfiltered one.
+  const partsKey = useWsKey("parts", "paged", {
+    archived,
+    categoryId,
+    includeDescendants,
+    // All three change the request, so all three must change the key —
+    // `specColumnParam` especially: it is resolved from the category
+    // (asynchronously, and again after every picker toggle), so without it
+    // here the request URL would move while the key stood still and
+    // TanStack would keep serving the page that has no spec values on it.
+    specColumnParam,
+    sortKey,
+    sortDir,
+  });
   // The column set is data, not markup — see `partsColumns.tsx`. Memoised
-  // on `categories` because `DataTable` filters and sorts through the
-  // array on every render, and a fresh one each keystroke would rebuild
-  // the category path lookup with it.
-  const columns = useMemo(() => partsListColumns({ categories }), [categories]);
+  // because `DataTable` filters and sorts through the array on every
+  // render, and a fresh one each keystroke would rebuild the category path
+  // lookup with it.
+  const columns = useMemo(
+    () => partsListColumns({ categories, specColumns, specSort, onSpecSort: toggleSpecSort }),
+    // `toggleSpecSort` closes over `setSearchParams` only, which is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [categories, specColumns, specSort?.key, specSort?.dir],
+  );
 
   const bulkDeleteMutation = useApiMutation<{ archived_ids: string[]; skipped: number }, { part_ids: string[] }>({
     mutationKey: ["parts", "bulk-delete"],
@@ -103,6 +169,23 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
     },
   });
 
+  // "Save as default sort" — persists the current spec sort on the
+  // category so everyone in the workspace gets it. Separate from the
+  // picker's mutation because it is a different field and a different
+  // button; they share the invalidation targets, not the request.
+  const saveSortMutation = useApiMutation<unknown, { list_sort: CategoryListSort | null }>({
+    mutationKey: ["category", categoryId ?? "none", "list-sort"],
+    mutationFn: (payload) => api.patch(`/categories/${categoryId}`, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "categories") });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
+      toast.success("Saved as this category's default sort.");
+    },
+    onError: (e) => {
+      toast.error(e instanceof ApiError ? e.userMessage : "Could not save the sort");
+    },
+  });
+
   const busy = bulkDeleteMutation.isPending;
 
   // `paged=true` opts into the cursor-paged response shape
@@ -119,7 +202,15 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
     (archived ? "&archived=true" : "") +
     (categoryId
       ? `&category_id=${encodeURIComponent(categoryId)}` +
-        (includeDescendants ? "" : "&include_descendants=false")
+        (includeDescendants ? "" : "&include_descendants=false") +
+        // The values the spec columns render, and the server-side order.
+        // Both are ignored without `category_id`, so both are built here.
+        (specColumnParam
+          ? `&spec_columns=${encodeURIComponent(specColumnParam)}`
+          : "") +
+        (sortKey
+          ? `&sort=${encodeURIComponent(`spec:${sortKey}`)}&dir=${sortDir}`
+          : "")
       : "");
 
   const query = useInfiniteQuery({
@@ -222,6 +313,21 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
     bulkDeleteMutation.mutate({ part_ids: ids });
   }
 
+  // Names for the "inherited from <parent>" lines on the spec-column
+  // controls — the schema endpoint answers with ids, and the rail already
+  // fetched every category.
+  const categoryNames = useMemo(
+    () => new Map(categories.map((c) => [c.id, c.name] as const)),
+    [categories],
+  );
+
+  // The sort on screen differs from the category's saved default, so
+  // offering to store it is not a no-op. Also covers "no default yet".
+  const sortIsUnsaved =
+    specSort !== null &&
+    (specSchema?.list_sort?.key !== specSort.key ||
+      specSchema?.list_sort?.dir !== specSort.dir);
+
   // Both shapes of the filter (rail at lg+, select below it) are wired to
   // the same handlers.
   const categoryFilterProps = {
@@ -250,6 +356,32 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
         />
         <div className="flex-1 min-w-0">
           <PartsCategoryBar {...categoryFilterProps} />
+          {categoryId && specSchema && (
+            <div className="flex flex-wrap items-center gap-2 pb-2">
+              <SpecColumnsPicker
+                categoryId={categoryId}
+                schema={specSchema}
+                categoryNames={categoryNames}
+              />
+              {sortIsUnsaved && (
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={saveSortMutation.isPending}
+                  onClick={() => saveSortMutation.mutate({ list_sort: specSort })}
+                >
+                  Save as default sort
+                </button>
+              )}
+              {specSchema.sort_inherited_from && !sortKey && (
+                <span className="text-xs text-muted">
+                  Default sort inherited from{" "}
+                  {categoryNames.get(specSchema.sort_inherited_from) ??
+                    "a parent category"}
+                </span>
+              )}
+            </div>
+          )}
           <QueryStateBoundary query={query} resourceLabel="parts">
             {query.isLoading ? (
               <div className="text-muted">Loading…</div>

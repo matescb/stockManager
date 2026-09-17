@@ -13,6 +13,7 @@ endpoint groups out of `parts.py` and import from this module.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from decimal import Decimal
 
 from fastapi import HTTPException, status
@@ -29,6 +30,7 @@ from app.domain.parts.provider_links import serialize_link
 # Re-export request schemas from the canonical domain location (CQ-006).
 # Kept importable here for back-compat with split files (#118 step 2-4).
 from app.domain.parts.schemas import BulkDeleteIn, PartIn, PartPatch  # noqa: F401
+from app.domain.parts.services.spec_columns import specs_for_parts
 from app.domain.parts.spec_schema import (
     all_canonical_keys,
     category_slug_for,
@@ -126,19 +128,20 @@ def serialize_part(
     image_url: str | None = None,
     provider_links: list[dict] | None = None,
     missing_specs: list[str] | None = None,
+    specs: dict[str, dict[str, str | None]] | None = None,
 ) -> dict:
     """Serialize a Part for API responses.
 
-    `provider_links` and `missing_specs` are emitted only when the caller
-    loaded them, and the key is *absent* — not `[]` — when it wasn't: an
-    empty array reads as "this part has no links" / "this part is
-    complete", which is a different fact from "this response didn't
-    look". Lists load them in one batched query per page
-    (`provider_links_for_parts`, `missing_specs_for_parts`);
-    detail-shaped responses load the one part's rows
-    (`provider_links_for`). Responses that echo a part without touching
-    either — create-part, for one — still pass nothing and still omit the
-    keys.
+    `provider_links`, `missing_specs` and `specs` are emitted only when
+    the caller loaded them, and the key is *absent* — not `[]` / `{}` —
+    when it wasn't: an empty array reads as "this part has no links" /
+    "this part is complete", which is a different fact from "this response
+    didn't look". Lists load them in one batched query per page
+    (`provider_links_for_parts`, `missing_specs_for_parts`,
+    `spec_columns.specs_for_parts`); detail-shaped responses load the one
+    part's rows (`provider_links_for`). Responses that echo a part without
+    touching any of them — create-part, for one — still pass nothing and
+    still omit the keys.
     """
     if reserved is None:
         reserved = 0
@@ -184,6 +187,14 @@ def serialize_part(
         # download failed. None when no image was ever attached.
         "image_url": image_url,
     }
+    if specs is not None:
+        # The per-category spec columns this request asked for
+        # (`?spec_columns=`), as `{key: {value, value_num}}`. Only the
+        # requested keys are here, and every one of them is, with both
+        # values null when the part has no row — so a blank cell is
+        # distinguishable from a column that was never requested. Alembic
+        # 0083 / ADR-0034.
+        out["specs"] = specs
     if provider_links is not None:
         out["provider_links"] = provider_links
     if missing_specs is not None:
@@ -235,14 +246,21 @@ def provider_links_for_parts(db, ws_id, part_ids: list) -> dict:
     return out
 
 
-def serialize_part_rows(db, *, ws_id, parts: list) -> list[dict]:
+def serialize_part_rows(
+    db, *, ws_id, parts: list, spec_keys: Sequence[str] = ()
+) -> list[dict]:
     """Serialize a page of parts for a LIST response.
 
-    Every per-row extra — image URL, on-hand, reserved, provider links —
-    is one batched query for the whole page. Keeping them together here
-    is the point: a future column that needs another lookup has an
-    obvious place to add a *batched* one, and the list route never grows
-    a per-row query by accident.
+    Every per-row extra — image URL, on-hand, reserved, provider links,
+    spec-column values — is one batched query for the whole page. Keeping
+    them together here is the point: a future column that needs another
+    lookup has an obvious place to add a *batched* one, and the list route
+    never grows a per-row query by accident.
+
+    `spec_keys` is empty on every caller but the parts list with
+    `?spec_columns=`, and an empty list costs no query and emits no
+    `specs` key — so the response is byte-identical to what it was before
+    per-category spec columns existed.
     """
     part_ids = [p.id for p in parts]
     image_urls = image_urls_for_parts(db, ws_id, part_ids)
@@ -254,6 +272,7 @@ def serialize_part_rows(db, *, ws_id, parts: list) -> list[dict]:
     )
     links_map = provider_links_for_parts(db, ws_id, part_ids)
     missing_map = missing_specs_for_parts(db, ws_id, parts)
+    specs_map = specs_for_parts(db, ws_id=ws_id, part_ids=part_ids, keys=spec_keys)
     return [
         serialize_part(
             p,
@@ -262,6 +281,7 @@ def serialize_part_rows(db, *, ws_id, parts: list) -> list[dict]:
             image_url=image_urls.get(p.id),
             provider_links=links_map.get(p.id, []),
             missing_specs=missing_map.get(p.id, []),
+            specs=specs_map.get(p.id) if spec_keys else None,
         )
         for p in parts
     ]

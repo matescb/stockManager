@@ -1495,6 +1495,7 @@ def test_categories_isolation():
     assert b.patch(f"/api/categories/{category}", json={"name": "stolen"}).status_code == 404
     assert b.post(f"/api/categories/{category}/archive").status_code == 404
     assert b.post(f"/api/categories/{category}/restore").status_code == 404
+    assert b.get(f"/api/categories/{category}/spec-schema").status_code == 404
     # And the FK on parts must refuse a foreign category the same way.
     part = b.post("/api/parts", json={"name": "B's part"}).json()["data"]["id"]
     assert b.patch(f"/api/parts/{part}", json={"category_id": category}).status_code == 404

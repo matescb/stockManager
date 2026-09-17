@@ -80,6 +80,39 @@ reconciler of its own. Three decisions landed with it:
   something, and a manual upsert un-archives rather than writing into a row the
   user can no longer see — `uq_cf_unique` does not exclude archived rows.
 
+**Per-category spec columns (2026-09-17) are the first read-side payoff.**
+`part_categories` gained `list_columns` and `list_sort` (alembic 0083), so a
+category states which of its canonical keys the parts list shows and which
+one it sorts by, and `GET /api/parts` grew `spec_columns=` and
+`sort=spec:<key>`. Three decisions landed with it:
+
+- **The choice is stored on the category, not in the browser.** `DataTable`
+  persists hidden columns to `localStorage`, which is per viewer and per
+  device; a curated library is read by the whole workspace, so "a resistor
+  shows resistance, tolerance and power" belongs next to the refdes prefix
+  and the value template. It inherits up `parent_id` exactly as
+  `value_template` and `kicad_fields` do, independently of them.
+- **Sorting is a database operation, which is what `value_num` was for.**
+  `ORDER BY value_num <dir> NULLS LAST, value <dir> NULLS LAST, parts.id` on
+  an OUTER-JOINed `custom_fields` row: the number orders a unit-bearing key
+  numerically, the text orders a unitless one alphabetically, and a part
+  without the spec is last either way. The existing partial index
+  `ix_custom_fields_ws_key_value_num` serves it; no new index was needed.
+  The cursor had to grow with it — `core/pagination.py::paginate_keyset`
+  carries the whole `(value_num, value, id)` seek position, because an
+  `id`-only cursor over a non-`id` ordering repeats and drops rows at every
+  page boundary.
+- **A unitless count still sorts as text.** `pin_count`, `positions`,
+  `rows`, `channels` and `hfe` have no `unit`, so `parse_si` never runs on
+  them and `value_num` is NULL. The spec-schema endpoint reports them
+  `numeric: true` for right-alignment only; giving them a real numeric sort
+  means adding a unit to the `SpecKey` and re-running `spec-normalize`, which
+  is a separate change. This is the same "refuse rather than guess" trade the
+  parser makes.
+
+Nothing about the write side changed. `spec_columns.py` reads
+`spec_schema.spec_keys_for` and `custom_fields`; it writes nothing.
+
 ## Consequences
 
 - **Good**: one place answers "what is a resistor supposed to have", so

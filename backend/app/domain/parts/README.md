@@ -31,6 +31,7 @@ Owns the `Part` aggregate (linked / local / meta / sub-assembly), MPN uniqueness
 | `services/spec_normalize.py` | The `spec-normalize` backfill job — batching, dry-run/apply boundary, audit, advisory lock |
 | `services/spec_normalize_rows.py` | Its row-level rules: re-key, archive, never delete, never touch what a user owns |
 | `services/spec_normalize_report.py` | The review CSV the backfill is approved from |
+| `services/spec_columns.py` | Per-category parts-list spec columns — schema resolution up the tree, key validation, the batched value fetch, the JOINed keyset sort |
 | `providers/base.py` | `PartsProvider` protocol + result types |
 | `providers/mouser.py`, `providers/digikey.py` | Concrete provider clients (per-workspace creds) |
 
@@ -56,6 +57,9 @@ Owns the `Part` aggregate (linked / local / meta / sub-assembly), MPN uniqueness
 | Back-fill the whole table | `services/spec_normalize.py::normalize_specs` (`run_job spec-normalize`) |
 | Re-parse a value already under its canonical key | `spec_schema.py::canonical_value` |
 | Our category name → schema slug | `spec_schema.py::category_slug_for` |
+| Which spec keys does this category have? | `services/spec_columns.py::effective_schema` (`::prospective_schema` before the row exists) |
+| Spec values for a page of parts | `services/spec_columns.py::specs_for_parts` |
+| Order a parts page by a spec | `services/spec_columns.py::sorted_page` |
 | Provider category → our category path | `spec_schema.py::category_for_provider` |
 | Parse a spec value | `spec_values.py::parse_si`, `::format_si` |
 | Take part of a value for one key | `spec_extract.py::extract_for` |

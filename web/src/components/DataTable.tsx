@@ -87,6 +87,24 @@ export type Column<T> = {
   width?: string;
   hidden?: boolean;
   align?: Align;
+  /**
+   * Take over this column's header click, for a column the SERVER sorts.
+   *
+   * The table's own sort is client-side over the rows it was handed, which
+   * is right for everything derivable from a row and wrong for a
+   * cursor-paged list ordered by a value the row does not carry — the
+   * parts list's per-category spec columns, where ordering "resistance"
+   * means `ORDER BY custom_fields.value_num` across every page, not
+   * within the one that happens to be loaded.
+   *
+   * When set, clicking the header calls this instead of setting the
+   * internal sort, and clears any internal sort that was active — a
+   * client-side reorder layered on top of a server order would silently
+   * scramble it. `sortDir` draws the indicator, since the table no longer
+   * knows which way the column is going.
+   */
+  onSort?: () => void;
+  sortDir?: "asc" | "desc" | null;
 };
 
 /**
@@ -618,13 +636,20 @@ export function DataTable<T>({
                   <th
                     key={c.key}
                     style={{ width: c.width }}
-                    onClick={() =>
+                    onClick={() => {
+                      if (c.onSort) {
+                        // Drop any client-side sort first: it would
+                        // reorder the page the server just ordered.
+                        setSort(null);
+                        c.onSort();
+                        return;
+                      }
                       setSort(s =>
                         s?.key === c.key
                           ? { key: c.key, dir: s.dir === "asc" ? "desc" : "asc" }
                           : { key: c.key, dir: "asc" }
-                      )
-                    }
+                      );
+                    }}
                     className={cn(
                       "cursor-pointer select-none",
                       padCls,
@@ -633,8 +658,10 @@ export function DataTable<T>({
                     )}
                   >
                     {c.header}
-                    {sort?.key === c.key && (
-                      <span className="text-muted">{sort.dir === "asc" ? " ▲" : " ▼"}</span>
+                    {(c.onSort ? c.sortDir : sort?.key === c.key ? sort.dir : null) && (
+                      <span className="text-muted">
+                        {(c.onSort ? c.sortDir : sort?.dir) === "asc" ? " ▲" : " ▼"}
+                      </span>
                     )}
                   </th>
                 );

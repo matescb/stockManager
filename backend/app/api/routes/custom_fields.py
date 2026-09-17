@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Request, status
@@ -13,22 +12,10 @@ from app.core.responses import ok
 from app.domain.audit.service import log as _audit_log
 from app.domain.custom_fields.models import CustomField
 from app.domain.custom_fields.schemas import CustomFieldIn
+from app.domain.custom_fields.serialize import value_num_out as _value_num_out
 from app.domain.parts.provider_fields import is_provider_reserved_custom_field_key
 
 router = APIRouter()
-
-
-def _value_num_out(value: Decimal | None) -> str | None:
-    """`Decimal("10000.000000000000000000")` → `"10000"`.
-
-    Postgres hands back the column's full declared scale, so `str()` would
-    put eighteen trailing zeros on every number. `normalize()` alone swings
-    the other way and yields `1E+4`, so the `"f"` format is the half that
-    makes it fixed-point. A string rather than a JSON number because
-    `Numeric(36,18)` is exact and a JS double is not — sorting and range
-    filters on this column are server-side, where the index is.
-    """
-    return None if value is None else format(value.normalize(), "f")
 
 
 def _serialize(r: CustomField) -> dict:

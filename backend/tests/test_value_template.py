@@ -193,13 +193,51 @@ def test_the_two_placeholder_patterns_agree():
         assert not PLACEHOLDER_PATTERN.fullmatch(f"{{{bad}}}"), bad
 
 
-def test_a_malformed_kicad_fields_column_reads_as_unset():
+def test_a_malformed_key_list_column_reads_as_unset():
     """`kicad_specs._field_list` tolerates JSONB that isn't a list of
     strings; `PartCategoryOut` has to agree, or the same restored row is
-    a 500 on the settings page instead of a blank field list."""
+    a 500 on the settings page instead of a blank field list.
+
+    The same validator now covers `list_columns` (alembic 0083), which is
+    the same shape read by a different consumer.
+    """
     from app.domain.categories.schemas import PartCategoryOut
 
     for raw in ({"a": 1}, "abc", ["a", 1], 7):
-        assert PartCategoryOut._tolerate_malformed_kicad_fields(raw) is None, raw
-    assert PartCategoryOut._tolerate_malformed_kicad_fields(None) is None
-    assert PartCategoryOut._tolerate_malformed_kicad_fields(["a"]) == ["a"]
+        assert PartCategoryOut._tolerate_malformed_key_list(raw) is None, raw
+    assert PartCategoryOut._tolerate_malformed_key_list(None) is None
+    assert PartCategoryOut._tolerate_malformed_key_list(["a"]) == ["a"]
+
+
+def test_a_malformed_list_sort_column_reads_as_unset():
+    """Same tolerance for the one-record column (alembic 0083).
+
+    `CategoryListSort` is `extra="forbid"` and its `key` is pattern-bound,
+    so a stray JSONB key or an upper-case one would otherwise 500 the
+    whole categories listing — for exactly the kind of row (raw SQL fix,
+    restored backup) this tolerance exists for. A category with an
+    unreadable stored sort must read as "no default sort", which every
+    consumer already handles.
+    """
+    from app.domain.categories.schemas import PartCategoryOut
+
+    for raw in (
+        "abc",
+        7,
+        {},
+        {"dir": "asc"},
+        {"key": 7, "dir": "asc"},
+        {"key": "Resistance"},
+        {"key": "resistance-1"},
+    ):
+        assert PartCategoryOut._tolerate_malformed_list_sort(raw) is None, raw
+    # An unknown direction falls back to ascending rather than dropping the
+    # key the user picked.
+    assert PartCategoryOut._tolerate_malformed_list_sort(
+        {"key": "resistance", "dir": "sideways"}
+    ) == {"key": "resistance", "dir": "asc"}
+    # An extra JSONB key is dropped, not refused.
+    assert PartCategoryOut._tolerate_malformed_list_sort(
+        {"key": "resistance", "dir": "desc", "stray": 1}
+    ) == {"key": "resistance", "dir": "desc"}
+    assert PartCategoryOut._tolerate_malformed_list_sort(None) is None
