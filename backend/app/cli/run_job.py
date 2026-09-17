@@ -330,6 +330,9 @@ JOBS: dict[str, JobSpec] = {
             "over unchanged upstream data rewrites no part column and no "
             "spec row; `last_refresh_at` and the link's own timestamp move "
             "every time, because they are the record that the run happened. "
+            "With --include-unlinked it also visits parts no provider has "
+            "ever been linked to, where the primary fills only the columns "
+            "the part left empty. "
             "Junk archived by spec-normalize stays archived. Writes nothing "
             "at all without --apply, which it refuses without --report. "
             "Stops at exit 3 when a provider reports it is out of quota, "
@@ -345,6 +348,7 @@ JOBS: dict[str, JobSpec] = {
             "limit",
             "only_uncategorized",
             "link_missing_providers",
+            "include_unlinked",
             "sleep_ms",
         ),
     ),

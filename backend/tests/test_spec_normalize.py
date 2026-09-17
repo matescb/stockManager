@@ -297,6 +297,60 @@ def test_every_canonical_row_it_writes_carries_a_provider(
         assert _rows_by_key(db, part_id)[key].provider == "digikey", key
 
 
+def test_apply_rekeys_a_resistor_composition_onto_technology(
+    client: TestClient, db, tmp_path: Path
+) -> None:
+    """`Composition` was the most frequent unmapped raw key on prod — 64
+    rows the schema had no home for. It is the resistor's `technology`
+    now, so the next backfill run picks it up instead of reporting it.
+
+    The value is the vendor's own words: no unit, so no numeric sidecar.
+    """
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "digikey")
+    category_id = _category(client, "Resistors")
+    part_id = _part(client, db, category_id=category_id, linked_provider="digikey")
+    _legacy_row(db, ws_id=ws_id, part_id=part_id, key="Composition", value="Thick Film")
+    db.commit()
+
+    _normalize(db, tmp_path / "report.csv", apply=True)
+
+    rows = _rows_by_key(db, part_id)
+    assert "Composition" not in rows, "the raw key was renamed, not duplicated"
+    assert rows["technology"].value == "Thick Film"
+    assert rows["technology"].value_num is None
+    assert rows["technology"].provider == "digikey"
+    assert rows["technology"].archived_at is None
+
+
+def test_apply_rekeys_an_aec_features_row_onto_automotive(
+    client: TestClient, db, tmp_path: Path
+) -> None:
+    """`Features: Automotive AEC-Q200` was left raw on prod because only
+    `Ratings` fed the key. A non-AEC `Features` row still stays put —
+    `test_apply_keeps_an_unrecognised_parametric_key_verbatim` pins that
+    half."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "digikey")
+    category_id = _category(client, "Resistors")
+    part_id = _part(client, db, category_id=category_id, linked_provider="digikey")
+    _legacy_row(
+        db,
+        ws_id=ws_id,
+        part_id=part_id,
+        key="Features",
+        value="Automotive AEC-Q200",
+    )
+    db.commit()
+
+    _normalize(db, tmp_path / "report.csv", apply=True)
+
+    rows = _rows_by_key(db, part_id)
+    assert "Features" not in rows
+    assert rows["automotive"].value == "AEC-Q200"
+    assert rows["automotive"].provider == "digikey"
+
+
 def test_provider_falls_back_to_the_workspace_primary(
     client: TestClient, db, tmp_path: Path
 ) -> None:

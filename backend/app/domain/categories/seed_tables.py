@@ -85,7 +85,18 @@ SEEDABLE_FIELDS: tuple[str, ...] = (
 # indistinguishable from NULL and safe to fill.
 EMPTY_IS_SET_FIELDS: frozenset[str] = frozenset({"kicad_fields"})
 
-_RESISTOR_FIELDS = ("resistance", "tolerance", "power", "temp_coefficient", "package")
+_RESISTOR_FIELDS = (
+    "resistance",
+    "tolerance",
+    "power",
+    "temp_coefficient",
+    # Optional, and not in the `value_template`: "10 kΩ 1% Thick Film
+    # 0402" is longer than a schematic value field can carry usefully.
+    # It is still worth a symbol field — a thin-film part and a thick-film
+    # one are not interchangeable at the bench.
+    "technology",
+    "package",
+)
 _CERAMIC_FIELDS = ("capacitance", "voltage_rating", "dielectric", "tolerance", "package")
 _ELECTROLYTIC_FIELDS = (
     "capacitance",

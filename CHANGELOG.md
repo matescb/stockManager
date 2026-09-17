@@ -15,6 +15,41 @@ the canonical record.
 
 ## Unreleased
 
+- **`provider-refresh --include-unlinked` links the parts nobody ever
+  asked a vendor about.** The sweep's scope was parts a provider already
+  knows; the flag widens it to active parts with no `part_provider_links`
+  row and no `linked_provider` — 34 of ours carry an MPN, one does not.
+  Each is asked of the workspace primary first and then of every
+  secondary with credentials, exact-MPN only. This is the one case where
+  the PRIMARY may claim a part it has never owned, because such a part
+  has no primary to displace and no provider-written column to
+  overwrite: the claim writes the linkage columns, flips the derived
+  `part_type`, fills a NULL category and writes the canonical specs and
+  assets, while `manufacturer`, `footprint` and `description` are filled
+  only where the part is silent (empty, or holding nothing but its own
+  MPN). A typed description survives, as does
+  `description_locally_edited`. A part with no MPN gets one `skipped`
+  line naming the reason rather than being absent from the report.
+  `docs/runbooks/provider-refresh.md` — "Linking local parts".
+- **A resistor's construction is a canonical spec.** The `resistor`
+  schema gained an optional `technology` key reading DigiKey's
+  `Composition` — the most frequent unmapped raw key in the catalogue at
+  64 rows — and Mouser's `Technology` / `Resistor Type` / `Composition`.
+  The value is the vendor's own words ("Thick Film", "Wirewound", …):
+  these are names rather than quantities, so there is no normalisation
+  table and no numeric sidecar. It is a seeded `kicad_fields` entry for
+  Resistors and deliberately NOT in the `value_template`. `spec-normalize`
+  re-keys the existing rows on its next run.
+- **`Features` feeds `automotive` when it carries an AEC-Q token.** Some
+  vendors file `AEC-Q200` under `Features` rather than `Ratings` or
+  `Qualification`, and those rows were left raw. Unlike the other two,
+  `Features` was never on the junk denylist, so a value the extractor
+  refuses stays on the Specs tab verbatim instead of being dropped. A
+  refusal is also no longer allowed to win a key: alias resolution walks
+  on to the next spelling present, so `Ratings: Moisture Resistant` next
+  to `Features: Automotive AEC-Q200` reads the qualification off the
+  second instead of leaving the key empty.
+
 - **The parts list can show a category's specs as columns, and sort by
   them.** Filter `/parts` to a category and a "Spec columns" control lists
   that category's canonical spec keys; ticking one adds a column, and the
@@ -56,6 +91,11 @@ the canonical record.
   part. `--link-missing-providers` also asks the SECONDARY providers a
   part is not linked to; it never promotes one to primary, which would
   rewrite six part columns from a provider nobody chose for that part.
+  Each (part, provider) pair writes inside its own savepoint, so a
+  statement Postgres rejects — most realistically the vendor's spelling
+  of an MPN colliding with a sibling part on `uq_parts_ws_mpn` — is one
+  `error` row and a sweep that carries on, not a 25-part batch that
+  commits nothing. The vendor's MPN is stored stripped.
   `docs/runbooks/provider-refresh.md`; ADR-0021.
 - **The refresh sequence moved out of the route.**
   `domain/parts/services/provider_refresh.py::refresh_part` is now the

@@ -177,6 +177,7 @@ def test_digikey_resistor_payload_maps_to_the_canonical_keys() -> None:
         "tolerance": "1%",
         "power": "63 mW",
         "temp_coefficient": "100 ppm/°C",
+        "technology": "Thick Film",
     }
     assert result.canonical["resistance"].value_num == Decimal("10000")
     assert result.canonical["resistance"].unit == "Ω"
@@ -195,8 +196,10 @@ def test_digikey_resistor_payload_routes_catalog_junk_and_optional() -> None:
         "Unit price (1+)": "0.10",
         "DigiKey P/N": "311-10.0KLRCT-ND",
     }
-    # Everything genuinely parametric that has no canonical slot survives.
-    assert result.optional == {"Composition": "Thick Film"}
+    # Nothing parametric is left over on this payload: `Composition` was
+    # the most frequent unmapped key on prod and is the resistor's
+    # `technology` now.
+    assert result.optional == {}
     # `Features` is dropped for its `-` value, the rest for their key.
     assert set(result.dropped) == {
         "Features",
@@ -660,6 +663,186 @@ def test_number_of_terminations_stays_junk() -> None:
     result = normalise("resistor", "digikey", [("Number of Terminations", "2")])
     assert result.canonical == {}
     assert result.dropped == ["Number of Terminations"]
+
+
+# ---------------------------------------------------------------------------
+# `Features` — the second key the AEC extractor reads, and the one that
+# keeps its prose
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("provider", ["digikey", "mouser"])
+def test_an_aec_token_under_features_becomes_the_automotive_key(
+    provider: str,
+) -> None:
+    """A prod resistor carried `Features: Automotive AEC-Q200` and the row
+    stayed raw, because only `Ratings` and `Qualification` fed the key."""
+    result = normalise("resistor", provider, [("Features", "Automotive AEC-Q200")])
+
+    assert result.canonical["automotive"].display == "AEC-Q200"
+    assert result.canonical["automotive"].raw_key == "Features"
+
+
+@pytest.mark.parametrize("provider", ["digikey", "mouser"])
+def test_a_non_automotive_features_value_is_kept_verbatim(provider: str) -> None:
+    """The opposite of `Ratings`, and the reason the two are separated.
+
+    `Ratings` and `Qualification` were on the junk denylist and the AEC
+    extractor is the only reason they came off it, so a value it refuses
+    goes back to being dropped. `Features` was never junk — "Moisture
+    Resistant" is a real parametric row a part has carried for months —
+    so refusing it must leave it exactly where it was.
+    """
+    result = normalise("resistor", provider, [("Features", "Moisture Resistant")])
+
+    assert "automotive" not in result.canonical
+    assert result.optional == {"Features": "Moisture Resistant"}
+    assert result.dropped == []
+
+
+@pytest.mark.parametrize("provider", ["digikey", "mouser"])
+def test_features_loses_the_automotive_key_to_the_dedicated_alias(
+    provider: str,
+) -> None:
+    """Alias order is precedence order, and `Features` is listed last: a
+    payload carrying both must read the key whose whole purpose is the
+    qualification."""
+    dedicated = "Ratings" if provider == "digikey" else "Qualification"
+    result = normalise(
+        "resistor",
+        provider,
+        [(dedicated, "AEC-Q200"), ("Features", "Automotive AEC-Q101")],
+    )
+
+    assert result.canonical["automotive"].raw_key == dedicated
+    assert result.canonical["automotive"].display == "AEC-Q200"
+    # Superseded, not kept verbatim: the key it lost to answered it.
+    assert result.dropped == ["Features"]
+    assert "Features" not in result.optional
+
+
+@pytest.mark.parametrize(
+    ("provider", "dedicated"), [("digikey", "Ratings"), ("mouser", "Qualification")]
+)
+def test_a_refused_alias_falls_through_to_the_next_one_present(
+    provider: str, dedicated: str
+) -> None:
+    """A refusal is not an answer, so it cannot win the key.
+
+    This is the shape a second alias made reachable: the
+    highest-precedence spelling is present and its extractor says the
+    value carries no fact about the key, while a lower one carries the
+    fact. Stopping at the first alias would leave `automotive` empty AND
+    archive both rows — the worst of both, since neither the
+    qualification nor the prose would survive anywhere.
+    """
+    result = normalise(
+        "resistor",
+        provider,
+        [(dedicated, "Moisture Resistant"), ("Features", "Automotive AEC-Q200")],
+    )
+
+    assert result.canonical["automotive"].display == "AEC-Q200"
+    assert result.canonical["automotive"].raw_key == "Features"
+    # The prose alias is still retired: it was junk-denylisted until the
+    # extractor gave it a meaning, and it has not got one here.
+    assert result.dropped == [dedicated]
+    assert "Features" not in result.optional
+
+
+@pytest.mark.parametrize(
+    ("provider", "dedicated"), [("digikey", "Ratings"), ("mouser", "Qualification")]
+)
+def test_when_every_alias_refuses_only_the_never_junk_one_survives(
+    provider: str, dedicated: str
+) -> None:
+    result = normalise(
+        "resistor",
+        provider,
+        [(dedicated, "Moisture Resistant"), ("Features", "Moisture Resistant")],
+    )
+
+    assert "automotive" not in result.canonical
+    assert result.optional == {"Features": "Moisture Resistant"}
+    assert result.dropped == [dedicated]
+
+
+def test_a_refused_first_alias_does_not_promote_a_lower_precedence_reading() -> None:
+    """Fall-through is about refusals only. Two aliases that BOTH extract
+    still resolve by schema order — `test_the_first_listed_alias_wins…`
+    pins the general case, and this pins it for an extractor-backed key,
+    which is the one the fall-through touches."""
+    result = normalise(
+        "resistor",
+        "digikey",
+        [("Ratings", "AEC-Q200"), ("Features", "Automotive AEC-Q101")],
+    )
+
+    assert result.canonical["automotive"].display == "AEC-Q200"
+
+
+# ---------------------------------------------------------------------------
+# `technology` — the resistor's construction, and the most frequent
+# unmapped raw key on prod (64 rows under `Composition`)
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("provider", "key"),
+    [
+        ("digikey", "Composition"),
+        ("mouser", "Technology"),
+        ("mouser", "Resistor Type"),
+        ("mouser", "Composition"),
+    ],
+)
+def test_a_resistor_reads_its_technology_from_every_vendor_spelling(
+    provider: str, key: str
+) -> None:
+    """Stored as the vendor's own words: there is no normalisation table
+    for it, because "Thick Film" and "Metal Oxide" are names, not
+    quantities, and inventing a canonical vocabulary for them would
+    silently rewrite values nobody asked us to interpret.
+
+    Alias uniqueness for these tuples is covered by
+    `test_aliases_are_unique_within_a_category`, which is parametrized
+    over every slug and both providers.
+    """
+    result = normalise("resistor", provider, [(key, "Thick Film")])
+
+    assert result.canonical["technology"].display == "Thick Film"
+    assert result.canonical["technology"].value_num is None
+    assert result.canonical["technology"].unit is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Thick Film",
+        "Thin Film",
+        "Metal Film",
+        "Wirewound",
+        "Carbon Film",
+        "Metal Oxide",
+        "Current Sense",
+    ],
+)
+def test_the_technology_value_is_the_vendor_text_unchanged(value: str) -> None:
+    result = normalise("resistor", "digikey", [("Composition", value)])
+
+    assert result.canonical["technology"].display == value
+
+
+def test_technology_is_not_mandatory_on_a_resistor() -> None:
+    """A resistor whose vendor does not publish a composition is not an
+    incomplete resistor, and a mandatory key nobody can satisfy is what
+    stops the missing-key flag being read at all."""
+    assert "technology" not in missing_mandatory("resistor", ["resistance"])
+
+
+def test_technology_is_a_resistor_key_only() -> None:
+    """`Composition` is not a common alias. A ceramic capacitor's
+    dielectric already answers "what is it made of" under its own key,
+    and a capacitor that grew a second one would write two rows saying
+    one thing."""
+    assert "technology" not in {s.key for s in spec_keys_for("capacitor_ceramic")}
+    assert "technology" not in {s.key for s in spec_keys_for("ic")}
 
 
 def test_a_number_of_pins_is_a_pin_count() -> None:

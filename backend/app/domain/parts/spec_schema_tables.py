@@ -68,6 +68,22 @@ _RESISTOR: tuple[SpecKey, ...] = (
         "temp_coefficient", "ppm/°C", "Temperature coefficient", True,
         ("Temperature Coefficient",), ("Temperature Coefficient",),
     ),
+    # How the resistive element is made — thick film, thin film, metal
+    # film, wirewound, carbon film, metal oxide, current sense. Stored as
+    # the vendor's own words, with no normalisation table: these are
+    # names rather than quantities, and a table mapping them onto a
+    # vocabulary of our own would rewrite values nobody asked us to
+    # interpret. DigiKey calls it `Composition`, which was the most
+    # frequent unmapped raw key on prod (64 rows).
+    #
+    # Optional: a resistor whose vendor does not publish a composition is
+    # not an incomplete resistor, and a mandatory key nobody can satisfy
+    # is what stops the missing-key flag being read at all.
+    SpecKey(
+        "technology", None, "Technology", False,
+        ("Composition",),
+        ("Technology", "Resistor Type", "Composition"),
+    ),
 )
 
 _ESR_DIGIKEY = ("ESR (Equivalent Series Resistance)",)
