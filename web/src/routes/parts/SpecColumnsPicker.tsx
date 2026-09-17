@@ -65,8 +65,17 @@ export default function SpecColumnsPicker({
 }) {
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
-  const selected = schema.list_columns ?? [];
   const ordered = useMemo(() => orderedSpecKeys(schema.keys), [schema.keys]);
+  // Narrowed to keys the category's schema still HAS. A stored key can
+  // outlive the schema — rename a category away from *Ceramic* and it
+  // loses `dielectric` — and the server rightly refuses a `list_columns`
+  // naming one. Without this, the stale key rides along on the next
+  // toggle's payload and turns an unrelated tick into a 422. The parts
+  // list drops it from the columns for the same reason.
+  const selected = useMemo(() => {
+    const known = new Set(schema.keys.map(spec => spec.key));
+    return (schema.list_columns ?? []).filter(key => known.has(key));
+  }, [schema.keys, schema.list_columns]);
 
   const save = useApiMutation<unknown, { list_columns: string[] }>({
     mutationKey: ["category", categoryId, "list-columns"],

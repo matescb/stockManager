@@ -2,7 +2,7 @@
 /**
  * Per-category spec columns on `/parts`.
  *
- * Four things are pinned, all of them things a reader of the component
+ * Five things are pinned, all of them things a reader of the component
  * cannot check by eye:
  *
  *  - the picker is driven by `GET /categories/{id}/spec-schema` and every
@@ -14,7 +14,11 @@
  *    `sort=spec:<key>`) rather than reordering the loaded page, because
  *    the list is cursor-paged and a client-side sort would only order the
  *    rows that happen to be in memory;
- *  - the saved default sort is offered but not assumed.
+ *  - the saved default sort is offered but not assumed;
+ *  - a stored key the schema no longer has is dropped from the request,
+ *    from the table AND from the next PATCH's payload — otherwise a
+ *    category renamed away from its schema turns an unrelated tick into a
+ *    422.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -320,6 +324,26 @@ describe("PartsList — per-category spec columns", () => {
     fireEvent.click(within(picker()).getByLabelText(/^Resistance/));
     await waitFor(() => expect(state.patches).toHaveLength(1));
     expect(state.patches[0].body).toEqual({ list_columns: [] });
+  });
+
+  it("drops a stored key the schema no longer has, everywhere", async () => {
+    // A category renamed away from its schema keeps the stored key.
+    // Sending it back would 422 the whole PATCH, so an unrelated tick must
+    // not carry it — and the table must not render a column for it either.
+    state.schema = {
+      ...SPEC_SCHEMA,
+      list_columns: ["resistance", "dielectric"],
+    };
+    await renderList();
+    await waitFor(() => expect(lastPartsUrl()).toContain("spec_columns=resistance"));
+    expect(lastPartsUrl()).not.toContain("dielectric");
+    expect(headers()).not.toContain("Dielectric");
+
+    fireEvent.click(within(picker()).getByLabelText(/^Tolerance/));
+    await waitFor(() => expect(state.patches).toHaveLength(1));
+    expect(state.patches[0].body).toEqual({
+      list_columns: ["resistance", "tolerance"],
+    });
   });
 
   it("says which ancestor the column choice came from", async () => {
