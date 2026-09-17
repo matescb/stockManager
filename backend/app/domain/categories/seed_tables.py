@@ -124,10 +124,12 @@ _MOSFET_TEMPLATE = "{vds} {id_max} {rds_on} {package}"
 
 _TRANSISTOR_FOOTPRINTS = ("SOT*", "TO_*", "*SOT?23*")
 
-# The active-component classes. `kicad_fields` is the MANDATORY canonical
-# keys of the category's spec slug — the ones a part of that class is
-# under-specified without — which is the same rule the passive tuples
-# above follow.
+# The active-component classes. `kicad_fields` is the canonical keys worth
+# putting on the symbol: the class's mandatory set, plus anything its
+# `value_template` reads. That is the same rule the passive tuples above
+# follow — a tantalum emits its optional `esr`, and a crystal emits its
+# optional `load_capacitance`, because a key that is absent on a part
+# simply renders nothing.
 _IC_FIELDS = ("ic_type", "supply_voltage", "package")
 _CONNECTOR_FIELDS = ("connector_type", "positions", "package")
 _CRYSTAL_FIELDS = ("frequency", "load_capacitance", "package")

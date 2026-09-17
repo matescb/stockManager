@@ -192,10 +192,11 @@ existed, every value on an IC or a connector was kept verbatim under
 `optional`, so nothing sorted and no key could be reported missing.
 
 `crystal` covers crystals, oscillators and resonators together, because no
-vendor taxonomy separates them reliably and the keys overlap. Its
-`load_capacitance` is mandatory, so an oscillator reads as incomplete on
-the Specs tab rather than being filed somewhere the rest of its keys do not
-exist.
+vendor taxonomy separates them reliably and the keys overlap. `frequency`
+is its only mandatory key, and it is the one all three have:
+`load_capacitance` belongs to a crystal alone, so requiring it would flag
+every oscillator in the workspace forever — noise, not a finding. It is
+still on the class's `value_template`, where an absent key renders nothing.
 
 `parts.category_id` is filled on the same pass when it is NULL, from the
 provider's own taxonomy (`spec_schema.category_for_provider` →

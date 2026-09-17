@@ -772,17 +772,28 @@ def test_a_digikey_crystal_payload_maps_to_the_crystal_schema() -> None:
     assert missing_mandatory("crystal", result.canonical) == []
 
 
-def test_an_oscillator_is_missing_the_load_capacitance_a_crystal_needs() -> None:
+def test_an_oscillator_is_not_incomplete_for_having_no_load_capacitance() -> None:
     """One slug covers crystals, oscillators and resonators, and only a
-    crystal has a load capacitance. The flag is the point: an oscillator
-    reads as incomplete on the Specs tab rather than being filed
-    somewhere the rest of its keys do not exist."""
-    payload = [("Frequency", "25MHz"), ("Voltage - Supply", "3.3V"), ("Type", "XO")]
+    crystal has a load capacitance. Mandatory would flag every oscillator
+    in the workspace forever, which is noise rather than a finding — so
+    `frequency` carries the class and `load_capacitance` is optional."""
+    payload = [
+        ("Frequency", "25MHz"),
+        ("Voltage - Supply", "3.3V"),
+        ("Type", "XO"),
+        ("Package / Case", "4-SMD"),
+    ]
 
     result = normalise("crystal", "digikey", payload)
 
     assert result.canonical["supply_voltage"].display == "3.3 V"
-    assert missing_mandatory("crystal", result.canonical) == ["package", "load_capacitance"]
+    assert missing_mandatory("crystal", result.canonical) == []
+
+
+def test_a_crystal_still_has_to_have_a_frequency() -> None:
+    result = normalise("crystal", "digikey", [("Load Capacitance", "18pF")])
+
+    assert missing_mandatory("crystal", result.canonical) == ["package", "frequency"]
 
 
 def test_a_digikey_fuse_payload_maps_to_the_fuse_schema() -> None:

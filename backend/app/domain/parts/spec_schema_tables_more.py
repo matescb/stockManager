@@ -149,13 +149,15 @@ _CONNECTOR: tuple[SpecKey, ...] = (
 
 # One slug for crystals, oscillators and resonators, because the vendor
 # category strings do not reliably separate them and the keys overlap.
-# `load_capacitance` is mandatory on it: a crystal without one cannot be
-# matched to a load, and an oscillator reads as incomplete rather than
-# being filed somewhere the rest of its keys do not exist.
+# `frequency` is the only mandatory key, and it is the one all three have.
+# `load_capacitance` belongs to a crystal alone, so requiring it would
+# flag every oscillator in the workspace forever — noise, not a finding.
+# It is still on the class's `value_template` and `kicad_fields`, where a
+# key that is absent simply renders nothing.
 _CRYSTAL: tuple[SpecKey, ...] = (
     SpecKey("frequency", "Hz", "Frequency", True, ("Frequency",), ("Frequency",)),
     SpecKey(
-        "load_capacitance", "F", "Load capacitance", True,
+        "load_capacitance", "F", "Load capacitance", False,
         ("Load Capacitance",), ("Load Capacitance",),
     ),
     SpecKey(
@@ -289,35 +291,56 @@ MORE_CANONICAL_SPECS: dict[str, tuple[SpecKey, ...]] = {
 # modifier refine it.
 #
 # Order inside this tuple is first-match-wins, like the passive rules it is
-# appended to, and it decides three real overlaps in DigiKey's own taxonomy:
+# appended to, and it is load-bearing. Read top to bottom it says:
 #
-# * `Interface - Analog Switches, Multiplexers` names an interface and a
-#   switch. It is an IC, so `ic` comes first.
-# * `Clock/Timing - … Frequency Synthesizers` names timing and frequency.
-#   It is an IC too — hence `timing` on the IC side and NOT `clock`, which
-#   would otherwise capture Mouser's `Clock Oscillators`.
-# * `mechanical` is last because its words ("thermal", "screws") are the
-#   ones most likely to turn up in a Mouser DESCRIPTION, which is the
-#   fallback text `category_for_provider` classifies when the category is
-#   missing. A class that appears in prose must not outrank one that only
-#   appears in a taxonomy.
-#
-# Known gap: DigiKey's `Thermal Interface Materials` reads as an IC, because
-# `interface` is an IC trigger and `mechanical` is last. It is not one of the
-# category names this table was written for; file it by hand.
+# 1. **A category that says "IC" outright is an IC**, whatever else it
+#    names. `PMIC - Thermal Management` and `Thermal Management ICs` are
+#    both ICs, and this rule is why.
+# 2. **A thermal fuse is a fuse.** `Thermal Cutoffs (Thermal Fuses)` would
+#    otherwise be caught by the thermal rule below it.
+# 3. **Anything else thermal is hardware.** A thermal pad, a heatsink and
+#    a gap filler are parts you screw on, not parts you solder.
+#    `Thermal Interface Materials` read as an IC until this rule existed,
+#    because `interface` is in the IC vocabulary below.
+# 4. **Then the rest of the IC vocabulary**, which is the weaker half:
+#    `Interface - Analog Switches, Multiplexers` is an IC, so these words
+#    come before `switch`. `Clock/Timing - … Frequency Synthesizers` is an
+#    IC too, so `timing` is here and bare `clock` is NOT — it would
+#    otherwise capture Mouser's `Clock Oscillators`.
+# 5. **Then the remaining classes**, with `mechanical` last because its
+#    words ("screws", "enclosures") are the ones most likely to turn up in
+#    a Mouser DESCRIPTION, which is the fallback text
+#    `category_for_provider` classifies when the category is missing. A
+#    class that appears in prose must not outrank one that only appears in
+#    a taxonomy.
 # ---------------------------------------------------------------------------
+_IC_EXPLICIT = frozenset({"ic", "ics", "integrated", "pmic"})
+
+_IC_REST = frozenset({
+    "microcontroller", "microcontrollers", "mcu", "microprocessor",
+    "microprocessors", "embedded", "fpga", "fpgas", "cpld", "logic",
+    "interface", "memory", "eeprom", "sram", "dram", "regulator",
+    "regulators", "ldo", "amplifier", "amplifiers", "opamp", "opamps",
+    "acquisition", "adc", "dac", "comparator", "comparators", "timing",
+    "timer", "timers", "dsp",
+})
+
+_FUSE_WORDS = frozenset({"fuse", "fuses", "fuseholder", "pptc", "polyfuse"})
+
+_THERMAL_WORDS = frozenset({"thermal", "thermoelectric", "heatsink", "heatsinks"})
+
+_MECHANICAL_WORDS = frozenset({
+    "hardware", "fastener", "fasteners", "standoff", "standoffs", "spacer",
+    "spacers", "screw", "screws", "bolt", "bolts", "nut", "nuts", "washer",
+    "washers", "bracket", "brackets", "enclosure", "enclosures", "sinks",
+    "ties", "mechanical",
+})
+
 MORE_CLASS_RULES: tuple[tuple[frozenset[str], str], ...] = (
-    (
-        frozenset({
-            "ic", "ics", "integrated", "microcontroller", "microcontrollers",
-            "mcu", "microprocessor", "microprocessors", "embedded", "fpga",
-            "fpgas", "cpld", "logic", "interface", "memory", "eeprom", "sram",
-            "dram", "pmic", "regulator", "regulators", "ldo", "amplifier",
-            "amplifiers", "opamp", "opamps", "acquisition", "adc", "dac",
-            "comparator", "comparators", "timing", "timer", "timers", "dsp",
-        }),
-        "ic",
-    ),
+    (_IC_EXPLICIT, "ic"),
+    (_FUSE_WORDS, "fuse"),
+    (_THERMAL_WORDS, "mechanical"),
+    (_IC_REST, "ic"),
     (
         frozenset({
             "connector", "connectors", "interconnect", "interconnects",
@@ -334,7 +357,6 @@ MORE_CLASS_RULES: tuple[tuple[frozenset[str], str], ...] = (
         }),
         "crystal",
     ),
-    (frozenset({"fuse", "fuses", "fuseholder", "pptc", "polyfuse"}), "fuse"),
     (
         frozenset({
             "switch", "switches", "pushbutton", "pushbuttons", "tactile",
@@ -343,16 +365,7 @@ MORE_CLASS_RULES: tuple[tuple[frozenset[str], str], ...] = (
         "switch",
     ),
     (frozenset({"transformer", "transformers"}), "transformer"),
-    (
-        frozenset({
-            "hardware", "fastener", "fasteners", "standoff", "standoffs",
-            "spacer", "spacers", "screw", "screws", "bolt", "bolts", "nut",
-            "nuts", "washer", "washers", "bracket", "brackets", "enclosure",
-            "enclosures", "heatsink", "heatsinks", "sinks", "thermal", "ties",
-            "mechanical",
-        }),
-        "mechanical",
-    ),
+    (_MECHANICAL_WORDS, "mechanical"),
 )
 
 # What each new class resolves to when no modifier matches. Unlike

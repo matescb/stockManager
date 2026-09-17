@@ -254,9 +254,11 @@ every category (`height`, `length`, `width`, `pin_count`, `pin_pitch`,
 roots. Four decisions landed with it:
 
 - **One slug for crystals, oscillators and resonators.** No vendor taxonomy
-  separates them reliably and the keys overlap. `load_capacitance` is
-  mandatory on it, so an oscillator reads as incomplete on the Specs tab
-  rather than being filed somewhere the rest of its keys do not exist.
+  separates them reliably and the keys overlap. `frequency` is its only
+  mandatory key, because it is the one all three have — requiring
+  `load_capacitance`, which belongs to a crystal alone, would flag every
+  oscillator in the workspace forever. A mandatory key nobody can satisfy
+  is noise, and noise is what stops the missing-key flag being read.
 - **`SpecKey.extract` names a value transform** in the new
   `spec_extract.py`, applied before the parser. It is what lets one
   upstream key feed two canonical keys, what prefers a vendor's
@@ -271,6 +273,16 @@ roots. Four decisions landed with it:
   resistances — but not an IC's, and DigiKey's own name for the FPGA family
   is `Embedded - FPGAs (Field Programmable Gate Array)`. The kit/assortment
   guard keeps no exemption: a bag of parts is not one part of any class.
+- **`CLASS_RULES` order is load-bearing, and the IC vocabulary is split
+  across it.** The words that name the class outright (`ICs`, `PMIC`) come
+  first, so `PMIC - Thermal Management` is an IC. Then `fuse`, so a thermal
+  fuse is a fuse. Then `thermal`, so a thermal pad is hardware — without
+  that rule `Thermal Interface Materials` read as an IC, because
+  `interface` is in the weaker half of the IC vocabulary that follows it.
+  That weaker half still precedes `switch` and `crystal`, which is what
+  makes `Interface - Analog Switches` and `Clock/Timing - … Frequency
+  Synthesizers` ICs. `mechanical` is last, because its words turn up in
+  Mouser DESCRIPTIONS, which this function also classifies.
 
 **Landed since**: A6/B3 (the `category-seed` job and the `Device:*` defaults
 it carries) and B4 (`symbol-collapse`). The seed is where the canonical keys

@@ -298,3 +298,53 @@ def test_an_assortment_is_not_a_part_of_any_class(provider_category):
     """A bag of assorted parts is not one part, whatever class the bag is
     labelled with — so this guard, unlike the array one, has no exemption."""
     assert category_for_provider("digikey", provider_category) is None
+
+
+# ---------------------------------------------------------------------------
+# Thermal management
+#
+# "Thermal Interface Materials" read as an IC, because `interface` is an IC
+# trigger. A thermal pad is hardware, so `thermal` gets a rule of its own
+# ahead of the IC vocabulary — and behind the two classes whose own nouns
+# beat it.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "provider_category",
+    [
+        "Thermal Interface Materials",
+        "Thermal - Pads, Sheets",
+        "Thermal - Heat Sinks",
+        "Thermal - Thermoelectric, Peltier Modules",
+    ],
+)
+def test_digikey_thermal_products_are_mechanical(provider_category):
+    assert category_for_provider("digikey", provider_category) == "Mechanical"
+
+
+@pytest.mark.parametrize(
+    "provider_category",
+    [
+        "Thermal Management",
+        "Thermal Management - Heat Sinks",
+        "Thermal Management > Thermal Interface Products",
+    ],
+)
+def test_mouser_thermal_management_is_mechanical(provider_category):
+    assert category_for_provider("mouser", provider_category) == "Mechanical"
+
+
+@pytest.mark.parametrize(
+    ("provider_category", "expected"),
+    [
+        # A category that says "IC" outright is an IC whatever else it
+        # names — which is why those words sit AHEAD of the thermal rule.
+        ("PMIC - Thermal Management", "ICs"),
+        ("Thermal Management ICs", "ICs"),
+        # And a thermal fuse is a fuse: `fuse` sits ahead of `thermal` too.
+        ("Thermal Cutoffs (Thermal Fuses)", "Fuses"),
+    ],
+)
+def test_thermal_does_not_capture_a_class_that_names_itself(
+    provider_category, expected
+):
+    assert category_for_provider("digikey", provider_category) == expected
