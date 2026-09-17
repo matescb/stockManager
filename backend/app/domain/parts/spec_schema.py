@@ -32,6 +32,7 @@ from typing import Iterable, Sequence
 from app.domain.parts.provider_fields import PROVIDER_RESERVED_CUSTOM_FIELD_KEYS
 from app.domain.parts.providers.mouser import parse_description_specs
 from app.domain.parts.spec_category_map import category_for_provider
+from app.domain.parts.spec_extract import extract_for
 from app.domain.parts.spec_schema_tables import (
     CANONICAL_SPECS,
     CATALOG_KEY_PATTERNS,
@@ -46,6 +47,7 @@ from app.domain.parts.spec_schema_tables import (
     WORD_RE,
     SpecKey,
 )
+from app.domain.parts.spec_schema_tables_more import COMMON_OVERRIDES
 from app.domain.parts.spec_values import parse_si
 
 # Re-exported read-only: the schema is process-wide state and an importer
@@ -174,10 +176,19 @@ def canonical_value(
 
 
 def spec_keys_for(category_slug: str | None) -> tuple[SpecKey, ...]:
-    """Common keys plus the category's own. Unknown slug -> common only."""
+    """Common keys plus the category's own. Unknown slug -> common only.
+
+    A category may answer a common key with one of its own — a connector's
+    `pitch` IS the common `pin_pitch`, under the upstream name they both
+    read. `COMMON_OVERRIDES` drops the common one for that slug, because
+    otherwise a single `Pitch` value would write two canonical rows saying
+    the same thing.
+    """
     if not category_slug or category_slug == "common":
         return COMMON_SPECS
-    return COMMON_SPECS + CANONICAL_SPECS.get(category_slug, ())
+    overridden = COMMON_OVERRIDES.get(category_slug, frozenset())
+    common = tuple(s for s in COMMON_SPECS if s.key not in overridden)
+    return common + CANONICAL_SPECS.get(category_slug, ())
 
 
 def is_junk_key(key: str) -> bool:
@@ -341,20 +352,39 @@ def _resolve_canonical(
             (attributes, from_attributes) if from_attributes else (mined, from_mined)
         )
         winner = present[0]
-        canonical[spec.key] = _to_spec_value(spec, winner, source[winner])
+        value = _to_spec_value(spec, winner, source[winner])
+        # ``None`` is an extractor saying the value carries no fact about
+        # this key ("Moisture Resistant" under `Ratings`). The alias stays
+        # consumed, so it is recorded as dropped rather than kept verbatim
+        # — which is the behaviour the junk denylist used to give it.
+        if value is not None:
+            canonical[spec.key] = value
     return canonical, consumed
 
 
-def _to_spec_value(spec: SpecKey, raw_key: str, raw_value: str) -> SpecValue:
+def _to_spec_value(spec: SpecKey, raw_key: str, raw_value: str) -> SpecValue | None:
+    """The canonical row one alias produces, or ``None`` for "says nothing".
+
+    `raw_value` is kept whole on the result whatever the extractor takes
+    out of it: it is what the `spec-normalize` CSV shows the operator as
+    the value being replaced, and `3.20mm` alone would not tell them which
+    row moved.
+    """
+    text = raw_value
+    if spec.extract is not None:
+        extracted = extract_for(spec.extract, raw_value)
+        if extracted is None:
+            return None
+        text = extracted
     if spec.unit is None:
-        return SpecValue(spec.key, raw_value, None, None, raw_key, raw_value)
-    parsed = parse_si(raw_value, unit_hint=spec.unit)
+        return SpecValue(spec.key, text, None, None, raw_key, raw_value)
+    parsed = parse_si(text, unit_hint=spec.unit)
     if parsed is None or parsed.unit != spec.unit:
         # Either unreadable to the parser (`"X7R"` under a unit-bearing key)
         # or readable as the wrong quantity (`"50 V"` under `resistance`,
         # from a mis-aliased payload). Keep the text; leave the sidecar empty
         # rather than invent a number or mix units under one sortable key.
-        return SpecValue(spec.key, raw_value, None, spec.unit, raw_key, raw_value)
+        return SpecValue(spec.key, text, None, spec.unit, raw_key, raw_value)
     return SpecValue(
         spec.key, parsed.display, parsed.value_num, parsed.unit, raw_key, raw_value
     )

@@ -47,15 +47,23 @@ def test_aliases_are_unique_within_a_category(slug: str, provider: str) -> None:
     # make the winner depend on tuple order, i.e. on nothing.
     owner_of: dict[str, str] = {}
 
+    shared_ok: dict[str, bool] = {}
+
     # Act / Assert
     for spec in spec_keys_for(slug):
         aliases = spec.mouser_aliases if provider == "mouser" else spec.digikey_aliases
         for alias in aliases:
-            assert alias not in owner_of, (
-                f"{slug}/{provider}: '{alias}' claimed by both "
-                f"'{owner_of.get(alias)}' and '{spec.key}'"
-            )
+            # The one legal exception: two keys may share an alias when BOTH
+            # declare an extractor, because then each takes a different part
+            # of one value (`Size / Dimension` is a length AND a width) and
+            # the outcome does not depend on tuple order. See ADR-0034.
+            if alias in owner_of:
+                assert shared_ok.get(alias) and spec.extract, (
+                    f"{slug}/{provider}: '{alias}' claimed by both "
+                    f"'{owner_of.get(alias)}' and '{spec.key}'"
+                )
             owner_of[alias] = spec.key
+            shared_ok[alias] = bool(spec.extract)
 
 
 @pytest.mark.parametrize("slug", sorted(CANONICAL_SPECS))
@@ -71,13 +79,23 @@ def test_every_category_carries_the_common_keys(slug: str) -> None:
     }
 
 
+COMMON_KEYS = [
+    "package",
+    "mounting",
+    "operating_temp",
+    "height",
+    "length",
+    "width",
+    "pin_count",
+    "pin_pitch",
+    "automotive",
+    "device_marking",
+]
+
+
 def test_unknown_category_falls_back_to_the_common_keys() -> None:
-    assert [s.key for s in spec_keys_for("not_a_category")] == [
-        "package",
-        "mounting",
-        "operating_temp",
-    ]
-    assert [s.key for s in spec_keys_for(None)] == ["package", "mounting", "operating_temp"]
+    assert [s.key for s in spec_keys_for("not_a_category")] == COMMON_KEYS
+    assert [s.key for s in spec_keys_for(None)] == COMMON_KEYS
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +107,7 @@ def test_unknown_category_falls_back_to_the_common_keys() -> None:
         "TARIC", "CNHTS", "BRHTS", "USHTS", "JPHTS", "KRHTS", "MXHTS", "CAHTS",
         "HTS code", "ECCN", "MSL", "Unit weight", "NCNR", "IPC code",
         "Conflict Minerals", "Base Product Number", "Number of Terminations",
-        "Qualification", "Ratings", "Restriction", "Suggested replacement",
+        "Restriction", "Suggested replacement",
     ],
 )
 def test_is_junk_key_catches_the_keys_measured_on_prod(key: str) -> None:
@@ -507,3 +525,123 @@ def test_the_schema_table_cannot_be_mutated_by_an_importer() -> None:
     # change every workspace at once.
     with pytest.raises(TypeError):
         CANONICAL_SPECS["resistor"] = ()  # type: ignore[index]
+
+
+# ---------------------------------------------------------------------------
+# Common optional keys — physical dimensions, pin geometry, qualification
+#
+# These sit alongside `package` / `mounting` / `operating_temp` on EVERY
+# category, including ones the schema does not model. They are what makes a
+# connector or an IC row sortable at all.
+# ---------------------------------------------------------------------------
+def test_a_size_dimension_value_fills_both_the_length_and_the_width() -> None:
+    # Arrange — one upstream key carrying two numbers. The only one-to-many
+    # alias in the schema; see ADR-0034.
+    payload = [("Size / Dimension", '0.126" L x 0.063" W (3.20mm x 1.60mm)')]
+
+    # Act
+    result = normalise("resistor", "digikey", payload)
+
+    # Assert — metric equivalents, parsed, in the base unit.
+    assert result.canonical["length"].display == "3.2 mm"
+    assert result.canonical["length"].value_num == Decimal("0.00320")
+    assert result.canonical["width"].display == "1.6 mm"
+    assert result.canonical["width"].value_num == Decimal("0.00160")
+    # One raw key, so it is a winner and never also a dropped alias.
+    assert result.dropped == []
+    assert result.optional == {}
+
+
+def test_the_one_to_many_alias_is_still_one_key_in_the_payload() -> None:
+    # Arrange / Act — the partition rule holds on the raw keys, which is
+    # what "nothing is lost and nothing is duplicated" means here.
+    payload = [("Size / Dimension", '0.126" L x 0.063" W (3.20mm x 1.60mm)')]
+    result = normalise("resistor", "digikey", payload)
+
+    # Assert
+    raw_keys = {spec.raw_key for spec in result.canonical.values()}
+    assert raw_keys | set(result.optional) | set(result.catalog) | set(
+        result.dropped
+    ) == {"Size / Dimension"}
+
+
+def test_mouser_sends_length_and_width_as_two_keys_and_both_survive() -> None:
+    # Arrange — "the last of one part" has to be that same part, or Mouser
+    # loses its width.
+    result = normalise("resistor", "mouser", [("Length", "3.2 mm"), ("Width", "1.6 mm")])
+
+    # Assert
+    assert result.canonical["length"].display == "3.2 mm"
+    assert result.canonical["width"].display == "1.6 mm"
+
+
+def test_an_imperial_height_is_stored_as_the_vendors_metric_equivalent() -> None:
+    # Arrange / Act — `parse_si` has no inch entry and is not getting one;
+    # the metric figure DigiKey already prints is used instead.
+    result = normalise("resistor", "digikey", [("Height - Seated (Max)", '0.087" (2.20mm)')])
+
+    # Assert
+    assert result.canonical["height"].display == "2.2 mm"
+    assert result.canonical["height"].value_num == Decimal("0.00220")
+
+
+def test_a_lead_spacing_lands_on_the_common_pin_pitch_key() -> None:
+    result = normalise("resistor", "digikey", [("Lead Spacing", '0.100" (2.54mm)')])
+
+    assert result.canonical["pin_pitch"].display == "2.54 mm"
+
+
+# ---------------------------------------------------------------------------
+# `Ratings` — off the junk denylist, and worth exactly one fact
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("key", ["Ratings", "Qualification"])
+def test_the_qualification_keys_are_no_longer_junk(key: str) -> None:
+    """They were denylisted because most of what they carry is prose. They
+    now feed `automotive`, and the extractor is what drops the prose."""
+    assert is_junk_key(key) is False
+
+
+@pytest.mark.parametrize(
+    ("provider", "key"), [("digikey", "Ratings"), ("mouser", "Qualification")]
+)
+def test_an_aec_rating_becomes_the_automotive_key(provider: str, key: str) -> None:
+    result = normalise("resistor", provider, [(key, "AEC-Q200")])
+
+    assert result.canonical["automotive"].display == "AEC-Q200"
+    assert result.canonical["automotive"].raw_key == key
+
+
+@pytest.mark.parametrize(
+    ("provider", "key"), [("digikey", "Ratings"), ("mouser", "Qualification")]
+)
+def test_a_non_automotive_rating_is_dropped_rather_than_stored(
+    provider: str, key: str
+) -> None:
+    """The whole point of taking the key off the denylist was the AEC-Q
+    token. "Moisture Resistant" under it is the prose the denylist existed
+    to refuse, and must not come back as a verbatim Specs row."""
+    result = normalise("resistor", provider, [(key, "Moisture Resistant")])
+
+    assert "automotive" not in result.canonical
+    assert result.optional == {}
+    assert result.dropped == [key]
+
+
+def test_number_of_terminations_stays_junk() -> None:
+    """It reads like a pin count and is not one: DigiKey files a two-pad
+    chip resistor's `2` under it. `pin_count` takes `Number of Pins` only,
+    so a passive does not acquire a pin count it has no use for."""
+    assert is_junk_key("Number of Terminations") is True
+    result = normalise("resistor", "digikey", [("Number of Terminations", "2")])
+    assert result.canonical == {}
+    assert result.dropped == ["Number of Terminations"]
+
+
+def test_a_number_of_pins_is_a_pin_count() -> None:
+    # Arrange / Act — a count has no unit, so it is kept verbatim with no
+    # numeric sidecar, the way `hfe` and `unidirectional` already are.
+    result = normalise("resistor", "digikey", [("Number of Pins", "8")])
+
+    # Assert
+    assert result.canonical["pin_count"].display == "8"
+    assert result.canonical["pin_count"].value_num is None
