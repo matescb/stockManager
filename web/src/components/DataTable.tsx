@@ -436,18 +436,37 @@ export function DataTable<T>({
     });
   }, [filtered, sort, columns]);
 
-  const visibleCols = useMemo(() => columns.filter(c => !hidden[c.key]), [columns, hidden]);
+  // Columns an extra section owns. They are governed by that section and
+  // by nothing else here — see `visibleCols` and `ownColumns` below.
+  const claimedKeys = useMemo(
+    () =>
+      new Set((extraColumnSections ?? []).flatMap(s => s.items.map(i => i.key))),
+    [extraColumnSections],
+  );
+  // A claimed column ignores `hidden`. It is on the table because its
+  // section put it there, and a `hidden` entry for it can only be a
+  // LEFTOVER: the column was in the table's own list at some point, a
+  // viewer unticked it, `localStorage` kept that, and the checkbox that
+  // could clear it is now gone. Honouring the entry would hide the
+  // column with no way in the UI to get it back. The dead entry stays in
+  // storage, harmlessly, rather than being pruned — pruning would fight
+  // the workspace-switch effect that re-seeds `hidden` from storage.
+  const visibleCols = useMemo(
+    () => columns.filter(c => claimedKeys.has(c.key) || !hidden[c.key]),
+    [columns, hidden, claimedKeys],
+  );
   // The Columns menu's own list. A column an extra section already names
   // is that section's to toggle — listing it twice would give the same
   // column two checkboxes that mean different things (per-viewer hide vs
   // whatever the section does), which is how a user ends up with a column
   // they cannot make reappear.
-  const ownColumns = useMemo(() => {
-    const claimed = new Set(
-      (extraColumnSections ?? []).flatMap(s => s.items.map(i => i.key)),
-    );
-    return claimed.size === 0 ? columns : columns.filter(c => !claimed.has(c.key));
-  }, [columns, extraColumnSections]);
+  const ownColumns = useMemo(
+    () =>
+      claimedKeys.size === 0
+        ? columns
+        : columns.filter(c => !claimedKeys.has(c.key)),
+    [columns, claimedKeys],
+  );
   const sample = rows[0];
 
   const padCls = density === "compact" ? "py-1" : "py-2";

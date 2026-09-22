@@ -15,7 +15,12 @@
  *    list, so it appears once;
  *  - a claimed column is still rendered in the table — claiming governs
  *    the menu, not visibility;
- *  - an empty section says so rather than rendering a bare heading.
+ *  - an empty section says so rather than rendering a bare heading;
+ *  - a claimed column ignores the persisted `hidden` map, because the
+ *    checkbox that could clear that entry is no longer in the table's own
+ *    list. Viewers who hid a spec column before it moved into a section
+ *    still carry that entry in `localStorage`, and without this they
+ *    would never see the column again.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
@@ -40,18 +45,30 @@ function labels(): string[] {
     .map(box => (box.closest("label")?.textContent ?? "").trim());
 }
 
-function renderTable(section: ColumnMenuSection | null) {
+function renderTable(section: ColumnMenuSection | null, tableId?: string) {
   render(
     <DataTable
       rows={ROWS}
       columns={COLUMNS}
       rowKey={r => r.id}
+      tableId={tableId}
       extraColumnSections={section ? [section] : undefined}
     />,
   );
 }
 
-beforeEach(cleanup);
+const SPEC_SECTION: ColumnMenuSection = {
+  id: "specs",
+  title: "Specs",
+  items: [
+    { key: "spec:resistance", label: "Resistance (Ω)", checked: true, onToggle: () => {} },
+  ],
+};
+
+beforeEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 describe("DataTable — extra Columns-menu sections", () => {
   it("renders a section's title, note, items and footer", () => {
@@ -121,6 +138,25 @@ describe("DataTable — extra Columns-menu sections", () => {
 
     expect(within(menu()).getByText("This category has no spec keys.")).toBeTruthy();
     expect(labels()).toEqual(["Name", "Resistance (Ω)"]);
+  });
+
+  it("shows a claimed column a viewer hid before it moved into a section", () => {
+    // The regression this guards: `spec:resistance` is in the persisted
+    // `hidden` map from before the spec toggles moved out of the table's
+    // own list. Nothing in the menu can clear that entry any more, so the
+    // claim has to override it or the column is gone for good.
+    localStorage.setItem("workspaceId", "ws-1");
+    localStorage.setItem(
+      "ws:ws-1:dt:parts",
+      JSON.stringify({ hidden: { "spec:resistance": true, name: true } }),
+    );
+
+    renderTable(SPEC_SECTION, "parts");
+
+    // Claimed: the section says it is on, so it is on.
+    expect(screen.getByText("10 kΩ")).toBeTruthy();
+    // Not claimed: the viewer's own hide still stands.
+    expect(screen.queryByText("R 10k")).toBeNull();
   });
 
   it("leaves the menu exactly as it was without a section", () => {
