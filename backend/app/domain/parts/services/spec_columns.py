@@ -23,10 +23,12 @@ drowns out its parent's: "Passives / Resistors / 0402" flattens to words
 that still contain `resistors`, but "Resistors / Precision / High-Z" is
 one rename away from not. So the walk retries the path with trailing
 segments dropped — leaf path first, then the parent's, up to the root —
-and takes the first slug that resolves. A bare root "Capacitors" is
-deliberately still unresolved (`CLASS_DEFAULT_SLUG["capacitor"]` is
-None: a capacitor with no dielectric named has no schema of its own),
-which leaves it with the common keys, which is the honest answer.
+and takes the first slug that resolves. A bare root "Capacitors" still
+resolves to no SLUG (`CLASS_DEFAULT_SLUG["capacitor"]` is None: a
+capacitor with no dielectric named has no key set of its own) — but it
+does resolve to a CLASS, and the parts filed under it carry the keys
+every dielectric writes. So it reads as the union of its class's slugs;
+`spec_class.py` owns that, and only the read side sees it.
 
 ## Why the values are one query and the sort is a JOIN
 
@@ -61,6 +63,11 @@ from app.domain.categories.service import category_index, get_category
 from app.domain.custom_fields.models import CustomField
 from app.domain.custom_fields.serialize import value_num_out
 from app.domain.parts.models import Part
+from app.domain.parts.spec_class import (
+    class_slugs,
+    component_class_for,
+    union_spec_keys,
+)
 from app.domain.parts.spec_key import SpecKey
 from app.domain.parts.spec_schema import category_slug_for, spec_keys_for
 
@@ -122,10 +129,20 @@ class EffectiveSchema:
     """What a category's parts listing can show, and what it does show."""
 
     #: The `spec_schema_tables` slug the category resolved to, or None —
-    #: which is not an error, it means "common keys only".
+    #: which is not an error. With a `component_class` it means "the
+    #: union of that class's slugs"; without one, "common keys only".
     slug: str | None
-    #: Common keys plus the slug's own, in schema order.
+    #: The component class the category's name path maps to, or None.
+    #: Reported whether or not a slug resolved, because the union is only
+    #: legible next to the class that produced it.
+    component_class: str | None
+    #: Common keys plus the slug's own, in schema order — or the class
+    #: union when `slug` is None and `component_class` is not.
     keys: tuple[SpecKey, ...]
+    #: `key -> the schema slugs that define it`. One entry per key in
+    #: `keys`, empty tuples throughout when no slug and no class
+    #: resolved. What lets the picker badge `esr` as electrolytic-only.
+    key_slugs: dict[str, tuple[str, ...]]
     #: The stored column choice, resolved through the tree. None when
     #: neither this category nor any ancestor has made one.
     list_columns: list[str] | None
@@ -200,10 +217,13 @@ def _resolved(
 ) -> EffectiveSchema:
     columns, columns_owner = _inherited(index, start, self_id, "list_columns")
     sort, sort_owner = _inherited(index, start, self_id, "list_sort")
-    slug = _slug_for_path(path)
+    slug, component_class = _schema_for_path(path)
+    keys, key_slugs = _keys_for(slug, component_class)
     return EffectiveSchema(
         slug=slug,
-        keys=spec_keys_for(slug),
+        component_class=component_class,
+        keys=keys,
+        key_slugs=key_slugs,
         list_columns=list(columns) if isinstance(columns, list) else None,
         list_sort=sort if isinstance(sort, dict) else None,
         inherited_from=columns_owner,
@@ -211,20 +231,49 @@ def _resolved(
     )
 
 
-def _slug_for_path(path: str) -> str | None:
-    """The spec-schema slug for a name path, walking up on a miss.
+def _schema_for_path(path: str) -> tuple[str | None, str | None]:
+    """`(slug, component class)` for a name path, walking up on a miss.
 
     Leaf path first, then with trailing segments dropped.
     `category_slug_for` is word-based over the flattened path, so dropping
     the leaf is what lets an ancestor's noun win when the leaf's own words
     say nothing about what the part is.
+
+    The class rides along from the SAME cut the slug came from, so
+    "Capacitors / Ceramic" reports `capacitor_ceramic` under `capacitor`
+    rather than under whatever a shorter path would have said. When no cut
+    yields a slug, the class is the first one any cut yields — which is
+    the bare-root case the union exists for.
     """
     segments = [segment.strip() for segment in path.split("/") if segment.strip()]
+    fallback_class: str | None = None
     for cut in range(len(segments), 0, -1):
-        slug = category_slug_for(" / ".join(segments[:cut]))
+        candidate = " / ".join(segments[:cut])
+        slug = category_slug_for(candidate)
         if slug is not None:
-            return slug
-    return None
+            return slug, component_class_for(candidate)
+        if fallback_class is None:
+            fallback_class = component_class_for(candidate)
+    return None, fallback_class
+
+
+def _keys_for(
+    slug: str | None, component_class: str | None
+) -> tuple[tuple[SpecKey, ...], dict[str, tuple[str, ...]]]:
+    """The key vocabulary for a resolved `(slug, class)` pair.
+
+    Three cases, and the middle one is the fix: a named slug answers with
+    its own keys; a bare root that maps to a class with no default slug
+    answers with that class's union; anything else keeps the common keys,
+    which is all a category the schema does not recognise ever had.
+    """
+    if slug is not None:
+        keys = spec_keys_for(slug)
+        return keys, {spec.key: (slug,) for spec in keys}
+    if component_class is not None:
+        return union_spec_keys(class_slugs(component_class))
+    keys = spec_keys_for(None)
+    return keys, {spec.key: () for spec in keys}
 
 
 def _inherited(
@@ -256,12 +305,20 @@ def serialize_schema(schema: EffectiveSchema) -> dict:
     """The `GET /api/categories/{id}/spec-schema` payload."""
     return {
         "slug": schema.slug,
+        # Null unless the name path names a component. With `slug` null
+        # and this set, `keys` is the union of the class's slugs and each
+        # key's `slugs` says which of them define it.
+        "class": schema.component_class,
         "keys": [
             {
                 "key": spec.key,
                 "label": spec.label,
                 "unit": spec.unit,
+                # True only where EVERY slug backing this schema says so —
+                # `esr` is mandatory for an electrolytic and optional for a
+                # tantalum, so it is optional for the class.
                 "mandatory": spec.mandatory,
+                "slugs": list(schema.key_slugs.get(spec.key, ())),
                 # A display hint (right-align), not a promise about the
                 # sort — see `NUMERIC_UNITLESS_KEYS`.
                 "numeric": is_numeric_key(spec),
@@ -302,11 +359,25 @@ def validated_keys(keys: Sequence[str], schema: EffectiveSchema) -> list[str]:
                 code=ErrorCodes.CATEGORY_UNKNOWN_SPEC_KEY,
                 message=(
                     f'"{key}" is not a spec key for this category '
-                    f'(schema: {schema.slug or "common"})'
+                    f"(schema: {_schema_name(schema)})"
                 ),
                 key=key,
             )
     return list(keys)
+
+
+def _schema_name(schema: EffectiveSchema) -> str:
+    """What the 422 calls the vocabulary it refused the key against.
+
+    A union has no slug to name, and "common" would be a lie about a
+    category that just offered eleven capacitor keys — so it names the
+    class instead.
+    """
+    if schema.slug is not None:
+        return schema.slug
+    if schema.component_class is not None:
+        return f"{schema.component_class} (any subtype)"
+    return "common"
 
 
 @dataclass(frozen=True)
