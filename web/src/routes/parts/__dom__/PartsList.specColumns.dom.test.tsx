@@ -172,6 +172,11 @@ const state = vi.hoisted(() => ({
   schema: null as unknown,
   requestedUrls: [] as string[],
   patches: [] as { url: string; body: unknown }[],
+  // With this set, a `spec-schema` GET hangs until `releaseSchema()` is
+  // called. That gap — PATCH resolved, schema not yet back — is where a
+  // second toggle used to build its payload from a stale column list.
+  deferSchema: false,
+  pendingSchema: [] as (() => void)[],
 }));
 
 vi.mock("@/lib/api", () => {
@@ -196,13 +201,25 @@ vi.mock("@/lib/api", () => {
       get: vi.fn(() => Promise.resolve([])),
       parsed: {
         get: vi.fn((url: string) => {
-          if (url.includes("/spec-schema")) return Promise.resolve(state.schema);
+          if (url.includes("/spec-schema")) {
+            if (!state.deferSchema) return Promise.resolve(state.schema);
+            return new Promise(resolve => {
+              state.pendingSchema.push(() => resolve(state.schema));
+            });
+          }
           return Promise.resolve(url.startsWith("/categories") ? CATEGORIES : []);
         }),
       },
       post: vi.fn(),
       patch: vi.fn((url: string, body: unknown) => {
         state.patches.push({ url, body });
+        // The server stores what it was sent, so the next `spec-schema`
+        // read answers with it. Without this the refetch would hand back
+        // the original list and the race would be invisible.
+        const columns = (body as { list_columns?: string[] }).list_columns;
+        if (columns) {
+          state.schema = { ...(state.schema as object), list_columns: columns };
+        }
         return Promise.resolve(null);
       }),
       delete: vi.fn(),
@@ -323,7 +340,15 @@ beforeEach(() => {
   state.schema = SPEC_SCHEMA;
   state.requestedUrls = [];
   state.patches = [];
+  state.deferSchema = false;
+  state.pendingSchema = [];
 });
+
+function releaseSchema() {
+  const waiting = state.pendingSchema;
+  state.pendingSchema = [];
+  for (const resolve of waiting) resolve();
+}
 afterEach(cleanup);
 
 describe("PartsList — per-category spec columns", () => {
@@ -476,6 +501,40 @@ describe("PartsList — per-category spec columns", () => {
     ).toBeTruthy();
   });
 
+  it("keeps the toggles disabled until the saved schema is back", async () => {
+    // The PATCH resolving is not the end of the save: until the
+    // `spec-schema` query has refetched, the section is still rendering
+    // the OLD column list. A second toggle in that window would build its
+    // payload from it and silently undo the first one.
+    await renderList();
+    state.deferSchema = true;
+
+    fireEvent.click(specToggle("Tolerance"));
+    await waitFor(() => expect(state.patches).toHaveLength(1));
+    await waitFor(() => expect(specToggle("Package").disabled).toBe(true));
+
+    releaseSchema();
+    await waitFor(() => expect(specToggle("Package").disabled).toBe(false));
+  });
+
+  it("a second toggle builds on the first one's result", async () => {
+    await renderList();
+    state.deferSchema = true;
+
+    fireEvent.click(specToggle("Tolerance"));
+    await waitFor(() => expect(state.patches).toHaveLength(1));
+    releaseSchema();
+    await waitFor(() => expect(specToggle("Package").disabled).toBe(false));
+
+    fireEvent.click(specToggle("Package"));
+    await waitFor(() => expect(state.patches).toHaveLength(2));
+    // All three, not `["resistance", "package"]` — the second payload has
+    // to carry the first toggle's key.
+    expect(state.patches[1].body).toEqual({
+      list_columns: ["resistance", "tolerance", "package"],
+    });
+  });
+
   it("caps the choice at twelve keys and says so", async () => {
     // The server refuses a thirteenth with a 422; disabling the unticked
     // ones turns that into a sentence rather than an error toast.
@@ -561,6 +620,10 @@ describe("PartsList — per-category spec columns", () => {
     fireEvent.click(toggle);
     await waitFor(() => expect(state.patches).toHaveLength(1));
     expect(state.patches[0].body).toEqual({ list_columns: [] });
+
+    // The save re-reads the schema and re-requests the page without the
+    // column, so wait for the table to come back before touching it.
+    await waitFor(() => expect(headers()).not.toContain("Resistance (Ω)"));
 
     // …while a fixed column is still a local hide, with no request.
     fireEvent.click(within(columnsMenu()).getByLabelText("Manufacturer"));

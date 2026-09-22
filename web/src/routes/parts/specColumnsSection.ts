@@ -22,9 +22,28 @@
  * It saves per toggle rather than behind a Save button because there is
  * nothing to review — one checkbox is one column — and a menu that
  * silently discards its state when it closes is worse than a request per
- * click on a setting nobody changes twice a day. `useApiMutation`'s
- * `mutationKey` serialises the clicks, so a fast double-toggle cannot
- * race two PATCHes.
+ * click on a setting nobody changes twice a day.
+ *
+ * ## Why the save is not over when the PATCH resolves
+ *
+ * Each payload is built from the CURRENT `list_columns`, which this
+ * component reads back off the server. So the save is only finished once
+ * `spec-schema` has refetched — until then the section is still
+ * rendering the pre-save list, and a second toggle in that window would
+ * build its payload from it and silently undo the first one.
+ *
+ * `onSuccess` therefore RETURNS the invalidations. TanStack awaits a
+ * promise returned from `onSuccess` before settling the mutation, so
+ * `isPending` — and with it every checkbox's `disabled` — stays true
+ * across the refetch, and the window closes.
+ *
+ * `scope.id` is what actually serialises two mutations in TanStack v5;
+ * `mutationKey` alone does not (it is a cache identity and a filter, not
+ * a queue). It is set here as well, so two PATCHes cannot reach the
+ * server out of order. Note that queueing is not freshness: a second
+ * payload computed from a stale list is wrong whether it is sent first
+ * or second, which is why the awaited invalidation above is the actual
+ * fix and this is the belt to its braces.
  */
 import { useMemo } from "react";
 import { toast } from "sonner";
@@ -131,14 +150,18 @@ export function useSpecColumnsSection({
 
   const save = useApiMutation<unknown, { list_columns: string[] }>({
     mutationKey: ["category", categoryId ?? "none", "list-columns"],
+    scope: { id: `category-list-columns:${categoryId ?? "none"}` },
     mutationFn: payload => api.patch(`/categories/${categoryId}`, payload),
-    onSuccess: () => {
-      // The prefix covers both the categories listing and this category's
-      // `spec-schema` entry; `parts` is a separate prefix because the row
-      // payload itself changes (`?spec_columns=` moves with it).
-      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "categories") });
-      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") });
-    },
+    // Returned, not fired and forgotten — see the module docstring. The
+    // `categories` prefix covers both the categories listing and this
+    // category's `spec-schema` entry; `parts` is a separate prefix
+    // because the row payload itself changes (`?spec_columns=` moves
+    // with it).
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "categories") }),
+        qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "parts") }),
+      ]),
     onError: e => {
       toast.error(e instanceof ApiError ? e.userMessage : "Could not save columns");
     },

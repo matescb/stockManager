@@ -18,11 +18,15 @@
  *    that resolves to `TOut`). We do **not** add a parallel HTTP path;
  *    the wrapper exists purely so callers don't repeat the busy/err
  *    plumbing.
- *  - `mutationKey` is the de-dup boundary. Two callers in the same tab
- *    that share a key serialise their mutations through TanStack's
- *    mutation cache, which means a double-click on the same submit
- *    button cannot fire two requests. Pick a key that names the
- *    *resource + action*, e.g. `["order", orderId, "add-entry"]`.
+ *  - `mutationKey` names the mutation in the cache — it is what
+ *    `useMutationState` and `isMutating` filter on. Pick one that names
+ *    the *resource + action*, e.g. `["order", orderId, "add-entry"]`.
+ *    It does **not** serialise anything: in TanStack v5 two mutations
+ *    sharing a key still run concurrently. What serialises them is
+ *    `scope: { id }`, and what stops a double-click is `disabled={…
+ *    .isPending}` on the control. This comment used to claim otherwise,
+ *    and a caller that believed it shipped a toggle that could race
+ *    itself.
  *  - The wrapper rethrows the original `ApiError`. Callers narrow on
  *    `e instanceof ApiError` for status-specific branches (the 409
  *    MPN-conflict flow in `PartCreate` keeps reading `error.body` for
@@ -68,13 +72,20 @@ export type ApiMutationResult<TOut, TIn> = UseMutationResult<
 
 /**
  * The default mutation hook for forms. Pass at minimum a `mutationFn`
- * that calls one of the `api.*` helpers; pass `mutationKey` whenever a
- * concurrent submit would be a real bug (i.e. always for write paths
- * that create or append a row).
+ * that calls one of the `api.*` helpers. Where a concurrent submit would
+ * be a real bug — any write path that creates or appends a row — gate
+ * the control on `isPending` and add `scope: { id }`; `mutationKey`
+ * alone will not stop it.
+ *
+ * When the save is not finished until some query has refetched, RETURN
+ * the invalidation promise from `onSuccess`. TanStack awaits it before
+ * settling the mutation, so `isPending` covers the refetch too. See
+ * `routes/parts/specColumnsSection.ts` for the case that needed it.
  *
  * Example:
  *   const addEntry = useApiMutation({
  *     mutationKey: ["order", orderId, "add-entry"],
+ *     scope: { id: `order-add-entry:${orderId}` },
  *     mutationFn: (input: AddEntryRequest) =>
  *       api.post(`/orders/${orderId}/entries`, input),
  *     onSuccess: () =>
