@@ -20,6 +20,14 @@ class but to no slug reads as the UNION of its class's slugs:
     class_slugs("capacitor")           -> the four dielectric slugs
     union_spec_keys(those)             -> their keys, deduplicated
 
+**Only `capacitor` and `transistor` roots ever reach the union**, because
+they are the only two classes whose `CLASS_DEFAULT_SLUG` is ``None``.
+Every other class — resistor, inductor, diode, LED, and the seven in
+`spec_schema_tables_more.py` — carries its own default slug, so the walk
+in `spec_columns._schema_for_path` resolves it and `union_spec_keys` is
+never called for it. A bare "Resistors" answers with the `resistor`
+schema exactly as it always has, and a bare "Diodes" with `diode`.
+
 The union is a read-side vocabulary only. Nothing here changes what
 `normalise()` writes, which slug a part resolves to, or which keys
 `missing_mandatory` demands — a key that only some of the class's slugs
@@ -67,10 +75,17 @@ def class_slugs(component_class: str) -> tuple[str, ...]:
     same slug twice and because the default is often one of the
     refinements.
 
-    A slug that IS another class's own default is dropped: the `diode`
-    rules refine to `led`, which is a class in its own right with its own
-    root category, and a bare "Diodes" must not start offering an LED's
-    colour and luminous intensity.
+    A slug that IS another class's own default is dropped, because it
+    belongs to that class and not to this one: the `diode` refinements
+    include `led`, which is its own class with its own root category and
+    its own colour and luminous-intensity keys.
+
+    That rule is unreachable today and kept deliberately. `diode` is the
+    only class whose refinements name a foreign slug, and a bare "Diodes"
+    never gets here at all — `CLASS_DEFAULT_SLUG["diode"]` is `"diode"`,
+    so the slug walk resolves and the union is not consulted. The rule
+    exists so that the function is correct for any class it is asked
+    about, rather than only for the two that reach it.
     """
     refinements = tuple(
         slug

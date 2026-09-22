@@ -129,7 +129,9 @@ Five rules the implementation depends on:
   subtypes that define it, which the section renders as a badge —
   `Dielectric ceramic`, `ESR electrolytic`. A key only some subtypes define
   is never `mandatory`, so nothing on screen claims every capacitor needs
-  an ESR.
+  an ESR. Only *Capacitors* and *Transistors* roots do this — every other
+  class resolves to a slug of its own, so a bare *Resistors* behaves
+  exactly as it always has.
 - **The unit lives in the header, once.** `Resistance (Ω)` over cells
   reading `10 kΩ`, built by `specColumnHeader`. The `accessor` returns the
   display string — that is what search matches and what CSV exports — and

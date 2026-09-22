@@ -240,6 +240,12 @@ payload carries `class` and a per-key `slugs` so the menu can badge
 `category_slug_for` and `missing_mandatory` are untouched, and a named
 subtype still narrows to its own slug.
 
+Only `capacitor` and `transistor` roots reach this. They are the only
+classes whose `CLASS_DEFAULT_SLUG` is `None`; every other class carries
+its own default, so the slug walk resolves and the union is never
+consulted. A bare *Resistors* still answers with the `resistor` schema
+and a bare *Diodes* with `diode`, exactly as before.
+
 ## Follow-ups this ADR does not cover
 
 - ~~**A3**~~ — landed 2026-09-16; see the Decision section above.

@@ -195,9 +195,12 @@ with the UNION of that class's slugs (`spec_class.class_slugs`), ordered:
 
 `slug` stays `null`, `class` names the class, and each key's `slugs` says
 which subtypes define it. `mandatory` survives only where every slug agrees.
-Today this affects `capacitor` and `transistor` — the two classes whose
-`CLASS_DEFAULT_SLUG` is `None`; every other class already resolves to a slug
-of its own and is unchanged.
+**This affects `capacitor` and `transistor` roots and nothing else.** They
+are the only two classes whose `CLASS_DEFAULT_SLUG` is `None`. Every other
+class — resistor, inductor, diode, LED and the seven in
+`spec_schema_tables_more.py` — carries its own default slug, so the walk
+resolves and the union is never consulted: a bare *Resistors* answers with
+the `resistor` schema and a bare *Diodes* with `diode`, exactly as before.
 
 `PATCH /api/categories/{id}` validates `list_columns` / `list_sort` against
 exactly the same vocabulary, so a key this payload offers is a key the PATCH

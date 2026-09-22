@@ -301,6 +301,9 @@ def test_root_sort_by_a_union_key_is_numeric_across_dielectrics(authed_client, d
     big = create_part(authed_client, name="C 100 uF", category_id=electrolytic["id"])
     small = create_part(authed_client, name="C 10 nF", category_id=ceramic["id"])
     mid = create_part(authed_client, name="C 1 uF", category_id=ceramic["id"])
+    # No `capacitance` row at all — a part the union offers the column for
+    # and that has no value under it.
+    create_part(authed_client, name="C unknown", category_id=ceramic["id"])
     _spec(db, ws_id=ws_id, part_id=big, key="capacitance",
           value="100 µF", value_num=Decimal("0.0001"))
     _spec(db, ws_id=ws_id, part_id=small, key="capacitance",
@@ -309,12 +312,18 @@ def test_root_sort_by_a_union_key_is_numeric_across_dielectrics(authed_client, d
           value="1 µF", value_num=Decimal("0.000001"))
     db.commit()
 
-    payload = _list(
-        authed_client,
+    query = (
         f"category_id={root['id']}&paged=true&spec_columns=capacitance"
-        "&sort=spec:capacitance&dir=asc",
+        "&sort=spec:capacitance"
     )
-    assert _names(payload) == ["C 10 nF", "C 1 uF", "C 100 uF"]
+    assert _names(_list(authed_client, f"{query}&dir=asc")) == [
+        "C 10 nF", "C 1 uF", "C 100 uF", "C unknown",
+    ]
+    # NULLS LAST both ways: a part with no value belongs at the end of the
+    # list whichever direction it is read in, not interleaved at one end.
+    assert _names(_list(authed_client, f"{query}&dir=desc")) == [
+        "C 100 uF", "C 1 uF", "C 10 nF", "C unknown",
+    ]
 
 
 def test_schema_marks_unit_bearing_and_count_keys_numeric(authed_client):
