@@ -140,6 +140,19 @@ checkboxes meaning different things (a per-viewer hide and a
 workspace-wide removal). An item whose key matches no column is normal:
 that is an available column nobody has switched on yet.
 
+**A claimed column also ignores the persisted `hidden` map.** Its section
+decides whether it is on the table, and a `hidden` entry for it can only
+be a leftover from when it was in the table's own list — honouring that
+entry would hide the column with no checkbox left to clear it. This is
+not hypothetical: the spec columns shipped in the table's own list first,
+so `dt:parts` entries for them exist in the wild. Pinned in
+`DataTable.columnMenu.dom.test.tsx`.
+
+A caller whose toggle is a request, not local state, should gate the
+items' `disabled` on the mutation and keep it set until whatever the
+table reads back has refetched — return the invalidation promise from
+`onSuccess`. See `lib/mutations.ts`.
+
 See [Parts list — per-category spec columns](parts.md#per-category-spec-columns).
 
 ## ConfirmDialog
