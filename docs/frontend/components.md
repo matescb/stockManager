@@ -21,7 +21,7 @@ page while unmatched rows stay visually muted and inert.
 |---|---|---|
 | Free-text search across all column accessors | `DataTable.tsx:198-209` | `DataTable.dom.test.tsx:149-163` (`initialSearch`) |
 | Click-header sort (toggles asc → desc → asc) | `DataTable.tsx:347-373` | `DataTable.dom.test.tsx:52-82` |
-| Hidden columns (column-toggle dropdown) | `DataTable.tsx:316-330` | — |
+| Hidden columns (column-toggle dropdown) | `DataTable.tsx` `ownColumns` + the `Columns` `<details>` | `DataTable.columnMenu.dom.test.tsx` |
 | Persist hidden columns + density to localStorage | `DataTable.tsx:114-126`, key = `dt:${tableId}` | — |
 | CSV export with formula-injection hardening | `DataTable.tsx:20-41`, `:258-274` | `DataTable.test.tsx:14-78` |
 | Multi-select with select-all-visible header checkbox | `DataTable.tsx:160-167`, `:276-291`, `:411-426` | `DataTable.dom.test.tsx:165-211` |
@@ -34,6 +34,7 @@ page while unmatched rows stay visually muted and inert.
 | Empty / filtered footer counts (`X of Y rows`) | `DataTable.tsx:449-454` | — |
 | Clear-sort affordance | `DataTable.tsx:455-463` | — |
 | `quantityColumn` — unit-bearing render + numeric accessor | `DataTable.tsx:93-160` | `DataTable.quantity.dom.test.tsx` |
+| `extraColumnSections` — caller-owned groups in the Columns menu | `DataTable.tsx` `ColumnMenuSection` | `DataTable.columnMenu.dom.test.tsx` |
 
 ### Quantity columns
 
@@ -116,6 +117,30 @@ text out of an arbitrary `ReactNode` (`DataTable.tsx:233-256`).
 There's an open `FIXME` for typed row-access; the workaround casts to
 `Record<string, unknown>` in three places (issue #57,
 `DataTable.tsx:204`, `:215`, `:244`, `:439`).
+
+
+### Extra Columns-menu sections
+
+`extraColumnSections` appends caller-owned groups below the table's own
+column toggles. It exists because the parts list needs a second kind of
+toggle in the same menu — its per-category spec columns, where a tick is a
+PATCH on the category rather than a per-viewer hide — and the menu is where
+people look for a column, so hiding one of the two behind its own button
+means nobody finds it.
+
+A `ColumnMenuSection` carries a `title`, an optional `note` above its items
+and `footer` below them, an `emptyNote` for when it has none, and the items
+themselves: `label`, `checked`, `disabled`, an optional `badge`, and
+`onToggle`. The table calls `onToggle` and does nothing else — the caller
+owns what a tick means.
+
+An item's `key` is the `Column.key` it governs. A column named by any
+section is dropped from the table's own list, so it never gets two
+checkboxes meaning different things (a per-viewer hide and a
+workspace-wide removal). An item whose key matches no column is normal:
+that is an available column nobody has switched on yet.
+
+See [Parts list — per-category spec columns](parts.md#per-category-spec-columns).
 
 ## ConfirmDialog
 

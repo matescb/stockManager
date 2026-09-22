@@ -220,6 +220,26 @@ Nothing about the write side changed. `spec_columns.py` reads
     the ownership rule working as designed — and exactly why a backfill that
     leaves one behind gives a normalised value away.
 
+## A bare root reads as its class's union
+
+`CLASS_DEFAULT_SLUG` is `None` for `capacitor` and `transistor`, which is
+the right answer for WRITING a part's specs and the wrong one for READING
+a category. The parts filed under a bare *Capacitors* were written by
+whichever slug their own import resolved, so the branch genuinely carries
+`capacitance`, `dielectric` and `esr` rows — and the spec-columns menu,
+built from `spec_keys_for(None)`, offered none of them: on prod, selecting
+the root showed no spec columns at all. So a category that resolves to a
+class but to no slug now reads as the UNION of that class's slugs
+(`spec_class.py`): common keys first, then the keys every slug in the class
+defines, then the rest in first-seen schema order, with `mandatory`
+surviving only where every slug agrees — `esr` is mandatory for an
+electrolytic and optional for a tantalum, so it is optional for the class,
+and no ceramic starts failing the completeness badge. The `spec-schema`
+payload carries `class` and a per-key `slugs` so the menu can badge
+`Dielectric ceramic`. This is read-side only: `normalise()`,
+`category_slug_for` and `missing_mandatory` are untouched, and a named
+subtype still narrows to its own slug.
+
 ## Follow-ups this ADR does not cover
 
 - ~~**A3**~~ — landed 2026-09-16; see the Decision section above.
@@ -437,6 +457,7 @@ Neither job re-keys existing `custom_fields` rows; that is still A5.
 ## References
 
 - Source: `backend/app/domain/parts/spec_schema.py`,
+  `backend/app/domain/parts/spec_class.py`,
   `backend/app/domain/parts/spec_schema_tables.py`,
   `backend/app/domain/parts/spec_schema_tables_more.py`,
   `backend/app/domain/parts/spec_key.py`,
@@ -452,6 +473,7 @@ Neither job re-keys existing `custom_fields` rows; that is still A5.
   `backend/app/domain/parts/services/spec_normalize_report.py`
 - Migration: `backend/alembic/versions/0081_custom_field_provider_value_num.py`
 - Tests: `backend/tests/test_spec_schema.py`,
+  `backend/tests/test_spec_columns.py`,
   `backend/tests/test_spec_values.py`,
   `backend/tests/test_spec_extract.py`,
   `backend/tests/test_custom_field_provider_value_num.py`,

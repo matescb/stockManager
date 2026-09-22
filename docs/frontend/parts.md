@@ -93,20 +93,26 @@ Source: `web/src/routes/parts/preview/`,
 
 ### Per-category spec columns
 
-With a category selected in the rail, a **Spec columns** control appears
-above the table listing that category's canonical spec keys. Ticking one adds
-a column; the choice is saved **on the category** and everyone in the
+With a category selected, the table's **Columns** menu grows a **Specs**
+section listing that category's canonical spec keys. Ticking one adds a
+column; the choice is saved **on the category** and everyone in the
 workspace sees it.
 
-That is the whole point of the feature, and it is why this does not reuse
-`DataTable`'s Columns menu: that menu persists to `localStorage`
-(`dataTableStorageKey`), so it is per viewer, per device, and invisible to
-anybody else. "Resistors show resistance, tolerance and power" is a fact
-about resistors. The two controls coexist — the picker decides which spec
-columns *exist* on the table, the Columns menu decides which of them *this*
-viewer is currently looking at, and hiding one there writes no PATCH.
+It used to be a separate "Spec columns" button in the category bar, and
+nobody found it — a column is a column, and the place people look for one
+is the Columns menu. So both kinds of toggle are in that one menu, with a
+rule separating them: the table's own list is per-viewer visibility
+persisted to `localStorage` (`dataTableStorageKey`), while a tick in the
+Specs section is a PATCH on the category. "Resistors show resistance,
+tolerance and power" is a fact about resistors, not about a laptop.
 
-Four rules the implementation depends on:
+`DataTable` takes the section through `extraColumnSections`
+(`ColumnMenuSection`), so the generic component was extended rather than
+forked. An item's `key` is the `Column.key` it governs, which is how the
+section claims its own columns out of the table's built-in list — one
+column never gets two checkboxes that mean different things.
+
+Five rules the implementation depends on:
 
 - **The key vocabulary comes from the server.** Which specs a category has
   is application data in `backend/app/domain/parts/spec_schema_tables.py`,
@@ -114,8 +120,16 @@ Four rules the implementation depends on:
   `useCategorySpecSchema` (`web/src/routes/parts/useCategorySpecSchema.ts`)
   fetches `GET /api/categories/{id}/spec-schema`, which also answers the
   stored choice resolved up the tree and which ancestor it came from. Keyed
-  under `["categories", id, "spec-schema"]`, so the picker's PATCH
+  under `["categories", id, "spec-schema"]`, so a toggle's PATCH
   invalidates it by the `["categories"]` prefix like everything else.
+- **A bare root answers with its class's union.** `Capacitors` resolves to
+  no schema slug (a capacitor with no dielectric named has no key set of
+  its own), so the server answers with `slug: null`, `class: "capacitor"`
+  and the union of every dielectric's keys. Each key carries `slugs`, the
+  subtypes that define it, which the section renders as a badge —
+  `Dielectric ceramic`, `ESR electrolytic`. A key only some subtypes define
+  is never `mandatory`, so nothing on screen claims every capacitor needs
+  an ESR.
 - **The unit lives in the header, once.** `Resistance (Ω)` over cells
   reading `10 kΩ`, built by `specColumnHeader`. The `accessor` returns the
   display string — that is what search matches and what CSV exports — and
@@ -139,8 +153,9 @@ Four rules the implementation depends on:
   not the URL, or a saved default would look like no sort at all.
   **Save as default sort** appears only when the two differ.
 
-Source: `web/src/routes/parts/SpecColumnsPicker.tsx`,
+Source: `web/src/routes/parts/specColumnsSection.ts`,
 `web/src/routes/parts/__dom__/PartsList.specColumns.dom.test.tsx`,
+`web/src/components/__dom__/DataTable.columnMenu.dom.test.tsx`,
 [Categories API](../api/categories.md#parts-list-spec-columns).
 
 ### Collapsing the category rail

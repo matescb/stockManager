@@ -42,7 +42,7 @@ import { providerLabel } from "@/lib/providers";
 import type { CategoryListSort, CategorySpecKey, Part, PartCategory } from "@/lib/schemas";
 import { isSafeHttpOrSameOriginUrl } from "@/lib/url";
 import { type Column, quantityColumn } from "@/components/DataTable";
-import { specColumnHeader } from "./SpecColumnsPicker";
+import { specColumnHeader, specColumnKey } from "./specColumnsSection";
 
 /** Booleans read better as words than as `true` / `false` in a CSV. */
 function yesNo(value: boolean | null | undefined): string {
@@ -143,8 +143,9 @@ function specColumn(
   const header = specColumnHeader(spec);
   return {
     // Namespaced so a spec key can never collide with a part field's
-    // column key — they share the `DataTable` hidden-column map.
-    key: `spec:${spec.key}`,
+    // column key — they share the `DataTable` hidden-column map, and the
+    // Columns menu's Specs section claims its columns by this key.
+    key: specColumnKey(spec.key),
     header,
     headerLabel: header,
     accessor: r => r.specs?.[spec.key]?.value ?? "",

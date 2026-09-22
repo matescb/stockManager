@@ -103,11 +103,20 @@ In **Settings**, enter a number in **Low-stock report quantity**. Parts that dro
 
 ## Show specs as columns
 
-Pick a category on the Parts list and a **Spec columns** button appears:
-tick a spec — resistance, tolerance, package — and it becomes a column you
-can sort by. The choice is saved on the category, so everyone in your
-workspace sees the same columns next time they open it, and a subcategory
-picks up whatever its parent uses unless you give it its own.
+Pick a category on the Parts list, open the table's **Columns** menu, and
+you'll find a **Specs** section under the usual column list: tick a spec —
+resistance, tolerance, package — and it becomes a column you can sort by.
+The choice is saved on the category, so everyone in your workspace sees the
+same columns next time they open it, and a subcategory picks up whatever its
+parent uses unless you give it its own. The columns above the Specs section
+are the ordinary part fields, and hiding one of those only affects your own
+browser.
+
+Picking a top-level category like **Capacitors** offers every kind of
+capacitor's specs at once, because the parts filed under it are a mix.
+Specs that only apply to some of them are marked — `Dielectric ceramic`,
+`ESR electrolytic` — so you can tell what a blank cell means. Pick the
+subcategory instead and you get just that kind's specs.
 
 Clicking a spec column heading sorts the whole list by that spec, not just
 the rows on screen, and by value rather than by text — so 100 Ω comes

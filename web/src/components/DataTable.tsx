@@ -179,6 +179,46 @@ export function quantityColumn<T>({
   };
 }
 
+/**
+ * One toggle in an extra section of the Columns menu.
+ *
+ * `key` is the `Column.key` this item governs, so a section that owns a
+ * column suppresses it from the table's own list rather than listing it
+ * twice. A key with no matching column is legal and normal — that is an
+ * available column the viewer has not switched on.
+ */
+export type ColumnMenuItem = {
+  key: string;
+  label: string;
+  checked: boolean;
+  disabled?: boolean;
+  /** A short word after the label, e.g. "required". */
+  badge?: ReactNode;
+  onToggle: () => void;
+};
+
+/**
+ * An extra group of toggles in the Columns menu, owned by the caller.
+ *
+ * The table's own toggles are per-viewer visibility persisted to
+ * `localStorage`; a section here can mean something else entirely. The
+ * parts list uses one for its per-category spec columns, where a toggle
+ * is a PATCH on the category and the choice is read by the whole
+ * workspace — the point being that both live where everyone looks for a
+ * column, instead of one of them hiding behind its own button.
+ */
+export type ColumnMenuSection = {
+  id: string;
+  title: string;
+  /** Above the items — e.g. "Inherited from Passives". */
+  note?: ReactNode;
+  /** Below the items — e.g. a cap message. */
+  footer?: ReactNode;
+  items: ColumnMenuItem[];
+  /** Shown instead of the items when there are none. */
+  emptyNote?: ReactNode;
+};
+
 type Density = "comfortable" | "compact";
 
 const VIRTUALIZATION_THRESHOLD = 200;
@@ -219,6 +259,11 @@ type Props<T> = {
   selectable?: boolean;
   /** Rendered right of the search box when at least one row is selected. */
   selectionAccessory?: (selectedIds: string[], clear: () => void) => ReactNode;
+  /**
+   * Extra groups appended to the Columns menu, below the table's own
+   * toggles. Each one owns the column keys its items name.
+   */
+  extraColumnSections?: ColumnMenuSection[];
 };
 
 type Persisted = { hidden?: Record<string, boolean>; density?: Density };
@@ -290,6 +335,7 @@ export function DataTable<T>({
   tableId,
   selectable = false,
   selectionAccessory,
+  extraColumnSections,
 }: Props<T>) {
   const auth = useOptionalAuth();
   const workspaceId = auth ? auth.workspaceId : storedWorkspaceId();
@@ -391,6 +437,17 @@ export function DataTable<T>({
   }, [filtered, sort, columns]);
 
   const visibleCols = useMemo(() => columns.filter(c => !hidden[c.key]), [columns, hidden]);
+  // The Columns menu's own list. A column an extra section already names
+  // is that section's to toggle — listing it twice would give the same
+  // column two checkboxes that mean different things (per-viewer hide vs
+  // whatever the section does), which is how a user ends up with a column
+  // they cannot make reappear.
+  const ownColumns = useMemo(() => {
+    const claimed = new Set(
+      (extraColumnSections ?? []).flatMap(s => s.items.map(i => i.key)),
+    );
+    return claimed.size === 0 ? columns : columns.filter(c => !claimed.has(c.key));
+  }, [columns, extraColumnSections]);
   const sample = rows[0];
 
   const padCls = density === "compact" ? "py-1" : "py-2";
@@ -597,8 +654,8 @@ export function DataTable<T>({
           {/* Capped + scrollable: the parts table alone declares eighteen
               columns, and an uncapped menu ran off the bottom of the
               viewport with no way to reach the last few. */}
-          <div className="absolute right-0 top-full mt-1 z-20 card p-2 min-w-[200px] max-h-[60vh] overflow-y-auto">
-            {columns.map(c => (
+          <div className="absolute right-0 top-full mt-1 z-20 card p-2 min-w-[220px] max-h-[60vh] overflow-y-auto">
+            {ownColumns.map(c => (
               <label key={c.key} className="flex items-center gap-2 px-2 py-1 text-sm cursor-pointer">
                 <input
                   type="checkbox"
@@ -607,6 +664,43 @@ export function DataTable<T>({
                 />
                 {columnHeaderLabel(c)}
               </label>
+            ))}
+            {(extraColumnSections ?? []).map(section => (
+              <div
+                key={section.id}
+                className="mt-2 pt-2 border-t border-border"
+              >
+                <p className="px-2 pb-1 section-title">{section.title}</p>
+                {section.note && (
+                  <p className="px-2 pb-1 text-xs text-muted">{section.note}</p>
+                )}
+                {section.items.length === 0
+                  ? section.emptyNote && (
+                      <p className="px-2 py-1 text-sm text-muted">
+                        {section.emptyNote}
+                      </p>
+                    )
+                  : section.items.map(item => (
+                      <label
+                        key={item.key}
+                        className="flex items-center gap-2 px-2 py-1 text-sm cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={item.checked}
+                          disabled={item.disabled}
+                          onChange={item.onToggle}
+                        />
+                        <span>{item.label}</span>
+                        {item.badge && (
+                          <span className="text-xs text-muted">{item.badge}</span>
+                        )}
+                      </label>
+                    ))}
+                {section.footer && (
+                  <p className="px-2 py-1 text-xs text-muted">{section.footer}</p>
+                )}
+              </div>
             ))}
           </div>
         </details>

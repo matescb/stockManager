@@ -200,6 +200,11 @@ export const CategorySpecKeySchema = z.object({
   // True for the keys every category carries, so the picker can group
   // them apart from the category's own.
   common: z.boolean(),
+  // Which schema slugs define this key. One entry for a category that
+  // resolved to a single slug; several for a root resolved as a class
+  // union (`esr` is electrolytic + tantalum); none when the category
+  // resolved to no slug and no class, i.e. the common keys only.
+  slugs: z.array(z.string()),
 });
 export type CategorySpecKey = z.infer<typeof CategorySpecKeySchema>;
 
@@ -208,13 +213,16 @@ export type CategorySpecKey = z.infer<typeof CategorySpecKeySchema>;
  * list CAN show and what it IS configured to show.
  *
  * `slug` is null for a category the spec schema does not recognise, which
- * is not an error: it means the common keys only. `list_columns` /
- * `list_sort` are resolved up the tree, and `inherited_from` /
- * `sort_inherited_from` name the ancestor each came from (null when this
- * category owns it, or when nobody has set one).
+ * is not an error. With `class` set it means the union of that class's
+ * slugs — a bare "Capacitors" offers every dielectric's keys, because the
+ * parts under it carry them; without one it means the common keys only.
+ * `list_columns` / `list_sort` are resolved up the tree, and
+ * `inherited_from` / `sort_inherited_from` name the ancestor each came
+ * from (null when this category owns it, or when nobody has set one).
  */
 export const CategorySpecSchemaSchema = z.object({
   slug: nullableString,
+  class: nullableString,
   keys: z.array(CategorySpecKeySchema),
   list_columns: z.array(z.string()).nullable(),
   list_sort: CategoryListSortSchema.nullable(),
