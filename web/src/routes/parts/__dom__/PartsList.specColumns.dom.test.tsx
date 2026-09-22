@@ -2,12 +2,16 @@
 /**
  * Per-category spec columns on `/parts`.
  *
- * Five things are pinned, all of them things a reader of the component
+ * Six things are pinned, all of them things a reader of the component
  * cannot check by eye:
  *
- *  - the picker is driven by `GET /categories/{id}/spec-schema` and every
- *    toggle is a PATCH on the CATEGORY, not browser state — the whole
- *    point of the feature is that the choice is shared;
+ *  - the spec keys live in the table's own Columns menu, in a "Specs"
+ *    section, because that is where everyone looks for a column — a
+ *    picker of its own in the category bar went unnoticed on prod;
+ *  - that section is driven by `GET /categories/{id}/spec-schema` and
+ *    every toggle is a PATCH on the CATEGORY, not browser state — the
+ *    whole point of the feature is that the choice is shared, which is
+ *    also why a spec key is NOT in the table's per-viewer list;
  *  - a spec column's header carries the unit and its cell carries the
  *    display value, so `Resistance (Ω)` / `10 kΩ` and not `10 kΩ Ω`;
  *  - a header click sorts on the SERVER (it reaches the request URL as
@@ -80,15 +84,49 @@ const CATEGORIES = [
   },
 ];
 
+function key(
+  k: string,
+  label: string,
+  unit: string | null,
+  mandatory: boolean,
+  common: boolean,
+  slugs: string[] = ["resistor"],
+) {
+  return { key: k, label, unit, mandatory, numeric: unit !== null, common, slugs };
+}
+
 const SPEC_SCHEMA = {
   slug: "resistor",
+  class: "resistor",
   keys: [
-    { key: "resistance", label: "Resistance", unit: "Ω", mandatory: true, numeric: true, common: false },
-    { key: "tolerance", label: "Tolerance", unit: "%", mandatory: true, numeric: true, common: false },
-    { key: "package", label: "Package", unit: null, mandatory: true, numeric: false, common: true },
-    { key: "mounting", label: "Mounting", unit: null, mandatory: false, numeric: false, common: true },
+    key("resistance", "Resistance", "Ω", true, false),
+    key("tolerance", "Tolerance", "%", true, false),
+    key("package", "Package", null, true, true),
+    key("mounting", "Mounting", null, false, true),
   ],
   list_columns: ["resistance"],
+  list_sort: null,
+  inherited_from: null,
+  sort_inherited_from: null,
+};
+
+/** A bare "Capacitors" root: no slug, a class, and the union of its keys. */
+const UNION_SCHEMA = {
+  slug: null,
+  class: "capacitor",
+  keys: [
+    key("package", "Package", null, true, true, [
+      "capacitor_ceramic",
+      "capacitor_electrolytic",
+    ]),
+    key("capacitance", "Capacitance", "F", true, false, [
+      "capacitor_ceramic",
+      "capacitor_electrolytic",
+    ]),
+    key("dielectric", "Dielectric", null, false, false, ["capacitor_ceramic"]),
+    key("esr", "ESR", "Ω", false, false, ["capacitor_electrolytic"]),
+  ],
+  list_columns: [],
   list_sort: null,
   inherited_from: null,
   sort_inherited_from: null,
@@ -134,6 +172,11 @@ const state = vi.hoisted(() => ({
   schema: null as unknown,
   requestedUrls: [] as string[],
   patches: [] as { url: string; body: unknown }[],
+  // With this set, a `spec-schema` GET hangs until `releaseSchema()` is
+  // called. That gap — PATCH resolved, schema not yet back — is where a
+  // second toggle used to build its payload from a stale column list.
+  deferSchema: false,
+  pendingSchema: [] as (() => void)[],
 }));
 
 vi.mock("@/lib/api", () => {
@@ -158,13 +201,25 @@ vi.mock("@/lib/api", () => {
       get: vi.fn(() => Promise.resolve([])),
       parsed: {
         get: vi.fn((url: string) => {
-          if (url.includes("/spec-schema")) return Promise.resolve(state.schema);
+          if (url.includes("/spec-schema")) {
+            if (!state.deferSchema) return Promise.resolve(state.schema);
+            return new Promise(resolve => {
+              state.pendingSchema.push(() => resolve(state.schema));
+            });
+          }
           return Promise.resolve(url.startsWith("/categories") ? CATEGORIES : []);
         }),
       },
       post: vi.fn(),
       patch: vi.fn((url: string, body: unknown) => {
         state.patches.push({ url, body });
+        // The server stores what it was sent, so the next `spec-schema`
+        // read answers with it. Without this the refetch would hand back
+        // the original list and the race would be invisible.
+        const columns = (body as { list_columns?: string[] }).list_columns;
+        if (columns) {
+          state.schema = { ...(state.schema as object), list_columns: columns };
+        }
         return Promise.resolve(null);
       }),
       delete: vi.fn(),
@@ -243,10 +298,36 @@ function cellUnder(startsWith: string): HTMLElement {
   return row.querySelectorAll("td")[index] as HTMLElement;
 }
 
-function picker(): HTMLElement {
-  const menu = screen.getByText("Spec columns").closest("details");
-  expect(menu, "the Spec columns menu is missing").not.toBeNull();
+/** The table's Columns menu — which is where the spec toggles now live. */
+function columnsMenu(): HTMLElement {
+  const menu = screen.getByText("Columns").closest("details");
+  expect(menu, "the Columns menu is missing").not.toBeNull();
   return menu as HTMLElement;
+}
+
+/** The "Specs" section inside it. */
+function specsSection(): HTMLElement {
+  const heading = within(columnsMenu()).queryByText("Specs");
+  expect(heading, "the Columns menu has no Specs section").not.toBeNull();
+  return (heading as HTMLElement).parentElement as HTMLElement;
+}
+
+/** The labels of the Specs section's checkboxes, badges stripped. */
+function specLabels(): string[] {
+  return Array.from(within(specsSection()).getAllByRole("checkbox")).map(box =>
+    (box.closest("label")?.textContent ?? "").trim(),
+  );
+}
+
+/** One spec toggle, found by the label it starts with. */
+function specToggle(startsWith: string): HTMLInputElement {
+  const box = Array.from(
+    within(specsSection()).getAllByRole("checkbox"),
+  ).find(input =>
+    (input.closest("label")?.textContent ?? "").trim().startsWith(startsWith),
+  );
+  expect(box, `no spec toggle starting with "${startsWith}"`).toBeTruthy();
+  return box as HTMLInputElement;
 }
 
 function lastPartsUrl(): string {
@@ -259,7 +340,15 @@ beforeEach(() => {
   state.schema = SPEC_SCHEMA;
   state.requestedUrls = [];
   state.patches = [];
+  state.deferSchema = false;
+  state.pendingSchema = [];
 });
+
+function releaseSchema() {
+  const waiting = state.pendingSchema;
+  state.pendingSchema = [];
+  for (const resolve of waiting) resolve();
+}
 afterEach(cleanup);
 
 describe("PartsList — per-category spec columns", () => {
@@ -286,19 +375,17 @@ describe("PartsList — per-category spec columns", () => {
       </QueryClientProvider>,
     );
     await screen.findByText("Resistor 10k");
-    expect(screen.queryByText("Spec columns")).toBeNull();
+    // The Columns menu is still there; its Specs section is not.
+    expect(within(columnsMenu()).queryByText("Specs")).toBeNull();
     expect(lastPartsUrl()).not.toContain("spec_columns");
   });
 
   it("lists the schema's keys mandatory-first, with units", async () => {
     await renderList();
-    const labels = Array.from(
-      within(picker()).getAllByRole("checkbox"),
-    ).map(box => (box.closest("label")?.textContent ?? "").trim());
     // Mandatory keys first, each group in schema order — `Mounting` is the
     // only optional one and lands last even though the schema lists it
     // among the common keys.
-    expect(labels.map(l => l.replace("required", "").trim())).toEqual([
+    expect(specLabels().map(l => l.replace("required", "").trim())).toEqual([
       "Resistance (Ω)",
       "Tolerance (%)",
       "Package",
@@ -306,9 +393,36 @@ describe("PartsList — per-category spec columns", () => {
     ]);
   });
 
+  it("keeps the spec keys out of the table's own per-viewer list", async () => {
+    // Two checkboxes for one column would mean two different things — a
+    // per-browser hide and a workspace-wide removal — and a user who used
+    // the wrong one could not get the column back.
+    await renderList();
+    const all = within(columnsMenu())
+      .getAllByRole("checkbox")
+      .map(box => (box.closest("label")?.textContent ?? "").trim());
+    expect(all.filter(l => l.startsWith("Resistance (Ω)"))).toHaveLength(1);
+  });
+
+  it("offers a bare root's whole class union, badged by subtype", async () => {
+    // The bug this fixes: selecting the root "Capacitors" showed no spec
+    // columns at all, although the parts under it carry `capacitance`.
+    state.schema = UNION_SCHEMA;
+    await renderList();
+
+    expect(specLabels().map(l => l.replace("required", "").trim())).toEqual([
+      "Package",
+      "Capacitance (F)",
+      // The subtype badge: `dielectric` is not an electrolytic's key and
+      // `esr` is not a ceramic's, and the union has to say so.
+      "Dielectricceramic",
+      "ESR (Ω)electrolytic",
+    ]);
+  });
+
   it("saves a toggled column on the category, appended to the stored order", async () => {
     await renderList();
-    fireEvent.click(within(picker()).getByLabelText(/^Tolerance/));
+    fireEvent.click(specToggle("Tolerance"));
 
     await waitFor(() => expect(state.patches).toHaveLength(1));
     expect(state.patches[0].url).toBe(`/categories/${CATEGORY_ID}`);
@@ -321,7 +435,7 @@ describe("PartsList — per-category spec columns", () => {
 
   it("unticking a column removes just that key", async () => {
     await renderList();
-    fireEvent.click(within(picker()).getByLabelText(/^Resistance/));
+    fireEvent.click(specToggle("Resistance"));
     await waitFor(() => expect(state.patches).toHaveLength(1));
     expect(state.patches[0].body).toEqual({ list_columns: [] });
   });
@@ -372,7 +486,7 @@ describe("PartsList — per-category spec columns", () => {
     expect(lastPartsUrl()).not.toContain("dielectric");
     expect(headers()).not.toContain("Dielectric");
 
-    fireEvent.click(within(picker()).getByLabelText(/^Tolerance/));
+    fireEvent.click(specToggle("Tolerance"));
     await waitFor(() => expect(state.patches).toHaveLength(1));
     expect(state.patches[0].body).toEqual({
       list_columns: ["resistance", "tolerance"],
@@ -382,7 +496,65 @@ describe("PartsList — per-category spec columns", () => {
   it("says which ancestor the column choice came from", async () => {
     state.schema = { ...SPEC_SCHEMA, inherited_from: PARENT_ID };
     await renderList();
-    expect(within(picker()).getByText(/Inherited from Passives/)).toBeTruthy();
+    expect(
+      within(specsSection()).getByText(/Inherited from Passives/),
+    ).toBeTruthy();
+  });
+
+  it("keeps the toggles disabled until the saved schema is back", async () => {
+    // The PATCH resolving is not the end of the save: until the
+    // `spec-schema` query has refetched, the section is still rendering
+    // the OLD column list. A second toggle in that window would build its
+    // payload from it and silently undo the first one.
+    await renderList();
+    state.deferSchema = true;
+
+    fireEvent.click(specToggle("Tolerance"));
+    await waitFor(() => expect(state.patches).toHaveLength(1));
+    await waitFor(() => expect(specToggle("Package").disabled).toBe(true));
+
+    releaseSchema();
+    await waitFor(() => expect(specToggle("Package").disabled).toBe(false));
+  });
+
+  it("a second toggle builds on the first one's result", async () => {
+    await renderList();
+    state.deferSchema = true;
+
+    fireEvent.click(specToggle("Tolerance"));
+    await waitFor(() => expect(state.patches).toHaveLength(1));
+    releaseSchema();
+    await waitFor(() => expect(specToggle("Package").disabled).toBe(false));
+
+    fireEvent.click(specToggle("Package"));
+    await waitFor(() => expect(state.patches).toHaveLength(2));
+    // All three, not `["resistance", "package"]` — the second payload has
+    // to carry the first toggle's key.
+    expect(state.patches[1].body).toEqual({
+      list_columns: ["resistance", "tolerance", "package"],
+    });
+  });
+
+  it("caps the choice at twelve keys and says so", async () => {
+    // The server refuses a thirteenth with a 422; disabling the unticked
+    // ones turns that into a sentence rather than an error toast.
+    const many = Array.from({ length: 12 }, (_, i) => `k${i}`);
+    state.schema = {
+      ...SPEC_SCHEMA,
+      keys: [
+        ...SPEC_SCHEMA.keys,
+        ...many.map(k => key(k, k.toUpperCase(), null, false, false)),
+      ],
+      list_columns: many,
+    };
+    await renderList();
+
+    expect(
+      within(specsSection()).getByText(/At most 12 spec columns/),
+    ).toBeTruthy();
+    // An unticked key cannot be added; a ticked one can still be removed.
+    expect(specToggle("Resistance").disabled).toBe(true);
+    expect(specToggle("K0").disabled).toBe(false);
   });
 
   it("a spec header click sorts on the server and rides the URL", async () => {
@@ -437,16 +609,25 @@ describe("PartsList — per-category spec columns", () => {
     await waitFor(() => expect(currentSearch).not.toContain("sort="));
   });
 
-  it("exports and hides spec columns like any other column", async () => {
+  it("unticking a spec column in the menu removes it for everyone", async () => {
+    // The fixed part columns keep their per-viewer `localStorage`
+    // visibility; a spec column is the category's choice, so the same
+    // menu does a different thing on that half of it — deliberately.
     await renderList();
-    const columnsMenu = screen.getByText("Columns").closest("details") as HTMLElement;
-    const toggle = within(columnsMenu).getByLabelText("Resistance (Ω)");
-    expect((toggle as HTMLInputElement).checked).toBe(true);
+    const toggle = specToggle("Resistance");
+    expect(toggle.checked).toBe(true);
 
     fireEvent.click(toggle);
+    await waitFor(() => expect(state.patches).toHaveLength(1));
+    expect(state.patches[0].body).toEqual({ list_columns: [] });
+
+    // The save re-reads the schema and re-requests the page without the
+    // column, so wait for the table to come back before touching it.
     await waitFor(() => expect(headers()).not.toContain("Resistance (Ω)"));
-    // No PATCH: the Columns menu is per-viewer visibility, not the
-    // workspace-wide column choice.
-    expect(state.patches).toHaveLength(0);
+
+    // …while a fixed column is still a local hide, with no request.
+    fireEvent.click(within(columnsMenu()).getByLabelText("Manufacturer"));
+    await waitFor(() => expect(headers()).not.toContain("Manufacturer"));
+    expect(state.patches).toHaveLength(1);
   });
 });

@@ -32,13 +32,13 @@ from typing import Iterable, Sequence
 from app.domain.parts.provider_fields import PROVIDER_RESERVED_CUSTOM_FIELD_KEYS
 from app.domain.parts.providers.mouser import parse_description_specs
 from app.domain.parts.spec_category_map import category_for_provider
+from app.domain.parts.spec_class import component_class_for
 from app.domain.parts.spec_extract import extract_for
 from app.domain.parts.spec_schema_tables import (
     CANONICAL_SPECS,
     CATALOG_KEY_PATTERNS,
     CATALOG_LITERAL_KEYS,
     CLASS_DEFAULT_SLUG,
-    CLASS_RULES,
     COMMON_SPECS,
     DROP_KEY_PATTERNS,
     JUNK_VALUES,
@@ -70,6 +70,7 @@ __all__ = [
     "canonical_value",
     "category_for_provider",
     "category_slug_for",
+    "component_class_for",
     "is_catalog_key",
     "is_junk_key",
     "is_junk_value",
@@ -232,16 +233,15 @@ def category_slug_for(category_name_path: str | None) -> str | None:
 
     Word-based rather than segment-based, so both `"Diodes / Zener"` and
     a flat `"Zener diodes"` land on the same slug.
+
+    The first pass is `spec_class.component_class_for`, which the columns
+    menu also calls on its own to union a bare root's class (ADR-0034).
     """
-    if not category_name_path:
-        return None
-    flattened = PATH_SEPARATOR_RE.sub(" ", category_name_path).lower()
-    words = set(WORD_RE.findall(flattened))
-    component_class = next(
-        (name for triggers, name in CLASS_RULES if words & triggers), None
-    )
+    component_class = component_class_for(category_name_path)
     if component_class is None:
         return None
+    flattened = PATH_SEPARATOR_RE.sub(" ", category_name_path or "").lower()
+    words = set(WORD_RE.findall(flattened))
     for triggers, slug in REFINEMENT_RULES.get(component_class, ()):
         if words & triggers:
             return slug

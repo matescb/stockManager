@@ -15,6 +15,24 @@ the canonical record.
 
 ## Unreleased
 
+- **Spec columns moved into the parts table's Columns menu, and a bare
+  root category now offers its whole class.** Two halves of one bug: the
+  per-category spec keys had a picker of their own in the category bar
+  that nobody found, and selecting the root *Capacitors* offered no spec
+  keys at all because that category resolves to no schema slug. The
+  toggles now live in a **Specs** section of `DataTable`'s Columns menu
+  (a new `extraColumnSections` prop, so the component was extended
+  rather than forked) — the part fields above it keep their per-browser
+  visibility, a spec tick is still a PATCH on the category that everyone
+  sees. And a root that names a component class but no subtype answers
+  with the union of that class's slugs: `capacitance`, `dielectric`,
+  `esr` and the rest, each badged with the subtypes that define it, each
+  mandatory only where every subtype agrees. `GET
+  /api/categories/{id}/spec-schema` gained `class` and a per-key
+  `slugs`; `PATCH list_columns` accepts any union key; sorting the root
+  by `capacitance` orders ceramics and electrolytics together, by
+  number. Read-side only — nothing changes about which slug a part
+  resolves to on import. ADR-0034.
 - **`provider-refresh --include-unlinked` links the parts nobody ever
   asked a vendor about.** The sweep's scope was parts a provider already
   knows; the flag widens it to active parts with no `part_provider_links`

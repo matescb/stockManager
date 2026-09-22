@@ -21,6 +21,7 @@ const partId = "11111111-1111-4111-8111-111111111111";
 
 const SCHEMA_PAYLOAD = {
   slug: "resistor",
+  class: "resistor",
   keys: [
     {
       key: "resistance",
@@ -29,6 +30,7 @@ const SCHEMA_PAYLOAD = {
       mandatory: true,
       numeric: true,
       common: false,
+      slugs: ["resistor"],
     },
     {
       key: "package",
@@ -37,6 +39,7 @@ const SCHEMA_PAYLOAD = {
       mandatory: true,
       numeric: false,
       common: true,
+      slugs: ["resistor"],
     },
   ],
   list_columns: ["resistance", "package"],
@@ -71,18 +74,54 @@ describe("CategorySpecSchemaSchema", () => {
   });
 
   it("accepts a category the spec schema does not recognise", () => {
-    // `slug: null` is not an error — it means the common keys only, and a
-    // frontend that treated it as one would break every uncategorised or
-    // oddly-named branch of the tree.
+    // `slug: null` is not an error — with no `class` either it means the
+    // common keys only, and a frontend that treated it as one would break
+    // every uncategorised or oddly-named branch of the tree.
     const parsed = CategorySpecSchemaSchema.parse({
       ...SCHEMA_PAYLOAD,
       slug: null,
+      class: null,
+      keys: SCHEMA_PAYLOAD.keys.map(k => ({ ...k, slugs: [] })),
       list_columns: null,
       list_sort: null,
       inherited_from: null,
     });
     expect(parsed.slug).toBeNull();
+    expect(parsed.class).toBeNull();
     expect(parsed.list_columns).toBeNull();
+  });
+
+  it("accepts a root resolved as a class union", () => {
+    // `slug` null with a `class` set: every key names the slugs that
+    // define it, and a key only some of them define is not mandatory.
+    const parsed = CategorySpecSchemaSchema.parse({
+      ...SCHEMA_PAYLOAD,
+      slug: null,
+      class: "capacitor",
+      keys: [
+        {
+          key: "capacitance",
+          label: "Capacitance",
+          unit: "F",
+          mandatory: true,
+          numeric: true,
+          common: false,
+          slugs: ["capacitor_ceramic", "capacitor_electrolytic"],
+        },
+        {
+          key: "esr",
+          label: "ESR",
+          unit: "Ω",
+          mandatory: false,
+          numeric: true,
+          common: false,
+          slugs: ["capacitor_electrolytic"],
+        },
+      ],
+    });
+    expect(parsed.slug).toBeNull();
+    expect(parsed.class).toBe("capacitor");
+    expect(parsed.keys[1].slugs).toEqual(["capacitor_electrolytic"]);
   });
 
   it("keeps the empty column list distinct from null", () => {

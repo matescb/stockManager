@@ -145,22 +145,185 @@ def test_schema_walks_ancestors_when_the_leaf_says_nothing(authed_client):
     assert _schema(authed_client, deep["id"])["slug"] == "resistor"
 
 
-def test_schema_for_a_bare_root_capacitors_is_common_only(authed_client):
-    """`CLASS_DEFAULT_SLUG["capacitor"]` is None — no dielectric, no schema.
+def test_schema_for_a_bare_root_capacitors_is_the_class_union(authed_client):
+    """A bare "Capacitors" offers every dielectric's keys, not just the common ones.
 
-    Not a bug: a capacitor whose category does not say ceramic, film,
-    tantalum or electrolytic has no canonical key set of its own, and
-    inventing one would put `dielectric` on every electrolytic.
+    `CLASS_DEFAULT_SLUG["capacitor"]` is still None — there is no single
+    honest schema for a capacitor whose dielectric nobody named. But the
+    parts filed under the root DO carry `capacitance`, `dielectric` and
+    `esr`, written by whichever slug their own provider import resolved,
+    and a columns menu that offers none of them is the bug this fixes.
+    So the root answers with the UNION of its class's slugs.
     """
     root = _category(authed_client, "Capacitors")
     schema = _schema(authed_client, root["id"])
+
     assert schema["slug"] is None
-    assert {row["key"] for row in schema["keys"]} == {
-        row["key"] for row in _schema(authed_client, _category(
-            authed_client, "Miscellaneous widgets"
-        )["id"])["keys"]
-    }
+    assert schema["class"] == "capacitor"
+    by_key = {row["key"]: row for row in schema["keys"]}
+    assert {"capacitance", "voltage_rating", "dielectric", "esr"} <= set(by_key)
+
+    # Each key says which of the class's slugs define it, so the picker can
+    # badge "ESR" as an electrolytic/tantalum key.
+    assert by_key["capacitance"]["slugs"] == [
+        "capacitor_ceramic",
+        "capacitor_electrolytic",
+        "capacitor_tantalum",
+        "capacitor_film",
+    ]
+    assert by_key["esr"]["slugs"] == ["capacitor_electrolytic", "capacitor_tantalum"]
+    assert by_key["dielectric"]["slugs"] == ["capacitor_ceramic", "capacitor_film"]
+    # A common key is still common, and still flagged as such.
+    assert by_key["package"]["common"] is True
+
+
+def test_the_union_keeps_mandatory_only_when_every_slug_agrees(authed_client):
+    """"Required" on the root has to mean required for every capacitor.
+
+    `esr` is mandatory for an electrolytic and optional for a tantalum, so
+    it cannot be mandatory for a category that holds both — the
+    completeness badge would fail every ceramic in the branch.
+    """
+    root = _category(authed_client, "Capacitors")
+    by_key = {row["key"]: row for row in _schema(authed_client, root["id"])["keys"]}
+
+    assert by_key["capacitance"]["mandatory"] is True
+    assert by_key["voltage_rating"]["mandatory"] is True
+    assert by_key["esr"]["mandatory"] is False
+    assert by_key["dielectric"]["mandatory"] is False
+    # Not in the electrolytic slug at all, so not mandatory for the class.
+    assert by_key["tolerance"]["mandatory"] is False
+
+
+def test_the_union_orders_common_then_shared_then_the_rest(authed_client):
+    """Stable order: common keys, keys every slug has, then first-seen."""
+    root = _category(authed_client, "Capacitors")
+    keys = [row["key"] for row in _schema(authed_client, root["id"])["keys"]]
+
+    common = [row["key"] for row in _schema(
+        authed_client, _category(authed_client, "Miscellaneous widgets")["id"]
+    )["keys"]]
+    assert keys[: len(common)] == common
+    # `capacitance` and `voltage_rating` are on all four dielectrics;
+    # `tolerance` is not (an electrolytic has none), so it falls back to
+    # schema order with the rest.
+    assert keys[len(common):] == [
+        "capacitance",
+        "voltage_rating",
+        "dielectric",
+        "tolerance",
+        "esr",
+        "ripple_current",
+        "lifetime",
+    ]
+
+
+def test_schema_for_a_bare_root_transistors_unions_bjt_and_mosfet(authed_client):
+    root = _category(authed_client, "Transistors")
+    schema = _schema(authed_client, root["id"])
+
+    assert schema["slug"] is None
+    assert schema["class"] == "transistor"
+    by_key = {row["key"]: row for row in schema["keys"]}
+    assert {"transistor_type", "vceo", "fet_type", "vds", "rds_on"} <= set(by_key)
+    assert by_key["vceo"]["slugs"] == ["transistor_bjt"]
+    assert by_key["vds"]["slugs"] == ["transistor_mosfet"]
+    # The two share no parametric key, so nothing is mandatory class-wide.
+    assert by_key["vceo"]["mandatory"] is False
+
+
+def test_a_root_whose_class_already_has_a_slug_is_unchanged(authed_client):
+    """"Resistors" resolves to `resistor`; there is nothing to union."""
+    schema = _schema(authed_client, _category(authed_client, "Resistors")["id"])
+
+    assert schema["slug"] == "resistor"
+    assert schema["class"] == "resistor"
+    by_key = {row["key"]: row for row in schema["keys"]}
+    assert {"resistance", "tolerance", "power"} <= set(by_key)
+    assert by_key["resistance"]["slugs"] == ["resistor"]
+    assert by_key["resistance"]["mandatory"] is True
+
+
+def test_a_root_with_no_class_at_all_is_common_only(authed_client):
+    """No component noun in the name, no class, no union — common keys."""
+    schema = _schema(authed_client, _category(authed_client, "Miscellaneous widgets")["id"])
+
+    assert schema["slug"] is None
+    assert schema["class"] is None
     assert all(row["common"] for row in schema["keys"])
+    assert all(row["slugs"] == [] for row in schema["keys"])
+
+
+def test_a_child_under_capacitors_keeps_its_own_slug(authed_client):
+    """The union is the ROOT's answer. A named dielectric still narrows."""
+    root = _category(authed_client, "Capacitors")
+    leaf = _category(authed_client, "Ceramic", parent_id=root["id"])
+
+    schema = _schema(authed_client, leaf["id"])
+    assert schema["slug"] == "capacitor_ceramic"
+    assert schema["class"] == "capacitor"
+    keys = {row["key"] for row in schema["keys"]}
+    assert "dielectric" in keys
+    # The electrolytic-only keys are NOT offered on a ceramic.
+    assert {"esr", "ripple_current", "lifetime"} & keys == set()
+
+
+def test_patch_accepts_a_union_key_on_the_root(authed_client):
+    """The PATCH vocabulary is the same union the schema payload offers."""
+    root = _category(authed_client, "Capacitors")
+    r = authed_client.patch(
+        f"/api/categories/{root['id']}",
+        json={"list_columns": ["capacitance", "dielectric", "esr"]},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["list_columns"] == ["capacitance", "dielectric", "esr"]
+
+    # And a key no capacitor slug defines is still a 422.
+    bad = authed_client.patch(
+        f"/api/categories/{root['id']}", json={"list_columns": ["resistance"]}
+    )
+    assert bad.status_code == 422
+    assert bad.json()["key"] == "resistance"
+
+
+def test_root_sort_by_a_union_key_is_numeric_across_dielectrics(authed_client, db):
+    """Sorting the root by `capacitance` orders ceramics and electrolytics together.
+
+    The JOIN matches on the KEY, not on the slug, so this already worked —
+    what did not was being allowed to ask for it. Pinned so a future
+    narrowing of the union cannot silently take the sort away with it.
+    """
+    ws_id = _ws(authed_client)
+    root = _category(authed_client, "Capacitors")
+    ceramic = _category(authed_client, "Ceramic", parent_id=root["id"])
+    electrolytic = _category(authed_client, "Electrolytic", parent_id=root["id"])
+
+    big = create_part(authed_client, name="C 100 uF", category_id=electrolytic["id"])
+    small = create_part(authed_client, name="C 10 nF", category_id=ceramic["id"])
+    mid = create_part(authed_client, name="C 1 uF", category_id=ceramic["id"])
+    # No `capacitance` row at all — a part the union offers the column for
+    # and that has no value under it.
+    create_part(authed_client, name="C unknown", category_id=ceramic["id"])
+    _spec(db, ws_id=ws_id, part_id=big, key="capacitance",
+          value="100 µF", value_num=Decimal("0.0001"))
+    _spec(db, ws_id=ws_id, part_id=small, key="capacitance",
+          value="10 nF", value_num=Decimal("0.00000001"))
+    _spec(db, ws_id=ws_id, part_id=mid, key="capacitance",
+          value="1 µF", value_num=Decimal("0.000001"))
+    db.commit()
+
+    query = (
+        f"category_id={root['id']}&paged=true&spec_columns=capacitance"
+        "&sort=spec:capacitance"
+    )
+    assert _names(_list(authed_client, f"{query}&dir=asc")) == [
+        "C 10 nF", "C 1 uF", "C 100 uF", "C unknown",
+    ]
+    # NULLS LAST both ways: a part with no value belongs at the end of the
+    # list whichever direction it is read in, not interleaved at one end.
+    assert _names(_list(authed_client, f"{query}&dir=desc")) == [
+        "C 100 uF", "C 1 uF", "C 10 nF", "C unknown",
+    ]
 
 
 def test_schema_marks_unit_bearing_and_count_keys_numeric(authed_client):

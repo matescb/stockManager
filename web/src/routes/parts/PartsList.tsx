@@ -22,7 +22,7 @@ import PartsCategoryRail, {
   PartsCategoryBar,
 } from "./PartsCategoryRail";
 import { partsListColumns } from "./partsColumns";
-import SpecColumnsPicker from "./SpecColumnsPicker";
+import { useSpecColumnsSection } from "./specColumnsSection";
 import { useCategorySpecSchema } from "./useCategorySpecSchema";
 import PartsPreviewLayout from "@/routes/parts/preview/PartsPreviewLayout";
 import { usePartPreview } from "@/routes/parts/preview/usePartPreview";
@@ -98,6 +98,13 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
     () => categoriesQuery.data ?? [],
     [categoriesQuery.data],
   );
+  // Names for the "Inherited from <parent>" lines on the spec-column
+  // controls — the schema endpoint answers with ids, and the rail already
+  // fetched every category.
+  const categoryNames = useMemo(
+    () => new Map(categories.map((c) => [c.id, c.name] as const)),
+    [categories],
+  );
   // Which of the selected category's spec keys are configured as columns,
   // and which one it sorts by. Resolved server-side (the choice inherits
   // through the category tree), so the list never has to walk it.
@@ -132,6 +139,15 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
     ? { key: validSortKey, dir: sortDir }
     : specSchema?.list_sort ?? null;
   const specColumnParam = specColumns.map((spec) => spec.key).join(",");
+  // The spec keys live in the table's own Columns menu, as an extra
+  // section — a column is a column, and a picker of its own in the
+  // category bar is a place nobody looks. Null without a category, which
+  // is when there is no key vocabulary to offer.
+  const specColumnsSection = useSpecColumnsSection({
+    categoryId,
+    schema: specSchema,
+    categoryNames,
+  });
 
   // A distinct key per view so archived/active lists don't share cache
   // entries, and so a filtered or sorted list is its own entry rather than
@@ -330,14 +346,6 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
     bulkDeleteMutation.mutate({ part_ids: ids });
   }
 
-  // Names for the "inherited from <parent>" lines on the spec-column
-  // controls — the schema endpoint answers with ids, and the rail already
-  // fetched every category.
-  const categoryNames = useMemo(
-    () => new Map(categories.map((c) => [c.id, c.name] as const)),
-    [categories],
-  );
-
   // The sort on screen differs from the category's saved default, so
   // offering to store it is not a no-op. Also covers "no default yet".
   const sortIsUnsaved =
@@ -373,13 +381,12 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
         />
         <div className="flex-1 min-w-0">
           <PartsCategoryBar {...categoryFilterProps} />
-          {categoryId && specSchema && (
+          {/* Sort controls only. The spec COLUMNS moved into the table's
+              Columns menu, so this row renders only when there is
+              something to say about the sort. */}
+          {specSchema &&
+            (sortIsUnsaved || (specSchema.sort_inherited_from && !sortKey)) && (
             <div className="flex flex-wrap items-center gap-2 pb-2">
-              <SpecColumnsPicker
-                categoryId={categoryId}
-                schema={specSchema}
-                categoryNames={categoryNames}
-              />
               {sortIsUnsaved && (
                 <button
                   type="button"
@@ -470,6 +477,9 @@ export default function PartsList({ archived = false }: { archived?: boolean }) 
                   onRowFocusChange={preview.previewRow}
                   rowClassName={preview.rowClassName}
                   columns={columns}
+                  extraColumnSections={
+                    specColumnsSection ? [specColumnsSection] : undefined
+                  }
                 />
 
                 {/* Infinite-scroll sentinel and load-more footer */}

@@ -138,11 +138,14 @@ parts list is configured to show. Read-only; writes go through `PATCH` above.
 {
   "data": {
     "slug": "capacitor_ceramic",
+    "class": "capacitor",
     "keys": [
       { "key": "package", "label": "Package", "unit": null,
-        "mandatory": true, "numeric": false, "common": true },
+        "mandatory": true, "numeric": false, "common": true,
+        "slugs": ["capacitor_ceramic"] },
       { "key": "capacitance", "label": "Capacitance", "unit": "F",
-        "mandatory": true, "numeric": true, "common": false }
+        "mandatory": true, "numeric": true, "common": false,
+        "slugs": ["capacitor_ceramic"] }
     ],
     "list_columns": ["capacitance", "voltage_rating"],
     "list_sort": { "key": "capacitance", "dir": "asc" },
@@ -155,11 +158,13 @@ parts list is configured to show. Read-only; writes go through `PATCH` above.
 
 | Field | Notes |
 |---|---|
-| `slug` | The [ADR-0034](../adr/0034-spec-schema.md) schema slug, or `null` — which is **not** an error: it means the common keys only. |
-| `keys` | Common keys plus the slug's own, in schema order. |
+| `slug` | The [ADR-0034](../adr/0034-spec-schema.md) schema slug, or `null` — which is **not** an error. With `class` set it means the class union below; without one, the common keys only. |
+| `class` | The component class the name path maps to (`capacitor`, `resistor`, `ic`, …), or `null`. Reported whether or not a slug resolved. |
+| `keys` | Common keys plus the slug's own, in schema order — or the class union when `slug` is `null` and `class` is not. |
+| `slugs` | Which schema slugs define this key. One entry for a single-slug category; several under a class union (`esr` is electrolytic + tantalum); empty when neither a slug nor a class resolved. |
 | `unit` | SI base-unit symbol (`"Ω"`, `"F"`, `"%"`), or `null` for a value that is not a quantity. |
 | `numeric` | A **display** hint (right-align). `unit != null`, plus an allow-list of unitless counts (`pin_count`, `positions`, `rows`, `channels`, `hfe`) in `spec_columns.NUMERIC_UNITLESS_KEYS`. NOT a promise that the sort is numeric — a count has no `value_num` and sorts as text. |
-| `mandatory` | This category says a part must carry the key; drives `missing_specs` too. |
+| `mandatory` | This category says a part must carry the key; drives `missing_specs` too. Under a class union it is true only where **every** slug in the class agrees, so `esr` (mandatory for an electrolytic, optional for a tantalum) comes back optional. |
 | `common` | True for the keys every category carries, so a picker can group them apart. |
 | `list_columns` / `list_sort` | The **resolved** stored choice, walked up `parent_id`. |
 | `inherited_from` / `sort_inherited_from` | Which ancestor each came from, or `null` when this category owns it (or nobody does). |
@@ -170,14 +175,48 @@ parts list is configured to show. Read-only; writes go through `PATCH` above.
 retries with trailing segments dropped, leaf first, up to the root, and
 takes the first slug that resolves; a leaf whose own words name a different
 component class than its parent therefore still lands on the parent's
-schema. A bare root *Capacitors* deliberately resolves to `null`
+schema. A bare root *Capacitors* still resolves to `slug: null`
 (`CLASS_DEFAULT_SLUG["capacitor"]` is `None`): a capacitor whose category
 does not say ceramic, film, tantalum or electrolytic has no canonical key
 set of its own.
 
+**The class union.** That `null` is right for *writing* a part's specs and
+wrong for *reading* a category. The parts filed under a bare *Capacitors*
+were written by whichever slug their own import resolved, so the branch
+really does carry `capacitance`, `dielectric` and `esr` — and a columns
+menu built from the common keys alone offers none of them. So when the slug
+walk finds nothing but the name path names a **class**, the payload answers
+with the UNION of that class's slugs (`spec_class.class_slugs`), ordered:
+
+1. the common keys, in `COMMON_SPECS` order;
+2. the keys **every** slug in the class defines (`capacitance`,
+   `voltage_rating`);
+3. the rest in first-seen schema order.
+
+`slug` stays `null`, `class` names the class, and each key's `slugs` says
+which subtypes define it. `mandatory` survives only where every slug agrees.
+**This affects `capacitor` and `transistor` roots and nothing else.** They
+are the only two classes whose `CLASS_DEFAULT_SLUG` is `None`. Every other
+class — resistor, inductor, diode, LED and the seven in
+`spec_schema_tables_more.py` — carries its own default slug, so the walk
+resolves and the union is never consulted: a bare *Resistors* answers with
+the `resistor` schema and a bare *Diodes* with `diode`, exactly as before.
+
+`PATCH /api/categories/{id}` validates `list_columns` / `list_sort` against
+exactly the same vocabulary, so a key this payload offers is a key the PATCH
+accepts and the listing renders. Sorting by a union key works because the
+`custom_fields` join matches on the KEY, not on the slug — a
+`sort=spec:capacitance` on the root orders ceramics and electrolytics
+together, by number.
+
+This is a read-side vocabulary only: it changes nothing about which slug a
+part resolves to on import, what `normalise()` writes, or which keys
+`missing_specs` demands.
+
 A category from another workspace is `404 code=category.not_found`.
 
-Source: `backend/app/domain/parts/services/spec_columns.py`, tests in
+Source: `backend/app/domain/parts/spec_class.py`,
+`backend/app/domain/parts/services/spec_columns.py`, tests in
 `backend/tests/test_spec_columns.py`.
 
 ## Routes
