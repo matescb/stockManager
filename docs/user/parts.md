@@ -114,9 +114,10 @@ browser.
 
 Picking a top-level category like **Capacitors** offers every kind of
 capacitor's specs at once, because the parts filed under it are a mix.
-Specs that only apply to some of them are marked — `Dielectric ceramic`,
-`ESR electrolytic` — so you can tell what a blank cell means. Pick the
-subcategory instead and you get just that kind's specs.
+Specs that only apply to some of them are marked with the kinds they
+belong to — **Dielectric** *ceramic*, **ESR** *electrolytic* — so you can
+tell what a blank cell means. Pick the subcategory instead and you get just
+that kind's specs.
 
 Clicking a spec column heading sorts the whole list by that spec, not just
 the rows on screen, and by value rather than by text — so 100 Ω comes
