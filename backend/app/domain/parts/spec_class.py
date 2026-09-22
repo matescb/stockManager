@@ -114,29 +114,31 @@ def union_spec_keys(
 
     first_seen: dict[str, SpecKey] = {}
     owners: dict[str, list[str]] = {}
+    mandatory_count: dict[str, int] = {}
     for slug in slugs:
         for spec in spec_keys_for(slug):
             first_seen.setdefault(spec.key, spec)
             owners.setdefault(spec.key, []).append(slug)
+            mandatory_count[spec.key] = mandatory_count.get(spec.key, 0) + spec.mandatory
 
     common = frozenset(spec.key for spec in spec_keys_for(None))
-    mandatory_everywhere = {
-        key: len(owners[key]) == len(slugs)
-        and all(
-            any(s.key == key and s.mandatory for s in spec_keys_for(slug))
-            for slug in slugs
-        )
-        for key in first_seen
-    }
+
+    def everywhere(key: str) -> bool:
+        return len(owners[key]) == len(slugs)
 
     def bucket(key: str) -> int:
         if key in common:
             return 0
-        return 1 if len(owners[key]) == len(slugs) else 2
+        return 1 if everywhere(key) else 2
 
-    ordered = sorted(first_seen, key=lambda key: bucket(key))
+    # `sorted` is stable, so within a bucket the keys keep the order they
+    # were first seen in — which for the common ones is `COMMON_SPECS`
+    # order, since every slug starts with it.
     keys = tuple(
-        replace(first_seen[key], mandatory=mandatory_everywhere[key])
-        for key in ordered
+        replace(
+            first_seen[key],
+            mandatory=everywhere(key) and mandatory_count[key] == len(slugs),
+        )
+        for key in sorted(first_seen, key=bucket)
     )
     return keys, {key: tuple(owners[key]) for key in first_seen}
