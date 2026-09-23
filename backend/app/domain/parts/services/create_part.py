@@ -1,7 +1,7 @@
 """Creating a part, for every door that can create one.
 
 Lifted out of `api/routes/parts_core.py::create_part` when the MCP
-surface grew a `create_part` tool. The two callers need the same five
+surface grew a `create_part` tool. The two callers need the same six
 rules and must not drift on any of them:
 
 * **at least one of `name` / `mpn`.** `name` is optional so an operator
@@ -20,6 +20,11 @@ rules and must not drift on any of them:
   downstream lookup (CLAUDE.md: isolation is enforced in code).
 * **an archived category is refused**, because every picker hides them,
   so one arriving here can only come from a stale or hand-built request.
+* **the workspace part policy's `when=create` rules are enforced** — a
+  422 `part.policy_violation` with the structured `missing` list. Last,
+  after the MPN check, so an MPN that already exists is still reported
+  as the existing part (which the MCP tool turns into a success) rather
+  than as a policy failure of a part nobody needs to create.
 
 What this does NOT do is write the audit row or commit. Both belong to
 the caller: the route has a `request_id` off `request.state` and the MCP
@@ -39,6 +44,7 @@ from sqlalchemy.orm import Session
 from app.api._helpers import assert_in_workspace
 from app.core.errors import ErrorCodes, raise_http
 from app.domain.categories.models import PartCategory
+from app.domain.part_policy.service import enforce_create as _enforce_policy
 from app.domain.parts.models import Part
 from app.domain.parts.schemas import PartIn
 from app.domain.parts.services.mpn_unique import (
@@ -47,7 +53,7 @@ from app.domain.parts.services.mpn_unique import (
 )
 from app.domain.storage.models import StorageLocation
 
-__all__ = ["create_part", "raise_mpn_conflict"]
+__all__ = ["check_references", "create_part", "raise_mpn_conflict"]
 
 
 def raise_mpn_conflict(existing: Part) -> None:
@@ -64,6 +70,31 @@ def raise_mpn_conflict(existing: Part) -> None:
         existing_id=str(existing.id),
         existing_name=existing.name,
     )
+
+
+def check_references(db: Session, *, ws: Any, payload: PartIn) -> None:
+    """Workspace-check the caller-supplied FKs; refuse an archived category.
+
+    Split out so the dry run (`POST /api/parts/validate`, MCP
+    `validate_part`) refuses exactly what the create would — a validate
+    that passes followed by a create that fails is the one outcome the
+    dry run exists to prevent.
+    """
+    if payload.default_storage_location_id is not None:
+        assert_in_workspace(
+            db,
+            StorageLocation,
+            payload.default_storage_location_id,
+            ws.id,
+            label="storage location",
+        )
+
+    if payload.category_id is not None:
+        category = assert_in_workspace(
+            db, PartCategory, payload.category_id, ws.id, label="category"
+        )
+        if category.archived_at is not None:
+            raise_http(409, ErrorCodes.CATEGORY_ARCHIVED, "Category is archived")
 
 
 def create_part(
@@ -90,21 +121,8 @@ def create_part(
         if existing:
             raise_mpn_conflict(existing)
 
-    if payload.default_storage_location_id is not None:
-        assert_in_workspace(
-            db,
-            StorageLocation,
-            payload.default_storage_location_id,
-            ws.id,
-            label="storage location",
-        )
-
-    if payload.category_id is not None:
-        category = assert_in_workspace(
-            db, PartCategory, payload.category_id, ws.id, label="category"
-        )
-        if category.archived_at is not None:
-            raise_http(409, ErrorCodes.CATEGORY_ARCHIVED, "Category is archived")
+    check_references(db, ws=ws, payload=payload)
+    _enforce_policy(db, ws=ws, payload=payload)
 
     part = Part(
         workspace_id=ws.id,

@@ -311,3 +311,30 @@ export function getConflictDetail(err: unknown): MpnConflictDetail | null {
     existing_name: b.existing_name,
   };
 }
+
+/**
+ * One unmet rule of the workspace part policy — an item of `missing` on a
+ * 422 `part.policy_violation`, on `POST /parts/validate` and on
+ * `GET /parts/{id}/policy-status`. See docs/api/part-policy.md.
+ */
+export type PolicyMissingItem = {
+  field: string;
+  rule_id: string;
+  when: "create" | "complete";
+  message: string;
+  hint: string;
+  allowed?: { id: string; name: string; path: string }[];
+};
+
+/**
+ * Narrow a caught error to the part-policy `missing` list if and only if
+ * it's an `ApiError(422)` with code `part.policy_violation`. Like the 409
+ * above, the list sits at the top level of the body (spread from the
+ * server's `HTTPException(detail=…)`).
+ */
+export function getPolicyViolation(err: unknown): PolicyMissingItem[] | null {
+  if (!(err instanceof ApiError) || err.status !== 422 || !err.body) return null;
+  const b = err.body as Record<string, unknown>;
+  if (b.code !== "part.policy_violation" || !Array.isArray(b.missing)) return null;
+  return b.missing as PolicyMissingItem[];
+}

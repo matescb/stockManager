@@ -270,6 +270,12 @@ class ErrorCodes:
     PART_ASSET_INVALID_FILENAME = "part.asset_invalid_filename"
     # Replace-in-projects: source and replacement resolve to the same part.
     PART_REPLACE_SAME_TARGET = "part.replace_same_target"
+    # A create violated one or more `when=create` rules of the workspace
+    # part policy. The 422 carries the structured `missing` list.
+    PART_POLICY_VIOLATION = "part.policy_violation"
+    # `PUT /api/part-policy` refused a rule the vocabulary allows but the
+    # workspace cannot honour (asset field at create, foreign category).
+    PART_POLICY_INVALID_RULE = "part_policy.invalid_rule"
 
     # Activity cursor parsing.
     ACTIVITY_INVALID_CURSOR = "activity.invalid_cursor"

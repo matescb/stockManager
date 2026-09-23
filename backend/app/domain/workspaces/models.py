@@ -115,6 +115,9 @@ class Workspace(Base):
     # royalty-free default; 'scandit' is opt-in and consumes scanner_license_key.
     scanner = Column(String(40), nullable=False, default="zxing")  # zxing | scandit
     scanner_license_key = Column(String(4096), nullable=True)
+    # `{"version": 1, "rules": [...]}` — which fields a part must carry.
+    # NULL means no rules. Shape and evaluation: `domain/part_policy/`.
+    part_policy = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 

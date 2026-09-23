@@ -227,6 +227,7 @@ from app.api.routes import (
     label_templates,
     lots,
     orders,
+    part_policy,
     parts_assets,
     parts_core,
     parts_provider,
@@ -571,6 +572,18 @@ app.include_router(
     dependencies=_member_gate,
 )
 app.include_router(parts_scan.router, prefix="/api/parts", tags=["parts"], dependencies=_member_gate)
+app.include_router(
+    part_policy.parts_router,
+    prefix="/api/parts",
+    tags=["parts"],
+    dependencies=_member_gate,
+)
+app.include_router(
+    part_policy.router,
+    prefix="/api/part-policy",
+    tags=["part_policy"],
+    dependencies=_member_gate,
+)
 app.include_router(storage.router, prefix="/api/storage", tags=["storage"], dependencies=_member_gate)
 app.include_router(
     storage_scan.router, prefix="/api/storage", tags=["storage"], dependencies=_member_gate
