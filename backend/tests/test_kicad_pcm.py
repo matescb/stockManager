@@ -579,6 +579,64 @@ def test_an_appended_model_is_placed_at_the_origin_unscaled(ws: Tenant):
     ]
 
 
+_PLACED = [
+    ["offset", ["xyz", "0.5", "-0.25", "0"]],
+    ["scale", ["xyz", "1", "1", "1"]],
+    ["rotate", ["xyz", "-90", "0", "180"]],
+]
+
+
+def _placed_footprint(model_path: str) -> bytes:
+    node = [
+        "footprint",
+        sexpr.Quoted("SOT-23"),
+        ["layer", sexpr.Quoted("F.Cu")],
+        ["model", sexpr.Quoted(model_path), *_PLACED],
+    ]
+    return sexpr.emit(node).encode()
+
+
+def _models_of(raw: bytes) -> list:
+    return [c for c in sexpr.parse(raw.decode()) if sexpr.head(c) == "model"]
+
+
+def test_the_other_format_of_a_placed_model_is_not_added_at_the_origin():
+    """LCSC and vendor-zip imports store and link BOTH a `.step` and a
+    `.wrl`, but the footprint names only the STEP, with the vendor's
+    offset and rotation. Appending the linked WRL at the identity put a
+    second body on the board, shifted and unrotated beside the real one —
+    the "3D model not sitting on its footprint" bug."""
+    raw = _placed_footprint(f"{kicad_refs.MODEL_PATH_VAR}/SOT-23.step")
+
+    out = pcm._footprint_for_package("com.x", raw, ("SOT-23.step", "SOT-23.wrl"))
+
+    (model,) = _models_of(out)
+    assert model[1] == kicad_refs.pcm_model_path("com.x", "SOT-23.step")
+    assert model[2:] == _PLACED
+
+
+def test_a_linked_model_replacing_a_foreign_one_keeps_its_placement():
+    """A KiCad-library footprint whose model the user replaced with their
+    own upload: the node is re-pointed, not duplicated at the origin."""
+    raw = _placed_footprint("${KICAD8_3DMODEL_DIR}/Package_TO_SOT_SMD.3dshapes/SOT-23.wrl")
+
+    out = pcm._footprint_for_package("com.x", raw, ("sot-23.step",))
+
+    (model,) = _models_of(out)
+    assert model[1] == kicad_refs.pcm_model_path("com.x", "sot-23.step")
+    assert model[2:] == _PLACED
+
+
+def test_an_unrelated_linked_model_is_still_appended():
+    raw = _placed_footprint(f"{kicad_refs.MODEL_PATH_VAR}/SOT-23.step")
+
+    out = pcm._footprint_for_package("com.x", raw, ("SOT-23.step", "heatsink.step"))
+
+    first, second = _models_of(out)
+    assert first[2:] == _PLACED
+    assert second[1] == kicad_refs.pcm_model_path("com.x", "heatsink.step")
+
+
 def test_linking_a_3d_model_changes_the_archive(ws: Tenant):
     """The link row has no timestamp and the footprint bytes don't
     change, so the cache key has to carry the link itself."""

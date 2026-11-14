@@ -28,6 +28,7 @@ missing model on every board that places the footprint otherwise.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 from uuid import UUID
@@ -253,6 +254,7 @@ def import_plan(
         if pending.kind in _MODEL_KINDS:
             models_by_stem.setdefault(_fold(pending.stem), []).append(row)
 
+    fallback = _unclaimed_model(plan.footprints, models_by_stem)
     for pending in plan.footprints:
         _import_footprint(
             db,
@@ -262,6 +264,7 @@ def import_plan(
             source=source,
             category_id=category_id,
             models_by_stem=models_by_stem,
+            fallback=fallback,
             result=result,
         )
 
@@ -283,6 +286,31 @@ def import_plan(
             result.symbols.append(row)
 
     return result
+
+
+def _unclaimed_model(
+    footprints, models_by_stem: dict[str, list[CreatedRow]]
+) -> list[CreatedRow]:
+    """The archive's one 3D model that no footprint names, for an archive
+    with exactly one footprint — or `[]`.
+
+    SnapEDA ships a STEP beside the footprint, but its `.kicad_mod`
+    usually carries no `(model …)` at all, or names a file under a
+    different stem (the MPN vs the package name). Matching by path alone
+    left that STEP stored and attached to nothing. With one footprint and
+    one model (in one or two formats) in the same vendor archive, the
+    pairing is not a guess. Anything more ambiguous stays unattached, as
+    before — the user can still link it on the CAD tab.
+    """
+    if len(footprints) != 1:
+        return []
+    claimed = {
+        _fold(_path_stem(path)) for path in sexpr.model_paths(footprints[0].node)
+    }
+    unclaimed = [group for stem, group in models_by_stem.items() if stem not in claimed]
+    if len(unclaimed) != 1:
+        return []
+    return unclaimed[0]
 
 
 def _fold(text: str) -> str:
@@ -360,8 +388,11 @@ def _import_footprint(
     category_id: UUID | None,
     models_by_stem: dict[str, list[CreatedRow]],
     result: ImportResult,
+    fallback: Sequence[CreatedRow] = (),
 ) -> None:
-    node, linked, unmatched_only, dropped = _rewrite_models(pending.node, models_by_stem)
+    node, linked, unmatched_only, dropped = _rewrite_models(
+        pending.node, models_by_stem, fallback
+    )
     row = _import_entry(
         db,
         ws=ws,
@@ -390,7 +421,9 @@ def _import_footprint(
 
 
 def _rewrite_models(
-    node: sexpr.Node, models_by_stem: dict[str, list[CreatedRow]]
+    node: sexpr.Node,
+    models_by_stem: dict[str, list[CreatedRow]],
+    fallback: Sequence[CreatedRow] = (),
 ) -> tuple[sexpr.Node, list[CreatedRow], bool, list[str]]:
     """Point the footprint's `(model …)` nodes at our own storage.
 
@@ -402,6 +435,10 @@ def _rewrite_models(
     because their file wasn't in the archive.
     """
     referenced = sexpr.model_paths(node)
+    if fallback and not any(
+        models_by_stem.get(_fold(_path_stem(path))) for path in referenced
+    ):
+        return _attach_fallback(node, referenced, fallback)
     if not referenced:
         return node, [], False, []
 
@@ -420,12 +457,36 @@ def _rewrite_models(
         group = models_by_stem.get(_fold(_path_stem(path)))
         if not group:
             return None
-        # Point the path at the STEP when the archive carried both — it's
-        # the format the mechanical side actually wants.
-        best = min(group, key=lambda row: 0 if row.kind == "step" else 1)
-        return f"{MODEL_PATH_VAR}/{best.name}"
+        return f"{MODEL_PATH_VAR}/{_best_model(group).name}"
 
     return sexpr.rewrite_model_paths(node, resolve), linked, False, dropped
+
+
+def _attach_fallback(
+    node: sexpr.Node, referenced: list[str], fallback: Sequence[CreatedRow]
+) -> tuple[sexpr.Node, list[CreatedRow], bool, list[str]]:
+    """Point the footprint at the archive's one unclaimed model.
+
+    The FIRST existing `(model …)` is re-pointed rather than a new one
+    appended, so the vendor's offset / rotation carries over; the others
+    name files the archive didn't carry and are dropped as usual. With no
+    `(model …)` at all the node is appended at the identity placement —
+    the vendor gave none to carry over.
+    """
+    target = f"{MODEL_PATH_VAR}/{_best_model(fallback).name}"
+    if not referenced:
+        return sexpr.append_model(node, target), list(fallback), False, []
+    first, dropped = referenced[0], referenced[1:]
+    rewritten = sexpr.rewrite_model_paths(
+        node, lambda path: target if path == first else None
+    )
+    return rewritten, list(fallback), False, dropped
+
+
+def _best_model(group: Sequence[CreatedRow]) -> CreatedRow:
+    # The STEP when the archive carried both — it's the format the
+    # mechanical side actually wants.
+    return min(group, key=lambda row: 0 if row.kind == "step" else 1)
 
 
 def _path_stem(path: str) -> str:

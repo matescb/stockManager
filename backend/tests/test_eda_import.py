@@ -22,8 +22,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.domain.audit.models import AuditLog
+from app.domain.eda import sexpr, vendor_zip
 from app.domain.eda import storage as eda_storage
-from app.domain.eda import vendor_zip
 from app.main import app
 from tests._factories import create_part, signup_user
 from tests.test_eda import (
@@ -322,6 +322,78 @@ def test_step_and_wrl_of_one_model_both_attach_step_first(authed_client):
     # The path points at the STEP even though the footprint named the WRL.
     body = _stored_text(c, _sha_of(c, "footprints", data["footprint"]["id"]), "kicad_mod")
     assert "${STOCKMGR_3D}/P.step" in body
+
+
+def _links_and_body(c, data) -> tuple[list[str], str]:
+    fp_id = data["footprint"]["id"]
+    links = c.get(f"/api/eda/footprints/{fp_id}/models").json()["data"]
+    by_id = {row["id"]: row for row in c.get("/api/eda/datafiles").json()["data"]}
+    body = _stored_text(c, _sha_of(c, "footprints", fp_id), "kicad_mod")
+    return [by_id[link["datafile_id"]]["name"] for link in links], body
+
+
+def test_a_snapeda_step_the_footprint_does_not_name_is_attached(authed_client):
+    """SnapEDA ships the STEP beside a `.kicad_mod` with no `(model …)`
+    at all — the STEP was stored and attached to nothing."""
+    c = authed_client
+    part_id = create_part(c, "Regulator")
+    raw = _zip_bytes(
+        {
+            "LM317.kicad_sym": _symbol_text("LM317"),
+            "TO220.kicad_mod": _footprint_with_models("TO220"),
+            "LM317.step": STEP_BYTES,
+        }
+    )
+    data = _ok(_import_zip(c, part_id, raw))
+
+    names, body = _links_and_body(c, data)
+    assert names == ["LM317.step"]
+    assert '(model "${STOCKMGR_3D}/LM317.step"' in body
+    assert not any("3D model" in s["reason"] for s in data["skipped"])
+
+
+def test_a_footprint_naming_another_file_is_repointed_keeping_its_placement(
+    authed_client,
+):
+    c = authed_client
+    part_id = create_part(c, "Regulator")
+    footprint = _footprint_with_models("TO220", "${KIPRJMOD}/TO220_vendor.wrl").replace(
+        "(rotate (xyz 0 0 0))", "(rotate (xyz -90 0 90))"
+    )
+    raw = _zip_bytes(
+        {
+            "LM317.kicad_sym": _symbol_text("LM317"),
+            "TO220.kicad_mod": footprint,
+            "LM317.step": STEP_BYTES,
+        }
+    )
+    data = _ok(_import_zip(c, part_id, raw))
+
+    names, body = _links_and_body(c, data)
+    assert names == ["LM317.step"]
+    assert "${STOCKMGR_3D}/LM317.step" in body
+    assert "TO220_vendor" not in body
+    (model,) = [n for n in sexpr.parse(body) if sexpr.head(n) == "model"]
+    assert ["rotate", ["xyz", "-90", "0", "90"]] in model
+    assert not any("left unchanged" in s["reason"] for s in data["skipped"])
+
+
+def test_two_unclaimed_models_are_not_guessed_between(authed_client):
+    c = authed_client
+    part_id = create_part(c, "Regulator")
+    raw = _zip_bytes(
+        {
+            "LM317.kicad_sym": _symbol_text("LM317"),
+            "TO220.kicad_mod": _footprint_with_models("TO220"),
+            "A.step": STEP_BYTES,
+            "B.step": STEP_BYTES.replace(b"HEADER", b"HEADER "),
+        }
+    )
+    data = _ok(_import_zip(c, part_id, raw))
+
+    names, body = _links_and_body(c, data)
+    assert names == []
+    assert "(model" not in body
 
 
 # ---------------------------------------------------------------------

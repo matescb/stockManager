@@ -869,17 +869,48 @@ def _footprint_for_package(
         _log.error("pcm: stored footprint is not parseable")
         _unavailable("a stored footprint could not be read")
     node = sexpr.rewrite_model_paths(node, rewrite)
-    # Deduped on the EMITTED path, not the stored name: a footprint
-    # re-uploaded after KiCad saved it already names the installed path
-    # verbatim, and that is the same model as the link.
-    present = set(sexpr.model_paths(node))
     for name in models:
-        path = kicad_refs.pcm_model_path(identifier, name)
-        if path in present:
-            continue
-        present.add(path)
-        node = sexpr.append_model(node, path)
+        node = _place_linked_model(node, identifier, name)
     return sexpr.emit(node).encode("utf-8")
+
+
+def _model_stem(path: str) -> str:
+    base = path.replace("\\", "/").rsplit("/", 1)[-1]
+    return (base.rsplit(".", 1)[0] if "." in base else base).casefold()
+
+
+def _place_linked_model(node: sexpr.Node, identifier: str, name: str) -> sexpr.Node:
+    """Make sure the CAD-tab-linked model `name` is on the footprint, placed
+    the way the footprint's author placed it.
+
+    The placement (`offset` / `scale` / `rotate`) lives only in the
+    footprint's own `(model …)` node — the link row carries none. So a
+    linked model is APPENDED at the identity placement only when the
+    footprint has no node for that model at all:
+
+    - Same installed path already present: nothing to do. Deduped on the
+      EMITTED path, not the stored name — a footprint re-uploaded after
+      KiCad saved it already names the installed path verbatim.
+    - One of OUR models with the same stem (the other format — LCSC and
+      vendor-zip imports store and link a `.step` AND a `.wrl`, but the
+      footprint names only the STEP): skip. Appending it put a second body
+      on the board at the origin, unrotated, beside the correctly placed
+      one — the "model shifted / rotated off its footprint" bug.
+    - A FOREIGN path with the same stem (a KiCad-library footprint whose
+      model the user replaced with their own upload): re-point that node
+      at ours, keeping its placement.
+    """
+    path = kicad_refs.pcm_model_path(identifier, name)
+    existing = sexpr.model_paths(node)
+    if path in existing:
+        return node
+    stem = _model_stem(name)
+    sibling = next((p for p in existing if _model_stem(p) == stem), None)
+    if sibling is None:
+        return sexpr.append_model(node, path)
+    if sibling.startswith(kicad_refs.pcm_model_path(identifier, "")):
+        return node
+    return sexpr.rewrite_model_paths(node, lambda p: path if p == sibling else p)
 
 
 def _member_info(member: str) -> zipfile.ZipInfo:
