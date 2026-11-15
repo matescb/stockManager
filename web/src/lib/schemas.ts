@@ -29,7 +29,10 @@ import { z } from "zod";
 // Atom-shaped helpers reused across resources.
 // ---------------------------------------------------------------------
 
-const uuid = z.string().uuid();
+// `z.guid()` keeps zod 3's permissive 8-4-4-4-12 hex match; zod 4's `uuid()`
+// enforces RFC 9562 version/variant bits, which test fixtures and
+// hand-made ids do not carry.
+const uuid = z.guid();
 const isoDate = z.string();           // ISO 8601 string; not parsed to Date
 const nullableString = z.string().nullable();
 const nullableNumber = z.number().nullable();
