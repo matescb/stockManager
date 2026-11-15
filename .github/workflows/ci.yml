@@ -359,7 +359,7 @@ jobs:
             tests/test_migration_0080_part_type_backfill.py
 
       - name: Upload backend coverage report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         if: always()
         with:
           name: backend-coverage
@@ -416,7 +416,7 @@ jobs:
         run: npm test -- --coverage
 
       - name: Upload web coverage report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         if: always()
         with:
           name: web-coverage
@@ -716,7 +716,7 @@ jobs:
         run: npx playwright test prod-smoke.spec.ts --project=prod-smoke
 
       - name: Upload prod Playwright report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         if: failure()
         with:
           name: prod-playwright-report
@@ -756,7 +756,7 @@ jobs:
         run: npx playwright test --project=smoke
 
       - name: Upload Playwright report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         if: failure()
         with:
           name: playwright-report
@@ -807,7 +807,7 @@ jobs:
         run: npx playwright test --project=core --pass-with-no-tests
 
       - name: Upload Playwright core report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         if: always()
         with:
           name: playwright-core-report
