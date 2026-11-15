@@ -11,7 +11,7 @@ import { z } from "zod";
 import { api, ApiError, categoryToUserMessage } from "./api";
 
 const Schema = z.object({
-  id: z.string().uuid(),
+  id: z.guid(),
   name: z.string(),
   count: z.number(),
 });
