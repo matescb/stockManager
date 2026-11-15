@@ -13,7 +13,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 
 from app.domain._mixins import WorkspaceOwned
 from app.infra.db import Base
@@ -165,6 +165,13 @@ class EdaFootprintModel(Base):
         index=True,
     )
     position = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    # Where the model sits on the footprint when the footprint's own bytes
+    # don't say: `{"offset": […], "rotate": […], "scale": […]}` in KiCad's
+    # 3D frame. NULL = unknown (appended at the identity). Migration 0084;
+    # read through `model_fit.Placement.from_json`.
+    # `none_as_null`: Python None must be SQL NULL, not JSON `null`, or
+    # `placement IS NULL` (the backfill job's predicate) never matches.
+    placement = Column(JSONB(none_as_null=True), nullable=True)
 
 
 class PartEda(WorkspaceOwned, Base):

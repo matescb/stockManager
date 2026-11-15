@@ -26,7 +26,7 @@ from app.api._helpers import assert_in_workspace
 from app.core.errors import ErrorCodes, raise_http
 from app.core.time import utcnow
 from app.domain.categories.models import PartCategory
-from app.domain.eda import sexpr, storage
+from app.domain.eda import model_placement, sexpr, storage
 from app.domain.eda.models import (
     EdaDatafile,
     EdaFootprint,
@@ -63,6 +63,11 @@ def _touch(footprint, user_id: UUID | None) -> None:
     """
     footprint.updated_by = user_id
     footprint.updated_at = utcnow()
+
+
+# Public name for callers outside the service (the `model-placement-fit`
+# job), which change a footprint's links without going through a route.
+touch_footprint = _touch
 _SPICE_KIND = "spice"
 
 
@@ -467,16 +472,31 @@ def link_footprint_model(
         .where(EdaFootprintModel.datafile_id == datafile.id)
     ).scalars().first()
     if link is None:
-        db.add(
-            EdaFootprintModel(
-                workspace_id=ws.id,
-                footprint_id=footprint.id,
-                datafile_id=datafile.id,
-                position=position,
-            )
+        link = EdaFootprintModel(
+            workspace_id=ws.id,
+            footprint_id=footprint.id,
+            datafile_id=datafile.id,
+            position=position,
         )
+        db.add(link)
     else:
         link.position = position
+    if link.placement is None:
+        # The footprint's bytes carry no placement for this model, so the
+        # package would append it at the identity — work one out from the
+        # geometry instead (migration 0084). Kept once set: a re-link is a
+        # reorder, not a request to re-fit.
+        link.placement = model_placement.placement_for_link(
+            db, workspace_id=ws.id, footprint=footprint, datafile=datafile
+        )
+        if link.placement is not None and datafile.kind == "step":
+            model_placement.share_with_siblings(
+                db,
+                workspace_id=ws.id,
+                footprint_id=footprint.id,
+                name=datafile.name,
+                placement=link.placement,
+            )
     _touch(footprint, user_id)
     db.flush()
     return footprint

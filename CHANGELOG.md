@@ -15,6 +15,21 @@ the canonical record.
 
 ## Unreleased
 
+- **3D models sit on their footprints.** A model linked on the CAD tab
+  carried no placement, so the KiCad package appended it at zero offset
+  and rotation — and SnapEDA STEPs, typically Y-up and centred on their
+  own origin, stood on edge half inside the board (14 of 19 such links in
+  production). The link row now stores a `placement` (migration 0084),
+  fitted from the STEP's bounding box against the footprint's courtyard
+  or pads (`domain/eda/model_fit.py`); a model that already fits keeps
+  the vendor's placement, a WRL copies its STEP sibling, and a footprint
+  that places the model itself still wins. The vendor-zip importer now
+  attaches a SnapEDA STEP the footprint never named (one footprint + one
+  unclaimed model) with a fitted placement, and the package no longer
+  appends the other format of a model the footprint already places.
+  Existing links: run the operator job `model-placement-fit` (dry run
+  first).
+
 - **Spec columns moved into the parts table's Columns menu, and a bare
   root category now offers its whole class.** Two halves of one bug: the
   per-category spec keys had a picker of their own in the category bar

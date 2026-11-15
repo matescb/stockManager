@@ -32,6 +32,7 @@ __all__ = [
     "EXTRA_FLAGS",
     "add_operator_arguments",
     "run_category_seed_job",
+    "run_model_placement_fit_job",
     "run_part_rename_job",
     "run_provider_refresh_job",
     "run_spec_normalize_job",
@@ -56,6 +57,18 @@ def run_symbol_collapse_job(db: Session, options: JobOptions) -> int:
 
     with report_stream(options) as stream:
         return run_symbol_collapse(
+            db,
+            apply=options.apply,
+            workspace_id=options.workspace_id,
+            stream=stream,
+        )
+
+
+def run_model_placement_fit_job(db: Session, options: JobOptions) -> int:
+    from app.domain.eda.model_placement_job import run_model_placement_fit
+
+    with report_stream(options) as stream:
+        return run_model_placement_fit(
             db,
             apply=options.apply,
             workspace_id=options.workspace_id,

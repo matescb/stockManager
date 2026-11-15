@@ -21,6 +21,7 @@ from app.cli.run_job_operator import (
 from app.cli.run_job_operator import (
     add_operator_arguments,
     run_category_seed_job,
+    run_model_placement_fit_job,
     run_part_rename_job,
     run_provider_refresh_job,
     run_spec_normalize_job,
@@ -278,6 +279,21 @@ JOBS: dict[str, JobSpec] = {
             "finds nothing. Writes nothing at all without --apply."
         ),
         run=run_symbol_collapse_job,
+        takes_options=True,
+    ),
+    "model-placement-fit": JobSpec(
+        name="model-placement-fit",
+        owner="backend/eda",
+        cadence="manual (operator-run, one-off backfill)",
+        idempotency=(
+            "Fills eda_footprint_models.placement only where it is NULL and "
+            "the footprint's own bytes don't already place that model, with "
+            "a placement fitted from the model's geometry. A filled row no "
+            "longer matches, so a second run proposes nothing. Writes "
+            "nothing at all without --apply, and a dry run writes no "
+            "preview-cache file."
+        ),
+        run=run_model_placement_fit_job,
         takes_options=True,
     ),
     "spec-normalize": JobSpec(

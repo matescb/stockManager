@@ -44,6 +44,7 @@ from app.cli.run_job_options import report_stream as _report_stream
 
 _OPERATOR_JOBS = (
     "category-seed",
+    "model-placement-fit",
     "part-rename",
     "provider-refresh",
     "spec-normalize",

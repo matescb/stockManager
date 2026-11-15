@@ -202,7 +202,11 @@ async def import_part_archive(
     hints = [_stem(file.filename), part.mpn or "", part.internal_part_number or ""]
     plan = await run_in_threadpool(_plan_for_part, raw, file.filename, hints)
 
-    result = importer.import_plan(
+    # Threadpool: an archive whose STEP the footprint never names has it
+    # fitted onto the footprint (`model_fit`), a CPU-bound conversion that
+    # must not run on the single worker's event loop.
+    result = await run_in_threadpool(
+        importer.import_plan,
         db,
         ws=ws,
         user_id=user.id,
@@ -261,8 +265,14 @@ async def import_library(
     raw = await _read_upload(file, kind=_ARCHIVE_KIND)
     plan = await run_in_threadpool(_plan_for_library, raw, file.filename)
 
-    result = importer.import_plan(
-        db, ws=ws, user_id=user.id, plan=plan, source=plan.vendor, category_id=category_id
+    result = await run_in_threadpool(
+        importer.import_plan,
+        db,
+        ws=ws,
+        user_id=user.id,
+        plan=plan,
+        source=plan.vendor,
+        category_id=category_id,
     )
     _audit_entries(request, db, ws, user, result, vendor=plan.vendor)
     return ok(
@@ -315,8 +325,8 @@ async def fetch_lcsc(
     part = _get_part(db, ws.id, part_id)
     plan = await _fetch_lcsc_plan(payload.lcsc_id)
 
-    result = importer.import_plan(
-        db, ws=ws, user_id=user.id, plan=plan, source=lcsc.SOURCE
+    result = await run_in_threadpool(
+        importer.import_plan, db, ws=ws, user_id=user.id, plan=plan, source=lcsc.SOURCE
     )
     return ok(
         _finish_part_import(

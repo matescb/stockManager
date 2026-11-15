@@ -114,7 +114,14 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.errors import ErrorCodes, raise_http
 from app.domain.categories.models import PartCategory
-from app.domain.eda import kicad_library, kicad_refs, sexpr, storage
+from app.domain.eda import (
+    kicad_library,
+    kicad_refs,
+    model_fit,
+    model_placement,
+    sexpr,
+    storage,
+)
 from app.domain.eda.models import EdaDatafile, EdaFootprint, EdaFootprintModel, EdaSymbol
 
 __all__ = [
@@ -205,7 +212,9 @@ GENERATOR = "stockmanager"
 #   1 — stored bytes verbatim, model paths rewritten.
 #   2 — symbol `Footprint` fields re-pointed at packaged footprints.
 #   3 — CAD-tab-linked 3D models appended as `(model …)` nodes.
-PACKAGE_FORMAT = 3
+#   4 — linked models placed by their stored placement; the other format
+#       of a model the footprint already places is no longer appended.
+PACKAGE_FORMAT = 4
 
 # The symbol property a `LibNick:Entry` footprint reference lives in.
 _FOOTPRINT_PROPERTY = "Footprint"
@@ -310,6 +319,12 @@ def _unavailable(message: str) -> NoReturn:
 # ---------------------------------------------------------------------
 
 
+# A linked 3D datafile's name and its placement on the footprint
+# (`eda_footprint_models.placement`, None when nothing is known). A bare
+# name is accepted wherever one is consumed and means "no placement".
+LinkedModel = tuple[str, model_fit.Placement | None]
+
+
 @dataclass(frozen=True)
 class _StoredEntry:
     """One stored blob, and where it goes.
@@ -326,9 +341,10 @@ class _StoredEntry:
     stem: str = ""
     member: str = ""
     kind: str = ""
-    # Footprints only: names of the 3D datafiles linked on the CAD tab,
-    # in position order — see `_linked_models`.
-    models: tuple[str, ...] = ()
+    # Footprints only: the 3D datafiles linked on the CAD tab, in position
+    # order, each with its stored placement (None = unknown) — see
+    # `_linked_models`.
+    models: tuple[LinkedModel, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -501,8 +517,11 @@ def _library_entries(
     ]
 
 
-def _linked_models(db: Session, *, workspace_id: UUID) -> dict[UUID, tuple[str, ...]]:
-    """Footprint id → names of its CAD-tab-linked 3D datafiles, in position order.
+def _linked_models(
+    db: Session, *, workspace_id: UUID
+) -> dict[UUID, tuple[LinkedModel, ...]]:
+    """Footprint id → its CAD-tab-linked 3D datafiles `(name, placement)`,
+    in position order.
 
     `eda_footprint_models` is a join row and nothing more: linking a
     model on the CAD tab writes it and leaves the stored footprint bytes
@@ -515,7 +534,11 @@ def _linked_models(db: Session, *, workspace_id: UUID) -> dict[UUID, tuple[str, 
     link row's `workspace_id` is not trusted to imply either (ADR-0002).
     """
     rows = db.execute(
-        select(EdaFootprintModel.footprint_id, EdaDatafile.name)
+        select(
+            EdaFootprintModel.footprint_id,
+            EdaDatafile.name,
+            EdaFootprintModel.placement,
+        )
         .join(
             EdaFootprint,
             and_(
@@ -539,10 +562,12 @@ def _linked_models(db: Session, *, workspace_id: UUID) -> dict[UUID, tuple[str, 
             EdaDatafile.name.asc(),
         )
     ).all()
-    out: dict[UUID, list[str]] = {}
-    for footprint_id, name in rows:
-        out.setdefault(footprint_id, []).append(name)
-    return {footprint_id: tuple(names) for footprint_id, names in out.items()}
+    out: dict[UUID, list[LinkedModel]] = {}
+    for footprint_id, name, placement in rows:
+        out.setdefault(footprint_id, []).append(
+            (name, model_fit.Placement.from_json(placement))
+        )
+    return {footprint_id: tuple(models) for footprint_id, models in out.items()}
 
 
 def _datafiles(db: Session, *, workspace_id: UUID) -> list[tuple[str, str, str, int]]:
@@ -653,7 +678,9 @@ def plan_package(db: Session, *, ws) -> Plan:
                     f"/{name}.{ext}"
                 ),
                 models=tuple(
-                    model for model in linked.get(row_id, ()) if model in shipped_models
+                    model
+                    for model in linked.get(row_id, ())
+                    if model[0] in shipped_models
                 ),
             )
         )
@@ -748,8 +775,14 @@ def _fingerprint(
                 f"{label}\t{entry.stem}\t{entry.name}\t{entry.sha256}\n".encode()
             )
             # Links live in a table the row's sha256 knows nothing about.
-            for model in entry.models:
-                hasher.update(f"\tmodel\t{model}\n".encode())
+            for name, placement in map(_linked, entry.models):
+                hasher.update(f"\tmodel\t{name}\n".encode())
+                if placement is not None:
+                    # The placement is what KiCad renders; moving a model
+                    # must change the archive.
+                    hasher.update(
+                        f"\tplacement\t{json.dumps(placement.as_json(), sort_keys=True)}\n".encode()
+                    )
     return hasher.hexdigest()
 
 
@@ -836,7 +869,7 @@ def _symbol_for_package(raw: bytes, footprint_libraries: dict[str, str]) -> byte
 
 
 def _footprint_for_package(
-    identifier: str, raw: bytes, models: tuple[str, ...] = ()
+    identifier: str, raw: bytes, models: tuple[LinkedModel | str, ...] = ()
 ) -> bytes:
     """Re-point a stored footprint's 3D models at their install location,
     then append the CAD-tab-linked `models` the bytes don't already name.
@@ -869,17 +902,63 @@ def _footprint_for_package(
         _log.error("pcm: stored footprint is not parseable")
         _unavailable("a stored footprint could not be read")
     node = sexpr.rewrite_model_paths(node, rewrite)
-    # Deduped on the EMITTED path, not the stored name: a footprint
-    # re-uploaded after KiCad saved it already names the installed path
-    # verbatim, and that is the same model as the link.
-    present = set(sexpr.model_paths(node))
-    for name in models:
-        path = kicad_refs.pcm_model_path(identifier, name)
-        if path in present:
-            continue
-        present.add(path)
-        node = sexpr.append_model(node, path)
+    for name, placement in map(_linked, models):
+        node = _place_linked_model(node, identifier, name, placement)
     return sexpr.emit(node).encode("utf-8")
+
+
+def _linked(model: LinkedModel | str) -> LinkedModel:
+    return (model, None) if isinstance(model, str) else model
+
+
+def _place_linked_model(
+    node: sexpr.Node,
+    identifier: str,
+    name: str,
+    placement: model_fit.Placement | None = None,
+) -> sexpr.Node:
+    """Make sure the CAD-tab-linked model `name` is on the footprint, placed
+    the way the footprint's author placed it.
+
+    The placement (`offset` / `scale` / `rotate`) lives only in the
+    footprint's own `(model …)` node — the link row carries none. So a
+    linked model is APPENDED at the identity placement only when the
+    footprint has no node for that model at all:
+
+    Appended at `placement` — fitted from the geometry when the link was
+    made (`model_placement`) — or at the identity when none is stored.
+
+    - Same installed path already present: nothing to do. Deduped on the
+      EMITTED path, not the stored name — a footprint re-uploaded after
+      KiCad saved it already names the installed path verbatim.
+    - One of OUR models with the same stem (the other format — LCSC and
+      vendor-zip imports store and link a `.step` AND a `.wrl`, but the
+      footprint names only the STEP): skip. Appending it put a second body
+      on the board at the origin, unrotated, beside the correctly placed
+      one — the "model shifted / rotated off its footprint" bug.
+    - A FOREIGN path with the same stem (a KiCad-library footprint whose
+      model the user replaced with their own upload): re-point that node
+      at ours, keeping its placement.
+    """
+    path = kicad_refs.pcm_model_path(identifier, name)
+    existing = sexpr.model_paths(node)
+    if path in existing:
+        return node
+    stem = model_placement.model_stem(name)
+    sibling = next((p for p in existing if model_placement.model_stem(p) == stem), None)
+    if sibling is None:
+        if placement is None:
+            return sexpr.append_model(node, path)
+        return sexpr.append_model(
+            node,
+            path,
+            offset=placement.offset,
+            scale=placement.scale,
+            rotate=placement.rotate,
+        )
+    if sibling.startswith(kicad_refs.pcm_model_path(identifier, "")):
+        return node
+    return sexpr.rewrite_model_paths(node, lambda p: path if p == sibling else p)
 
 
 def _member_info(member: str) -> zipfile.ZipInfo:

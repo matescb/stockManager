@@ -303,6 +303,16 @@ export const EdaDatafilesListSchema = z.array(EdaDatafileSchema);
 export const EdaFootprintModelSchema = z.object({
   datafile_id: uuid,
   position: z.number(),
+  // Where the model sits when the footprint's own bytes don't say —
+  // fitted from geometry on link (migration 0084). Null = unknown.
+  placement: z
+    .object({
+      offset: z.array(z.number()),
+      rotate: z.array(z.number()),
+      scale: z.array(z.number()),
+    })
+    .nullable()
+    .optional(),
 });
 export type EdaFootprintModel = z.infer<typeof EdaFootprintModelSchema>;
 export const EdaFootprintModelsListSchema = z.array(EdaFootprintModelSchema);

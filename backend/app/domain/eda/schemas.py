@@ -127,6 +127,7 @@ class EdaFootprintModelOut(BaseModel):
 
     datafile_id: UUID
     position: int
+    placement: dict | None = None
 
 
 class PartEdaIn(BaseModel):
