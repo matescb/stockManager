@@ -14,6 +14,7 @@ from __future__ import annotations
 import inspect
 import io
 import os
+import pathlib
 import uuid
 import zipfile
 
@@ -350,6 +351,30 @@ def test_a_snapeda_step_the_footprint_does_not_name_is_attached(authed_client):
     assert names == ["LM317.step"]
     assert '(model "${STOCKMGR_3D}/LM317.step"' in body
     assert not any("3D model" in s["reason"] for s in data["skipped"])
+
+
+def test_an_attached_snapeda_step_is_placed_from_its_geometry(authed_client):
+    """With no `(model …)` to carry a placement over, the importer fits
+    one: the fixture cube is centred on its own origin, so it is lifted
+    5 mm to sit on the board instead of half inside it."""
+    pytest.importorskip("cascadio")
+    cube = (
+        pathlib.Path(__file__).parent / "fixtures" / "eda" / "preview3d" / "cube.step"
+    ).read_bytes()
+    c = authed_client
+    part_id = create_part(c, "Regulator")
+    raw = _zip_bytes(
+        {
+            "LM317.kicad_sym": _symbol_text("LM317"),
+            "TO220.kicad_mod": _footprint_with_models("TO220"),
+            "LM317.step": cube,
+        }
+    )
+    data = _ok(_import_zip(c, part_id, raw))
+
+    _, body = _links_and_body(c, data)
+    (model,) = [n for n in sexpr.parse(body) if sexpr.head(n) == "model"]
+    assert ["offset", ["xyz", "0", "0", "5"]] in model
 
 
 def test_a_footprint_naming_another_file_is_repointed_keeping_its_placement(

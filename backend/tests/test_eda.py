@@ -482,7 +482,7 @@ def test_link_and_unlink_a_3d_model(authed_client):
         json={"datafile_id": step["id"], "position": 1},
     )
     assert r.status_code == 200, r.text
-    assert r.json()["data"] == [{"datafile_id": step["id"], "position": 1}]
+    assert r.json()["data"] == [{"datafile_id": step["id"], "position": 1, "placement": None}]
     assert (
         c.get(f"/api/eda/footprints/{footprint['id']}/models").json()["data"][0]["position"]
         == 1
@@ -504,7 +504,7 @@ def test_relinking_the_same_pair_moves_it_rather_than_conflicting(authed_client)
     assert c.post(path, json={"datafile_id": step["id"], "position": 0}).status_code == 200
     r = c.post(path, json={"datafile_id": step["id"], "position": 5})
     assert r.status_code == 200, r.text
-    assert r.json()["data"] == [{"datafile_id": step["id"], "position": 5}]
+    assert r.json()["data"] == [{"datafile_id": step["id"], "position": 5, "placement": None}]
 
 
 def test_models_are_ordered_by_position(authed_client):

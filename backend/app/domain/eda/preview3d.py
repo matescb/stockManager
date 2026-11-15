@@ -69,6 +69,8 @@ __all__ = [
     "OutputTooLarge",
     "ConversionFailed",
     "get_or_build_glb",
+    "convert_step",
+    "read_or_convert",
 ]
 
 _log = logging.getLogger(__name__)
@@ -260,3 +262,45 @@ def get_or_build_glb(
         _prune(cache_dir, source_sha, os.path.basename(cache_path))
         return cache_path, None
     return None, glb
+
+
+def convert_step(source: bytes) -> bytes:
+    """STEP bytes → GLB bytes, in memory, under the same caps as the
+    cached path. For callers that hold the STEP but not a stored copy
+    (the zip importer, before the row exists)."""
+    if len(source) > MAX_SOURCE_BYTES:
+        raise SourceTooLarge(f"source is {len(source)} bytes (cap {MAX_SOURCE_BYTES})")
+    glb = _convert(source)
+    if len(glb) > MAX_OUTPUT_BYTES:
+        raise OutputTooLarge(f"glb is {len(glb)} bytes (cap {MAX_OUTPUT_BYTES})")
+    return glb
+
+
+def read_or_convert(
+    workspace_id, source_sha: str, source_path: str, *, write_cache: bool
+) -> bytes:
+    """The GLB for a stored STEP, as bytes.
+
+    A cached GLB is read when there is one. Otherwise `write_cache=True`
+    builds through `get_or_build_glb` (so the preview gets it for free)
+    and `write_cache=False` converts in memory and writes nothing — the
+    dry run of an operator job must leave no file behind.
+    """
+    cache_path = os.path.join(_cache_dir(workspace_id), _cache_name(source_sha))
+    if write_cache:
+        path, data = get_or_build_glb(workspace_id, source_sha, source_path)
+        cache_path = path or cache_path
+        if data is not None:
+            return data
+    try:
+        with open(cache_path, "rb") as handle:
+            return handle.read()
+    except OSError:
+        if write_cache:
+            raise SourceMissing("cached GLB vanished") from None
+    try:
+        with open(source_path, "rb") as handle:
+            source = handle.read(MAX_SOURCE_BYTES + 1)
+    except OSError as exc:
+        raise SourceMissing(str(exc)) from exc
+    return convert_step(source)

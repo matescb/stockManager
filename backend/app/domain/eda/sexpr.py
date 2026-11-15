@@ -432,22 +432,36 @@ def rewrite_model_paths(node: Node, fn: Callable[[str], str | None]) -> Node:
     return out
 
 
-def append_model(node: Node, path: str) -> Node:
+def append_model(
+    node: Node,
+    path: str,
+    *,
+    offset: tuple[float, float, float] = (0, 0, 0),
+    scale: tuple[float, float, float] = (1, 1, 1),
+    rotate: tuple[float, float, float] = (0, 0, 0),
+) -> Node:
     """Return a copy of `node` with a `(model "path" …)` appended.
 
-    The placement is the identity KiCad itself writes for a freshly
-    added model — origin, unit scale, no rotation — because a node we
-    invent has no vendor placement to carry over. Appended, not
-    inserted: KiCad renders models in file order, and one already in
-    the bytes was put first by whoever authored the footprint.
+    The default placement is the identity KiCad itself writes for a
+    freshly added model — origin, unit scale, no rotation. A caller that
+    knows better (a placement fitted from the model's geometry,
+    `model_fit`) passes it. Appended, not inserted: KiCad renders models
+    in file order, and one already in the bytes was put first by whoever
+    authored the footprint.
     """
     return [
         *node,
         [
             _MODEL,
             Quoted(path),
-            ["offset", ["xyz", "0", "0", "0"]],
-            ["scale", ["xyz", "1", "1", "1"]],
-            ["rotate", ["xyz", "0", "0", "0"]],
+            ["offset", ["xyz", *(_number(v) for v in offset)]],
+            ["scale", ["xyz", *(_number(v) for v in scale)]],
+            ["rotate", ["xyz", *(_number(v) for v in rotate)]],
         ],
     ]
+
+
+def _number(value: float) -> str:
+    """A coordinate as KiCad writes it: no trailing `.0`, no `-0`."""
+    text = f"{float(value):.6f}".rstrip("0").rstrip(".")
+    return "0" if text in ("", "-0") else text

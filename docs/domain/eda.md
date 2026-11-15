@@ -38,9 +38,11 @@ Uniqueness is **partial on active rows**, which is what makes archiving free a n
 
 The footprint ↔ 3D-model join. Plain `Base`, deliberately **not** `WorkspaceOwned`: a join row has no independent lifecycle, so `archived_at` and `created_by` would be dead columns. Same shape as `parts.models.PartCadKey`.
 
-Columns: `id`, `workspace_id` → `workspaces.id` CASCADE, `footprint_id` → `eda_footprints.id` CASCADE, `datafile_id` → `eda_datafiles.id` CASCADE, `position` default `0`. Unique on `(footprint_id, datafile_id)` — **not** workspace-qualified, since both parents already are.
+Columns: `id`, `workspace_id` → `workspaces.id` CASCADE, `footprint_id` → `eda_footprints.id` CASCADE, `datafile_id` → `eda_datafiles.id` CASCADE, `position` default `0`, `placement` JSONB nullable (migration 0084). Unique on `(footprint_id, datafile_id)` — **not** workspace-qualified, since both parents already are.
 
 `workspace_id` is carried redundantly (derivable through either parent) so a join row can be listed without a join, and every query filters on it (`models.py:136-139`).
+
+`placement` is where the model sits when the footprint's own bytes don't say: `{"offset": [x, y, z], "rotate": [rx, ry, rz], "scale": [sx, sy, sz]}`, mm and degrees, in KiCad's 3D frame (Y up; KiCad negates the angles). It is fitted from the model's geometry when the link is made — `model_placement.placement_for_link` reads the STEP's bounding box from the 3D-preview GLB and `model_fit.fit` picks the axis-aligned orientation and offset that best covers the courtyard (else the pads), keeping a model that already sits on the board where the vendor put it. A WRL copies its same-stem STEP sibling's placement; a footprint whose bytes already carry a `(model …)` for that stem keeps NULL, because the vendor's node wins in the package. NULL means unknown, and the package then appends the model at the identity as it always did. Links that predate 0084 are filled by the operator-run `model-placement-fit` job. Geometry cannot tell pin-1 direction on a part symmetric in its bounding box, so a fitted placement is a starting point. The column is `JSONB(none_as_null=True)` — without it SQLAlchemy writes JSON `null` and `placement IS NULL` never matches.
 
 It carries **no timestamps**, which is why `service.py::_touch` writes the footprint's `updated_at` by hand on link and unlink — see [package versions](#why-a-3d-link-touches-the-footprint).
 

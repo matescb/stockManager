@@ -28,7 +28,7 @@ missing model on every board that places the footprint otherwise.
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 from uuid import UUID
@@ -37,7 +37,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import ErrorCodes
-from app.domain.eda import kicad_refs, sexpr, storage
+from app.domain.eda import kicad_refs, model_fit, model_placement, sexpr, storage
 from app.domain.eda import service as eda_service
 from app.domain.eda.models import EdaDatafile, EdaFootprint, EdaSymbol, PartEda
 from app.domain.eda.vendor_zip import ImportPlan, PendingDatafile, PendingEntry, Skipped
@@ -391,7 +391,10 @@ def _import_footprint(
     fallback: Sequence[CreatedRow] = (),
 ) -> None:
     node, linked, unmatched_only, dropped = _rewrite_models(
-        pending.node, models_by_stem, fallback
+        pending.node,
+        models_by_stem,
+        fallback,
+        fit=lambda fp_node, row: _fit_fallback(ws.id, fp_node, row),
     )
     row = _import_entry(
         db,
@@ -424,6 +427,7 @@ def _rewrite_models(
     node: sexpr.Node,
     models_by_stem: dict[str, list[CreatedRow]],
     fallback: Sequence[CreatedRow] = (),
+    fit: Callable[[sexpr.Node, CreatedRow], model_fit.Placement | None] | None = None,
 ) -> tuple[sexpr.Node, list[CreatedRow], bool, list[str]]:
     """Point the footprint's `(model …)` nodes at our own storage.
 
@@ -438,7 +442,7 @@ def _rewrite_models(
     if fallback and not any(
         models_by_stem.get(_fold(_path_stem(path))) for path in referenced
     ):
-        return _attach_fallback(node, referenced, fallback)
+        return _attach_fallback(node, referenced, fallback, fit)
     if not referenced:
         return node, [], False, []
 
@@ -463,24 +467,49 @@ def _rewrite_models(
 
 
 def _attach_fallback(
-    node: sexpr.Node, referenced: list[str], fallback: Sequence[CreatedRow]
+    node: sexpr.Node,
+    referenced: list[str],
+    fallback: Sequence[CreatedRow],
+    fit: Callable[[sexpr.Node, CreatedRow], model_fit.Placement | None] | None,
 ) -> tuple[sexpr.Node, list[CreatedRow], bool, list[str]]:
     """Point the footprint at the archive's one unclaimed model.
 
     The FIRST existing `(model …)` is re-pointed rather than a new one
     appended, so the vendor's offset / rotation carries over; the others
     name files the archive didn't carry and are dropped as usual. With no
-    `(model …)` at all the node is appended at the identity placement —
-    the vendor gave none to carry over.
+    `(model …)` at all the vendor gave no placement to carry over, so one
+    is fitted from the STEP's geometry (`model_fit`) — SnapEDA STEPs are
+    commonly Y-up and centred on their own origin, and at the identity
+    they stood on edge inside the board. The identity is the fallback
+    only when the geometry can't be read.
     """
-    target = f"{MODEL_PATH_VAR}/{_best_model(fallback).name}"
+    best = _best_model(fallback)
+    target = f"{MODEL_PATH_VAR}/{best.name}"
     if not referenced:
-        return sexpr.append_model(node, target), list(fallback), False, []
+        placement = fit(node, best) if fit is not None else None
+        if placement is None:
+            appended = sexpr.append_model(node, target)
+        else:
+            appended = sexpr.append_model(
+                node,
+                target,
+                offset=placement.offset,
+                scale=placement.scale,
+                rotate=placement.rotate,
+            )
+        return appended, list(fallback), False, []
     first, dropped = referenced[0], referenced[1:]
     rewritten = sexpr.rewrite_model_paths(
         node, lambda path: target if path == first else None
     )
     return rewritten, list(fallback), False, dropped
+
+
+def _fit_fallback(
+    workspace_id: UUID, node: sexpr.Node, row: CreatedRow
+) -> model_fit.Placement | None:
+    fitted = model_placement.fit_stored(workspace_id, node, row)
+    return fitted.placement if fitted else None
 
 
 def _best_model(group: Sequence[CreatedRow]) -> CreatedRow:

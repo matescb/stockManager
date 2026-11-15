@@ -41,7 +41,7 @@ from sqlalchemy import update
 
 import app.core.ratelimit as _ratelimit_mod
 from app.core.time import utcnow
-from app.domain.eda import kicad_refs, pcm, sexpr
+from app.domain.eda import kicad_refs, model_fit, pcm, sexpr
 from app.domain.eda.models import EdaSymbol
 from app.main import app
 from tests._factories import signup_user
@@ -637,6 +637,82 @@ def test_an_unrelated_linked_model_is_still_appended():
     assert second[1] == kicad_refs.pcm_model_path("com.x", "heatsink.step")
 
 
+_CUBE_STEP = (
+    pathlib.Path(__file__).parent / "fixtures" / "eda" / "preview3d" / "cube.step"
+).read_bytes()
+
+
+def _model_nodes(tenant: Tenant, member: str) -> list:
+    archive = _open_zip(tenant.pcm.get(_archive(tenant.token)))
+    return [c for c in sexpr.parse(archive.read(member).decode()) if sexpr.head(c) == "model"]
+
+
+def test_a_linked_model_gets_a_placement_fitted_from_its_geometry(ws: Tenant):
+    """The 10 mm fixture cube is centred on its own origin, so at the
+    identity half of it is inside the board. Linking it on the CAD tab
+    stores a placement that sets it on top, and the package uses it."""
+    pytest.importorskip("cascadio")
+    bare = ws.footprint("R_Bare")
+    cube = ws.datafile("real_cube.step", _CUBE_STEP, name="real_cube.step")
+    _link(ws, bare["id"], cube["id"])
+
+    links = ws.session.get(f"/api/eda/footprints/{bare['id']}/models").json()["data"]
+    placement = links[0]["placement"]
+    assert placement["rotate"] == [0.0, 0.0, 0.0]
+    assert placement["offset"][2] == pytest.approx(5.0)
+
+    (model,) = _model_nodes(ws, "footprints/SM_uncategorized.pretty/R_Bare.kicad_mod")
+    assert model[1] == _installed_model(ws, "real_cube.step")
+    assert ["offset", ["xyz", "0", "0", "5"]] in model
+
+
+def test_a_model_the_footprint_already_places_gets_no_placement(ws: Tenant):
+    """The vendor's `(model …)` node wins; a fitted placement would only
+    be a second opinion nobody reads."""
+    fp = ws.session.get("/api/eda/footprints").json()["data"][0]
+    cube = _step_file(ws)
+    _link(ws, fp["id"], cube["id"])
+
+    links = ws.session.get(f"/api/eda/footprints/{fp['id']}/models").json()["data"]
+    assert links[0]["placement"] is None
+
+
+def test_an_unreadable_model_is_linked_without_a_placement(ws: Tenant):
+    """The stub STEP has no geometry: the link still succeeds, and the
+    package falls back to the identity it always used."""
+    bare = ws.footprint("R_Bare")
+    _link(ws, bare["id"], _step_file(ws)["id"])
+    links = ws.session.get(f"/api/eda/footprints/{bare['id']}/models").json()["data"]
+    assert links[0]["placement"] is None
+
+
+def test_a_stored_placement_is_used_when_appending():
+    raw = _placed_footprint(f"{kicad_refs.MODEL_PATH_VAR}/SOT-23.step")
+    placement = model_fit.Placement(offset=(0, 0.5, 1), rotate=(-90, 0, 90))
+
+    out = pcm._footprint_for_package("com.x", raw, (("heatsink.step", placement),))
+
+    _, appended = _models_of(out)
+    assert appended[2:] == [
+        ["offset", ["xyz", "0", "0.5", "1"]],
+        ["scale", ["xyz", "1", "1", "1"]],
+        ["rotate", ["xyz", "-90", "0", "90"]],
+    ]
+
+
+def test_the_fingerprint_carries_the_placement():
+    """Moving a model changes what KiCad renders, so it must change the
+    archive even though no footprint byte moved."""
+    base = dict(name="R_0402", sha256="ab" * 32, size_bytes=10, ext="kicad_mod", stem="SM_x")
+    args = ("com.x", "1.0", "ws", [])
+    unplaced = pcm._StoredEntry(**base, models=(("cube.step", None),))
+    placed = pcm._StoredEntry(
+        **base,
+        models=(("cube.step", model_fit.Placement(offset=(0, 0, 5), rotate=(0, 0, 0))),),
+    )
+    assert pcm._fingerprint(*args, [unplaced], []) != pcm._fingerprint(*args, [placed], [])
+
+
 def test_linking_a_3d_model_changes_the_archive(ws: Tenant):
     """The link row has no timestamp and the footprint bytes don't
     change, so the cache key has to carry the link itself."""
@@ -1226,11 +1302,11 @@ def test_derive_version_is_monotonic():
 
 
 def test_derive_version_shape_at_a_day_boundary():
-    assert pcm._derive_version(pcm.VERSION_EPOCH)[0] == "3.0.0"
+    assert pcm._derive_version(pcm.VERSION_EPOCH)[0] == "4.0.0"
     end_of_day = pcm.VERSION_EPOCH + timedelta(hours=23, minutes=59, seconds=59)
-    assert pcm._derive_version(end_of_day)[0] == "3.0.43199"
-    assert pcm._derive_version(pcm.VERSION_EPOCH + timedelta(days=1))[0] == "3.1.0"
-    assert pcm._derive_version(pcm.VERSION_EPOCH + timedelta(days=10_000))[0] == "4.0.0"
+    assert pcm._derive_version(end_of_day)[0] == "4.0.43199"
+    assert pcm._derive_version(pcm.VERSION_EPOCH + timedelta(days=1))[0] == "4.1.0"
+    assert pcm._derive_version(pcm.VERSION_EPOCH + timedelta(days=10_000))[0] == "5.0.0"
 
 
 def test_the_package_format_revision_outranks_every_earlier_version():
@@ -1260,8 +1336,8 @@ def test_derive_version_clamps_below_the_epoch():
     """A restored backup or a skewed clock must not produce a negative
     component — the PCM's version pattern rejects the whole document."""
     stale = datetime(2020, 6, 1, tzinfo=timezone.utc)
-    assert pcm._derive_version(stale)[0] == "3.0.0"
-    assert pcm._derive_version(None)[0] == "3.0.0"
+    assert pcm._derive_version(stale)[0] == "4.0.0"
+    assert pcm._derive_version(None)[0] == "4.0.0"
 
 
 # ---------------------------------------------------------------------
