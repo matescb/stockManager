@@ -111,3 +111,55 @@ class StockSummaryRow(BaseModel):
     quantity: int
     unit_price: Decimal | None = None
     currency: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Box intake / box audit (phase 15). One scanned bag = one lot, so a box's
+# contents are a list of (part, lot) buckets that can be checked bag by bag.
+# ---------------------------------------------------------------------------
+
+
+class BoxScanResolveIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mpn: str | None = Field(default=None, max_length=200)
+    bag_signature: BagSignatureStr | None = None
+    raw_bag_code: str | None = Field(default=None, max_length=4096)
+    # Off for the audit page's first pass: a bag it does not know is
+    # resolved again with the provider only when the operator keeps it.
+    provider_lookup: bool = True
+
+
+class BoxIntakeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    part_id: UUID | None = None
+    mpn: str | None = Field(default=None, max_length=200)
+    quantity: int = Field(gt=0)
+    bag_signature: BagSignatureStr | None = None
+    raw_bag_code: str | None = Field(default=None, max_length=4096)
+    lot_name: str | None = Field(default=None, max_length=200)
+    lot_serial: str | None = Field(default=None, max_length=200)
+    comments: str | None = Field(default=None, max_length=1000)
+    # What to do when the scanned bag is already recorded in another box:
+    # "move" relocates that lot here (the default — the bag was physically
+    # moved), "add_new" records it as a fresh bag (it is a second bag
+    # that happens to carry an identical label).
+    on_existing: Literal["move", "add_new"] = "move"
+
+
+class BoxAuditLine(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    part_id: UUID
+    lot_id: UUID | None = None
+    action: Literal["count", "write_off", "move"]
+    actual_quantity: int | None = Field(default=None, ge=0)
+    to_storage_location_id: UUID | None = None
+
+
+class BoxAuditIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lines: list[BoxAuditLine] = Field(min_length=1, max_length=1000)
+    comments: str | None = Field(default=None, max_length=500)

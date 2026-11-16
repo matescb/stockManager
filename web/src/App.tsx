@@ -49,6 +49,8 @@ import PartActivity from "@/routes/parts/detail/PartActivity";
 // Storage / lots — small, also eagerly imported.
 import StorageListPage from "@/routes/storage/StorageList";
 import StorageCreate from "@/routes/storage/StorageCreate";
+import BoxIntake from "@/routes/storage/boxScan/BoxIntake";
+import BoxAudit from "@/routes/storage/boxScan/BoxAudit";
 import {
   StorageDetailLayout,
   StorageInfo,
@@ -265,6 +267,8 @@ export default function App() {
             <Route path="/storage/:storageId" element={<StorageDetailLayout />}>
               <Route index element={<Navigate to="info" replace />} />
               <Route path="info" element={<StorageInfo />} />
+              <Route path="intake" element={<BoxIntake />} />
+              <Route path="audit" element={<BoxAudit />} />
               <Route path="history" element={<StorageHistory />} />
               <Route path="settings" element={<StorageSettings />} />
               <Route path="other" element={<StorageOther />} />

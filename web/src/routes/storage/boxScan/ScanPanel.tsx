@@ -1,0 +1,153 @@
+/**
+ * Input side of box intake / audit: camera scanner (toggleable), USB /
+ * Bluetooth keyboard-wedge reader, pasted bag code, and "add by MPN".
+ * Scanning a printed box label switches to the same mode for that box.
+ */
+import { useCallback, useState } from "react";
+import type React from "react";
+import { useNavigate } from "react-router-dom";
+import { Camera, CameraOff, Keyboard, Plus } from "lucide-react";
+import { toast } from "sonner";
+import Scanner, { type ScanResult } from "@/components/scanner/Scanner";
+import { useKeyboardWedge } from "@/components/scanner/useKeyboardWedge";
+import { api, ApiError } from "@/lib/api";
+import { classifyScan, type ScannedBag } from "./scanCode";
+
+const SYMBOLOGIES = ["DataMatrix", "QR"] as const;
+const CAMERA_PREF = "boxScan:camera";
+
+function readCameraPref(): boolean {
+  try {
+    return localStorage.getItem(CAMERA_PREF) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+type Props = {
+  boxId: string;
+  mode: "intake" | "audit";
+  onBag: (bag: ScannedBag) => void;
+  /** Present only where adding by MPN makes sense. */
+  onManual?: (mpn: string, quantity: number) => void;
+};
+
+export default function ScanPanel({ boxId, mode, onBag, onManual }: Props) {
+  const navigate = useNavigate();
+  const [camera, setCamera] = useState(readCameraPref);
+  const [code, setCode] = useState("");
+  const [mpn, setMpn] = useState("");
+  const [qty, setQty] = useState("");
+
+  const handle = useCallback(
+    async (raw: string) => {
+      const scanned = await classifyScan(raw);
+      if (scanned.kind === "bag") {
+        onBag(scanned);
+        return;
+      }
+      if (scanned.kind === "unreadable") {
+        toast.error("Code not recognised as a part bag");
+        return;
+      }
+      try {
+        const target = await api.get<{ entity_type: string; entity_id: string }>(
+          `/codes/${encodeURIComponent(scanned.code)}`,
+        );
+        if (target.entity_type !== "storage_location") {
+          toast.error("That label is not a box");
+        } else if (target.entity_id !== boxId) {
+          navigate(`/storage/${target.entity_id}/${mode}`);
+        }
+      } catch (e) {
+        toast.error(e instanceof ApiError ? e.userMessage : "Unknown label");
+      }
+    },
+    [boxId, mode, navigate, onBag],
+  );
+
+  useKeyboardWedge(handle);
+  const onCamera = useCallback((s: ScanResult) => void handle(s.data), [handle]);
+
+  function toggleCamera() {
+    const next = !camera;
+    setCamera(next);
+    try {
+      localStorage.setItem(CAMERA_PREF, next ? "on" : "off");
+    } catch {
+      /* private mode — preference just isn't remembered */
+    }
+  }
+
+  function submitCode(e: React.FormEvent) {
+    e.preventDefault();
+    if (!code.trim()) return;
+    void handle(code);
+    setCode("");
+  }
+
+  function submitMpn(e: React.FormEvent) {
+    e.preventDefault();
+    const n = Number(qty);
+    if (!mpn.trim() || !Number.isInteger(n) || n <= 0 || !onManual) return;
+    onManual(mpn.trim(), n);
+    setMpn("");
+    setQty("");
+  }
+
+  return (
+    <div className="card p-3 space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-xs text-muted inline-flex items-center gap-1.5">
+          <Keyboard size={14} /> USB / Bluetooth reader ready — just scan.
+        </div>
+        <button type="button" className="btn btn-sm inline-flex items-center gap-1" onClick={toggleCamera}>
+          {camera ? <CameraOff size={14} /> : <Camera size={14} />}
+          {camera ? "Camera off" : "Camera on"}
+        </button>
+      </div>
+      {camera && <Scanner onScan={onCamera} symbologies={SYMBOLOGIES} className="flex flex-col h-[40vh]" />}
+      <form className="flex gap-2" onSubmit={submitCode}>
+        <label className="sr-only" htmlFor="box-scan-code">Bag code</label>
+        <input
+          id="box-scan-code"
+          className="input min-w-0 flex-1"
+          placeholder="Paste or type a bag code"
+          value={code}
+          onChange={e => setCode(e.target.value)}
+        />
+        <button type="submit" className="btn btn-sm" disabled={!code.trim()}>Scan</button>
+      </form>
+      {onManual && (
+        <form className="flex gap-2" onSubmit={submitMpn}>
+          <label className="sr-only" htmlFor="box-scan-mpn">MPN</label>
+          <input
+            id="box-scan-mpn"
+            className="input min-w-0 flex-1"
+            placeholder="MPN"
+            value={mpn}
+            onChange={e => setMpn(e.target.value)}
+          />
+          <label className="sr-only" htmlFor="box-scan-qty">Quantity</label>
+          <input
+            id="box-scan-qty"
+            className="input w-24"
+            type="number"
+            min={1}
+            step={1}
+            placeholder="Qty"
+            value={qty}
+            onChange={e => setQty(e.target.value)}
+          />
+          <button
+            type="submit"
+            className="btn-primary btn-sm inline-flex items-center gap-1"
+            disabled={!mpn.trim() || !(Number(qty) > 0)}
+          >
+            <Plus size={14} /> Add by MPN
+          </button>
+        </form>
+      )}
+    </div>
+  );
+}

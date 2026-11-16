@@ -231,6 +231,11 @@ class ErrorCodes:
     STORAGE_NOT_FOUND = "storage.not_found"
     STORAGE_HAS_STOCK = "storage.has_stock"
     STORAGE_CONSTRAINT_VIOLATION = "storage.constraint_violation"
+    STORAGE_ARCHIVED = "storage.archived"
+
+    # Box intake / audit (storage_scan router, phase 15).
+    BOX_SCAN_NO_PART = "box_scan.no_part"
+    BOX_SCAN_PART_NOT_FOUND = "box_scan.part_not_found"
 
     # Attachments router.
     ATTACHMENT_TOO_LARGE = "attachment.too_large"

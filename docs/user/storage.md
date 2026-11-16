@@ -39,11 +39,44 @@ Open a location and click the **Info** tab. The table lists every (part, lot) ro
 
 The **History** tab shows every stock event that touched this location — useful for "who put what here, and when".
 
-> _Screenshot: the storage Info tab with the parts table and the "Scan into here" button at the top._
+> _Screenshot: the storage Info tab with the parts table and the "Scan into here" and "Audit" buttons at the top._
 
-## Scan stock straight into a location
+## Fill a box by scanning (Intake)
 
-A shortcut: open the location and click **Scan into here** at the top. That opens the [scan-to-import](scan-import.md) page with this bin pre-selected as the destination, so you don't have to remember to set it.
+Use this to load an old box or a new delivery. Open the box and click **Scan into here** (or the **Intake** tab).
+
+1. Scan each bag's 2D code with the camera, or with a USB / Bluetooth barcode reader (no need to click anything first; just scan).
+2. Each bag appears in the list and is saved straight away into this box as its own bag (lot). The quantity comes from the label.
+3. If the real count differs, type the right number in the row and click **Update count**.
+4. No label? Type the **MPN** and **Qty** and click **Add by MPN**.
+
+What each row tells you:
+
+- **Added**: the bag is now in this box. **new part** means the part was not in your library and was created from your parts provider.
+- **Already in this box**: this bag was scanned into this box before. Only its count changes if you edit it.
+- **Recorded in another box**: the bag is on record somewhere else. Click **Move here** if you moved it, or **Add as new bag** if it is a second bag with an identical label.
+- **Not in the library**: the provider has no match for the MPN. Use **Create part…** and then add it by MPN.
+
+Untick **Save each scan immediately** if you would rather check the list first and then click **Save all**. **Undo** sets a just-added bag back to zero.
+
+Scanning a box's printed label switches to that box.
+
+## Check a box (Audit)
+
+Use this to make the records match what is really in the box. Open the box and click **Audit**.
+
+1. Scan every bag in the box. Each scanned bag moves to **Scanned**, showing its recorded quantity. Change the number if your count differs.
+2. Bags still listed under **Not scanned** (in red) were not found. For each one, pick:
+   - **Write off** (default): the record drops to zero. History is kept.
+   - **Move to…**: it lives in another box. Pick which.
+   - **Keep**: leave the record as it is.
+   - Or click **It's here** if the bag is there but its label will not scan.
+3. A scanned bag that is not on record for this box shows under **Found here, not recorded**. Click **Move here** or **Add to box**.
+4. Click **Finish audit**. Everything is applied at once.
+
+Stock entered before bag tracking existed shows as **old record, not tracked per bag** and is written off by default. Scan the actual bags to replace it.
+
+Progress is kept if you reload the page. **Start over** clears it.
 
 ## Set a default location for a part
 
