@@ -15,6 +15,23 @@ the canonical record.
 
 ## Unreleased
 
+- **Box intake and box audit.** Two scan modes on every storage
+  location ([phase 15](docs/phases/15-box-intake-and-audit.md)).
+  - **Intake** (`/storage/:id/intake`, "Scan into here") adds each
+    scanned bag as its own lot. It covers parts already in the library,
+    which scan-to-import used to skip as `duplicate` without adding
+    stock, and creates unknown parts from the provider. A bag recorded
+    in another box is moved rather than duplicated, and parts can also
+    be added by MPN + quantity.
+  - **Audit** (`/storage/:id/audit`) ticks off recorded bags as they
+    are scanned, with editable counts, and lists the bags that were
+    never scanned. Each of those can be written off (adjust to 0),
+    moved or kept; everything is applied in one transaction.
+  - New endpoints `POST /api/storage/{id}/scan/resolve`,
+    `POST …/intake`, `GET …/bags`, `POST …/audit`.
+  - Both pages also accept USB / Bluetooth keyboard-wedge barcode readers.
+    Nothing ever implemented the reader support the user docs claimed.
+
 - **3D models sit on their footprints.** A model linked on the CAD tab
   carried no placement, so the KiCad package appended it at zero offset
   and rotation — and SnapEDA STEPs, typically Y-up and centred on their

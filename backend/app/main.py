@@ -240,6 +240,7 @@ from app.api.routes import (
     sourcing,
     stock,
     storage,
+    storage_scan,
     tags,
     tokens,
     workspaces,
@@ -571,6 +572,7 @@ app.include_router(
 )
 app.include_router(parts_scan.router, prefix="/api/parts", tags=["parts"], dependencies=_member_gate)
 app.include_router(storage.router, prefix="/api/storage", tags=["storage"], dependencies=_member_gate)
+app.include_router(storage_scan.router, prefix="/api/storage", tags=["storage"], dependencies=_member_gate)
 app.include_router(stock.router, prefix="/api/stock", tags=["stock"], dependencies=_member_gate)
 app.include_router(lots.router, prefix="/api/lots", tags=["lots"], dependencies=_member_gate)
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"], dependencies=_member_gate)

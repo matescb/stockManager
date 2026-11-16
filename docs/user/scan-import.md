@@ -18,7 +18,7 @@ The page has two halves:
 - **Left** — the camera viewport and a status line.
 - **Right** — the storage picker, a Submit button, and the queue of bags scanned so far.
 
-The browser asks for camera permission the first time. Allow it. If you have a USB barcode reader configured to type into the browser, it works the same way — focus the page and scan.
+The browser asks for camera permission the first time. Allow it. To use a USB barcode reader here, click **Manual entry** and scan into its box. Box [Intake and Audit](storage.md#fill-a-box-by-scanning-intake) accept a USB reader directly.
 
 Your administrator may have configured a higher-quality scanner engine. If so, scanning works without further setup. The default engine (zxing) handles the common 2D codes printed by Mouser and DigiKey.
 
@@ -26,7 +26,7 @@ Your administrator may have configured a higher-quality scanner engine. If so, s
 
 Before scanning many bags, set the **Storage location** dropdown on the right. Every queued bag lands there when you submit. You can override it per-bag later, or leave it blank and pick storage at receive time.
 
-A faster shortcut: open a storage location and click **Scan into here** at the top. That opens the scan page with the destination already set.
+Filling a specific box, especially with parts already in your library? Open the box and click **Scan into here** instead. That [Intake](storage.md#fill-a-box-by-scanning-intake) page adds stock for parts you already have too, one bag at a time.
 
 ## Scan bags
 

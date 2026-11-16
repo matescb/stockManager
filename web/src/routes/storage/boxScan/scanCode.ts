@@ -1,0 +1,32 @@
+/** Classify what a scanner (camera, wedge or paste) produced. */
+import { bagComments, bagLotName, bagSignature, parseBagCode, type BagCode } from "@/lib/bagCode";
+
+export type ScannedBag = {
+  kind: "bag";
+  raw: string;
+  bag: BagCode;
+  sig: string | null;
+  lotName: string | null;
+  comments: string | null;
+};
+
+export type Scanned = ScannedBag | { kind: "box_label"; code: string } | { kind: "unreadable"; raw: string };
+
+// A printed label's QR encodes `<APP_BASE_URL>/c/<code>`.
+const LABEL_URL = /\/c\/([A-Za-z0-9_-]+)\/?$/;
+
+export async function classifyScan(raw: string): Promise<Scanned> {
+  const text = raw.trim();
+  const label = LABEL_URL.exec(text);
+  if (label && /^https?:\/\//i.test(text)) return { kind: "box_label", code: label[1] };
+  const bag = parseBagCode(raw);
+  if (!bag.mpn.trim()) return { kind: "unreadable", raw };
+  return {
+    kind: "bag",
+    raw,
+    bag,
+    sig: await bagSignature(raw),
+    lotName: bagLotName(bag),
+    comments: bagComments(bag),
+  };
+}

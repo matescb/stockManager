@@ -1,6 +1,6 @@
 import { Link, Outlet, useParams, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ScanLine } from "lucide-react";
+import { ClipboardCheck, ScanLine } from "lucide-react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
@@ -25,6 +25,12 @@ export function StorageDetailLayout() {
   if (!data) return <div className="text-muted">Loading…</div>;
   const items = [
     { to: `/storage/${data.id}/info`, label: "Info" },
+    ...(data.archived_at
+      ? []
+      : [
+          { to: `/storage/${data.id}/intake`, label: "Intake" },
+          { to: `/storage/${data.id}/audit`, label: "Audit" },
+        ]),
     { to: `/storage/${data.id}/history`, label: "History" },
     { to: `/storage/${data.id}/settings`, label: "Settings" },
     { to: `/storage/${data.id}/other`, label: "Other" },
@@ -49,16 +55,24 @@ export function StorageDetailLayout() {
               entityName={data.name}
             />
             {!data.archived_at && (
-              // "Scan into here": jumps to the bulk-import flow with this
-              // bin pre-selected as the destination, so a fresh bag of
-              // parts lands directly without picking storage in the form.
-              <Link
-                to={`/parts/scan-import?storage_id=${data.id}`}
-                className="btn-primary inline-flex items-center gap-1.5"
-              >
-                <ScanLine size={14} />
-                Scan into here
-              </Link>
+              <>
+                <Link
+                  to={`/storage/${data.id}/intake`}
+                  className="btn-primary inline-flex items-center gap-1.5"
+                  title="Scan bags into this box"
+                >
+                  <ScanLine size={14} />
+                  Scan into here
+                </Link>
+                <Link
+                  to={`/storage/${data.id}/audit`}
+                  className="btn inline-flex items-center gap-1.5"
+                  title="Check the box contents bag by bag"
+                >
+                  <ClipboardCheck size={14} />
+                  Audit
+                </Link>
+              </>
             )}
           </div>
         }

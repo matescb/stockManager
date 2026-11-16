@@ -205,6 +205,22 @@ depending on someone watching the browser console
 A parent that needs to change which symbologies are decoded must remount
 the component (key it by symbologies). No caller does this today.
 
+## Keyboard-wedge readers
+
+`web/src/components/scanner/keyboardWedge.ts` + `useKeyboardWedge.ts`
+(phase 15). USB / Bluetooth readers type the code and press Enter.
+`WedgeBuffer` treats a run of keys at most 50 ms apart, at least 4 long and
+ended by Enter/Tab, as a scan. A longer gap starts a new buffer, so slow
+human typing is never mistaken for one. Keys aimed at an input, textarea,
+select or contenteditable are ignored, so form fields keep working.
+
+Readers in "function key" mode send the DataMatrix separators as Ctrl
+combos. Ctrl+^ (and Ctrl+6) map to RS, Ctrl+] to GS and Ctrl+D to EOT, so
+`bagSignature()` hashes the same bytes the camera decoder would have
+produced. The hook calls `preventDefault` on those keys so Ctrl+D does not
+open the bookmark dialog mid-scan. Today only the box intake / audit pages
+(`routes/storage/boxScan/ScanPanel.tsx`) mount it.
+
 ## `bagCode.ts` — parser for Mouser / DigiKey 2D bags
 
 `web/src/lib/bagCode.ts`. The 2D Data Matrix codes printed on component
