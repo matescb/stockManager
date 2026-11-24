@@ -86,13 +86,34 @@ describe("parseBagCode — separators lost (keyboard-wedge reader)", () => {
     const b = parseBagCode(MOUSER_NO_1P);
     expect(b.mpn).toBe("");
     expect(b.noMpn).toBe(true);
-    expect(noMpnMessage(b)).toContain("Murata · qty 100 · customer P/N C201,C202,C503");
+    expect(noMpnMessage(b)).toContain(
+      "Murata · qty 100 · Mouser order 40489709 line 027 · customer P/N C201,C202,C503",
+    );
   });
 
   it("keeps the traceability comment for a no-MPN label", () => {
     expect(bagComments(parseBagCode(MOUSER_NO_1P))).toBe(
       "Order 40489709 · line 027 · invoice 092571642",
     );
+  });
+
+  // Owner's real labels from one Mouser order (customer P/N entered at
+  // ordering, so Mouser printed no 1P on any of them).
+  it.each([
+    [MOUSER_NO_1P, { lineItem: "027", distributorPn: "C201,C202,C503", quantity: 100, countryOfOrigin: "JP", manufacturer: "Murata" }],
+    [
+      "[)>06K4048970914K028PC102,C103Q10011K0925716424LJP1VMurata",
+      { lineItem: "028", distributorPn: "C102,C103", quantity: 100, countryOfOrigin: "JP", manufacturer: "Murata" },
+    ],
+    [
+      // The customer P/N itself starts with "Q" and abuts the line item:
+      // neither "Q201" as the quantity nor "1PQ201" as an MPN.
+      "[)>06K4048970914K021PQ201Q1011K0925716424LPH1Vonsemi",
+      { lineItem: "021", distributorPn: "Q201", quantity: 10, countryOfOrigin: "PH", manufacturer: "onsemi" },
+    ],
+  ])("reads the real no-1P Mouser label %s", (raw, expected) => {
+    const b = parseBagCode(raw);
+    expect(b).toMatchObject({ mpn: "", noMpn: true, customerRef: "40489709", invoiceRef: "092571642", ...expected });
   });
 
   it("recovers the MPN from a separator-less Mouser label that has 1P", () => {

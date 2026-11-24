@@ -55,6 +55,8 @@ export type BagCode = {
   dateCode?: string;
   /** Manufacturer's lot/batch identifier (1T). */
   lotBatch?: string;
+  /** Country of origin (4L), ISO 3166 alpha-2. */
+  countryOfOrigin?: string;
   /** Serial number (1S) — only present on serialized parts. */
   serial?: string;
   /** Order / PO / line / invoice references — handy for traceability.
@@ -243,8 +245,10 @@ function assignField(out: BagCode, f: SegmentField): void {
     case "11K":
       out.invoiceRef = f.value;
       break;
-    // 4L (country of origin), 13Z (arbitrary), T are intentionally
-    // not surfaced — niche enough to keep out of the UI.
+    case "4L":
+      out.countryOfOrigin = f.value;
+      break;
+    // 13Z (arbitrary) and T are intentionally not surfaced.
   }
 }
 
@@ -287,14 +291,32 @@ export function parseBagCode(raw: string): BagCode {
   return out;
 }
 
-/** One-line summary of what a no-MPN bag label did carry, for messages:
- *  "Murata · qty 100 · customer P/N C201,C202,C503". */
-export function bagSummary(b: BagCode): string {
+/** Where to look the bag up: "Mouser order 40489709 line 027". Mouser is
+ *  the distributor that prints a 14K line item next to its K order ref. */
+export function bagOrderRef(b: BagCode): string | null {
+  if (b.customerRef && b.lineItem) return `Mouser order ${b.customerRef} line ${b.lineItem}`;
+  if (b.customerRef) return `order ${b.customerRef}`;
+  if (b.poNumber) return `order ${b.poNumber}`;
+  return null;
+}
+
+/** Which bag this is, for a follow-up prompt:
+ *  "Murata · qty 100 · Mouser order 40489709 line 027". */
+export function bagContext(b: BagCode): string {
   const parts: string[] = [];
   if (b.manufacturer) parts.push(b.manufacturer);
   if (b.quantity) parts.push(`qty ${b.quantity}`);
-  if (b.distributorPn) parts.push(`customer P/N ${b.distributorPn}`);
+  const order = bagOrderRef(b);
+  if (order) parts.push(order);
   return parts.join(" · ");
+}
+
+/** `bagContext` plus the customer P/N:
+ *  "Murata · qty 100 · Mouser order 40489709 line 027 · customer P/N C201,C202,C503". */
+export function bagSummary(b: BagCode): string {
+  const context = bagContext(b);
+  if (!b.distributorPn) return context;
+  return [context, `customer P/N ${b.distributorPn}`].filter(Boolean).join(" · ");
 }
 
 /** User-facing explanation for a bag label that has no manufacturer part

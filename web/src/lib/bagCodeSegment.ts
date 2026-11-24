@@ -37,7 +37,10 @@ const TOKEN = /^\S+$/;
 
 const RULES: Rule[] = [
   { di: "Q", shape: /^\d{1,7}$/, strict: true },
-  { di: "14K", shape: /^\d{1,6}$/, strict: true },
+  // Mouser zero-pads the line item to three digits ("027"). Without that
+  // floor "14K021PQ201" also reads as 14K=02 + 1P=Q201, and the 1P
+  // preference below would pick it — a customer P/N taken for the MPN.
+  { di: "14K", shape: /^\d{3,6}$/, strict: true },
   { di: "11K", shape: /^\d{1,12}$/, strict: true },
   { di: "10K", shape: /^\d{1,12}$/, strict: true },
   // 1K is DigiKey's (numeric) sales order. A non-numeric PO only ever

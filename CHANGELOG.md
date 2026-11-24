@@ -16,21 +16,30 @@ the canonical record.
 ## Unreleased
 
 - **Bag labels scanned without separators, or without an MPN.** A USB reader
-  that drops the label's GS/RS separators ran every field together, and a
-  Mouser label that carries only the customer part number (P) and no 1P then
-  sent the whole `[)>06K…` string to the provider as the MPN, which wasted a
-  metered call and reported "not in the library". The parser now cuts a
-  separator-less label into fields by value shape (Q, 14K, 11K, 1K, 10K
-  digits; 10D/9D YYWW; 4L two letters; 1V last), so `Q10011K…` reads as
-  Q=100 + 11K. It leaves a field out when two readings are equally good. A
-  label with no 1P sets `noMpn` with an empty MPN. Box intake and audit then
-  ask for the MPN in the row (or take the next bare part-number scan) and
-  keep the label's quantity and order refs. Scan import says why the row has
-  no MPN and still offers quick-remove for a known bag. The keyboard-wedge
-  listener now reads the reader's separators by physical key, so Ctrl+]
-  works on a Czech layout. It also keeps AltGr characters such as `#`. The
-  provider cache and the box-scan endpoints refuse a `[)>…` string as an MPN.
-  `bag_signature` is unchanged.
+  that drops the label's GS/RS separators ran every field together. A Mouser
+  label made for an order with customer part numbers carries only P, no 1P.
+  The whole `[)>06K…` string then went to the provider as the MPN, which
+  wasted a metered call and reported "not in the library". The parser now
+  cuts a separator-less label into fields by value shape. Q, 11K, 1K and 10K
+  are digits, 14K is three or more digits (Mouser zero-pads it), 10D/9D are
+  YYWW, 4L is two letters and 1V comes last. So `Q10011K…` reads as Q=100 +
+  11K, and `14K021PQ201Q10` as line 021, customer P/N `Q201`, qty 10. A field
+  is left out when two readings are equally good. 4L is now kept as
+  `countryOfOrigin`. A label with no 1P sets `noMpn`; its messages name the
+  bag as "Murata · qty 100 · Mouser order 40489709 line 027".
+- **Follow-up scan in box intake and audit.** When a scanned label lacks the
+  MPN (or, in intake, the quantity), the page plays a distinct two-tone
+  "need more info" sound. It shows what to scan next and takes the next
+  plain (non-`[)>`) scan or typed text as the answer. The bag keeps the 2D
+  label's quantity, order refs and `bag_signature`. Esc or Cancel stops
+  waiting, and a new 2D label abandons the prompt and becomes its own bag.
+  The camera click moved to `components/scanner/scanSounds.ts`. Scan import
+  shows the no-MPN message and still offers quick-remove for a known bag.
+- **Keyboard-wedge separators on non-US layouts.** Ctrl+] / Ctrl+^ / Ctrl+D
+  are also read by physical key, so a reader on a Czech layout no longer drops
+  GS. AltGr characters such as `#` are kept. The provider cache and the
+  box-scan endpoints refuse a `[)>…` string as an MPN. `bag_signature` is
+  unchanged.
 - **`catalog_search` facets on broad DigiKey searches (SM-002 fix).** Production
   returned empty `categories`, `status` and `parametric_filters` for a
   44,740-result search. The parser's field names were right (they match the

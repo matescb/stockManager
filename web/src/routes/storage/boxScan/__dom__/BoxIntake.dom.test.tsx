@@ -9,11 +9,14 @@ vi.mock("@/lib/auth", () => ({ useAuth: () => ({ workspaceId: "ws-1" }) }));
 vi.mock("@/lib/queryKeys", () => ({ useWsKey: (...a: unknown[]) => ["ws-1", ...a] }));
 vi.mock("@/components/scanner/Scanner", () => ({ default: () => <div data-testid="camera" /> }));
 vi.mock("sonner", () => ({ toast: { info: vi.fn(), error: vi.fn(), success: vi.fn() } }));
+const sounds = vi.hoisted(() => ({ playNeedMoreInfo: vi.fn(), playScanBeep: vi.fn() }));
+vi.mock("@/components/scanner/scanSounds", () => sounds);
 vi.mock("@/lib/api", async () => {
   const m = await import("./mocks");
   return { api: { get: m.apiGet, post: m.apiPost }, ApiError: m.FakeApiError };
 });
 
+import { bagSignature } from "@/lib/bagCode";
 import BoxIntake from "../BoxIntake";
 
 const part = { id: "p1", name: "LM358", mpn: "LM358", manufacturer: "TI", description: null };
@@ -41,6 +44,7 @@ beforeEach(() => {
   localStorage.clear();
   apiGet.mockReset();
   apiPost.mockReset();
+  sounds.playNeedMoreInfo.mockReset();
 });
 afterEach(cleanup);
 
@@ -128,15 +132,16 @@ describe("BoxIntake", () => {
     expect(screen.getByText("Create part…")).toBeTruthy();
   });
 
-  describe("bag label without a manufacturer part number", () => {
+  describe("follow-up scan for a label that lacks a field", () => {
     const murata = { ...part, id: "p2", name: "GRM188", mpn: "GRM188R71H104KA93D", manufacturer: "Murata" };
+    const PROMPT = "Scan the Mfr. Part No barcode on this label (Murata · qty 100 · Mouser order 40489709 line 027)";
 
     function mockResolve() {
       apiPost.mockImplementation((url: string, body: { mpn?: string }) => {
         if (url.endsWith("/scan/resolve")) {
           return Promise.resolve(
             body.mpn
-              ? { status: "existing_part", part: murata, bag: null, provider: null }
+              ? { status: "existing_part", part: body.mpn === "LM358" ? part : murata, bag: null, provider: null }
               : { status: "not_found", part: null, bag: null, provider: null },
           );
         }
@@ -144,47 +149,81 @@ describe("BoxIntake", () => {
       });
     }
 
-    it("explains the missing MPN instead of a provider miss, and never sends the raw code as MPN", async () => {
+    const intakeBodies = () => apiPost.mock.calls.filter(c => c[0] === "/storage/box1/intake").map(c => c[1]);
+
+    it("waits for the Mfr. Part No with a distinct sound, never sending the raw code as MPN", async () => {
       mockResolve();
       mount();
       scan(RAW_NO_1P);
 
-      expect(await screen.findByText(/has no manufacturer part number \(Murata · qty 100 · customer P\/N C201,C202,C503\)/)).toBeTruthy();
+      expect((await screen.findByTestId("follow-up-prompt")).textContent).toContain(PROMPT);
+      expect(sounds.playNeedMoreInfo).toHaveBeenCalledTimes(1);
       expect(screen.queryByText(/not in the library/)).toBeNull();
       const resolveCall = apiPost.mock.calls.find(c => c[0] === "/storage/box1/scan/resolve");
       expect(resolveCall?.[1].mpn).toBe("");
-      expect(resolveCall?.[1].raw_bag_code).toBe(RAW_NO_1P);
     });
 
-    it("saves with the label's quantity and order refs once the MPN is typed", async () => {
+    it("takes the next plain scan as the MPN and keeps the original label's traceability and signature", async () => {
       mockResolve();
       mount();
       scan(RAW_NO_1P);
-      await screen.findByText(/has no manufacturer part number/);
-
-      fireEvent.change(screen.getByPlaceholderText("Mfr. part number"), { target: { value: "GRM188R71H104KA93D" } });
-      fireEvent.click(screen.getByRole("button", { name: /Look up/ }));
-
-      expect(await screen.findByText("Added")).toBeTruthy();
-      expect(apiPost.mock.calls.find(c => c[0] === "/storage/box1/intake")?.[1]).toMatchObject({
-        part_id: "p2",
-        quantity: 100,
-        comments: "Order 40489709 · line 027 · invoice 092571642",
-        raw_bag_code: RAW_NO_1P,
-      });
-    });
-
-    it("completes the waiting label with the next bare part-number scan", async () => {
-      mockResolve();
-      mount();
-      scan(RAW_NO_1P);
-      await screen.findByText(/has no manufacturer part number/);
+      await screen.findByTestId("follow-up-prompt");
 
       scan("GRM188R71H104KA93D");
 
       expect(await screen.findByText("Added")).toBeTruthy();
+      expect(screen.queryByTestId("follow-up-prompt")).toBeNull();
       expect(screen.getAllByTestId("intake-row")).toHaveLength(1);
-      expect(apiPost.mock.calls.find(c => c[0] === "/storage/box1/intake")?.[1]).toMatchObject({ quantity: 100 });
+      expect(intakeBodies()).toEqual([
+        expect.objectContaining({
+          part_id: "p2",
+          quantity: 100,
+          comments: "Order 40489709 · line 027 · invoice 092571642",
+          raw_bag_code: RAW_NO_1P,
+          bag_signature: await bagSignature(RAW_NO_1P),
+        }),
+      ]);
+    });
+
+    it("cancels with the button and with Esc; the bag keeps its inline MPN box", async () => {
+      mockResolve();
+      mount();
+      scan(RAW_NO_1P);
+      await screen.findByTestId("follow-up-prompt");
+      fireEvent.click(screen.getByRole("button", { name: /Cancel/ }));
+      expect(screen.queryByTestId("follow-up-prompt")).toBeNull();
+      expect(screen.getByPlaceholderText("Mfr. part number")).toBeTruthy();
+
+      scan("[)>06K4048970914K028PC102,C103Q10011K0925716424LJP1VMurata");
+      await screen.findByTestId("follow-up-prompt");
+      fireEvent.keyDown(window, { key: "Escape" });
+      expect(screen.queryByTestId("follow-up-prompt")).toBeNull();
+    });
+
+    it("abandons the prompt when another 2D label is scanned, and handles that label as its own bag", async () => {
+      mockResolve();
+      mount();
+      scan(RAW_NO_1P);
+      await screen.findByTestId("follow-up-prompt");
+
+      scan(RAW_A);
+
+      await waitFor(() => expect(screen.getAllByTestId("intake-row")).toHaveLength(2));
+      expect(screen.queryByTestId("follow-up-prompt")).toBeNull();
+      expect(intakeBodies()).toEqual([expect.objectContaining({ part_id: "p1", quantity: 100 })]);
+    });
+
+    it("asks for the quantity when the label has none, and saves the typed answer", async () => {
+      mockResolve();
+      mount();
+      scan("[)>\x1e06\x1d1PLM358\x1d1TQQQ\x1e\x04");
+
+      expect((await screen.findByTestId("follow-up-prompt")).textContent).toContain("Scan or type the quantity");
+      expect(sounds.playNeedMoreInfo).toHaveBeenCalledTimes(1);
+      fireEvent.change(screen.getByPlaceholderText("or type the quantity"), { target: { value: "25" } });
+      fireEvent.click(screen.getByRole("button", { name: "Use" }));
+
+      await waitFor(() => expect(intakeBodies()).toEqual([expect.objectContaining({ part_id: "p1", quantity: 25 })]));
     });
   });
 });

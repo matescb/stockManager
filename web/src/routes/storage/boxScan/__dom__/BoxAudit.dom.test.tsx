@@ -11,6 +11,7 @@ vi.mock("@/lib/queryKeys", () => ({ useWsKey: (...a: unknown[]) => ["ws-1", ...a
 vi.mock("@/components/scanner/Scanner", () => ({ default: () => <div data-testid="camera" /> }));
 vi.mock("@/components/ConfirmDialog", () => ({ useConfirm: () => async () => true }));
 vi.mock("sonner", () => ({ toast: { info: vi.fn(), error: vi.fn(), success: vi.fn() } }));
+vi.mock("@/components/scanner/scanSounds", () => ({ playNeedMoreInfo: vi.fn(), playScanBeep: vi.fn() }));
 vi.mock("@/lib/api", async () => {
   const m = await import("./mocks");
   return { api: { get: m.apiGet, post: m.apiPost }, ApiError: m.FakeApiError };
@@ -105,7 +106,7 @@ describe("BoxAudit", () => {
     await waitFor(() => expect(apiPost).toHaveBeenCalledWith("/storage/box1/intake", expect.objectContaining({ part_id: "p1", quantity: 10 })));
   });
 
-  it("asks for the MPN of an unrecorded bag whose label has none", async () => {
+  it("asks for the MPN of an unrecorded bag whose label has none, via a follow-up scan", async () => {
     await setup();
     apiPost.mockImplementation((url: string, body: { mpn?: string }) =>
       url.endsWith("/scan/resolve")
@@ -114,11 +115,12 @@ describe("BoxAudit", () => {
     );
     scan(RAW_NO_1P);
 
-    expect(await screen.findByText(/has no manufacturer part number/)).toBeTruthy();
+    expect((await screen.findByTestId("follow-up-prompt")).textContent).toContain("Scan the Mfr. Part No barcode on this label (Murata · qty 100");
+    expect(screen.getByText(/has no manufacturer part number/)).toBeTruthy();
     expect((screen.getByRole("button", { name: /Add to box/ }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.change(screen.getByPlaceholderText("Mfr. part number"), { target: { value: "LM358" } });
-    fireEvent.click(screen.getByRole("button", { name: /Look up/ }));
+    scan("LM358");
     await screen.findByText(/Part is in the library/);
+    expect(screen.queryByTestId("follow-up-prompt")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Add to box/ }));
     await waitFor(() => expect(apiPost).toHaveBeenCalledWith("/storage/box1/intake", expect.objectContaining({ part_id: "p1", quantity: 100 })));
   });

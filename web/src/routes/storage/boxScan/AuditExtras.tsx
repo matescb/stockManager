@@ -15,6 +15,8 @@ export type ExtraBag = {
   /** The label had no 1P and matched no recorded bag: type the MPN. */
   needsMpn?: boolean;
   noMpnMessage?: string;
+  /** Which bag, for the follow-up prompt. */
+  context?: string;
   resolve?: ResolveResult;
   busy: boolean;
   error?: string;

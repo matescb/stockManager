@@ -56,11 +56,26 @@ What each row tells you:
 - **Already in this box**: this bag was scanned into this box before. Only its count changes if you edit it.
 - **Recorded in another box**: the bag is on record somewhere else. Click **Move here** if you moved it, or **Add as new bag** if it is a second bag with an identical label.
 - **Not in the library**: the provider has no match for the MPN. Use **Create part…** and then add it by MPN.
-- **This label has no manufacturer part number**: some Mouser labels carry only your own part number (what you typed when ordering), not the maker's. Scan the **Mfr. Part No** barcode on the same label, or type the MPN into the row and click **Look up**. The quantity and order details from the label are kept.
+- **This label has no manufacturer part number**: see [When a label needs a second scan](#when-a-label-needs-a-second-scan).
 
 Untick **Save each scan immediately** if you would rather check the list first and then click **Save all**. **Undo** sets a just-added bag back to zero.
 
 Scanning a box's printed label switches to that box.
+
+### When a label needs a second scan
+
+Some labels leave something out. When you put your own part number on a Mouser order, Mouser prints only that number in the bag's 2D code, not the maker's part number. Some labels have no quantity.
+
+When that happens:
+
+1. You hear two rising tones, different from the normal scan click.
+2. A yellow box at the top of the list says what to scan next. For example: **Scan the Mfr. Part No barcode on this label (Murata · qty 100 · Mouser order 40489709 line 027)**. The order and line tell you where to look the part up on mouser.com if the label has no barcode for it.
+3. Scan that barcode (the plain 1D one) with the same reader or the camera, or type the answer in the yellow box and click **Use**.
+4. The bag carries on as normal: it is matched in your library or looked up with your parts provider, then saved. It keeps the quantity, order, line and invoice from the 2D label. Re-scanning that 2D label later finds this bag.
+
+If the label has no quantity, the yellow box asks you to **Scan or type the quantity** instead. A reader may ignore very short codes such as `10`, so type small numbers.
+
+Press **Esc** or click **Cancel** to stop waiting. The bag stays in the list with its own MPN box, so you can finish it later. If you scan another bag's 2D label while the app is waiting, the app stops waiting and adds the new bag. The earlier bag stays in the list with its MPN box.
 
 ## Check a box (Audit)
 
@@ -79,7 +94,7 @@ Stock entered before bag tracking existed shows as **old record, not tracked per
 
 Progress is kept if you reload the page. **Start over** clears it.
 
-A bag whose label has no manufacturer part number shows under **Found here, not recorded** with a box for the MPN. Type it and click **Look up**, or scan the label's **Mfr. Part No** barcode.
+A bag whose label has no manufacturer part number shows under **Found here, not recorded**, and the app waits for its **Mfr. Part No** barcode the same way as in [Intake](#when-a-label-needs-a-second-scan). You can also type the MPN into the bag's own box and click **Look up**.
 
 ## Set up a USB barcode reader
 

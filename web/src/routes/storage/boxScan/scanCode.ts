@@ -32,9 +32,3 @@ export async function classifyScan(raw: string): Promise<Scanned> {
     comments: bagComments(bag),
   };
 }
-
-/** A bare part number (1D "Mfr. Part No" barcode or typed text) rather
- *  than an ECIA bag label — used to complete a label that had no MPN. */
-export function isPlainMpnScan(s: ScannedBag): boolean {
-  return !s.bag.noMpn && !s.raw.trim().startsWith("[)>");
-}

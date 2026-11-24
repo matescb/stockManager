@@ -17,6 +17,8 @@ export type IntakeRow = {
   /** Set when the scanned label had no 1P — the message to show while
    *  the operator supplies the MPN. */
   noMpnMessage?: string;
+  /** Which bag, for a follow-up prompt ("Murata · qty 100 · Mouser order …"). */
+  context?: string;
   phase: IntakePhase;
   resolve?: ResolveResult;
   result?: Pick<IntakeResult, "status" | "lot_id" | "part" | "part_created">;
