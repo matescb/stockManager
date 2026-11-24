@@ -49,6 +49,13 @@ The diff
   resulting line has no part link. Not exclusive — an unmatched line is
   also added, updated or unchanged.
 
+Stored designators are keyed through the same split and range expansion
+as incoming ones (`schemas.normalise_stored_designators`), so a line the
+CSV importer saved as `["C3", "C4", "C6-C8"]` is the same line as an
+export's `C3,C4,C6,C7,C8`. A line that differs only in that spelling is
+`unchanged` and is not rewritten: normalising is not a change, and the
+second sync must still write nothing. No data migration is needed.
+
 Only fields the row carries are compared. A null `name`, `footprint`,
 `cad_key`, `comments` or `dnp` leaves the existing value alone, and a
 row the resolver cannot match never clears a part link someone set by
@@ -76,7 +83,7 @@ from app.domain.audit.service import log as audit_log
 from app.domain.parts.models import Part
 from app.domain.projects.bom_import import ParsedRow, _match_part
 from app.domain.projects.models import Project, ProjectEntry
-from app.domain.projects.schemas import BomSyncRowIn
+from app.domain.projects.schemas import BomSyncRowIn, normalise_stored_designators
 from app.domain.users.models import User
 from app.domain.workspaces.models import Workspace
 
@@ -124,7 +131,7 @@ def _key(
 
 def _entry_key(entry: ProjectEntry) -> Key | None:
     return _key(
-        _norm_designators(entry.designators),
+        _norm_designators(normalise_stored_designators(entry.designators)),
         entry.part_id,
         _clean(entry.cad_key),
         _clean(entry.name),

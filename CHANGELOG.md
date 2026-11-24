@@ -15,6 +15,10 @@ the canonical record.
 
 ## Unreleased
 
+- **BOM sync keys stored designator ranges.** A line the CSV importer
+  saved with an unexpanded range (`["C3", "C4", "C6-C8"]`) now matches an
+  export's `C3,C4,C6,C7,C8` instead of being archived and re-added; the
+  spelling difference alone counts as unchanged. No data migration.
 - **Catalogue search for agents (SM-002).** New MCP tool `catalog_search`
   searches DigiKey (KeywordSearch with category, manufacturer, status and
   parametric filters, in-stock / RoHS / datasheet options, sort, limit and

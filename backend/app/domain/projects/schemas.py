@@ -203,6 +203,22 @@ def _split_designator_items(items: list[object]) -> list[object]:
     return out
 
 
+def normalise_stored_designators(designators: list[str] | None) -> list[str]:
+    """A STORED line's designators, split and range-expanded like a row's.
+
+    Lines written before BOM sync (the CSV importer stores what it is
+    given) can hold `C6-C8` or `"R1,R2"` as one element. Keying them raw
+    would make a sync archive the line and add an identical one. Stored
+    data is never refused: past any of the caps this falls back to the
+    raw tokens, split but not expanded.
+    """
+    items: list[object] = [d for d in designators or [] if isinstance(d, str)]
+    try:
+        return [str(d) for d in _split_designator_items(items)]
+    except ValueError:
+        return [ref for item in items for ref in str(item).replace(",", " ").split()]
+
+
 class BomSyncRowIn(BaseModel):
     """One BOM line as an EDA export carries it.
 
