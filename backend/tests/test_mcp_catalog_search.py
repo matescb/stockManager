@@ -253,3 +253,29 @@ async def test_a_suspended_digikey_is_reported_not_empty(token, digikey, monkeyp
     async with mcp_session(token) as s:
         message = await call_error(s, "catalog_search", keywords="a")
     assert "provider.suspended" in message
+
+
+async def test_digikey_400_detail_and_hint_reach_the_agent(token, digikey, monkeypatch, clock):
+    body = fixture("digikey_keyword_400_parent_category.json")
+    monkeypatch.setattr(digikey_search, "_post_search", lambda t, c, p: (400, body))
+    async with mcp_session(token) as s:
+        message = await call_error(
+            s, "catalog_search", keywords="capacitor", category_id="3", provider="digikey",
+            parameter_filters=[{"parameter_id": 14, "value_ids": ["64"]}])
+    assert "provider.upstream_error" in message
+    assert "Parametric Filtering Not Support at Parent Category Level" in message
+    assert digikey_search.HINT_PARENT_CATEGORY in message
+    assert "developer.digikey.com" not in message and "/products/v4" not in message
+
+
+async def test_digikey_400_detail_is_on_its_errors_entry_beside_mouser(
+        token, digikey, mouser, monkeypatch, clock):
+    body = fixture("digikey_keyword_400_parent_category.json")
+    monkeypatch.setattr(digikey_search, "_post_search", lambda t, c, p: (400, body))
+    async with mcp_session(token) as s:
+        out = await call(s, "catalog_search", keywords="capacitor")
+    error = next(e for e in out["errors"] if e["provider"] == "digikey")
+    assert error["provider_message"].startswith(
+        "Parametric Filtering Not Support at Parent Category Level")
+    assert error["hint"] == digikey_search.HINT_PARENT_CATEGORY
+    assert out["candidates"] and all(c["source"] == "mouser" for c in out["candidates"])

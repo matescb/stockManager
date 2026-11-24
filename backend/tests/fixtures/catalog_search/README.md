@@ -54,3 +54,13 @@ So:
 - The `TopCategories` shape (`RootCategory` / `Category` as
   `TopCategoryNode {Id, Name, ProductCount}`) is tested inline in
   `test_catalog_search_providers.py`, copied from the partrack recording.
+
+## DigiKey 400 (`digikey_keyword_400_parent_category.json`)
+
+The body is the v4 error schema `DKProblemDetails` (`type`, `title`,
+`status`, `detail`, `instance`, `correlationId`, `errors`), which the
+OpenAPI definition declares for every 4xx of `/search/keyword`. The `detail`
+text is DigiKey's own, as `retospect/precis-mcp@dcd0fed`
+(`tests/test_digikey_catalog.py`) records it. The other values are
+illustrative. `type` and `instance` are there so tests can check that
+URL-ish fields never reach the agent.

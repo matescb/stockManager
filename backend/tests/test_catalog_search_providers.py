@@ -166,6 +166,46 @@ def test_digikey_search_refusals_are_not_empty_results(monkeypatch, token, statu
     assert out["found"] is False and expect in out
 
 
+def test_digikey_400_detail_reaches_the_agent_with_a_leaf_category_hint(monkeypatch, token):
+    body = fixture("digikey_keyword_400_parent_category.json")
+    monkeypatch.setattr(digikey_search, "_post_search", lambda t, c, p: (400, body))
+    out = digikey_search.search(DigiKeyProvider("cid", "s"), SearchQuery(
+        keywords="capacitor", category_id="3", parameter_filters=((14, ("64",)),)))
+    assert out["found"] is False and out["message"] == "DigiKey returned HTTP 400"
+    assert out["provider_message"] == (
+        "Parametric Filtering Not Support at Parent Category Level.")
+    assert digikey_search._provider_message({"title": "Bad Request"}) == "Bad Request"
+    assert out["hint"] == digikey_search.HINT_PARENT_CATEGORY
+    flat = json.dumps(out)
+    assert "developer.digikey.com" not in flat and "/products/v4" not in flat
+    assert "0f6c1d2e" not in flat, "correlationId is not a message"
+
+
+def test_provider_message_is_sanitised_and_capped():
+    msg = digikey_search._provider_message({
+        "detail": "bad\x00value\nsee https://api.digikey.com/x?token=abc now",
+        "errors": {"Keywords": ["too\tlong", "bad\x00value see https://a.b/c now"],
+                   "Limit": "x" * 400},
+        "instance": "https://api.digikey.com/products/v4/search/keyword",
+    })
+    assert "\x00" not in msg and "\n" not in msg and "\t" not in msg
+    assert "https://" not in msg and "token=abc" not in msg and "[url]" in msg
+    assert msg.startswith("bad value see [url] now; too long")
+    assert len(msg) == digikey_search.MAX_PROVIDER_MESSAGE and msg.endswith("…")
+    assert digikey_search._provider_message("not json") is None
+    assert digikey_search._provider_message({"errors": {}}) is None
+
+
+@pytest.mark.parametrize("status", [401, 403, 429])
+def test_auth_and_throttle_bodies_are_not_echoed(monkeypatch, token, status):
+    body = {"detail": "Parametric Filtering Not Support at Parent Category Level.",
+            "ErrorMessage": "throttled" if status == 403 else "nope"}
+    monkeypatch.setattr(digikey_search, "_post_search", lambda t, c, p: (status, body))
+    out = digikey_search.search(DigiKeyProvider("cid", "s"), SearchQuery(keywords="x"))
+    assert out["found"] is False
+    assert "provider_message" not in out and "hint" not in out
+
+
 def test_digikey_categories_two_levels(monkeypatch, token):
     monkeypatch.setattr(digikey_search, "_get_categories",
                         lambda t, c: (200, fixture("digikey_categories.json")))

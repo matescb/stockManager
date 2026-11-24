@@ -75,6 +75,14 @@ HINT_LEAF_CATEGORY = (
     "No parametric_filters came back for this category_id; if it is a parent "
     "category, use one of its leaf children (list_categories)."
 )
+HINT_PARENT_CATEGORY = (
+    "DigiKey refuses parametric filters on a parent category (and when the keywords "
+    "match nothing inside the category): use a leaf category_id from facets.categories "
+    "or list_categories, or retry with fewer keywords."
+)
+MAX_PROVIDER_MESSAGE = 300
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_URL = re.compile(r"https?://\S+", re.IGNORECASE)
 HINT_VALUE_KEYWORDS = (
     "No match. DigiKey's keyword search matches values as its listings write them "
     "(0.1µF, 100pF, 10µH), so a value like 100nF in keywords finds nothing: drop the "
@@ -246,7 +254,49 @@ def _not_ok(status: int, body: Any) -> dict[str, Any]:
     refused = _refusal(status, body)
     if refused is not None:
         return dict(refused)
-    return {"found": False, "result": None, "message": f"DigiKey returned HTTP {status}"}
+    out: dict[str, Any] = {"found": False, "result": None,
+                           "message": f"DigiKey returned HTTP {status}"}
+    if 400 <= status < 500 and status not in (401, 403, 429):
+        detail = _provider_message(body)
+        if detail:
+            out["provider_message"] = detail
+            if "parametric filtering" in detail.lower():
+                out["hint"] = HINT_PARENT_CATEGORY
+    return out
+
+
+def _provider_message(body: Any) -> str | None:
+    """DigiKey's own text from a 4xx body, safe to hand an agent.
+
+    v4 answers errors with `DKProblemDetails` {type, title, status, detail,
+    instance, correlationId, errors: {field: [message]}}; older gateway
+    answers use `ErrorMessage` / `ErrorDetails`. Only message fields are
+    read (never `type`/`instance`, which are URLs/paths); control
+    characters are dropped, any URL is redacted, and the text is capped."""
+    if not isinstance(body, dict):
+        return None
+    texts: list[str] = []
+    for key in ("detail", "ErrorMessage", "ErrorDetails", "message"):
+        value = body.get(key)
+        if isinstance(value, str):
+            texts.append(value)
+    errors = body.get("errors")
+    if isinstance(errors, dict):
+        for value in errors.values():
+            items = value if isinstance(value, list) else [value]
+            texts.extend(v for v in items if isinstance(v, str))
+    if not any(t.strip() for t in texts) and isinstance(body.get("title"), str):
+        texts.append(body["title"])  # generic ("Bad Request"): only when nothing better
+    cleaned: list[str] = []
+    for text in texts:
+        text = _URL.sub("[url]", _CONTROL.sub(" ", text))
+        text = " ".join(text.split())
+        if text and text not in cleaned:
+            cleaned.append(text)
+    joined = "; ".join(cleaned)
+    if len(joined) > MAX_PROVIDER_MESSAGE:
+        joined = joined[: MAX_PROVIDER_MESSAGE - 1].rstrip() + "…"
+    return joined or None
 
 
 # ---------------------------------------------------------------------------

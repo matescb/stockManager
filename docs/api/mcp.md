@@ -243,6 +243,14 @@ transport retries.
   `"100nF 0603 C0G 50V"` returns 0 while `"ceramic capacitor 0603 C0G"`
   returns thousands. We do not rewrite the query. A parametric
   `UnitOfMeasure` value id is its text (`"0.1 µF"`).
+- **DigiKey's own 4xx text.** A DigiKey 4xx other than 401 / 403 / 429
+  carries `provider_message`: the message fields of its `DKProblemDetails`
+  body (`detail`, `errors`; `title` only as a fallback), with control
+  characters dropped, URLs redacted and the text capped at 300 characters.
+  It never includes `type`, `instance`, the request URL or headers. It
+  appears on that provider's `errors` entry, or in the refusal text when no
+  provider answered. "Parametric Filtering Not Support at Parent Category
+  Level" also adds a `hint`: use a leaf `category_id`, or fewer keywords.
 - **`hints`** (when present) gives the agent the next step: narrow by
   category to get parametric filters, or drop an SI-prefixed value
   (`100nF`, `4.7uH`) from keywords after a zero-result search.

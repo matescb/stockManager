@@ -96,6 +96,9 @@ def catalog_search(
     `cache`, and `quota` as in catalog_lookup. Same refusals as
     catalog_lookup (provider.quota_reserve_reached, provider.suspended,
     provider.pacing with retry_after_ms), plus provider.invalid_filter.
+    A DigiKey 4xx carries DigiKey's own text as `provider_message` (and a
+    `hint`); "Parametric Filtering Not Support at Parent Category Level"
+    means use a leaf category_id.
     """
     try:
         return service.catalog_search(
