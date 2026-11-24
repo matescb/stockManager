@@ -479,3 +479,88 @@ def test_netsch_export_fixture_syncs_and_resyncs_cleanly(authed_client, db):
 
     assert (again["updated"], again["unchanged"], again["unmatched"]) == (1, 4, 0)
     assert again["lines"]["updated"][0]["changed"] == ["entry_type", "part_id"]
+
+
+# Lines stored before BOM sync ------------------------------------------------
+
+# The CSV importer stored designators as given, so production holds lines
+# like ["C3", "C4", "C6-C8"] (the 24 V filter, found by netsch's first dry
+# run). Keyed raw, a real sync would archive that line and add an identical
+# one, losing its history.
+
+
+def _legacy_line(c: TestClient, project: str, part: str, designators: list[str]) -> str:
+    r = c.post(
+        f"/api/projects/{project}/entries",
+        json={
+            "part_id": part,
+            "name": "C_10u_1206_50V_X7R",
+            "quantity": 5,
+            "designators": designators,
+            "cad_footprint": "Capacitor_SMD:C_1206_3216Metric",
+        },
+    )
+    assert r.status_code in (200, 201), r.text
+    return r.json()["data"]["id"]
+
+
+@pytest.mark.parametrize(
+    "incoming",
+    ["C3,C4,C6-C8", ["C3", "C4", "C6", "C7", "C8"]],
+    ids=["range-string", "expanded-list"],
+)
+@pytest.mark.parametrize(
+    "stored",
+    [["C3", "C4", "C6-C8"], ["C3,C4,C6-C8"]],
+    ids=["range-element", "comma-joined-element"],
+)
+def test_stored_ranges_key_like_incoming_ones(authed_client, db, stored, incoming):
+    c = authed_client
+    part = create_part(c, "10u 1206", mpn="C3216X7R1H106K160AC")
+    project = _project(c)
+    entry = _legacy_line(c, project, part, stored)
+    row = {
+        "designators": incoming,
+        "quantity": 5,
+        "value": "C_10u_1206_50V_X7R",
+        "footprint": "Capacitor_SMD:C_1206_3216Metric",
+        "mpn": "C3216X7R1H106K160AC",
+    }
+    audit_before = _sync_audit_count(db)
+
+    for _ in range(2):  # first sync matches; second still changes nothing
+        out = _sync(c, project, [row])
+        assert (out["added"], out["updated"], out["removed"]) == (0, 0, 0)
+        assert out["lines"]["unchanged"][0]["entry_id"] == entry
+
+    # Pure normalisation is not a write: the stored spelling stays.
+    (line,) = _entries(db, project)
+    assert line.designators == stored and line.archived_at is None
+    assert _sync_audit_count(db) == audit_before
+
+
+def test_stored_designators_past_the_cap_fall_back_to_raw_tokens():
+    from app.domain.projects.schemas import normalise_stored_designators
+
+    assert normalise_stored_designators(["C3", "C4", "C6-C8"]) == ["C3", "C4", "C6", "C7", "C8"]
+    many = ["R1-R999"] * 3  # 2997 > 2000: not refused, just not expanded
+    assert normalise_stored_designators(many) == many
+    assert normalise_stored_designators(None) == []
+
+
+def test_descriptive_stored_name_vs_kicad_value_is_a_name_change(authed_client, db):
+    """What netsch's dry run showed 14 times: the old script stored
+    descriptive names, netsch sends the KiCad value. Reported as `name`."""
+    c = authed_client
+    part = create_part(c, "10u 1206", mpn="C3216X7R1H106K160AC")
+    project = _project(c)
+    r = c.post(
+        f"/api/projects/{project}/entries",
+        json={"part_id": part, "name": "10 uF 50 V X7R 1206", "quantity": 1, "designators": ["C9"]},
+    )
+    assert r.status_code in (200, 201), r.text
+
+    out = _sync(c, project, [{"designators": "C9", "value": "C_10u", "mpn": "C3216X7R1H106K160AC"}])
+
+    assert out["updated"] == 1
+    assert out["lines"]["updated"][0]["changed"] == ["name"]

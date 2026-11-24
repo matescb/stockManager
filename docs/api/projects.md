@@ -269,7 +269,10 @@ line's value alone.
 **Line identity** — a row and a line are the same line when their keys
 match: the designator set (stripped, upper-cased, sorted) when there are
 designators; otherwise the matched part id; otherwise `cad_key`; otherwise
-`name`/`value`/`mpn`, case-folded. Splitting `R1,R2` into `R1` + `R2` is
+`name`/`value`/`mpn`, case-folded. Stored designators are split and range-expanded
+the same way before keying, so a line saved as `["C3", "C4", "C6-C8"]`
+matches an export's `C3,C4,C6,C7,C8`; that difference alone is `unchanged`
+and the stored spelling is not rewritten. Splitting `R1,R2` into `R1` + `R2` is
 one removal and two additions. Full rule: the module docstring of
 `backend/app/domain/projects/bom_sync.py`.
 
