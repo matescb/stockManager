@@ -63,7 +63,7 @@ pins it.
 
 ## Tools
 
-26 tools — 14 read, 12 write. Names and arguments are the agent-facing contract;
+27 tools — 14 read, 13 write. Names and arguments are the agent-facing contract;
 the authoritative descriptions are the docstrings in `backend/app/mcp/tools/`,
 which are what the model actually reads.
 
@@ -95,10 +95,11 @@ earlier result has the other.
 | Tool | Does |
 |---|---|
 | `sourcing_offers` | Distributor price and stock for a part (see below) |
+| `catalog_lookup` | Look an MPN up at DigiKey / Mouser; nothing is written (see below) |
 | `set_part_eda` | Replace a part's KiCad configuration |
 | `upload_eda_asset` | Add a symbol / footprint / 3D model / SPICE file (base64) |
 | `import_vendor_zip` | Import a SnapEDA / SamacSys / UltraLibrarian archive (base64) |
-| `fetch_lcsc` | Fetch and convert CAD data from LCSC / EasyEDA |
+| `fetch_lcsc` | Fetch and convert CAD data from LCSC / EasyEDA — **disabled by default**, see [Disabling](#disabling) |
 | `add_stock` | Add stock |
 | `consume_stock` | Consume stock |
 | `move_stock` | Move stock between locations |
@@ -106,6 +107,96 @@ earlier result has the other.
 | `create_part` | Create a part, or report the one that already holds the MPN |
 | `set_part_category` | File a part under a category |
 | `set_part_specs` | Write a part's own specifications |
+
+### Catalogue lookup
+
+`catalog_lookup(mpn, manufacturer?, provider?)` asks the workspace's
+configured distributor providers — `"digikey"`, `"mouser"`, or `"all"`
+(default: the primary plus every secondary with credentials) — about one
+manufacturer part number. It writes nothing: no part, no spec rows, no
+asset download. It is declared a write because a cache miss spends the
+owner's daily distributor allowance ([below](#why-a-price-lookup-counts-as-a-write)).
+
+```json
+{
+  "mpn": "OPA192IDBVT",
+  "match": "exact",
+  "records": [
+    {
+      "source": "digikey",
+      "match": "exact",
+      "product_url": "https://www.digikey.cz/en/products/detail/…",
+      "retrieved_at": "2026-11-24T10:02:11+00:00",
+      "mpn": "OPA192IDBVT",
+      "manufacturer": "Texas Instruments",
+      "description": "IC OPAMP GP 1 CIRCUIT SOT23-5",
+      "category": "Instrumentation, Op Amps, Buffer Amps",
+      "lifecycle": {"status": "Active"},
+      "compliance": {"RoHS": "ROHS3 Compliant", "MSL": "1 (Unlimited)"},
+      "datasheet_url": "https://www.ti.com/lit/ds/symlink/opa192.pdf",
+      "stock": 5234,
+      "price_breaks": [{"qty": 1, "unit_price": "52.1000 CZK"}],
+      "cache": "miss"
+    }
+  ],
+  "cache": "miss",
+  "quota": [
+    {"provider": "digikey", "spent": 1, "remaining_day": 640,
+     "reserve": 200, "source": "header"}
+  ]
+}
+```
+
+- **One record per provider, never merged.** `source`, the provider's own
+  `product_url` (unmodified) and `retrieved_at` are on every record —
+  DigiKey's terms require its data to be attributed and not aggregated with
+  other data "without distinction". `lifecycle` and `compliance` are the
+  providers' raw values; structuring them is SM-004.
+- **`match`** is `exact` only when the provider's MPN is the one asked for
+  (case-insensitive). DigiKey's keyword fallback and Mouser's partial match
+  return `fuzzy` with the MPN actually found in `mpn`. The top-level `match`
+  is `exact` if any record is, `none` if there are no records. `found` on
+  the underlying `MpnLookupResult` keeps its old meaning; `match` is a new
+  key next to it.
+- **`candidates`** lists every manufacturer when Mouser has several for one
+  exact MPN. With `manufacturer` given, each record carries
+  `manufacturer_matches` and the matching candidate becomes the record.
+- **`misses`** lists providers that answered "no match"; **`errors`** lists
+  providers that refused, each `{provider, code, message}`. The call as a
+  whole is refused only when no provider answered at all, with the first
+  provider's code and the quota of each in the message.
+- **`cache: "hit"`** means every answer came from the in-process provider
+  cache (24 h for hits, 5 min for clean misses) and spent nothing; each
+  record also carries its own `cache`.
+
+### Provider quota
+
+DigiKey publishes 1000 Product Information calls a day and suspends an
+application for ten minutes ("403 Forbidden") when a per-second threshold is
+exceeded; Mouser's limits are reported as 1000 a day but unverified. That
+allowance is shared by the UI lookup, scan import, refresh-from-provider and
+the `provider-refresh` job, so the agent path is held to rules the others
+are not (`backend/app/domain/parts/services/provider_quota.py`):
+
+| Rule | Default | Setting |
+|---|---|---|
+| Live calls to one provider from one workspace are at least this far apart (the tool waits, it does not refuse) | 1 s | `PROVIDER_AGENT_MIN_SPACING_SECONDS` |
+| Agent tools refuse when fewer calls than this remain today | 200 | `PROVIDER_AGENT_QUOTA_RESERVE` |
+| Daily allowance assumed when the provider sent no header today | 1000 / 1000 | `PROVIDER_DAILY_LIMIT_DIGIKEY` / `_MOUSER` |
+
+Every answer carries `quota`, one entry per provider asked: `spent` (calls
+this answer cost — 0 on a cache hit), `remaining_day`, `reserve`, and
+`source`. `source: "header"` is DigiKey's own `X-RateLimit-Remaining` from
+today, less any calls this process made since; `"local-count"` is the
+configured allowance minus the calls this process counted, which cannot see
+the `provider-refresh` job's separate container. The state is per process,
+like the provider cache (one uvicorn worker in prod).
+
+A DigiKey 403 opens that provider's circuit breaker for ten minutes. Every
+lookup in that window — agent, UI or refresh — fails fast with "suspended …
+retry in Ns" instead of reaching DigiKey; cache hits are still served. It is
+never reported as "no match", and the `provider-refresh` job halts on it
+(exit 3) the way it does on a 429.
 
 ### Authoring a part
 
@@ -413,6 +504,10 @@ slice of the workspace's metered distributor quota, and writes a
 `sourcing_cache` row. The REST twin agrees — `POST /api/sourcing/search`
 sits behind `require_role("member")`.
 
+`catalog_lookup` is in the write column for the same reason and writes no
+row at all: a cache miss spends a call from the DigiKey or Mouser daily
+allowance the owner's own lookups depend on.
+
 The trade is deliberate and it is a real loss: the credential you paste
 into a KiCad config file can no longer ask what a part costs. That is
 the price of it also being unable to spend your quota if the file leaks.
@@ -441,6 +536,17 @@ part.not_found: no part in this workspace matching 'STM32G071'
 stock.operation_error: insufficient stock (have 3, want 10)
 resource.insufficient_role: this tool writes and requires role member+ in this workspace
 ```
+
+Codes specific to the provider tools:
+
+| Code | Meaning | Retry? |
+|---|---|---|
+| `provider.quota_reserve_reached` | Fewer calls than the reserve remain today; the rest is the owner's | Not today |
+| `provider.suspended` | The provider has blocked this application (DigiKey 403); the message says how long | After the stated wait |
+| `provider.upstream_error` | The provider failed or rejected the credentials | Later |
+| `rate_limited` | The provider answered 429 | Later |
+| `part.provider_not_configured` | No credentials for the provider asked for, or none at all | No — ask the owner |
+| `eda.lcsc_disabled` | `fetch_lcsc` is parked for agents ([Disabling](#disabling)) | No |
 
 The code leads because it is the half that does not get reworded. A stack trace
 is never returned; an unexpected exception becomes a generic
@@ -493,6 +599,15 @@ created.
 `/mcp` 404s like any unrouted path. It is the kill switch for an agent
 integration that needs stopping without redeploying the app.
 
+`MCP_FETCH_LCSC_ENABLED` (default **false**) gates the `fetch_lcsc` tool.
+EasyEDA's terms prohibit access "by any robot, spider, scraper, crawler,
+script or other automated means" without written permission, and the owner
+has parked agent use until that is settled. While false the tool stays
+listed, with the same name and arguments, and refuses with
+`eda.lcsc_disabled` before contacting anything. The REST route behind the
+UI's LCSC button (`POST /api/parts/{part_id}/eda/fetch-lcsc`) is an owner's
+own action and does not read the flag.
+
 ## See also
 
 - [agents](agents.md) — driving the REST API directly with the same token
@@ -500,4 +615,5 @@ integration that needs stopping without redeploying the app.
 - [ADR-0030](../adr/0030-mcp-server-surface.md) — why in-process, why stateless, why the service layer
 - [ADR-0029](../adr/0029-api-tokens-and-csrf-exemption.md) — the credential and the CSRF exemption
 - `backend/app/mcp/README.md` — the module map
-- `backend/tests/test_mcp.py`, `backend/tests/test_mcp_parts.py` — this page, executable
+- `backend/tests/test_mcp.py`, `backend/tests/test_mcp_parts.py`,
+  `backend/tests/test_mcp_catalog.py` — this page, executable

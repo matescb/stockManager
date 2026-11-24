@@ -1430,6 +1430,11 @@ def test_a_row_that_changed_nothing_repeats_the_category_rather_than_blanking_it
         "DigiKey rate limit reached",
         "Too many requests",
         "Your daily quota has been exceeded",
+        # SM-005: DigiKey's ten-minute burst suspension (HTTP 403). Every
+        # remaining call would be refused; recording them as misses is
+        # the lie this halt exists to prevent.
+        "DigiKey suspended this application (HTTP 403); retry in about 10 minutes",
+        "digikey has suspended this application (HTTP 403); retry in 540s",
     ],
 )
 def test_a_quota_answer_stops_the_sweep(

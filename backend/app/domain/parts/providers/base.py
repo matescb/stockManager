@@ -6,7 +6,7 @@ part's identifying fields. Providers are configured per workspace
 """
 from __future__ import annotations
 
-from typing import Optional, Protocol, TypedDict
+from typing import Literal, Optional, Protocol, TypedDict
 
 from app.domain.provider_errors import ProviderError, ProviderUpstreamError
 
@@ -16,6 +16,7 @@ __all__ = [
     "ProviderError",
     "ProviderUpstreamError",
     "make_provider",
+    "match_kind",
 ]
 
 
@@ -25,6 +26,18 @@ class MpnLookupResult(TypedDict, total=False):
     result: Optional[dict]  # see schema below
     candidates: list[dict]
     message: Optional[str]
+    # How the record in `result` relates to the MPN that was asked for.
+    # "exact": the provider's manufacturer part number equals the query
+    # (case and surrounding whitespace ignored). "fuzzy": the provider
+    # returned a DIFFERENT part number — DigiKey's keyword fallback, or a
+    # Mouser partial match — and `result["mpn"]` says which. `found`
+    # keeps its old meaning ("a record came back"); a caller that needs
+    # the asked-for part reads this, not `found`. Set only when found.
+    match: Literal["exact", "fuzzy"]
+    # True when the provider refused because it has suspended this
+    # application (DigiKey: HTTP 403 after a burst). Not a miss, and not
+    # the day's quota: `provider_cache` opens the breaker on it.
+    suspended: bool
 
 
 # Canonical record shape (the `result` payload):
@@ -44,6 +57,18 @@ class MpnLookupResult(TypedDict, total=False):
 # come straight from the upstream provider (e.g. Mouser's
 # ProductAttributes) and vary by part type. The frontend persists
 # each row as a custom_fields entry on the new part.
+
+
+def match_kind(query: str, found_mpn: str | None) -> Literal["exact", "fuzzy"]:
+    """"exact" when *found_mpn* is the part number that was asked for.
+
+    Compared case-insensitively after stripping, and nothing looser: a
+    reformatted MPN (`98266-0897` vs `0982660897`) is a different string
+    and therefore `fuzzy`, which is the point — the caller has to look.
+    """
+    a = (query or "").strip().casefold()
+    b = (found_mpn or "").strip().casefold()
+    return "exact" if a and a == b else "fuzzy"
 
 
 class PartsProvider(Protocol):

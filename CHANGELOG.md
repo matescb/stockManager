@@ -31,6 +31,32 @@ the canonical record.
   longer hit the `search_parts` / `find_parts_missing_eda` caps. A cursor it
   did not mint is refused with `mcp.invalid_cursor`. Existing tools are
   unchanged.
+
+- **Catalogue lookup for agents, with a quota policy (SM-001, SM-005).**
+  New MCP tool `catalog_lookup(mpn, manufacturer?, provider?)` asks DigiKey
+  and/or Mouser about an MPN and returns one record per provider, never
+  merged, each with `source`, the provider's own `product_url`,
+  `retrieved_at` and `match: "exact" | "fuzzy"` — DigiKey's keyword fallback
+  and Mouser's partial matches now say they are fuzzy (`MpnLookupResult`
+  gains a `match` key; `found` is unchanged). Nothing is written. It is
+  declared a write (quota follows cost), so a read-only token is refused.
+  Agent-path calls are paced (1 s per provider per workspace), refused with
+  `provider.quota_reserve_reached` when fewer than 200 calls remain today
+  (DigiKey's `X-RateLimit-Remaining`, else a local count), and report a
+  `quota` object; the UI, scan import and `provider-refresh` are not held to
+  the reserve. A DigiKey 403 is now a ten-minute suspension for every caller
+  (`provider.suspended`, breaker open) instead of a miss — including a 403
+  or 429 from the keyword fallback, which used to read as "no match" — and
+  `provider-refresh` halts on it with exit 3. Settings
+  `PROVIDER_AGENT_MIN_SPACING_SECONDS`, `PROVIDER_AGENT_QUOTA_RESERVE`,
+  `PROVIDER_DAILY_LIMIT_DIGIKEY`, `PROVIDER_DAILY_LIMIT_MOUSER`.
+  Contract in `docs/api/mcp.md` ("Catalogue lookup", "Provider quota").
+
+- **`fetch_lcsc` parked for agents.** The MCP tool refuses with
+  `eda.lcsc_disabled` unless `MCP_FETCH_LCSC_ENABLED=true` (default false):
+  EasyEDA's terms forbid automated access without permission. Name and
+  arguments unchanged; the UI's LCSC button (REST) is unaffected.
+
 - **Workspace part policy.** The workspace now defines which fields a part
   must have, instead of every client deciding for itself. Admins edit the
   rules under Settings → Workspace → Part policy (`PUT /api/part-policy`);

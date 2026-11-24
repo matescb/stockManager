@@ -266,15 +266,19 @@ def _reset_provider_cache_and_breakers():
     test-isolation equivalent of clearing slowapi's in-memory bucket store
     between rate-limit tests."""
     import app.domain.parts.services.provider_cache as _cache_mod
+    from app.domain.parts.services.provider_quota import QUOTA
 
     # Clear TTL cache entries.
     _cache_mod._cache._store.clear()
     # Reset all circuit breakers.
     _cache_mod._breakers.clear()
+    # And the agent-path quota ledger / pacer (SM-005), same reasoning.
+    QUOTA.reset()
     yield
     # Clean up after the test as well (belt-and-suspenders).
     _cache_mod._cache._store.clear()
     _cache_mod._breakers.clear()
+    QUOTA.reset()
 
 
 # ---------------------------------------------------------------------------

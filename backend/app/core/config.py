@@ -125,6 +125,31 @@ class Settings(BaseSettings):
     # is the kill switch to reach for if an agent integration ever needs
     # to be stopped without a redeploy of the whole app.
     MCP_ENABLED: bool = True
+    # The MCP `fetch_lcsc` tool, off by default. It drives EasyEDA's
+    # endpoints, and EasyEDA's terms forbid access "by any robot, spider,
+    # scraper ... or other automated means" without written permission.
+    # The owner has parked agent use until that is settled; the tool stays
+    # listed and refuses with `eda.lcsc_disabled`. The REST route behind
+    # the UI button (an owner's own click) does not read this flag.
+    MCP_FETCH_LCSC_ENABLED: bool = False
+
+    # ---- Distributor quota for agent-path provider calls (SM-005) ----------
+    # Only the agent tools (`catalog_lookup`) are paced and refused against
+    # these; the UI, scan import and the `provider-refresh` job are not.
+    # Minimum gap between two live calls to one provider from one
+    # workspace. DigiKey suspends an application for ten minutes when a
+    # per-second threshold is exceeded; the tool sleeps up to this long
+    # rather than refusing.
+    PROVIDER_AGENT_MIN_SPACING_SECONDS: float = Field(default=1.0, ge=0, le=10)
+    # Calls kept back from the day's allowance for the owner's own work.
+    # Below this many remaining, agent tools refuse with
+    # `provider.quota_reserve_reached`.
+    PROVIDER_AGENT_QUOTA_RESERVE: int = Field(default=200, ge=0)
+    # Published (DigiKey Product Information) or reported (Mouser, not
+    # verified) daily allowance. Used only when no `X-RateLimit-Remaining`
+    # header has been seen today: remaining = limit - calls counted here.
+    PROVIDER_DAILY_LIMIT_DIGIKEY: int = Field(default=1000, ge=0)
+    PROVIDER_DAILY_LIMIT_MOUSER: int = Field(default=1000, ge=0)
 
     # Base URL of the `kicad-render` sidecar (see render/). The CAD tab's
     # 2D symbol/footprint previews POST stored entries there to be drawn by

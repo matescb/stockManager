@@ -19,7 +19,12 @@ from urllib.parse import quote
 
 import httpx
 
-from app.domain.parts.providers.base import MpnLookupResult, ProviderUpstreamError
+from app.domain.parts.providers.base import (
+    MpnLookupResult,
+    ProviderUpstreamError,
+    match_kind,
+)
+from app.domain.parts.services.provider_quota import QUOTA, account_key
 from app.domain.sourcing.providers import make_retrying_client
 
 _API_BASE = "https://api.digikey.com"
@@ -31,6 +36,13 @@ _TIMEOUT_SEC = 8.0  # Cap upstream wall-clock to prevent worker stall (BE2-011).
 _LOCALE_SITE = "CZ"
 _LOCALE_LANG = "en"
 _LOCALE_CURR = "CZK"
+
+# What a DigiKey burst suspension reads as. Says "suspended" so that
+# `provider_refresh_failures.looks_like_quota` halts the sweep instead of
+# recording a miss for every remaining part, and so `provider_cache`
+# readers see the same word the breaker uses.
+_SUSPENDED_MESSAGE = "DigiKey suspended this application (HTTP 403); retry in about 10 minutes"
+_RATE_LIMIT_MESSAGE = "DigiKey rate limit reached"
 
 # DigiKey ParameterText values that are really package descriptors —
 # we lift the first match into the canonical `footprint`.
@@ -85,6 +97,9 @@ def _get_product_details(
     url = f"{_API_BASE}{_PRODUCT_DETAILS_PATH.format(mpn=quote(mpn, safe=''))}"
     with make_retrying_client(provider_name="digikey", timeout=_TIMEOUT_SEC) as client:
         resp = client.get(url, headers=_digikey_headers(token, client_id))
+    # Side channel for the day's remaining count (SM-005). Not part of
+    # the return value: tests stub this seam with a 2-tuple.
+    QUOTA.note_remaining("digikey", account_key(client_id), resp.headers)
     try:
         body = resp.json()
     except ValueError:
@@ -104,6 +119,7 @@ def _post_keyword_search(
     headers = {**_digikey_headers(token, client_id), "Content-Type": "application/json"}
     with make_retrying_client(provider_name="digikey", timeout=_TIMEOUT_SEC) as client:
         resp = client.post(url, headers=headers, json=payload)
+    QUOTA.note_remaining("digikey", account_key(client_id), resp.headers)
     try:
         body = resp.json()
     except ValueError:
@@ -145,12 +161,17 @@ class DigiKeyProvider:
         and retry once. The proactive 60s buffer in _get_token covers the
         common case; this guards the rare interleaving where DigiKey
         rotates the token in the few seconds we held it."""
+        account = account_key(self.client_id)
         token = self._get_token()
+        # Counted before the call so a header the call returns already
+        # accounts for it (`provider_quota.note_remaining`).
+        QUOTA.note_call("digikey", account)
         status, data = fn(token)
         if status == 401:
             self._token = None
             self._token_exp = 0.0
             token = self._get_token()
+            QUOTA.note_call("digikey", account)
             status, data = fn(token)
         return status, data
 
@@ -191,22 +212,15 @@ class DigiKeyProvider:
                 "digikey",
                 f"DigiKey upstream returned HTTP {status}",
             )
-        if status == 429:
-            return {
-                "found": False,
-                "result": None,
-                "message": "DigiKey rate limit reached",
-            }
+        refused = _refusal(status)
+        if refused is not None:
+            return refused
 
         # Happy path — exact-match ProductDetails returned a record.
         if status == 200:
             product = (data or {}).get("Product") or {}
             if product:
-                return {
-                    "found": True,
-                    "result": _record_from_product(product),
-                    "message": None,
-                }
+                return _found(mpn, product)
             # 200 with empty Product is treated like 404 below.
 
         # Fallback: ProductDetails requires an exact match against
@@ -239,11 +253,17 @@ class DigiKeyProvider:
             if kw_status == 200:
                 products = (kw_data or {}).get("Products") or []
                 if products and isinstance(products[0], dict):
-                    return {
-                        "found": True,
-                        "result": _record_from_product(products[0]),
-                        "message": None,
-                    }
+                    # Usually `fuzzy`: the keyword search finds the
+                    # product DigiKey indexes under a different spelling,
+                    # and `match` is how a caller learns it is not the
+                    # string it asked for.
+                    return _found(mpn, products[0])
+            # A 403/429 here used to fall through to "no match for MPN",
+            # which records the provider as never having heard of a part
+            # it simply refused to look up.
+            refused = _refusal(kw_status)
+            if refused is not None:
+                return refused
             if kw_status >= 500:
                 raise ProviderUpstreamError(
                     "digikey",
@@ -256,6 +276,36 @@ class DigiKeyProvider:
             "result": None,
             "message": f"DigiKey returned HTTP {status}",
         }
+
+
+def _found(query: str, product: dict[str, Any]) -> MpnLookupResult:
+    record = _record_from_product(product)
+    return {
+        "found": True,
+        "result": record,
+        "match": match_kind(query, record.get("mpn")),
+        "message": None,
+    }
+
+
+def _refusal(status: int) -> MpnLookupResult | None:
+    """DigiKey refusing to answer, as opposed to not knowing the part.
+
+    429 is the day's (or minute's) allowance — matched by message in
+    `provider_refresh_failures.looks_like_quota`, so the wording is load-
+    bearing. 403 is the ten-minute burst suspension (DigiKey API docs);
+    `suspended` makes `provider_cache` open the breaker for it.
+    """
+    if status == 429:
+        return {"found": False, "result": None, "message": _RATE_LIMIT_MESSAGE}
+    if status == 403:
+        return {
+            "found": False,
+            "result": None,
+            "message": _SUSPENDED_MESSAGE,
+            "suspended": True,
+        }
+    return None
 
 
 def _deepest_category_name(cat: Any) -> str | None:

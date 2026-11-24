@@ -24,6 +24,8 @@ from __future__ import annotations
 from typing import Any, Literal
 from uuid import UUID
 
+from app.core.config import settings
+from app.core.errors import ErrorCodes
 from app.domain.eda import importer, lcsc, storage, vendor_zip
 from app.domain.eda import service as eda_service
 from app.domain.eda.models import EdaDatafile, EdaFootprint, EdaSymbol
@@ -399,7 +401,23 @@ def fetch_lcsc(
     unreachable, this fails with `eda.lcsc_not_found` /
     `eda.lcsc_unavailable` — retrying the second is reasonable, the
     first is not.
+
+    Disabled unless the owner has enabled it: it refuses with
+    `eda.lcsc_disabled` until then. Do not retry that one; bring CAD
+    data in with import_vendor_zip or upload_eda_asset, or ask the owner.
     """
+    if not settings().MCP_FETCH_LCSC_ENABLED:
+        # EasyEDA's terms forbid automated access without written
+        # permission, and the owner has parked agent use of this tool
+        # until that is settled. Refused before resolving the part so the
+        # answer is the same whatever was passed. The REST route behind the
+        # UI button does not read this flag.
+        raise ToolError(
+            f"{ErrorCodes.EDA_LCSC_DISABLED}: fetch_lcsc is disabled for agents — "
+            "the owner has parked it pending EasyEDA's permission for "
+            "automated access; use import_vendor_zip or upload_eda_asset, "
+            "or ask the owner to fetch it from the UI"
+        )
     part = resolve_part(caller, part_id)
     try:
         plan = lcsc.fetch_plan(lcsc_id)

@@ -39,6 +39,12 @@ _QUOTA_TOKENS: tuple[str, ...] = (
     "quota",
     "calls exceeded",
     "limit exceeded",
+    # DigiKey's ten-minute burst suspension (HTTP 403, SM-005). Not the
+    # day's quota, but the same answer for a sweep: every remaining call
+    # would be refused, and reading the refusals as misses is the lie
+    # this function exists to prevent. Both the provider's own message
+    # and `provider_cache`'s open-breaker error say "suspended".
+    "suspended",
 )
 
 #: The other half, and it cannot be a bare `"429"` substring: provider

@@ -74,6 +74,7 @@ differently — see `secret-rotation.md` rather than this runbook.
 | Timeout / connect refused | Provider down or network issue | Wait + workaround (step 4) |
 | 5xx (500/502/503) | Provider degraded | Wait + workaround |
 | 401 / 403 | Workspace's API key is invalid or revoked | Workspace owner re-issues key (step 5) |
+| 403 from DigiKey product search, "suspended … retry in Ns" | DigiKey's ten-minute burst suspension; the breaker in `provider_cache.py` holds every DigiKey lookup off the network until it ends | Wait it out (step 6) |
 | 429 | Rate-limit hit | Workaround for now; reduce call frequency (step 6) |
 | 200 with empty body / unexpected schema | Provider changed schema | Bug in our adapter; file an issue and patch |
 
@@ -127,11 +128,19 @@ back to the provider — that's not our problem to fix.
 
 ### 6. If we're being rate-limited globally
 
-This means our adapter is calling more than the provider allows. Short
-term: there's no global throttle in the adapter today
-(`<TODO(verify): confirm no rate-limit / circuit-breaker is implemented
-in providers/digikey.py or mouser.py — if it is, document where>`).
-Mitigations:
+This means our adapter is calling more than the provider allows. What
+exists (`backend/app/domain/parts/services/`):
+
+- `provider_cache.py` — a per-provider circuit breaker (5 hard failures
+  open it for 60 s) and, since SM-005, a ten-minute open state on a DigiKey
+  403 ("suspended … retry in Ns" in every lookup's error).
+- `provider_quota.py` — agent tools (`catalog_lookup`) are paced to one live
+  call per provider per workspace per `PROVIDER_AGENT_MIN_SPACING_SECONDS`
+  and refused below `PROVIDER_AGENT_QUOTA_RESERVE` calls left today. The UI,
+  scan import and `provider-refresh` are NOT throttled by it.
+
+If agents are the cause, raise `PROVIDER_AGENT_QUOTA_RESERVE` or set
+`MCP_ENABLED=false`. Other mitigations:
 
 - Ask high-volume workspaces to pause bulk imports.
 - File a follow-up to add adapter-level rate limiting / backoff.
