@@ -15,6 +15,14 @@ the canonical record.
 
 ## Unreleased
 
+- **Part image lightbox and local datasheet link.** Clicking the part
+  thumbnail in the header now opens the full image in an in-page popup
+  (`ImageLightbox`: Esc / backdrop / close button, focus returns to the
+  thumbnail, page scroll locked, "Open original" link) instead of a new
+  tab; image attachments get the same Preview. The Info tab's "Datasheet"
+  link now points at the stored local copy (the `datasheet` attachment)
+  when one exists, with the provider URL kept as a small "source" link;
+  without one it still links the provider and says "Not downloaded yet".
 - **Workspace part policy.** The workspace now defines which fields a part
   must have, instead of every client deciding for itself. Admins edit the
   rules under Settings → Workspace → Part policy (`PUT /api/part-policy`);

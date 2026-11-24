@@ -1,4 +1,5 @@
-import { ReactNode } from "react";
+import { ReactNode, useCallback, useState } from "react";
+import ImageLightbox from "@/components/ImageLightbox";
 import { isSafeHttpOrSameOriginUrl } from "@/lib/url";
 
 export type Stat = { label: string; value: ReactNode; tone?: "default" | "danger" | "warning" | "success" };
@@ -15,10 +16,12 @@ type Props = {
   /**
    * Optional thumbnail rendered to the left of the title. Used by Part
    * detail to surface the provider image in the header rather than in
-   * a footer Media card. Anchor URL goes through to a full-size view
-   * on click.
+   * a footer Media card. Clicking it opens the full-size image in an
+   * in-page `ImageLightbox`.
    */
   imageUrl?: string | null;
+  /** Caption / accessible name for the lightbox; defaults to "Image". */
+  imageTitle?: string;
 };
 
 const TONE_CLS: Record<NonNullable<Stat["tone"]>, string> = {
@@ -36,8 +39,11 @@ export default function EntityHeader({
   breadcrumb,
   stats,
   imageUrl,
+  imageTitle,
 }: Props) {
   const safeImageUrl = isSafeHttpOrSameOriginUrl(imageUrl) ? imageUrl : null;
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const closeLightbox = useCallback(() => setLightboxOpen(false), []);
 
   return (
     <div className="card p-4 mb-4">
@@ -45,19 +51,27 @@ export default function EntityHeader({
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3 min-w-0">
           {safeImageUrl && (
-            <a
-              href={safeImageUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="shrink-0 block"
-              aria-label="Open full image"
-            >
-              <img
+            <>
+              <button
+                type="button"
+                onClick={() => setLightboxOpen(true)}
+                className="shrink-0 block cursor-zoom-in rounded focus:outline-none focus:ring-2 focus:ring-accent/40"
+                aria-label="View full image"
+                aria-haspopup="dialog"
+              >
+                <img
+                  src={safeImageUrl}
+                  alt=""
+                  className="h-14 w-14 object-contain rounded bg-panel"
+                />
+              </button>
+              <ImageLightbox
+                open={lightboxOpen}
+                onClose={closeLightbox}
                 src={safeImageUrl}
-                alt=""
-                className="h-14 w-14 object-contain rounded bg-panel"
+                title={imageTitle ?? "Image"}
               />
-            </a>
+            </>
           )}
           <div className="min-w-0">
             <div className="text-lg font-semibold truncate">{title}</div>

@@ -8,6 +8,10 @@ Part-detail UI flows that are larger than one tab component.
 
 The Authorized-supply tab renders one `Add to order` action per distributor row and opens `CreateOrderLineModal`, which lists draft orders with `GET /api/orders?order_status=draft` and submits through the documented order endpoints. Existing draft orders receive a line via `POST /api/orders/{order_id}/entries`; the create-new branch posts `POST /api/orders` with one initial entry. The saved entry `comments` value is the compliance-safe TrustedParts summary only; the distributor page is available as a modal link but is not persisted in comments. Source: `web/src/routes/parts/detail/AuthorizedSupplyTab.tsx:318-343`, `web/src/routes/parts/detail/CreateOrderLineModal.tsx:82-154`.
 
+## Part Image And Datasheet Links
+
+The header thumbnail opens `ImageLightbox` (an in-page dialog on top of `Modal`) instead of a new tab; `part.image_url` is used as-is, local `/api/parts/assets/…` path or external URL. The Info tab's datasheet card (`PartDatasheetLink`) reads the part's attachments (`GET /api/attachments/by-object/part/{id}`, the same query key as the Attachments tab) and, when a `file_type='datasheet'` attachment exists — which is how `backend/app/domain/parts/services/datasheets.py` records a stored copy, since it never rewrites `datasheet_url` — links `GET /api/attachments/{id}/download` as the primary "Datasheet" link with the upstream URL as a secondary "source" link. Without one it links the upstream URL and says the file is not downloaded yet. The choice lives in `resolveDatasheetLink` (`web/src/routes/parts/detail/datasheetLink.ts`).
+
 ## Parts List Preview Pane
 
 Clicking a row in `/parts` opens a preview beside the table instead of

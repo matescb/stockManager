@@ -123,6 +123,7 @@ function PartLayoutQuery({ partId }: { partId: string }) {
         idCode={part.id}
         stats={stats}
         imageUrl={part.image_url}
+        imageTitle={part.mpn || part.name}
         actions={
           <PrintLabelButton entityType="part" entityId={part.id} entityName={part.name} />
         }

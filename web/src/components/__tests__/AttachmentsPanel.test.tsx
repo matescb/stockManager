@@ -25,6 +25,7 @@ import {
   MAX_BYTES,
   ALLOWED_MIME_FOR_TYPE,
   humanSize,
+  isPreviewableImage,
 } from "../AttachmentsPanel";
 
 /**
@@ -290,5 +291,22 @@ describe("ALLOWED_MIME_FOR_TYPE", () => {
   it("other has empty ext/mime lists (fully permissive)", () => {
     expect(ALLOWED_MIME_FOR_TYPE.other.exts).toHaveLength(0);
     expect(ALLOWED_MIME_FOR_TYPE.other.mimes).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isPreviewableImage — which attachments get an in-page lightbox preview
+// ---------------------------------------------------------------------------
+describe("isPreviewableImage", () => {
+  it("accepts the image MIMEs the backend allow-lists", () => {
+    for (const mime of ["image/png", "image/jpeg", "image/webp"]) {
+      expect(isPreviewableImage({ mime_type: mime })).toBe(true);
+    }
+  });
+
+  it("rejects PDFs, SVG, unknown and missing MIME types", () => {
+    for (const mime of ["application/pdf", "image/svg+xml", "application/octet-stream", null]) {
+      expect(isPreviewableImage({ mime_type: mime })).toBe(false);
+    }
   });
 });
