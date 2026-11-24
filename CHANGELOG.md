@@ -64,6 +64,17 @@ the canonical record.
   every answer reports `applied_sort` per provider. A package / size token in
   keywords (`0603`, `SOT-23`, …) adds a hint to narrow it with the
   "Package / Case" parametric facet, since DigiKey's keyword matcher does not.
+- **Symbol-pin / footprint-pad check (SM-008).** New read-only MCP tools
+  `check_pin_pad` (one part) and `list_pin_pad_issues` (cursor-paged audit,
+  filter `fail` / `not-checkable` / `all`), and an additive `pin_pad_check`
+  key on `get_part_eda`. Every symbol pin number must have a pad and every
+  electrical pad a pin; exposed pads, thermal vias sharing a number,
+  unnumbered, NPTH and paste/mask-only pads are legal, multi-unit symbols are
+  checked as the union of their units, and unpadded `no_connect` pins are
+  reported as information, as are unclaimed connector mounting / shield pads
+  (`MP`, `MH`, `SH`, `SHIELD`). The verdict is computed on demand from the current
+  files and carries their sha256s; nothing is stored and there is no
+  migration. Rules in `docs/api/mcp.md#pinpad-check`.
 - **`catalog_search` facets on broad DigiKey searches (SM-002 fix).** Production
   returned empty `categories`, `status` and `parametric_filters` for a
   44,740-result search. The parser's field names were right (they match the

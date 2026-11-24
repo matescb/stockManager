@@ -1,0 +1,9 @@
+(kicad_symbol_lib
+	(version 20231120)
+	(generator "kicad_symbol_editor")
+	(symbol "DERIVED_DEVICE"
+		(extends "SOIC8_DEVICE")
+		(property "Reference" "U" (at 0 0 0) (effects (font (size 1.27 1.27))))
+		(property "Value" "DERIVED_DEVICE" (at 0 0 0) (effects (font (size 1.27 1.27))))
+	)
+)

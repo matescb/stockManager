@@ -573,6 +573,8 @@ def _read_tool_arguments(client: TestClient) -> dict[str, dict]:
         "part_policy_status": {"part_id_or_mpn": part_id},
         "export_parts": {"page_size": 1},
         "list_part_documents": {"part_id_or_mpn": part_id},
+        "check_pin_pad": {"part_id_or_mpn": part_id},
+        "list_pin_pad_issues": {},
     }
 
 
@@ -1147,6 +1149,8 @@ async def test_set_part_eda_round_trips(authed_client, full_token):
             footprint_filters=["R_0603*"],
         )
         read_back = await call(s, "get_part_eda", part_id=part_id)
+    # `pin_pad_check` (SM-008) is computed on read and only get_part_eda has it.
+    assert read_back.pop("pin_pad_check")["reason"] == "symbol_external"
     assert written == read_back
     assert read_back["value"] == "10k"
     assert read_back["footprint_filters"] == ["R_0603*"]

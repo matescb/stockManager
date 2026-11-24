@@ -63,7 +63,7 @@ pins it.
 
 ## Tools
 
-31 tools — 15 read, 16 write. Names and arguments are the agent-facing contract;
+33 tools — 17 read, 16 write. Names and arguments are the agent-facing contract;
 the authoritative descriptions are the docstrings in `backend/app/mcp/tools/`,
 which are what the model actually reads.
 
@@ -77,7 +77,7 @@ earlier result has the other.
 |---|---|
 | `search_parts` | Free-text search over name, MPN, manufacturer, IPN, description |
 | `get_part` | One part: specs, catalog metadata, stock by location, CAD status, [lifecycle and compliance](#lifecycle-and-compliance) |
-| `get_part_eda` | A part's KiCad configuration, with resolved `PCM_SM_…` refs |
+| `get_part_eda` | A part's KiCad configuration, with resolved `PCM_SM_…` refs and its `pin_pad_check` |
 | `find_parts_missing_eda` | "What still needs a footprint?" — by `symbol`/`footprint`/`model3d`/`spice` |
 | `stock_levels` | On-hand / reserved / available, one part or the whole inventory |
 | `list_storage_locations` | Bins and their constraints |
@@ -89,6 +89,8 @@ earlier result has the other.
 | `validate_part` | Dry-run `create_part`: what the part policy would refuse, nothing written |
 | `part_policy_status` | What an existing part still lacks under the part policy |
 | `export_parts` | Every part, cursor-paged, with EDA hashes, on-hand / reserved / available, lifecycle and compliance — for audits |
+| `check_pin_pad` | Do the symbol's pin numbers and the footprint's pad numbers match? (see [Pin/pad check](#pinpad-check)) |
+| `list_pin_pad_issues` | Every part whose pin/pad check fails or cannot run, cursor-paged |
 | `list_part_documents` | A part's local PDFs (datasheet, app notes, PCNs, manuals, uploads) with a Bearer-downloadable `download_url`, plus what is still queued (see [Part documents](#part-documents)) |
 
 ### Write
@@ -537,6 +539,9 @@ both ends.
    never both; same for `footprint_id` / `footprint_ref_external`. Leaving
    both empty inherits the category default. Pass back everything from step 2
    you want to keep.
+5. `check_pin_pad(part_id_or_mpn=…)` — confirm the symbol's pin numbers and the
+   footprint's pad numbers match before the part goes on a board. Vendor
+   symbols and footprints come from different generators.
 
 ### Check a BOM against stock
 
@@ -586,6 +591,63 @@ the same helper as `find_parts_missing_eda`, so the two never disagree.
 `page_size` above 200 is **clamped** to 200 (not refused); the result's
 `page_size` echoes the value used. Each page costs a fixed handful of queries
 regardless of size. Works with a read-only token.
+
+### Pin/pad check
+
+`check_pin_pad(part_id_or_mpn)` compares the part's symbol pin numbers with its
+footprint's pad numbers. It is computed on every call from the files the part
+uses now and stores nothing, so it is never stale; it carries the two
+`sha256`s it was computed on. `get_part_eda` returns the same object under
+`pin_pad_check`.
+
+```json
+{"part_id": "…", "part_url": "…", "verdict": "fail",
+ "symbol_sha256": "…", "footprint_sha256": "…",
+ "symbol_ref": "PCM_SM_ics:SOIC8_DEVICE", "footprint_ref": "PCM_SM_ics:SOIC8_PAD9",
+ "findings": {"pins_without_pad": [], "pads_without_pin": ["9"],
+              "duplicate_pin_numbers": [], "no_connect_pins_without_pad": [],
+              "mounting_pads_without_pin": []},
+ "checked_at": "2026-11-24T12:00:00+00:00"}
+```
+
+The rules:
+
+- Numbers are compared as trimmed, case-sensitive strings (BGA `A1` is not
+  `a1`). Pins with an empty number are ignored.
+- Only **electrical** pads count: a non-empty number, type `smd`, `thru_hole` or
+  `connect`, and a copper layer. Unnumbered pads, `np_thru_hole` (NPTH /
+  mechanical) pads and paste- or mask-only pads never fail. Several pads with
+  one number (an exposed pad and its thermal vias, or an EP numbered like a
+  ground pin) are legal.
+- A multi-unit symbol is checked as the union of its units' pins. Body style 1
+  is checked; a De Morgan style 2 with different pin numbers is
+  `not-checkable` (`body_styles_differ`).
+- A `no_connect` pin with no pad goes under `no_connect_pins_without_pad` as
+  information and does not fail.
+- A copper pad named like a connector's mounting or shield pad — `MP`, `MH` or
+  `SH` with an optional number (`MP1`), or `SHIELD`, in any case — that no pin
+  claims goes under `mounting_pads_without_pin` as information and does not
+  fail. `S`, `G` and `GND_TAB` are not exempt: `G` / `D` / `S` are a FET's real
+  pads. A symbol that has an `MP` pin matches the `MP` pad as usual.
+- The same pin number twice in one unit is `duplicate_pin_numbers` and fails,
+  except stacked pins (same position) and duplicate power pins of which at most
+  one is visible.
+- `fail` when `pins_without_pad`, `pads_without_pin` or
+  `duplicate_pin_numbers` is non-empty, otherwise `pass`.
+- `not-checkable` carries `reason` and `detail`: `symbol_missing`,
+  `footprint_missing`, `symbol_external` / `footprint_external` (the entry is in
+  the user's local KiCad library, including a category default),
+  `symbol_unreadable` / `footprint_unreadable`, `symbol_derived` (the symbol
+  `extends` one that is not stored), `body_styles_differ`, `symbol_too_complex`
+  (over 10,000 pins, 256 units or 4 body styles: the check's work is bounded).
+
+`list_pin_pad_issues(verdict="all"|"fail"|"not-checkable", cursor, page_size)`
+walks every active part whose own EDA configuration names a symbol or a
+footprint, keyset-paged by part id like `export_parts`, and returns the ones
+with the asked verdict (`all` = `fail` and `not-checkable`; passing parts are
+never listed). Each call scans at most 500 parts, so a page can be short or
+empty while `next_cursor` is still set — continue until it is `null`. Works
+with a read-only token.
 
 ### Part documents
 
@@ -655,6 +717,8 @@ not repeated per row.
 | `validate_part` | — | same as `create_part` | `category.not_found`; `category.archived`; `part.invalid_field`. An unmet rule is `ok: false`, not a refusal |
 | `part_policy_status` | `part_id_or_mpn` | — | `part.not_found` |
 | `export_parts` | — | `cursor`, `page_size`, `include_archived` | `mcp.invalid_cursor` (a cursor this tool did not mint — start over without one) |
+| `check_pin_pad` | `part_id_or_mpn` | — | `part.not_found`. A missing, external or unreadable file is `verdict: not-checkable` with a `reason`, not a refusal |
+| `list_pin_pad_issues` | — | `verdict`, `cursor`, `page_size` | `mcp.invalid_cursor` (a cursor this tool did not mint) |
 | `list_part_documents` | `part_id_or_mpn` | `kinds` | `part.not_found`; `document.invalid_kind` |
 | `request_part_document` | `part_id_or_mpn`, `url`, `kind` | `title` | `part.not_found`; `document.invalid_url`; `document.invalid_kind`; `document.invalid_title` (> 300 characters); `document.queue_full` (200 requests already waiting in this workspace — wait for the hourly job) |
 | `catalog_lookup` | `mpn` | `manufacturer`, `provider` | `part.provider_not_configured`; `part.provider_missing_mpn`; when NO provider answered, the first provider's `provider.quota_reserve_reached` / `provider.suspended` / `provider.pacing` / `rate_limited` / `provider.upstream_error`. A provider that refuses while another answers is listed under `errors`, not refused |
@@ -804,6 +868,7 @@ the REST surface ([ADR-0002](../adr/0002-code-enforced-workspace-isolation.md)).
 | `search_parts` results | 50 |
 | `find_parts_missing_eda` results | 100 |
 | `export_parts` page size | 200 (clamped; paged, never truncated) |
+| `list_pin_pad_issues` page size / parts scanned per call | 100 (clamped) / 500 |
 | `set_part_specs` keys per call | 50 |
 | `set_part_specs` key / value length | 256 / 1024 characters |
 | `create_part` `mpn` / `manufacturer` / `internal_part_number` | 200 / 200 / 120 characters |
