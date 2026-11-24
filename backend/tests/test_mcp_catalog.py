@@ -128,8 +128,15 @@ async def test_sm001_1_exact_record_with_source_and_product_url(
     assert rec["product_url"] == DK_URL, "the provider's own link, unmodified"
     assert rec["retrieved_at"] and rec["mpn"] == MPN
     assert rec["manufacturer"] == "Texas Instruments"
-    assert rec["lifecycle"] == {"status": "Active"}
-    assert rec["compliance"] == {"RoHS": "ROHS3 Compliant", "MSL": "1"}
+    # SM-004: the same structured shape `get_part` returns.
+    assert rec["lifecycle"] == {
+        "status": "active", "raw": "Active", "discontinued": False, "end_of_life": False,
+        "source": "digikey", "refreshed_at": rec["retrieved_at"],
+    }
+    assert rec["compliance"] == {
+        "rohs": "ROHS3 Compliant", "reach": "unknown", "eccn": "unknown", "hts": "unknown",
+        "msl": "1", "source": "digikey", "refreshed_at": rec["retrieved_at"],
+    }
     assert rec["stock"] == 5234
     assert [b["qty"] for b in rec["price_breaks"]] == [1, 10]
     assert out["cache"] == "miss"

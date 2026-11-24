@@ -34,6 +34,7 @@ import httpx
 
 from app.core.errors import ErrorCodes
 from app.core.time import utcnow
+from app.domain.parts import lifecycle_compliance
 from app.domain.parts.provider_credentials import active_credential_rows
 from app.domain.parts.providers.base import match_kind
 from app.domain.parts.services.provider_cache import (
@@ -64,15 +65,6 @@ __all__ = ["CatalogLookupRefused", "PROVIDER_ORDER", "catalog_lookup", "configur
 PROVIDER_ORDER: tuple[str, ...] = ("digikey", "mouser")
 
 _PRICE_KEY = re.compile(r"^Unit price \((\d+)\+\)$")
-_COMPLIANCE_KEYS: tuple[str, ...] = (
-    "RoHS", "REACH", "REACH SVHC", "MSL", "ECCN", "HTS code",
-    "USHTS", "CAHTS", "CNHTS", "JPHTS", "KRHTS", "MXHTS", "BRHTS", "TARIC",
-)
-_FLAG_KEYS: tuple[tuple[str, str], ...] = (
-    ("Discontinued", "discontinued"),
-    ("End of life", "end_of_life"),
-    ("NCNR", "ncnr"),
-)
 
 
 class CatalogLookupRefused(Exception):
@@ -325,8 +317,10 @@ def _record(
         "manufacturer": rec.get("manufacturer"),
         "description": rec.get("description"),
         "category": rec.get("category"),
-        "lifecycle": _lifecycle(specs),
-        "compliance": _compliance(specs),
+        **lifecycle_compliance.from_record(
+            specs, source=answer.provider,
+            retrieved_at=retrieved if hasattr(retrieved, "isoformat") else None,
+        ),
         "datasheet_url": rec.get("datasheet_url"),
         "stock": _stock(specs),
         "price_breaks": _price_breaks(specs),
@@ -340,23 +334,6 @@ def _record(
 def _same_maker(wanted: str, found: str | None) -> bool:
     a, b = wanted.strip().casefold(), (found or "").strip().casefold()
     return bool(a and b) and (a in b or b in a)
-
-
-def _lifecycle(specs: dict[str, Any]) -> dict[str, Any] | None:
-    out: dict[str, Any] = {}
-    if specs.get("Lifecycle"):
-        out["status"] = specs["Lifecycle"]
-    for key, name in _FLAG_KEYS:
-        if specs.get(key):
-            out[name] = True
-    if specs.get("Suggested replacement"):
-        out["suggested_replacement"] = specs["Suggested replacement"]
-    return out or None
-
-
-def _compliance(specs: dict[str, Any]) -> dict[str, Any] | None:
-    out = {k: specs[k] for k in _COMPLIANCE_KEYS if specs.get(k)}
-    return out or None
 
 
 def _stock(specs: dict[str, Any]) -> int | None:

@@ -58,8 +58,78 @@ def test_payload_carries_every_filter_digikey_accepts():
     }
 
 
-def test_plain_keyword_payload_has_no_filter_block():
-    assert build_payload(SearchQuery(keywords="x")) == {"Keywords": "x", "Limit": 20, "Offset": 0}
+def test_plain_keyword_payload_has_no_filter_block_and_the_default_sort():
+    # DigiKey's own order is not relevance, so an unsorted agent call asks
+    # for most-in-stock first (SM-002 follow-up).
+    assert build_payload(SearchQuery(keywords="x")) == {
+        "Keywords": "x", "Limit": 20, "Offset": 0,
+        "SortOptions": {"Field": "QuantityAvailable", "SortOrder": "Descending"},
+    }
+
+
+@pytest.mark.parametrize(("sort", "field", "order"), [
+    ("price", "Price", "Ascending"),
+    ("-price", "Price", "Descending"),
+    ("stock", "QuantityAvailable", "Ascending"),
+    ("mpn", "ManufacturerProductNumber", "Ascending"),
+    ("-manufacturer", "Manufacturer", "Descending"),
+    ("status", "ProductStatus", "Ascending"),
+    ("min_qty", "MinimumQuantity", "Ascending"),
+])
+def test_an_explicit_sort_is_sent_unchanged_and_reported_as_the_callers(sort, field, order):
+    q = SearchQuery(keywords="x", sort=sort)
+    assert build_payload(q)["SortOptions"] == {"Field": field, "SortOrder": order}
+    assert digikey_search.applied_sort(q) == {
+        "sort": sort, "field": field, "order": order, "source": "caller",
+    }
+
+
+def test_sort_fields_are_values_of_the_v4_sortoptions_enum():
+    # `SortOptions.Field` enum of DigiKey's ProductSearch v4 OpenAPI
+    # (fixture README cites the swagger copies).
+    v4_enum = {
+        "None", "Packaging", "ProductStatus", "DigiKeyProductNumber",
+        "ManufacturerProductNumber", "Manufacturer", "MinimumQuantity",
+        "QuantityAvailable", "Price", "Supplier", "PriceManufacturerStandardPackage",
+    }
+    assert set(digikey_search.SORT_FIELDS.values()) <= v4_enum
+
+
+def test_the_default_sort_is_reported_as_default():
+    assert digikey_search.applied_sort(SearchQuery(keywords="x")) == {
+        "sort": "-stock", "field": "QuantityAvailable", "order": "Descending",
+        "source": "default",
+    }
+
+
+@pytest.mark.parametrize("keywords", [
+    "ceramic capacitor 0603 C0G", "0402 100k", "resistor 1206", "MOSFET SOT-23",
+    "op amp SOIC-8", "LDO sot23-5", "buck QFN-16", "TVS SMA", "regulator TO-220",
+])
+def test_a_package_token_in_keywords_adds_the_package_facet_hint(monkeypatch, token, keywords):
+    broad = fixture("digikey_keyword_broad.json")
+    monkeypatch.setattr(digikey_search, "_post_search", lambda t, c, p: (200, broad))
+    out = digikey_search.search(DigiKeyProvider("cid", "s"), SearchQuery(keywords=keywords))
+    package_hints = [h for h in out.get("hints", []) if "Package / Case" in h]
+    assert len(package_hints) == 1
+
+
+@pytest.mark.parametrize("keywords", ["100nF", "LM358", "0.1uF ceramic", "STM32F103C8T6",
+                                      "10k 1%", "BC847"])
+def test_no_package_hint_without_a_package_token(monkeypatch, token, keywords):
+    broad = fixture("digikey_keyword_broad.json")
+    monkeypatch.setattr(digikey_search, "_post_search", lambda t, c, p: (200, broad))
+    out = digikey_search.search(DigiKeyProvider("cid", "s"), SearchQuery(keywords=keywords))
+    assert not [h for h in out.get("hints", []) if "Package / Case" in h]
+
+
+def test_no_package_hint_once_parametric_filters_are_applied(monkeypatch, token):
+    narrowed = fixture("digikey_keyword_narrowed.json")
+    monkeypatch.setattr(digikey_search, "_post_search", lambda t, c, p: (200, narrowed))
+    q = SearchQuery(keywords="capacitor 0603", category_id="60",
+                    parameter_filters=((16, ("0603 (1608 Metric)",)),))
+    out = digikey_search.search(DigiKeyProvider("cid", "s"), q)
+    assert not [h for h in out.get("hints", []) if "Package / Case" in h]
 
 
 def test_digikey_search_shapes_candidates_and_facets(monkeypatch, token):
@@ -100,7 +170,10 @@ def test_broad_search_without_top_categories_still_yields_category_ids(monkeypat
     ]
     assert facets["categories_from"] == "candidates"
     assert facets["status"] == [] and facets["parametric_filters"] == []
-    assert out["hints"] == [digikey_search.HINT_NARROW_FOR_PARAMETRICS]
+    assert out["hints"] == [
+        digikey_search.HINT_NARROW_FOR_PARAMETRICS,
+        digikey_search.HINT_PACKAGE_KEYWORD.format(token="0603"),
+    ]
 
 
 def test_narrowed_search_parses_status_and_parametric_filters(monkeypatch, token):
@@ -115,7 +188,9 @@ def test_narrowed_search_parses_status_and_parametric_filters(monkeypatch, token
     }
     assert by_name["Voltage - Rated"]["values"][0] == {"id": "64", "name": "50V", "count": 9}
     assert facets["categories"][0]["id"] == "60"
-    assert "hints" not in out
+    # Parametric filters came back, so the only hint left is the package
+    # one: "0603" in keywords did not restrict the package.
+    assert out["hints"] == [digikey_search.HINT_PACKAGE_KEYWORD.format(token="0603")]
 
 
 def test_top_categories_are_preferred_when_digikey_sends_them(monkeypatch, token):

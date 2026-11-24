@@ -45,6 +45,25 @@ the canonical record.
   GS. AltGr characters such as `#` are kept. The provider cache and the
   box-scan endpoints refuse a `[)>…` string as an MPN. `bag_signature` is
   unchanged.
+- **Lifecycle and compliance as structured fields (SM-004).** `get_part` and
+  `export_parts` items gain `lifecycle {status, raw, discontinued, end_of_life,
+  source, refreshed_at, alternates?}` and `compliance {rohs, reach, eccn, hts,
+  msl, source, refreshed_at, alternates?}`, read from the catalog rows the
+  provider refresh already stores (no migration, no new writes). Status is
+  normalised to active / nrnd / last-time-buy / obsolete / discontinued /
+  preliminary / unknown; manual values say `source: "manual"`; a second
+  provider's disagreeing answer is listed under `alternates`.
+  `catalog_lookup` records use the same shape (**changed**: `lifecycle.status`
+  is now the normalised value with the provider string in `raw`, and
+  `compliance` keys are `rohs` / `reach` / `eccn` / `hts` / `msl` instead of
+  the provider's spellings). ECCN / HTS / MSL stay unstored (ADR-0034 junk),
+  so stored parts read `unknown` for them.
+- **`catalog_search`: default order and a package hint (SM-002 follow-up).**
+  Without `sort`, DigiKey is now asked for most-in-stock first
+  (`QuantityAvailable` descending) — its own order is not relevance — and
+  every answer reports `applied_sort` per provider. A package / size token in
+  keywords (`0603`, `SOT-23`, …) adds a hint to narrow it with the
+  "Package / Case" parametric facet, since DigiKey's keyword matcher does not.
 - **`catalog_search` facets on broad DigiKey searches (SM-002 fix).** Production
   returned empty `categories`, `status` and `parametric_filters` for a
   44,740-result search. The parser's field names were right (they match the

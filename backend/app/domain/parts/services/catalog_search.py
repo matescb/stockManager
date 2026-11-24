@@ -53,6 +53,8 @@ DEFAULT_LIMIT = 20
 SORTS: tuple[str, ...] = tuple(
     name for field in SORT_FIELDS for name in (field, f"-{field}")
 )
+#: `applied_sort` for a provider that takes no sort (Mouser): its own order.
+_PROVIDER_ORDER: dict[str, Any] = {"sort": None, "source": "provider"}
 _RESPONSE_TTL_SEC = 600.0
 _CATEGORIES_TTL_SEC = 86_400.0
 
@@ -316,6 +318,8 @@ def _response(q: SearchQuery, answers: list[_Answer]) -> dict[str, Any]:
         "facets": next(({"source": a.provider, **a.result["facets"]}
                         for a in answered if a.result.get("facets")), None),
         "applied_filters": {a.provider: a.result.get("applied_filters") for a in answered},
+        "applied_sort": {a.provider: a.result.get("applied_sort") or dict(_PROVIDER_ORDER)
+                         for a in answered},
         "cache": "hit" if all(a.cache == "hit" for a in answered) else "miss",
         "quota": [a.quota for a in answers],
     }
