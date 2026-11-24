@@ -567,6 +567,7 @@ def _read_tool_arguments(client: TestClient) -> dict[str, dict]:
         "get_part_policy": {},
         "validate_part": {"mpn": "CLEAN-2", "category_id": slug},
         "part_policy_status": {"part_id_or_mpn": part_id},
+        "export_parts": {"page_size": 1},
     }
 
 

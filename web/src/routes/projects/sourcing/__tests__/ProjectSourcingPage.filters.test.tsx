@@ -161,6 +161,30 @@ describe("ProjectSourcingPage", () => {
     expect(await screen.findByText("Workspace preferred distributors are not all active; using active distributors only.")).toBeDefined();
   });
 
+  it("distributor checkboxes never commit without their defaults", async () => {
+    // Regression for a CI flake: defaults used to be applied in an effect,
+    // so the first committed frame showed every box unchecked and a DOM
+    // query landing in that frame saw `checked === false`. Record the
+    // state at the FIRST mutation that shows a checkbox.
+    mockReads({
+      sourcing_preferred_distributors: ["A", "B", "C"],
+      active_distributors: ["A", "B", "X"],
+    });
+    vi.spyOn(api, "post").mockResolvedValue(sourcingResponse());
+    const firstSeen: boolean[] = [];
+    const observer = new MutationObserver(() => {
+      const box = document.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+      if (box && firstSeen.length === 0) firstSeen.push(box.checked);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    renderPage();
+    await screen.findByRole("checkbox", { name: "A" });
+    observer.disconnect();
+
+    expect(firstSeen).toEqual([true]);
+  });
+
   it("no-overlap distributors fall back to first active distributor", async () => {
     mockReads({
       sourcing_preferred_distributors: ["X", "Y"],
