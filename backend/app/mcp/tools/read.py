@@ -16,6 +16,7 @@ from sqlalchemy import or_, select
 from app.domain._quantity import QUANTITY_ZERO, quantity_out
 from app.domain.builds import service as builds_service
 from app.domain.categories import service as categories_service
+from app.domain.eda import pin_pad_service
 from app.domain.eda.models import PartEda
 from app.domain.parts import lifecycle_compliance
 from app.domain.parts.models import Part
@@ -217,7 +218,8 @@ def get_part_eda(caller: Caller, part_id: str) -> dict[str, Any]:
     will appear in a schematic; entries the user keeps in their own
     local libraries are reported as `symbol_ref_external` /
     `footprint_ref_external`. `configured: false` means the part has no
-    CAD configuration at all yet.
+    CAD configuration at all yet. `pin_pad_check` is the
+    `check_pin_pad` result for the part.
     """
     part = resolve_part(caller, part_id)
     config = (
@@ -229,7 +231,9 @@ def get_part_eda(caller: Caller, part_id: str) -> dict[str, Any]:
         .scalars()
         .first()
     )
-    return part_eda_payload(caller, part, config)
+    payload = part_eda_payload(caller, part, config)
+    checks = pin_pad_service.check_parts(caller.db, caller.ws.id, [part])
+    return {**payload, "pin_pad_check": checks[part.id]}
 
 
 @tool()

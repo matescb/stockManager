@@ -19,6 +19,7 @@ def load_tools() -> list[ToolSpec]:
         documents,
         export,
         part_policy,
+        pin_pad,
         read,
         sourcing,
         write,

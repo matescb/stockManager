@@ -24,6 +24,7 @@ Owns the workspace's KiCad library — schematic symbols, PCB footprints, 3D mod
 | `symbol_collapse.py` | The `symbol-collapse` job: drop a vendor-zip `symbol_id` so the category's `Device:*` default applies |
 | `render.py` | kicad-cli SVG rendering (via the `kicad-render` sidecar) + content-addressed SVG cache for the 2D preview |
 | `preview3d.py` | STEP→GLB conversion (cascadio/OCC) + content-addressed GLB cache for the 3D preview |
+| `pin_pad.py` / `pin_pad_service.py` | SM-008 symbol-pin vs footprint-pad check (rules in `pin_pad.py`'s docstring); computed on demand, nothing stored |
 
 ## Public surface
 
@@ -47,6 +48,7 @@ Owns the workspace's KiCad library — schematic symbols, PCB footprints, 3D mod
 | Shape the PCM documents | `pcm.py::repository_document`, `::packages_document`, `::metadata_document` |
 | Render a 2D preview (cached) | `render.py::get_or_build_svg` |
 | Build a STEP's 3D preview (cached) | `preview3d.py::get_or_build_glb` |
+| Check pins against pads | `pin_pad.py::check_bytes`, `pin_pad_service.py::check_parts` |
 
 REST surface: `backend/app/api/routes/eda.py` (library CRUD + per-part config) and
 `backend/app/api/routes/eda_import.py` (the three import endpoints), both mounted
