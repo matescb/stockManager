@@ -63,7 +63,7 @@ pins it.
 
 ## Tools
 
-27 tools — 14 read, 13 write. Names and arguments are the agent-facing contract;
+28 tools — 14 read, 14 write. Names and arguments are the agent-facing contract;
 the authoritative descriptions are the docstrings in `backend/app/mcp/tools/`,
 which are what the model actually reads.
 
