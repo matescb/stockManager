@@ -18,7 +18,11 @@ not blank: `native_primitive` (a built-in R / C / L / D simulated with
 instead). For both, `subckt` and `model_sha256` are NULL; a CHECK keeps
 them NOT NULL for the file kinds `subckt` / `model`.
 `unconnected_ports` lists model ports deliberately driven by no symbol
-pin.
+pin. `fallback_token` and `native` carry the ngSPICE inventory manifest's
+fallback token and native-primitive record; `export_metadata` holds the
+`ngspice-export/1` header fields of the bound file (port functions,
+internally unconnected ports, channels, kind and build tokens, match,
+valid_for basis).
 
 Metadata columns `model_source`, `build_requirement`, `grade` and
 `header_pins` are filled from the NG-010 header `bin/export-model` of the
@@ -93,6 +97,9 @@ def upgrade() -> None:
         sa.Column("unconnected_ports", postgresql.JSONB(), nullable=True),
         sa.Column("params", sa.String(length=500), nullable=True),
         sa.Column("fallback", sa.String(length=500), nullable=True),
+        sa.Column("fallback_token", sa.String(length=220), nullable=True),
+        sa.Column("native", postgresql.JSONB(), nullable=True),
+        sa.Column("export_metadata", postgresql.JSONB(), nullable=True),
         sa.Column("model_source", sa.String(length=500), nullable=True),
         sa.Column("build_requirement", sa.String(length=500), nullable=True),
         sa.Column("grade", sa.String(length=500), nullable=True),

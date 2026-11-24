@@ -329,6 +329,17 @@ class PartSpiceBinding(WorkspaceOwned, Base):
     unconnected_ports = Column(JSONB(none_as_null=True), nullable=True)
     params = Column(String(500), nullable=True)
     fallback = Column(String(500), nullable=True)
+    # ngspice-export/1 fallback token: vendor_model_wanted | native |
+    # attended_ltspice | external_model:<name>.
+    fallback_token = Column(String(220), nullable=True)
+    # The inventory manifest's `native` object for a native_primitive:
+    # {letter, parameters {value, unit, source} | null, parameters_reason,
+    # loses_behaviour, loses_behaviour_reason}.
+    native = Column(JSONB(none_as_null=True), nullable=True)
+    # The ngspice-export/1 header fields of the bound file: kind, build
+    # token, valid_for_basis, per-port function / on_symbol /
+    # internally_unconnected, channels, match, corrections.
+    export_metadata = Column(JSONB(none_as_null=True), nullable=True)
     model_source = Column(String(500), nullable=True)
     build_requirement = Column(String(500), nullable=True)
     grade = Column(String(500), nullable=True)

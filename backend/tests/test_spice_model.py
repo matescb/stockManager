@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-from app.domain.eda import sexpr, spice_model
+from app.domain.eda import sexpr, spice_header, spice_model
 from app.domain.eda.spice_binding import _symbol_pin_numbers, check_pin_map, sorted_pins
 
 FIXTURES = Path(__file__).parent / "fixtures" / "spice"
@@ -98,7 +98,7 @@ def test_empty_and_comment_only_files_define_nothing():
 
 def test_ng010_header_subckt():
     text = _read("tlv431_ng010.lib")
-    header = spice_model.parse_ng010_header(text)
+    header = spice_header.parse_ng010_header(text)
     assert header is not None
     assert header.catalogue_entry == "TLV431"
     assert header.catalogue_kind == "subcircuit"
@@ -114,7 +114,7 @@ def test_ng010_header_subckt():
     assert header.grade_limits == ("synthetic limit line for the parser test",)
     assert header.pins == ("K", "A", "R")
     assert "redistribution terms not established" in header.licence
-    assert spice_model.model_source_text(header).startswith(
+    assert spice_header.model_source_text(header).startswith(
         "ngspice-library:TLV431; lib/sub/TLV431.sub sha256 1111"
     )
     # The body still parses: header pins are names, ports are node numbers.
@@ -123,24 +123,24 @@ def test_ng010_header_subckt():
 
 def test_ng010_header_model_card():
     text = _read("d1n4148_ng010.lib")
-    header = spice_model.parse_ng010_header(text)
+    header = spice_header.parse_ng010_header(text)
     assert header.pins == ("A", "K")
     assert spice_model.parse_models(text)[0].ports == ("A", "K")
 
 
 def test_ng010_header_runtime_build_and_correction():
-    header = spice_model.parse_ng010_header(_read("bead_corrected_runtime_ng010.lib"))
+    header = spice_header.parse_ng010_header(_read("bead_corrected_runtime_ng010.lib"))
     assert header.build_needs == "patched+runtime"
     assert header.manufacturer is None  # "not established"
     assert header.corrections == (
         "NG009-001 (proposed): Rser 3 -> 3m; APPLIED in this file; "
         "see corrections/NG009-001.yaml",
     )
-    assert "correction NG009-001 (proposed)" in spice_model.model_source_text(header)
+    assert "correction NG009-001 (proposed)" in spice_header.model_source_text(header)
 
 
 def test_vendor_file_is_not_an_ng010_export():
-    assert spice_model.parse_ng010_header(_read("opa192_continuation.lib")) is None
+    assert spice_header.parse_ng010_header(_read("opa192_continuation.lib")) is None
 
 
 # ---------------------------------------------------------------------
@@ -219,3 +219,48 @@ def test_nc_pin_is_left_out_of_sim_pins():
         {"1": "A", "2": "K", "3": "NC"}, symbol_pins=["1", "2", "3"], ports=("A", "K")
     )
     assert spice_model.format_sim_pins(pairs) == "1=A 2=K"
+
+
+# ---------------------------------------------------------------------
+# ngspice-export/1 header
+# ---------------------------------------------------------------------
+
+
+def test_schema1_header_fields():
+    header = spice_header.parse_ng010_header(_read("ldo13_schema1.lib"))
+    assert header.export_schema == "ngspice-export/1"
+    assert header.kind == "subckt"
+    assert header.build_needs == "patched+runtime"
+    assert header.valid_for_basis == {"dc": ["distributor_spec"], "ac-small-signal": ["conversion"]}
+    assert [p.port for p in header.port_table] == [str(n) for n in range(1, 14)]
+    assert header.port_table[0].function == "INFILT" and header.port_table[0].on_symbol is True
+    assert header.port_table[2].function is None and header.port_table[2].on_symbol is False
+    assert header.port_table[2].source.endswith("pin not drawn")
+    assert header.internally_unconnected == ["3", "8", "10", "12"]
+    assert header.channels == {"package": None, "model": None}
+    assert header.match["manufacturer"] == "Example Semi Inc."
+    assert header.match["confidence"] == "alias"
+    assert header.match["manufacturer_match"] == "True"
+    meta = header.metadata()
+    assert meta["internally_unconnected_ports"] == ["3", "8", "10", "12"]
+    assert "match alias" in spice_header.model_source_text(header)
+
+
+def test_schema1_channels_and_empty_basis():
+    header = spice_header.parse_ng010_header(_read("quad_switch_schema1.lib"))
+    assert header.channels == {"package": 4, "model": 1}
+    assert header.valid_for_basis == {}
+    assert header.internally_unconnected == []
+
+
+def test_unknown_export_schema_major_is_refused_legacy_accepted():
+    with pytest.raises(HTTPException) as exc:
+        spice_header.require_supported_schema(_read("schema2_unsupported.lib"))
+    assert _code(exc) == "eda.spice_export_schema_unsupported"
+    with pytest.raises(HTTPException) as exc:
+        spice_header.require_supported_schema("* Export-Schema: other/1\n.subckt X a\n.ends\n")
+    assert _code(exc) == "eda.spice_export_schema_unsupported"
+    # Legacy NG-010 (no Export-Schema) and a schema-1 minor bump both pass.
+    spice_header.require_supported_schema(_read("tlv431_ng010.lib"))
+    spice_header.require_supported_schema("* Export-Schema: ngspice-export/1.3\n")
+    assert spice_header.parse_ng010_header(_read("tlv431_ng010.lib")).export_schema is None

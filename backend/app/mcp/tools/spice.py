@@ -20,7 +20,7 @@ from fastapi import HTTPException
 
 from app.core.errors import ErrorCodes
 from app.core.pagination import Cursor, decode_cursor, encode_cursor
-from app.domain.eda import spice_binding
+from app.domain.eda import spice_binding, spice_binding_read
 from app.mcp.principal import Caller
 from app.mcp.tools._registry import ToolError, tool
 from app.mcp.tools._shared import audit, part_url, resolve_part, sid
@@ -47,6 +47,8 @@ def set_spice_binding(
     params: str | None = None,
     fallback: str | None = None,
     source: str | None = None,
+    fallback_token: str | None = None,
+    native: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Record how a part simulates; map symbol pins onto model ports, checked.
 
@@ -82,10 +84,21 @@ def set_spice_binding(
             from its file and this must then match or be omitted.
         unconnected_ports: Model ports no symbol pin drives (an LTspice
             "NC" node, the unused channels of a multi-channel model).
+            Omitted: taken from an ngspice-export/1 header's ports marked
+            internally_unconnected (reported in `warnings`); pass [] for
+            none.
         device_type: native_primitive only: R, C, L or D.
         params: native_primitive only: the primitive's parameters as KiCad
             `Sim.Params` text, e.g. "r=10k" (up to 500 characters).
-        fallback: Mainly for none: what to simulate with instead.
+        fallback: Mainly for none: what to simulate with instead (prose;
+            the manifest's `fallback.detail`).
+        fallback_token: The manifest's `fallback.token`: vendor_model_wanted,
+            native, attended_ltspice or external_model:<name>.
+        native: native_primitive only: the manifest's `native` object
+            {letter, parameters {value, unit, source} | null,
+            parameters_reason, loses_behaviour, loses_behaviour_reason}.
+            `letter` stands in for device_type, and an R/C/L value for
+            params ("c=1e-10") when those are omitted.
         source: Where the record comes from (e.g. a model library
             manifest); for a file, an NG-010 header takes precedence.
 
@@ -99,7 +112,9 @@ def set_spice_binding(
     eda.spice_port_duplicate, eda.spice_port_count_mismatch,
     eda.spice_sim_pins_too_long, eda.spice_kind_conflict (file-less
     kind on a part with a file), eda.spice_not_applicable (pin_map,
-    device_type or params with kind none), eda.spice_field_too_long.
+    device_type or params with kind none), eda.spice_field_too_long,
+    eda.spice_export_schema_unsupported, eda.spice_fallback_token_unknown,
+    eda.spice_native_invalid.
 
     Returns `spice_binding` (as get_part_eda reports it), `sim_pins` and
     `warnings` (e.g. an NG-010 header whose pin count differs from the
@@ -120,6 +135,8 @@ def set_spice_binding(
         params=params,
         fallback=fallback,
         source=source,
+        fallback_token=fallback_token,
+        native=native,
     )
     binding = result.binding
     audit(
@@ -135,7 +152,7 @@ def set_spice_binding(
     return {
         "part_id": sid(part.id),
         "part_url": part_url(part.id),
-        "spice_binding": spice_binding.binding_payload(
+        "spice_binding": spice_binding_read.binding_payload(
             caller.db, ws=caller.ws, config=result.config, part_id=part.id
         ),
         "sim_pins": result.config.sim_pins if result.config else None,
@@ -171,7 +188,7 @@ def list_spice_binding_issues(
     `page_size` used.
     """
     page_size = max(1, min(page_size, MAX_PAGE_SIZE))
-    items, next_after = spice_binding.list_issues(
+    items, next_after = spice_binding_read.list_issues(
         caller.db, ws=caller.ws, after=_seek_position(cursor), limit=page_size
     )
     return {

@@ -7,18 +7,17 @@ ordered ports (parsed by `spice_model.py`) and a `{symbol_pin: port}`
 map checked against the symbol, and DERIVES `sim_pins` from that map.
 `sim_pins` stays the emitted carrier; no emitted field name changes.
 
-Three entry points, one per caller:
+Two write entry points, one per caller:
 
-* `bind` — the `set_spice_binding` MCP tool. Validates and writes.
+* `bind` — the `set_spice_binding` MCP tool. Validates and writes, for
+  a file-backed model or the file-less kinds `native_primitive` / `none`.
 * `record_upload` — `upload_eda_asset` with a `part_id`. Stores what the
-  file says (subckt, ports, NG-010 header) WITHOUT a confirmed mapping,
+  file says (subckt, ports, export header) WITHOUT a confirmed mapping,
   and marks an existing binding unvalidated when the bytes changed. It
   never deletes a binding or touches `sim_pins`.
-* `binding_payload` / `list_issues` — the read side. Whether a binding
-  still holds is computed here, at read time, from the live `part_eda`
-  row: a different file, different bytes, or a hand-edited `sim_pins`
-  make it unvalidated whichever path caused the change (`set_part_eda`,
-  the REST PUT, a vendor-zip import) — none of them has to know.
+
+The read side — what `get_part_eda` reports and what
+`list_spice_binding_issues` lists — is `spice_binding_read.py`.
 
 Workspace isolation: every query filters on `ws.id`; the datafile and
 symbol rows are only ever reached through the part's own `part_eda` row,
@@ -33,12 +32,12 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import status
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ErrorCodes, raise_http
 from app.core.time import utcnow
-from app.domain.eda import pin_pad, sexpr, spice_model, storage
+from app.domain.eda import pin_pad, sexpr, spice_header, spice_model, storage
 from app.domain.eda.models import EdaDatafile, EdaSymbol, PartEda, PartSpiceBinding
 from app.domain.parts.models import Part
 
@@ -47,8 +46,7 @@ _SIM_PINS_MAX = 300
 # Spelling of "not connected" accepted as a pin_map value besides null,
 # unless the model really has a port of that name.
 _NC = "nc"
-_UNREADABLE = "model_unreadable"
-_FILELESS_KINDS = ("native_primitive", "none")
+FILELESS_KINDS = ("native_primitive", "none")
 
 
 def _unprocessable(code: str, message: str, **fields: Any):
@@ -133,7 +131,7 @@ def _config(db: Session, *, ws: Any, part_id: UUID) -> PartEda | None:
     ).scalars().first()
 
 
-def _binding(db: Session, *, ws: Any, part_id: UUID) -> PartSpiceBinding | None:
+def binding_for_part(db: Session, *, ws: Any, part_id: UUID) -> PartSpiceBinding | None:
     return db.execute(
         select(PartSpiceBinding)
         .where(PartSpiceBinding.workspace_id == ws.id)
@@ -141,7 +139,7 @@ def _binding(db: Session, *, ws: Any, part_id: UUID) -> PartSpiceBinding | None:
     ).scalars().first()
 
 
-def _datafile(db: Session, *, ws: Any, datafile_id: UUID | None) -> EdaDatafile | None:
+def datafile_in_ws(db: Session, *, ws: Any, datafile_id: UUID | None) -> EdaDatafile | None:
     if datafile_id is None:
         return None
     return db.execute(
@@ -222,6 +220,7 @@ def check_pin_map(
     symbol_pins: Sequence[str],
     ports: Sequence[str],
     unconnected: Sequence[str] = (),
+    aliases: Mapping[str, str] | None = None,
 ) -> list[tuple[str, str]]:
     """Validate a mapping; return the `(symbol_pin, port)` pairs to emit.
 
@@ -231,6 +230,8 @@ def check_pin_map(
     is left out of `Sim.Pins`. A model port no symbol pin drives (an
     LTspice "NC" node, one channel of a quad part) must be named in
     `unconnected`; otherwise every port must be mapped exactly once.
+    `aliases` (lower-cased port FUNCTION → port, from an export header's
+    Port lines) lets a map name "OUT" for a port the `.subckt` calls "11".
     """
     mapping = {str(k): v for k, v in pin_map.items()}
     unknown_pins = [p for p in mapping if p not in symbol_pins]
@@ -248,7 +249,8 @@ def check_pin_map(
             "port, or to null for not connected",
             unmapped=unmapped,
         )
-    by_lower = {p.lower(): p for p in ports}
+    by_lower = {**{k.lower(): v for k, v in (aliases or {}).items()}}
+    by_lower.update({p.lower(): p for p in ports})
     pairs: list[tuple[str, str]] = []
     missing: list[str] = []
     for pin in symbol_pins:
@@ -304,18 +306,19 @@ def check_pin_map(
     return pairs
 
 
-def _apply_header(binding: PartSpiceBinding, text: str) -> spice_model.Ng010Header | None:
+def _apply_header(binding: PartSpiceBinding, text: str) -> spice_header.Ng010Header | None:
     """Copy NG-010 header metadata onto the binding; None when absent.
 
     The columns describe the file at `model_sha256`, so a file without a
     header clears them rather than inheriting the previous file's.
     """
-    header = spice_model.parse_ng010_header(text)
+    header = spice_header.parse_ng010_header(text)
     if header is None:
         binding.model_source = binding.build_requirement = binding.grade = None
-        binding.header_pins = None
+        binding.header_pins = binding.export_metadata = None
         return None
-    binding.model_source = spice_model.model_source_text(header)[:500] or None
+    binding.export_metadata = header.metadata()
+    binding.model_source = spice_header.model_source_text(header)[:500] or None
     binding.build_requirement = (header.build_requirement or "")[:500] or None
     binding.grade = (header.grade or "")[:500] or None
     binding.header_pins = list(header.pins) or None
@@ -331,8 +334,7 @@ def _set_model(
     binding.ports = list(model.ports)
     binding.model_sha256 = datafile.sha256
     binding.spice_datafile_id = datafile.id
-    binding.params = None
-    binding.fallback = None
+    binding.params = binding.fallback = binding.fallback_token = binding.native = None
 
 
 MODEL_KINDS = ("file", "native_primitive", "none")
@@ -354,6 +356,8 @@ def bind(
     params: str | None = None,
     fallback: str | None = None,
     source: str | None = None,
+    fallback_token: str | None = None,
+    native: Mapping[str, Any] | None = None,
 ) -> BindResult:
     """Record how a part simulates; validate and store it.
 
@@ -375,8 +379,13 @@ def bind(
         return _bind_file(
             db, ws=ws, part=part, user_id=user_id, pin_map=pin_map or {},
             subckt=subckt, symbol_pins=symbol_pins,
-            unconnected_ports=list(unconnected_ports or []), source=source,
+            unconnected_ports=unconnected_ports, source=source,
         )
+    native_record = _native_record(native, model_kind)
+    if native_record is not None:
+        device_type = device_type or native_record["letter"]
+        params = params or _native_params(native_record)
+    _check_fallback_token(fallback_token)
     config = _config(db, ws=ws, part_id=part.id)
     if config is not None and config.spice_datafile_id is not None:
         _unprocessable(
@@ -390,11 +399,11 @@ def bind(
             symbol_pins=symbol_pins,
         )
     else:
-        if pin_map or device_type or params:
+        if pin_map or device_type or params or native:
             _unprocessable(
                 ErrorCodes.EDA_SPICE_NOT_APPLICABLE,
-                "model_kind 'none' takes no pin_map, device_type or params — only "
-                "fallback and source",
+                "model_kind 'none' takes no pin_map, device_type, params or native — "
+                "only fallback, fallback_token and source",
             )
         ports, pairs, pins_source = (), None, None
     binding = _upsert_binding(db, ws=ws, part=part, user_id=user_id)
@@ -404,9 +413,12 @@ def bind(
     binding.ports = list(ports)
     binding.params = params or None
     binding.fallback = fallback or None
+    binding.fallback_token = fallback_token or None
+    binding.native = native_record
     binding.model_source = source or None
     binding.spice_datafile_id = binding.model_sha256 = None
     binding.build_requirement = binding.grade = binding.header_pins = None
+    binding.export_metadata = None
     binding.unconnected_ports = None
     binding.symbol_pins_source = pins_source
     if pairs is None:
@@ -419,7 +431,13 @@ def bind(
         binding.validated, binding.validated_at = True, utcnow()
     binding.updated_by = user_id
     db.flush()
-    return BindResult(binding=binding, config=config, datafile=None, warnings=[])
+    warnings = []
+    if native_record and native_record["loses_behaviour"]:
+        warnings.append(
+            "native_loses_behaviour: "
+            + (native_record["loses_behaviour_reason"] or "the primitive is a simplification")
+        )
+    return BindResult(binding=binding, config=config, datafile=None, warnings=warnings)
 
 
 def _native_ports_and_pairs(
@@ -441,8 +459,132 @@ def _native_ports_and_pairs(
     return ports, check_pin_map(pin_map, symbol_pins=pins, ports=ports), pins_source
 
 
+_FALLBACK_TOKENS = ("vendor_model_wanted", "native", "attended_ltspice")
+_EXTERNAL_PREFIX = "external_model:"
+
+
+def _check_fallback_token(token: str | None) -> None:
+    """The ngspice-export/1 fallback vocabulary, or a refusal."""
+    if token is None or token in _FALLBACK_TOKENS:
+        return
+    if token.startswith(_EXTERNAL_PREFIX) and 0 < len(token) - len(_EXTERNAL_PREFIX) <= 200:
+        return
+    _unprocessable(
+        ErrorCodes.EDA_SPICE_FALLBACK_TOKEN_UNKNOWN,
+        f"fallback_token {token[:60]!r} is not one of {', '.join(_FALLBACK_TOKENS)} "
+        f"or {_EXTERNAL_PREFIX}<name>",
+    )
+
+
+def _native_record(native: Mapping[str, Any] | None, model_kind: str) -> dict | None:
+    """The manifest's `native` object, checked and normalised for storage."""
+    if native is None:
+        return None
+    if model_kind != "native_primitive":
+        _unprocessable(
+            ErrorCodes.EDA_SPICE_NOT_APPLICABLE, "native is for model_kind native_primitive"
+        )
+    letter = str(native.get("letter") or "").upper()
+    if letter not in spice_model.NATIVE_PORTS:
+        _unprocessable(
+            ErrorCodes.EDA_SPICE_NATIVE_INVALID,
+            f"native.letter {letter[:5]!r} is not one of {', '.join(spice_model.NATIVE_PORTS)}",
+        )
+    parameters = native.get("parameters")
+    if parameters is not None:
+        value = parameters.get("value") if isinstance(parameters, Mapping) else None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            _unprocessable(
+                ErrorCodes.EDA_SPICE_NATIVE_INVALID,
+                "native.parameters needs a numeric value (with unit and source)",
+            )
+        parameters = {
+            "value": value,
+            "unit": _short(parameters.get("unit"), 10),
+            "source": _short(parameters.get("source"), 500),
+        }
+    return {
+        "letter": letter,
+        "parameters": parameters,
+        "parameters_reason": _short(native.get("parameters_reason"), 500),
+        "loses_behaviour": bool(native.get("loses_behaviour")),
+        "loses_behaviour_reason": _short(native.get("loses_behaviour_reason"), 500),
+    }
+
+
+def _short(value: Any, limit: int) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    if len(text) > limit:
+        _unprocessable(
+            ErrorCodes.EDA_SPICE_FIELD_TOO_LONG,
+            f"a native field is {len(text)} characters; the limit is {limit}",
+        )
+    return text
+
+
+def _native_params(native: Mapping[str, Any]) -> str | None:
+    """KiCad `Sim.Params` text for an R / C / L value, e.g. "c=1e-10"."""
+    parameters = native.get("parameters")
+    if not parameters or native["letter"] == "D":
+        return None
+    return f"{native['letter'].lower()}={parameters['value']:g}"
+
+
+def _header_unconnected(header, model, warnings: list[str]) -> list[str]:
+    """Default `unconnected_ports` from the export header's Port lines."""
+    if header is None or not header.internally_unconnected:
+        return []
+    ports = {p.lower() for p in model.ports}
+    taken = [p for p in header.internally_unconnected if p.lower() in ports]
+    if taken:
+        warnings.append(
+            "unconnected_ports_from_header: ports "
+            f"{' '.join(taken)} are internally unconnected per the export header "
+            "and were left unbound; pass unconnected_ports to override"
+        )
+    return taken
+
+
+def _function_aliases(header, model) -> dict[str, str]:
+    """Port function → port, for functions that name exactly one port."""
+    if header is None:
+        return {}
+    ports = {p.lower(): p for p in model.ports}
+    seen: dict[str, list[str]] = {}
+    for info in header.port_table:
+        if info.function and info.port.lower() in ports:
+            seen.setdefault(info.function.lower(), []).append(ports[info.port.lower()])
+    return {fn: found[0] for fn, found in seen.items() if len(found) == 1}
+
+
+def _header_warnings(header, model) -> list[str]:
+    if header is None:
+        return []
+    warnings: list[str] = []
+    if header.pins and len(header.pins) != len(model.ports):
+        warnings.append(
+            f"header_pin_count_differs: the export header lists {len(header.pins)} pins "
+            f"({' '.join(header.pins)}), the {model.kind} line has {len(model.ports)}"
+        )
+    table = [p.port for p in header.port_table]
+    if table and [p.lower() for p in table] != [p.lower() for p in model.ports]:
+        warnings.append(
+            "header_ports_differ: the export header's Port lines name "
+            f"{' '.join(table[:20])}; the {model.kind} line has {' '.join(model.ports[:20])}"
+        )
+    package, modelled = (header.channels or {}).get("package"), (header.channels or {}).get("model")
+    if package and modelled and package > modelled:
+        warnings.append(
+            f"partial_channels: the model covers {modelled} of the package's "
+            f"{package} channels; the other channels are not simulated"
+        )
+    return warnings
+
+
 def _upsert_binding(db: Session, *, ws: Any, part: Part, user_id: UUID | None):
-    binding = _binding(db, ws=ws, part_id=part.id)
+    binding = binding_for_part(db, ws=ws, part_id=part.id)
     if binding is None:
         binding = PartSpiceBinding(workspace_id=ws.id, part_id=part.id, created_by=user_id)
         db.add(binding)
@@ -463,7 +605,7 @@ def _bind_file(
     pin_map: Mapping[str, str | None],
     subckt: str | None,
     symbol_pins: Sequence[str] | None,
-    unconnected_ports: Sequence[str],
+    unconnected_ports: Sequence[str] | None,
     source: str | None,
 ) -> BindResult:
     """A file-backed binding: the part's attached `.subckt` / `.model`.
@@ -473,7 +615,7 @@ def _bind_file(
     this touches.
     """
     config = _config(db, ws=ws, part_id=part.id)
-    datafile = _datafile(db, ws=ws, datafile_id=config.spice_datafile_id if config else None)
+    datafile = datafile_in_ws(db, ws=ws, datafile_id=config.spice_datafile_id if config else None)
     if config is None or datafile is None:
         _unprocessable(
             ErrorCodes.EDA_SPICE_MODEL_MISSING,
@@ -487,7 +629,12 @@ def _bind_file(
             code=ErrorCodes.EDA_FILE_NOT_FOUND,
             message="the SPICE model's stored file is missing",
         )
+    spice_header.require_supported_schema(text)
     model = _choose_model(spice_model.parse_models(text), subckt)
+    header = spice_header.parse_ng010_header(text)
+    warnings: list[str] = []
+    if unconnected_ports is None:
+        unconnected_ports = _header_unconnected(header, model, warnings)
     if not model.checkable:
         _unprocessable(
             ErrorCodes.EDA_SPICE_NOT_CHECKABLE,
@@ -496,7 +643,8 @@ def _bind_file(
         )
     pins, pins_source = _symbol_pins(db, ws=ws, config=config, declared=symbol_pins)
     pairs = check_pin_map(
-        pin_map, symbol_pins=pins, ports=model.ports, unconnected=unconnected_ports
+        pin_map, symbol_pins=pins, ports=model.ports, unconnected=unconnected_ports,
+        aliases=_function_aliases(header, model),
     )
     derived = spice_model.format_sim_pins(pairs)
     if len(derived) > _SIM_PINS_MAX:
@@ -507,7 +655,7 @@ def _bind_file(
 
     binding = _upsert_binding(db, ws=ws, part=part, user_id=user_id)
     _set_model(binding, model, datafile)
-    header = _apply_header(binding, text)
+    _apply_header(binding, text)
     if header is None and source:
         binding.model_source = source
     binding.unconnected_ports = _ports_in_order(model.ports, unconnected_ports)
@@ -521,13 +669,7 @@ def _bind_file(
     config.sim_pins = derived
     config.updated_by = user_id
     db.flush()
-
-    warnings: list[str] = []
-    if header is not None and header.pins and len(header.pins) != len(model.ports):
-        warnings.append(
-            f"header_pin_count_differs: the NG-010 header lists {len(header.pins)} pins "
-            f"({' '.join(header.pins)}), the {model.kind} line has {len(model.ports)}"
-        )
+    warnings += _header_warnings(header, model)
     return BindResult(binding=binding, config=config, datafile=datafile, warnings=warnings)
 
 
@@ -550,7 +692,7 @@ def record_upload(
     config = _config(db, ws=ws, part_id=part.id)
     if config is None or config.spice_datafile_id != datafile.id:
         return False
-    binding = _binding(db, ws=ws, part_id=part.id)
+    binding = binding_for_part(db, ws=ws, part_id=part.id)
     if (
         binding is not None
         and binding.model_sha256 == datafile.sha256
@@ -575,197 +717,3 @@ def record_upload(
     binding.updated_by = user_id
     db.flush()
     return True
-
-
-# ---------------------------------------------------------------------
-# Read
-# ---------------------------------------------------------------------
-
-
-def binding_issues(
-    binding: PartSpiceBinding, config: PartEda | None, datafile_sha: str | None
-) -> list[str]:
-    """Why a stored binding does not hold right now; empty when it does."""
-    if binding.model_kind in _FILELESS_KINDS:
-        return _fileless_issues(binding, config)
-    issues: list[str] = []
-    if not binding.validated:
-        issues.append("not_confirmed" if binding.pin_map is None else "awaiting_reconfirmation")
-    if config is None or config.spice_datafile_id is None:
-        issues.append("model_detached")
-    elif (
-        config.spice_datafile_id != binding.spice_datafile_id
-        or datafile_sha != binding.model_sha256
-    ):
-        issues.append("model_changed")
-    if binding.validated and (config is None or config.sim_pins != binding.sim_pins_derived):
-        issues.append("sim_pins_edited")
-    return issues
-
-
-def _fileless_issues(binding: PartSpiceBinding, config: PartEda | None) -> list[str]:
-    issues = ["no_model"] if binding.model_kind == "none" else []
-    if binding.model_kind == "native_primitive" and not binding.validated:
-        issues.append("not_confirmed")
-    if config is not None and config.spice_datafile_id is not None:
-        # Recorded as file-less, yet a file is attached now.
-        issues.append("model_file_attached")
-    return issues
-
-
-def _iso(value) -> str | None:
-    return value.isoformat() if value is not None else None
-
-
-def binding_payload(db: Session, *, ws: Any, config: PartEda | None, part_id: UUID) -> dict | None:
-    """The `spice_binding` object `get_part_eda` reports, or None."""
-    binding = _binding(db, ws=ws, part_id=part_id)
-    if binding is None:
-        if config is not None and config.sim_pins and config.sim_pins.strip():
-            return {"source": "free-text", "validated": False, "sim_pins": config.sim_pins}
-        return None
-    datafile = _datafile(db, ws=ws, datafile_id=config.spice_datafile_id if config else None)
-    issues = binding_issues(binding, config, datafile.sha256 if datafile else None)
-    return {
-        "source": "binding",
-        "validated": not issues,
-        "issues": issues,
-        "subckt": binding.subckt,
-        "model_kind": binding.model_kind,
-        "device_type": binding.device_type,
-        "params": binding.params,
-        "fallback": binding.fallback,
-        "ports": list(binding.ports or []),
-        "pin_map": binding.pin_map,
-        "unconnected_ports": binding.unconnected_ports,
-        "sim_pins": binding.sim_pins_derived,
-        "symbol_pins_source": binding.symbol_pins_source,
-        "spice_datafile_id": str(binding.spice_datafile_id) if binding.spice_datafile_id else None,
-        "model_sha256": binding.model_sha256,
-        "model_source": binding.model_source,
-        "build_requirement": binding.build_requirement,
-        "grade": binding.grade,
-        "header_pins": binding.header_pins,
-        "validated_at": _iso(binding.validated_at),
-    }
-
-
-def _free_text_checks(sim_pins: str, text: str | None) -> tuple[list[str], dict]:
-    """Compare free-text `sim_pins` with the attached file, if readable."""
-    issues = ["free_text_unvalidated"]
-    detail: dict[str, Any] = {}
-    pairs = spice_model.parse_sim_pins(sim_pins)
-    if pairs is None:
-        issues.append("sim_pins_unparseable")
-    if text is None:
-        issues.append(_UNREADABLE)
-        return issues, detail
-    models = spice_model.parse_models(text)
-    detail["models"] = [m.name for m in models[:20]]
-    if len(models) != 1:
-        issues.append("no_model_in_file" if not models else "model_ambiguous")
-        return issues, detail
-    model = models[0]
-    detail["subckt"], detail["ports"] = model.name, list(model.ports)
-    if pairs is None or not model.checkable:
-        return issues, detail
-    if len(pairs) != len(model.ports):
-        issues.append("port_count_mismatch")
-    known = {p.lower() for p in model.ports}
-    unknown = [port for _, port in pairs if port.lower() not in known]
-    if unknown:
-        issues.append("port_unknown")
-        detail["unknown_ports"] = unknown[:20]
-    return issues, detail
-
-
-def list_issues(
-    db: Session, *, ws: Any, after: UUID | None, limit: int
-) -> tuple[list[dict], UUID | None]:
-    """Parts whose SPICE pin mapping is unvalidated, keyset-paged on part id.
-
-    Selected in SQL (so a page is never short because of filtering in
-    Python): free-text `sim_pins` without a binding, or a binding that is
-    unconfirmed, points at another file or other bytes, or whose derived
-    value was edited. Read-only — nothing here writes.
-    """
-    stmt = (
-        select(Part, PartEda, PartSpiceBinding, EdaDatafile)
-        .join(PartEda, and_(PartEda.part_id == Part.id, PartEda.workspace_id == ws.id))
-        .outerjoin(
-            PartSpiceBinding,
-            and_(
-                PartSpiceBinding.part_id == Part.id,
-                PartSpiceBinding.workspace_id == ws.id,
-            ),
-        )
-        .outerjoin(
-            EdaDatafile,
-            and_(
-                EdaDatafile.id == PartEda.spice_datafile_id,
-                EdaDatafile.workspace_id == ws.id,
-            ),
-        )
-        .where(Part.workspace_id == ws.id)
-        .where(Part.archived_at.is_(None))
-        .where(
-            or_(
-                and_(
-                    PartSpiceBinding.id.is_(None),
-                    PartEda.sim_pins.is_not(None),
-                    PartEda.sim_pins != "",
-                ),
-                and_(
-                    PartSpiceBinding.model_kind.in_(_FILELESS_KINDS),
-                    PartEda.spice_datafile_id.is_not(None),
-                ),
-                and_(
-                    PartSpiceBinding.id.is_not(None),
-                    PartSpiceBinding.model_kind.not_in(_FILELESS_KINDS),
-                    or_(
-                        PartSpiceBinding.validated.is_(False),
-                        PartEda.spice_datafile_id.is_(None),
-                        PartEda.spice_datafile_id.is_distinct_from(
-                            PartSpiceBinding.spice_datafile_id
-                        ),
-                        EdaDatafile.sha256.is_distinct_from(PartSpiceBinding.model_sha256),
-                        PartEda.sim_pins.is_distinct_from(PartSpiceBinding.sim_pins_derived),
-                    ),
-                ),
-            )
-        )
-    )
-    if after is not None:
-        stmt = stmt.where(Part.id > after)
-    rows = list(db.execute(stmt.order_by(Part.id).limit(limit + 1)).all())
-    page = rows[:limit]
-    texts: dict[str, str | None] = {}
-    items = [_issue_item(*row, texts) for row in page]
-    next_after = page[-1][0].id if len(rows) > limit else None
-    return items, next_after
-
-
-def _issue_item(part, config, binding, datafile, texts: dict[str, str | None]) -> dict:
-    item: dict[str, Any] = {
-        "part_id": str(part.id),
-        "name": part.name,
-        "mpn": part.mpn,
-        "sim_pins": config.sim_pins,
-        "spice_datafile_id": str(datafile.id) if datafile else None,
-    }
-    if binding is not None:
-        item["source"] = "binding"
-        item["issues"] = binding_issues(binding, config, datafile.sha256 if datafile else None)
-        item["subckt"] = binding.subckt
-        item["ports"] = list(binding.ports or [])
-        return item
-    item["source"] = "free-text"
-    if datafile is None:
-        item["issues"] = ["free_text_unvalidated", "no_model_attached"]
-        return item
-    if datafile.sha256 not in texts:
-        texts[datafile.sha256] = read_model_text(datafile)
-    issues, detail = _free_text_checks(config.sim_pins, texts[datafile.sha256])
-    item["issues"] = issues
-    item.update(detail)
-    return item

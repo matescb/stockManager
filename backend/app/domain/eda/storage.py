@@ -43,7 +43,7 @@ from fastapi import status
 
 from app.core.config import settings
 from app.core.errors import ErrorCodes, raise_http
-from app.domain.eda import sexpr
+from app.domain.eda import sexpr, spice_header
 
 __all__ = [
     "SYMBOL_KIND",
@@ -266,7 +266,9 @@ def validated_datafile(kind: str, raw: bytes) -> bytes:
             _reject('not a VRML file — expected it to start with "#VRML"')
         return raw
     if kind == "spice":
-        decode_text(raw, kind="SPICE model")
+        # An ngSPICE export names its header schema; one this server does
+        # not know is refused here, before a row or a blob exists (SM-009).
+        spice_header.require_supported_schema(decode_text(raw, kind="SPICE model"))
         return raw
     raise_http(
         status.HTTP_422_UNPROCESSABLE_ENTITY,

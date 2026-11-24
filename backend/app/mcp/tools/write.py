@@ -26,7 +26,15 @@ from uuid import UUID
 
 from app.core.config import settings
 from app.core.errors import ErrorCodes
-from app.domain.eda import importer, lcsc, spice_binding, spice_model, storage, vendor_zip
+from app.domain.eda import (
+    importer,
+    lcsc,
+    spice_binding,
+    spice_header,
+    spice_model,
+    storage,
+    vendor_zip,
+)
 from app.domain.eda import service as eda_service
 from app.domain.eda.models import EdaDatafile, EdaFootprint, EdaSymbol
 from app.domain.eda.schemas import PartEdaIn
@@ -292,7 +300,7 @@ def _spice_upload_info(caller: Caller, data: bytes, *, row, part_id: str | None)
             for m in models[:50]
         ]
     }
-    header = spice_model.parse_ng010_header(text)
+    header = spice_header.parse_ng010_header(text)
     if header is not None:
         info["ng010_header"] = compact(
             {
@@ -302,6 +310,11 @@ def _spice_upload_info(caller: Caller, data: bytes, *, row, part_id: str | None)
                 "build_requirement": header.build_requirement,
                 "build_needs": header.build_needs,
                 "corrections": list(header.corrections),
+                "export_schema": header.export_schema,
+                "kind": header.kind,
+                "internally_unconnected_ports": header.internally_unconnected,
+                "channels": header.channels,
+                "match": header.match,
                 "grade": header.grade,
                 "pins": list(header.pins),
             }

@@ -581,6 +581,13 @@ silently wrong (SM-009). The emitted field names `Sim.Device`, `Sim.Pins`,
      record is kept, `not_confirmed`).
    - `model_kind="none"` records that there is no model, with `fallback`
      text (what to simulate with instead). It takes no `pin_map`.
+   - From the ngSPICE inventory manifest (`ngspice-inventory-manifest/1`),
+     pass a part's `native` object as `native` (its `letter` stands in for
+     `device_type`, an R/C/L value for `params`, e.g. `c=1e-10`;
+     `loses_behaviour` comes back as a warning) and its `fallback` as
+     `fallback_token` (`vendor_model_wanted`, `native`, `attended_ltspice`,
+     `external_model:<name>`; anything else is
+     `eda.spice_fallback_token_unknown`) plus `fallback` (the detail).
    - Both file-less kinds take an optional `source` (e.g. the ngSPICE
      inventory manifest), refuse a part with a SPICE file attached
      (`eda.spice_kind_conflict`) and never write `part_eda` — the HTTP
@@ -602,6 +609,23 @@ silently wrong (SM-009). The emitted field names `Sim.Device`, `Sim.Pins`,
    `sim_pins_unparseable`, `model_ambiguous`, `no_model_in_file`,
    `model_unreadable`, `no_model_attached`). File-less records are listed
    only when a file has since been attached. It reads only.
+
+**ngSPICE export headers.** A file exported by the ngSPICE model library
+carries a `* Key: value` header. Legacy NG-010 headers (no `Export-Schema:`)
+are read as before. `ngspice-export/1` adds `Kind:`, `Build-Token:`,
+`Valid-For-Basis:`, one `Port:` line per port (function, whether it is on the
+LTspice symbol, whether it is internally unconnected), `Channels:` and
+`Match:`. The binding stores them and `spice_binding` reports them as
+`export_schema`, `export_kind`, `build`, `valid_for_basis`, `port_functions`,
+`ports_on_symbol`, `suggested_unconnected_ports`, `channels`, `match` and
+`corrections`. Three effects on `set_spice_binding`: an omitted
+`unconnected_ports` defaults to the ports the header marks internally
+unconnected (pass `[]` to override; a warning says so); `pin_map` may name a
+port by its function (`"OUT"` for port `11`) when that function names exactly
+one port; and a model covering fewer channels than the package warns
+`partial_channels`. Any other `Export-Schema` major version is refused —
+at upload, before anything is stored, and at binding — with
+`eda.spice_export_schema_unsupported`.
 
 **What the parser reads.** Top-level `.subckt NAME ports… [PARAMS: …]` with
 `+` continuations, `*` / `;` / `$` comments, any case; nested subcircuits are
@@ -801,8 +825,8 @@ not repeated per row.
 | `consume_stock` | `part_id`, `qty` | `storage_location_id`, `note` | `stock.operation_error` — a non-positive `qty`, or "insufficient stock (have 3, want 10)" |
 | `move_stock` | `part_id`, `qty`, `from_location_id`, `to_location_id` | — | `resource.not_found` for either end; `stock.operation_error` for a non-positive `qty` or too little stock at the source; `stock.constraint_violation` on the destination |
 | `set_part_eda` | `part_id` | the other eleven | `eda_symbol.not_found`, `eda_footprint.not_found`, `eda_datafile.not_found`; `eda.ref_conflict` when both `<slot>_id` and `<slot>_ref_external` are set; `eda.archived` for a retired entry |
-| `upload_eda_asset` | `kind`, `filename`, `content_base64` | `part_id`, `category_slug` | `eda.unsupported_kind`, `eda.invalid_file`, `eda.empty_file`, `eda.file_too_large`, `eda.multiple_symbols`, `eda.legacy_format` |
-| `set_spice_binding` | `part_id_or_mpn` | `pin_map` (required for `file`), `model_kind`, `subckt`, `symbol_pins`, `unconnected_ports`, `device_type`, `params`, `fallback`, `source` | `part.not_found`; `eda.spice_model_missing`; `eda.file_not_found`; `eda.spice_no_model`; `eda.spice_subckt_ambiguous` / `eda.spice_subckt_unknown` (both list `available`); `eda.spice_model_not_checkable`; `eda.spice_symbol_pins_unknown`; `eda.spice_symbol_pins_conflict`; `eda.spice_pin_unknown`; `eda.spice_pin_unmapped`; `eda.spice_port_unknown`; `eda.spice_port_duplicate`; `eda.spice_port_count_mismatch`; `eda.spice_sim_pins_too_long`; `eda.spice_kind_conflict`; `eda.spice_not_applicable`; `eda.spice_field_too_long` |
+| `upload_eda_asset` | `kind`, `filename`, `content_base64` | `part_id`, `category_slug` | `eda.spice_export_schema_unsupported` (a SPICE file whose ngSPICE export header names an unknown schema), `eda.unsupported_kind`, `eda.invalid_file`, `eda.empty_file`, `eda.file_too_large`, `eda.multiple_symbols`, `eda.legacy_format` |
+| `set_spice_binding` | `part_id_or_mpn` | `pin_map` (required for `file`), `model_kind`, `subckt`, `symbol_pins`, `unconnected_ports`, `device_type`, `params`, `fallback`, `fallback_token`, `native`, `source` | `part.not_found`; `eda.spice_model_missing`; `eda.file_not_found`; `eda.spice_no_model`; `eda.spice_subckt_ambiguous` / `eda.spice_subckt_unknown` (both list `available`); `eda.spice_model_not_checkable`; `eda.spice_symbol_pins_unknown`; `eda.spice_symbol_pins_conflict`; `eda.spice_pin_unknown`; `eda.spice_pin_unmapped`; `eda.spice_port_unknown`; `eda.spice_port_duplicate`; `eda.spice_port_count_mismatch`; `eda.spice_sim_pins_too_long`; `eda.spice_kind_conflict`; `eda.spice_not_applicable`; `eda.spice_field_too_long`; `eda.spice_export_schema_unsupported`; `eda.spice_fallback_token_unknown`; `eda.spice_native_invalid` |
 | `import_vendor_zip` | `part_id`, `content_base64` | `overwrite` | `eda.invalid_archive`, `eda.archive_too_large`, `eda.no_entries` |
 | `fetch_lcsc` | `part_id`, `lcsc_id` | `overwrite` | `eda.lcsc_not_found`, `eda.lcsc_unavailable` |
 | `sync_project_bom` | `project_id`, `rows` | `dry_run` | `project.not_found`; `bom.sync_invalid_row`; `bom.sync_duplicate_line`; `bom.sync_unkeyed_row`. Same diff as `POST /api/projects/{id}/bom/sync` — see [projects.md](./projects.md#post-apiprojectsproject_idbomsync) |

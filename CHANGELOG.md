@@ -28,7 +28,11 @@ the canonical record.
   attaches one. A part without a model file can be recorded as
   `native_primitive` (built-in R/C/L/D with parameters) or `none` (with the
   fallback to use), and model ports no symbol pin drives are listed as
-  `unconnected_ports`. Emitted `Sim.*` field names are unchanged and no
+  `unconnected_ports`. ngSPICE `ngspice-export/1` headers are read (port
+  functions, internally unconnected ports, channels, kind/build tokens,
+  match, valid_for basis) and an unknown export-schema major is refused with
+  `eda.spice_export_schema_unsupported`; manifest `native` records and
+  fallback tokens are accepted. Emitted `Sim.*` field names are unchanged and no
   existing row is rewritten: free-text values read as `source: "free-text",
   validated: false`.
 - **Bag labels scanned without separators, or without an MPN.** A USB reader

@@ -489,11 +489,11 @@ def part_eda_payload(caller: Caller, part: Part, config: PartEda | None) -> dict
     same module the PCM package generation uses — so a ref reported here
     is the ref that ships.
     """
-    from app.domain.eda import kicad_refs, spice_binding
+    from app.domain.eda import kicad_refs, spice_binding_read
 
     # SM-009: the structured SPICE binding, or `{source: "free-text",
     # validated: false}` for a hand-written `sim_pins` with none.
-    binding = spice_binding.binding_payload(
+    binding = spice_binding_read.binding_payload(
         caller.db, ws=caller.ws, config=config, part_id=part.id
     )
     if config is None:

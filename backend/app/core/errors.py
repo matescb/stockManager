@@ -382,6 +382,9 @@ class ErrorCodes:
     EDA_SPICE_KIND_CONFLICT = "eda.spice_kind_conflict"
     EDA_SPICE_NOT_APPLICABLE = "eda.spice_not_applicable"
     EDA_SPICE_FIELD_TOO_LONG = "eda.spice_field_too_long"
+    EDA_SPICE_EXPORT_SCHEMA_UNSUPPORTED = "eda.spice_export_schema_unsupported"
+    EDA_SPICE_FALLBACK_TOKEN_UNKNOWN = "eda.spice_fallback_token_unknown"
+    EDA_SPICE_NATIVE_INVALID = "eda.spice_native_invalid"
 
     # Reports router.
     REPORT_PROJECT_NOT_FOUND = "report.project_not_found"

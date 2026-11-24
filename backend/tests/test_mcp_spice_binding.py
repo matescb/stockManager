@@ -550,3 +550,141 @@ async def test_unconnected_model_ports_must_be_listed(authed_client, full_token)
     assert bound["spice_binding"]["validated"] is True
     assert bound["spice_binding"]["unconnected_ports"] == nc_ports
     assert bound["sim_pins"] == "1=1 2=2 4=4 5=5 6=6 7=7 9=9 11=11 13=13"
+
+
+# ---------------------------------------------------------------------
+# ngspice-export/1 (ngSPICE export schema 1)
+# ---------------------------------------------------------------------
+
+
+async def test_schema1_header_fills_the_binding_and_defaults_unconnected_ports(
+    authed_client, full_token
+):
+    part_id = create_part(authed_client, "Schema-1 LDO")
+    symbol_pins = [str(n) for n in range(1, 18)]
+    pin_map = {pin: None for pin in symbol_pins}
+    pin_map.update({p: p for p in ("1", "2", "4", "5", "6", "7", "9", "11", "13")})
+    async with mcp_session(full_token) as s:
+        uploaded = await call(
+            s, "upload_eda_asset", kind="spice", filename="ldo13s1.lib",
+            content_base64=_b64(_fixture("ldo13_schema1.lib")), part_id=part_id,
+        )
+        before = await call(s, "get_part_eda", part_id=part_id)
+        bound = await call(
+            s, "set_spice_binding", part_id_or_mpn=part_id, pin_map=pin_map,
+            symbol_pins=symbol_pins,
+        )
+        explicit_none = await call_error(
+            s, "set_spice_binding", part_id_or_mpn=part_id, pin_map=pin_map,
+            symbol_pins=symbol_pins, unconnected_ports=[],
+        )
+
+    header = uploaded["ng010_header"]
+    assert header["export_schema"] == "ngspice-export/1"
+    assert header["internally_unconnected_ports"] == ["3", "8", "10", "12"]
+    suggested = before["spice_binding"]
+    assert suggested["suggested_unconnected_ports"] == ["3", "8", "10", "12"]
+    assert suggested["port_functions"]["1"] == "INFILT"
+    assert suggested["port_functions"]["3"] is None
+    assert suggested["ports_on_symbol"]["3"] is False
+    assert suggested["export_kind"] == "subckt" and suggested["build"] == "patched+runtime"
+    assert suggested["valid_for_basis"] == {
+        "dc": ["distributor_spec"], "ac-small-signal": ["conversion"],
+    }
+    assert suggested["match"]["confidence"] == "alias"
+    assert suggested["channels"] == {"package": None, "model": None}
+    binding = bound["spice_binding"]
+    assert binding["validated"] is True
+    assert binding["unconnected_ports"] == ["3", "8", "10", "12"]
+    assert any(w.startswith("unconnected_ports_from_header") for w in bound["warnings"])
+    assert "eda.spice_port_count_mismatch:" in explicit_none
+
+
+async def test_partial_channels_warn_and_unknown_schema_is_refused(authed_client, full_token, db):
+    part_id = create_part(authed_client, "Quad switch")
+    pin_map = {str(n): None for n in range(1, 17)}
+    pin_map.update({"1": "IN", "2": "S", "3": "D", "4": "Vss", "13": "Vdd", "5": "GND"})
+    async with mcp_session(full_token) as s:
+        await call(
+            s, "upload_eda_asset", kind="spice", filename="sw4.lib",
+            content_base64=_b64(_fixture("quad_switch_schema1.lib")), part_id=part_id,
+        )
+        bound = await call(
+            s, "set_spice_binding", part_id_or_mpn=part_id, pin_map=pin_map,
+            symbol_pins=[str(n) for n in range(1, 17)],
+        )
+        refused = await call_error(
+            s, "upload_eda_asset", kind="spice", filename="sw4v2.lib",
+            content_base64=_b64(_fixture("schema2_unsupported.lib")),
+        )
+
+    # Port FUNCTIONS from the export header stand in for the numbered ports.
+    assert bound["sim_pins"] == "1=1 2=2 3=3 4=4 5=6 13=5"
+    assert bound["spice_binding"]["pin_map"]["5"] == "6"
+    assert bound["spice_binding"]["channels"] == {"package": 4, "model": 1}
+    assert any(w.startswith("partial_channels") for w in bound["warnings"])
+    assert "eda.spice_export_schema_unsupported:" in refused
+    from app.domain.eda.models import EdaDatafile
+
+    assert db.query(EdaDatafile).filter(EdaDatafile.name == "sw4v2").count() == 0
+
+
+async def test_manifest_native_and_fallback_records(authed_client, full_token):
+    cap = create_part(authed_client, "100p C0G")
+    pptc = create_part(authed_client, "PPTC fuse")
+    tvs = create_part(authed_client, "TVS diode")
+    async with mcp_session(full_token) as s:
+        c = await call(
+            s, "set_spice_binding", part_id_or_mpn=cap, model_kind="native_primitive",
+            native={
+                "letter": "C",
+                "parameters": {"value": 1e-10, "unit": "F", "source": "inventory snapshot"},
+                "parameters_reason": None,
+                "loses_behaviour": False,
+                "loses_behaviour_reason": None,
+            },
+            fallback_token="native", fallback="native SPICE primitive; C + ESR + ESL",
+        )
+        d = await call(
+            s, "set_spice_binding", part_id_or_mpn=tvs, model_kind="native_primitive",
+            native={
+                "letter": "D", "parameters": None,
+                "parameters_reason": "no unambiguous value in the inventory snapshot",
+                "loses_behaviour": True,
+                "loses_behaviour_reason": "partial: generic .model D (DC Vf roughly)",
+            },
+        )
+        n = await call(
+            s, "set_spice_binding", part_id_or_mpn=pptc, model_kind="none",
+            fallback_token="external_model:PPTC_2920L260",
+            fallback="the model EV-014 found outside this library",
+        )
+        bad_token = await call_error(
+            s, "set_spice_binding", part_id_or_mpn=pptc, model_kind="none",
+            fallback_token="ask_someone",
+        )
+        bad_native = await call_error(
+            s, "set_spice_binding", part_id_or_mpn=cap, model_kind="native_primitive",
+            native={"letter": "Q"},
+        )
+        native_on_none = await call_error(
+            s, "set_spice_binding", part_id_or_mpn=pptc, model_kind="none",
+            native={"letter": "R"},
+        )
+
+    cb = c["spice_binding"]
+    assert cb["device_type"] == "C" and cb["params"] == "c=1e-10"
+    assert cb["native"]["parameters"] == {
+        "value": 1e-10, "unit": "F", "source": "inventory snapshot",
+    }
+    assert cb["fallback_token"] == "native"
+    assert c["warnings"] == []
+    db_ = d["spice_binding"]
+    assert db_["device_type"] == "D" and db_["params"] is None and db_["ports"] == ["A", "K"]
+    assert db_["native"]["loses_behaviour"] is True
+    assert d["warnings"] == ["native_loses_behaviour: partial: generic .model D (DC Vf roughly)"]
+    assert n["spice_binding"]["fallback_token"] == "external_model:PPTC_2920L260"
+    assert n["spice_binding"]["issues"] == ["no_model"]
+    assert "eda.spice_fallback_token_unknown:" in bad_token
+    assert "eda.spice_native_invalid:" in bad_native
+    assert "eda.spice_not_applicable:" in native_on_none
