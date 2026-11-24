@@ -47,6 +47,12 @@ Pads (footprint side) — only ELECTRICAL pads take part:
 * several pads with one number (an exposed pad plus its thermal vias,
   or an EP numbered like a ground pin) are one pad number and legal.
 
+* A copper pad named like a connector's mounting / shield pad (`MP`,
+  `MH`, `SH` with an optional number, or `SHIELD`, any case) that no
+  pin claims goes under `mounting_pads_without_pin` as information: a
+  connector symbol commonly leaves its retention tabs off. A symbol
+  that DOES have such a pin matches it like any other number.
+
 Verdict: `fail` when any pin (other than `no_connect`) has no pad, any
 electrical pad has no pin, or a duplicate pin number stands; else
 `pass`.
@@ -81,6 +87,11 @@ _POWER_PIN_TYPES = frozenset({"power_in", "power_out"})
 _NO_CONNECT = "no_connect"
 # `NAME_<unit>_<style>` — KiCad's sub-symbol naming.
 _UNIT_SUFFIX = re.compile(r"_(\d+)_(\d+)$")
+# Conventional names for connector retention / mounting / shield pads
+# (`MP`, `MP1`, `MH2`, `SH`, `SHIELD`), case-insensitive. Deliberately
+# NOT the single letters `S` / `G` or `GND_TAB`: `G`, `D`, `S` are a
+# FET's real pad names, and a symbol missing its gate must still fail.
+_MOUNTING_PAD = re.compile(r"(?:MP|MH|SH)\d*|SHIELD", re.IGNORECASE)
 _CACHE_SIZE = 1024
 # Complexity caps, far above any real part (the largest stock KiCad
 # symbols are ~2,000-ball FPGAs in a dozen units). A symbol past them
@@ -124,6 +135,7 @@ class PinPadResult:
     pads_without_pin: tuple[str, ...] = ()
     duplicate_pin_numbers: tuple[str, ...] = ()
     no_connect_pins_without_pad: tuple[str, ...] = ()
+    mounting_pads_without_pin: tuple[str, ...] = ()
     reason: str | None = None
     detail: str | None = None
     counts: dict[str, int] = field(default_factory=dict)
@@ -134,6 +146,7 @@ class PinPadResult:
             "pads_without_pin": list(self.pads_without_pin),
             "duplicate_pin_numbers": list(self.duplicate_pin_numbers),
             "no_connect_pins_without_pad": list(self.no_connect_pins_without_pad),
+            "mounting_pads_without_pin": list(self.mounting_pads_without_pin),
         }
 
 
@@ -364,7 +377,8 @@ def compare(pins: list[Pin], pads: set[str]) -> PinPadResult:
     # A number is "no connect" only if EVERY pin carrying it is.
     no_connect = numbers - {p.number for p in primary if p.type != _NO_CONNECT}
     missing = numbers - pads
-    unused = pads - numbers
+    mounting = {n for n in pads - numbers if _MOUNTING_PAD.fullmatch(n)}
+    unused = pads - numbers - mounting
     dupes = _duplicates(pins)
     failing = (missing - no_connect) or unused or dupes
     return PinPadResult(
@@ -373,6 +387,7 @@ def compare(pins: list[Pin], pads: set[str]) -> PinPadResult:
         pads_without_pin=_sorted(unused),
         duplicate_pin_numbers=_sorted(dupes),
         no_connect_pins_without_pad=_sorted(missing & no_connect),
+        mounting_pads_without_pin=_sorted(mounting),
         counts={"pins": len(numbers), "pads": len(pads)},
     )
 

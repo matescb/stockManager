@@ -605,7 +605,8 @@ uses now and stores nothing, so it is never stale; it carries the two
  "symbol_sha256": "…", "footprint_sha256": "…",
  "symbol_ref": "PCM_SM_ics:SOIC8_DEVICE", "footprint_ref": "PCM_SM_ics:SOIC8_PAD9",
  "findings": {"pins_without_pad": [], "pads_without_pin": ["9"],
-              "duplicate_pin_numbers": [], "no_connect_pins_without_pad": []},
+              "duplicate_pin_numbers": [], "no_connect_pins_without_pad": [],
+              "mounting_pads_without_pin": []},
  "checked_at": "2026-11-24T12:00:00+00:00"}
 ```
 
@@ -623,6 +624,11 @@ The rules:
   `not-checkable` (`body_styles_differ`).
 - A `no_connect` pin with no pad goes under `no_connect_pins_without_pad` as
   information and does not fail.
+- A copper pad named like a connector's mounting or shield pad — `MP`, `MH` or
+  `SH` with an optional number (`MP1`), or `SHIELD`, in any case — that no pin
+  claims goes under `mounting_pads_without_pin` as information and does not
+  fail. `S`, `G` and `GND_TAB` are not exempt: `G` / `D` / `S` are a FET's real
+  pads. A symbol that has an `MP` pin matches the `MP` pad as usual.
 - The same pin number twice in one unit is `duplicate_pin_numbers` and fails,
   except stacked pins (same position) and duplicate power pins of which at most
   one is visible.

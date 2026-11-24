@@ -71,7 +71,8 @@ the canonical record.
   electrical pad a pin; exposed pads, thermal vias sharing a number,
   unnumbered, NPTH and paste/mask-only pads are legal, multi-unit symbols are
   checked as the union of their units, and unpadded `no_connect` pins are
-  reported as information. The verdict is computed on demand from the current
+  reported as information, as are unclaimed connector mounting / shield pads
+  (`MP`, `MH`, `SH`, `SHIELD`). The verdict is computed on demand from the current
   files and carries their sha256s; nothing is stored and there is no
   migration. Rules in `docs/api/mcp.md#pinpad-check`.
 - **`catalog_search` facets on broad DigiKey searches (SM-002 fix).** Production

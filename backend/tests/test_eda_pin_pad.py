@@ -30,6 +30,7 @@ def test_pins_1_to_8_and_an_unnumbered_mechanical_pad_pass():
         "pads_without_pin": [],
         "duplicate_pin_numbers": [],
         "no_connect_pins_without_pad": [],
+        "mounting_pads_without_pin": [],
     }
 
 
@@ -88,6 +89,58 @@ def test_duplicate_pin_number_in_one_unit_fails_but_stacked_and_hidden_power_do_
     # "3" twice at two positions; "4" stacked and "8" hidden power are allowed.
     assert result.duplicate_pin_numbers == ("3",)
     assert result.pins_without_pad == () and result.pads_without_pin == ()
+
+
+def test_connector_mp_retention_pads_are_information_not_failure():
+    result = _check("jst_sh4.kicad_sym", "jst_sh4_mp.kicad_mod")
+    assert result.verdict == pin_pad.PASS
+    assert result.mounting_pads_without_pin == ("MP",)
+    assert result.pads_without_pin == ()
+
+
+def test_usb_c_shield_legs_are_information_not_failure():
+    result = _check("usb_c.kicad_sym", "usb_c_shield.kicad_mod")
+    assert result.verdict == pin_pad.PASS
+    assert result.mounting_pads_without_pin == ("SH",)
+
+
+@pytest.mark.parametrize("name", ["MP", "mp", "MP1", "MH2", "SH", "Sh10", "SHIELD", "shield"])
+def test_mounting_pad_names(name):
+    footprint = (
+        b'(footprint "F" (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu"))'
+        b' (pad "' + name.encode() + b'" smd rect (at 2 0) (size 1 1) (layers "F.Cu")))'
+    )
+    symbol = b'(symbol "P" (symbol "P_1_1" (pin passive line (at 0 0 0) (number "1"))))'
+    result = pin_pad.check_bytes(symbol, footprint)
+    assert result.verdict == pin_pad.PASS
+    assert result.mounting_pads_without_pin == (name,)
+
+
+@pytest.mark.parametrize("name", ["G", "S", "D", "GND_TAB", "MPX", "SH-1", "M1"])
+def test_other_unmatched_pads_still_fail(name):
+    """`G`/`S`/`D` are a FET's real pads; a near-miss name is not exempt."""
+    footprint = (
+        b'(footprint "F" (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu"))'
+        b' (pad "' + name.encode() + b'" smd rect (at 2 0) (size 1 1) (layers "F.Cu")))'
+    )
+    symbol = b'(symbol "P" (symbol "P_1_1" (pin passive line (at 0 0 0) (number "1"))))'
+    result = pin_pad.check_bytes(symbol, footprint)
+    assert result.verdict == pin_pad.FAIL
+    assert result.pads_without_pin == (name,)
+
+
+def test_a_symbol_pin_named_mp_matches_its_pad():
+    symbol = (
+        b'(symbol "P" (symbol "P_1_1" (pin passive line (at 0 0 0) (number "1"))'
+        b' (pin passive line (at 0 5 0) (number "MP"))))'
+    )
+    footprint = (
+        b'(footprint "F" (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu"))'
+        b' (pad "MP" smd rect (at 2 0) (size 1 1) (layers "F.Cu")))'
+    )
+    result = pin_pad.check_bytes(symbol, footprint)
+    assert result.verdict == pin_pad.PASS
+    assert result.mounting_pads_without_pin == ()
 
 
 def test_derived_symbol_is_not_checkable():

@@ -63,8 +63,10 @@ def check_pin_pad(caller: Caller, part_id_or_mpn: str) -> dict[str, Any]:
     `body_styles_differ`, `symbol_too_complex`) and `detail`; `symbol_sha256`,
     `footprint_sha256`, `symbol_ref`, `footprint_ref`, `checked_at`; and
     `findings` with `pins_without_pad`, `pads_without_pin`,
-    `duplicate_pin_numbers` (each fails the check) and
-    `no_connect_pins_without_pad` (information only). Legal and never a
+    `duplicate_pin_numbers` (each fails the check),
+    `no_connect_pins_without_pad` and `mounting_pads_without_pin`
+    (connector MP / MH / SH / SHIELD pads no pin claims; information
+    only). Legal and never a
     failure: unnumbered pads, NPTH / mechanical pads, paste- or
     mask-only pads, and several pads sharing one number (exposed pad,
     thermal vias). Multi-unit symbols are checked as the union of their
