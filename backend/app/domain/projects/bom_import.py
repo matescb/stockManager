@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import csv
 import io
+import re
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -235,17 +236,41 @@ def _apply_mapping(
     return out
 
 
+# The KiCad HTTP library's `StockManager` field is
+# `<APP_BASE_URL>/parts/<part_id>` (`eda/kicad_library.py`). The host is
+# deliberately not checked — a board carries the URL forever, and the
+# deployment it names may since have moved — but the `/parts/<uuid>` path
+# shape is, so an arbitrary URL that merely contains a uuid does not match.
+_PART_URL_RE = re.compile(
+    r"/parts/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/?$"
+)
+
+
+def parse_part_id_code(id_code: str) -> UUID | None:
+    """The part uuid in an `id_code`: a bare uuid, or a part URL.
+
+    Returns None when the value is neither. Workspace membership is the
+    caller's check — this only parses.
+    """
+    value = id_code.strip()
+    match = _PART_URL_RE.search(value.split("#", 1)[0].split("?", 1)[0])
+    if match:
+        return UUID(match.group(1))
+    try:
+        return UUID(value)
+    except ValueError:
+        return None
+
+
 def _match_part(db: Session, *, workspace_id: UUID, row: ParsedRow) -> Part | None:
     """Spec §16.3 match priority — never auto-create.
 
     Auto-create lives in commit() under the auto_create_missing_parts flag (BOM-001).
     """
-    # 1. internal ID code → we treat the part `id` UUID as the ID code if present.
+    # 1. internal ID code → the part `id` UUID, bare or as the part URL
+    #    the KiCad `StockManager` field carries (SM-011).
     if row.id_code:
-        try:
-            uuid_val = UUID(row.id_code)
-        except ValueError:
-            uuid_val = None
+        uuid_val = parse_part_id_code(row.id_code)
         if uuid_val:
             p = db.get(Part, uuid_val)
             if p and p.workspace_id == workspace_id:
@@ -272,11 +297,23 @@ def _match_part(db: Session, *, workspace_id: UUID, row: ParsedRow) -> Part | No
         ).scalars().first()
         if p:
             return p
-    # 4. exact MPN (+ manufacturer if present)
+    # 4. exact MPN. The MPN alone decides: it is unique per workspace among
+    #    active parts (`uq_parts_ws_mpn`), and EDA exports spell the
+    #    manufacturer however the symbol author did ("Amphenol RF" vs
+    #    "Amphenol"), so requiring it to match turned a sure hit into a
+    #    miss. The manufacturer only orders candidates — an active part
+    #    first, then one whose manufacturer agrees — for the archived
+    #    duplicates the partial index allows.
     if row.mpn:
-        q = select(Part).where(Part.workspace_id == workspace_id).where(Part.mpn == row.mpn)
+        order = [Part.archived_at.is_not(None)]
         if row.manufacturer:
-            q = q.where(func.lower(Part.manufacturer) == row.manufacturer.lower())
+            order.append(func.lower(Part.manufacturer) != row.manufacturer.lower())
+        q = (
+            select(Part)
+            .where(Part.workspace_id == workspace_id)
+            .where(Part.mpn == row.mpn)
+            .order_by(*order, Part.created_at)
+        )
         p = db.execute(q.limit(1)).scalars().first()
         if p:
             return p

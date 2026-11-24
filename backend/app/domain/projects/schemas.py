@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import re
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ProjectCreateIn(BaseModel):
@@ -145,6 +146,105 @@ class BomImportCommitOut(BaseModel):
     unmatched: int
     auto_created: int = 0
     skipped: int = 0
+
+
+# BOM sync (SM-011) — `domain/projects/bom_sync.py`. Same caps as the CSV
+# importer: 10 000 rows per call (`bom_import._MAX_ROW_COUNT`).
+BOM_SYNC_MAX_ROWS = 10_000
+
+# KiCad's BOM export collapses consecutive references into a range
+# (`C6-C8`, `--ref-range-delimiter`, default "-"). Expanded so a line's
+# identity does not depend on the export setting. Same prefix on both
+# ends, ascending, and capped so a typo cannot mint a million designators.
+_REF_RANGE_RE = re.compile(r"^([A-Za-z_#]{1,20})(\d{1,9})-\1(\d{1,9})$")
+_REF_RANGE_MAX = 1000
+# Per-row ceilings, checked BEFORE any splitting or expansion so the
+# validator's own work is bounded: raw characters across the field, and
+# the number of designators after expansion (the same 2000 the field's
+# `max_length` states). A range is sized against the remaining budget
+# before `range()` is called, so "R1-R999" repeated cannot amplify.
+BOM_SYNC_MAX_DESIGNATORS = 2000
+_DESIGNATORS_MAX_CHARS = 40_000
+_DESIGNATOR_ITEM_MAX_CHARS = 20_000
+
+
+def _expand_ref_range(ref: str, budget: int) -> list[str]:
+    """`ref` expanded if it is a KiCad range; raises once over `budget`."""
+    match = _REF_RANGE_RE.match(ref)
+    if not match:
+        count = 1
+    else:
+        start, end = int(match.group(2)), int(match.group(3))
+        expandable = start < end and end - start < _REF_RANGE_MAX
+        count = end - start + 1 if expandable else 1
+    if count > budget:
+        raise ValueError(f"more than {BOM_SYNC_MAX_DESIGNATORS} designators in one row")
+    if count == 1:
+        return [ref]
+    prefix = match.group(1)
+    return [f"{prefix}{n}" for n in range(start, end + 1)]
+
+
+def _split_designator_items(items: list[object]) -> list[object]:
+    if len(items) > BOM_SYNC_MAX_DESIGNATORS:
+        raise ValueError(f"more than {BOM_SYNC_MAX_DESIGNATORS} designators in one row")
+    lengths = [len(item) for item in items if isinstance(item, str)]
+    if lengths and max(lengths) > _DESIGNATOR_ITEM_MAX_CHARS:
+        raise ValueError(f"a designators string exceeds {_DESIGNATOR_ITEM_MAX_CHARS} characters")
+    if sum(lengths) > _DESIGNATORS_MAX_CHARS:
+        raise ValueError(f"designators exceed {_DESIGNATORS_MAX_CHARS} characters")
+    out: list[object] = []
+    for item in items:
+        if not isinstance(item, str):
+            out.append(item)
+            continue
+        for ref in item.replace(",", " ").split():
+            out.extend(_expand_ref_range(ref, BOM_SYNC_MAX_DESIGNATORS - len(out)))
+    return out
+
+
+class BomSyncRowIn(BaseModel):
+    """One BOM line as an EDA export carries it.
+
+    The field set is `bom_import.ParsedRow`'s, named the way a KiCad /
+    netsch export names them: `value` and `name` both feed the line's
+    name (`name` wins), `ipn` is the internal part number, `id_code` is a
+    bare part uuid or the `StockManager` part URL. A field left out
+    (null) leaves the existing line's value alone; see `bom_sync.py`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    designators: list[str] = Field(default_factory=list, max_length=BOM_SYNC_MAX_DESIGNATORS)
+    quantity: int | None = Field(default=None, ge=0)
+    mpn: str | None = Field(default=None, max_length=200)
+    manufacturer: str | None = Field(default=None, max_length=200)
+    value: str | None = Field(default=None, max_length=300)
+    name: str | None = Field(default=None, max_length=300)
+    footprint: str | None = Field(default=None, max_length=120)
+    id_code: str | None = Field(default=None, max_length=500)
+    ipn: str | None = Field(default=None, max_length=200)
+    cad_key: str | None = Field(default=None, max_length=300)
+    dnp: bool | None = None
+    comments: str | None = Field(default=None, max_length=5000)
+
+    @field_validator("designators", mode="before")
+    @classmethod
+    def _split_designators(cls, value: object) -> object:
+        # KiCad's CSV export joins references with ","; netsch splits on
+        # whitespace. Accept a string or a list, splitting either on both,
+        # and expand KiCad reference ranges.
+        items = [value] if isinstance(value, str) else value
+        if not isinstance(items, list):
+            return value
+        return _split_designator_items(items)
+
+
+class BomSyncIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rows: list[BomSyncRowIn] = Field(max_length=BOM_SYNC_MAX_ROWS)
+    dry_run: bool = False
 
 
 class BomProviderImportIn(BaseModel):

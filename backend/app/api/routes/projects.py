@@ -15,7 +15,7 @@ from app.core.time import utcnow
 from app.domain._quantity import quantity_out
 from app.domain.parts.models import Part
 from app.domain.projects import bom_import as bom
-from app.domain.projects import bom_import_provider
+from app.domain.projects import bom_import_provider, bom_sync
 from app.domain.projects.models import Project, ProjectEntry
 from app.domain.projects.schemas import (
     BomEntryIn,
@@ -24,6 +24,7 @@ from app.domain.projects.schemas import (
     BomImportPreviewIn,
     BomProviderImportChoiceIn,
     BomProviderImportIn,
+    BomSyncIn,
     MatchEntryIn,
     ProjectCreateIn,
     ProjectPatchIn,
@@ -62,6 +63,7 @@ def _serialize_entry(e: ProjectEntry) -> dict:
         "cad_key": e.cad_key,
         "dnp": e.dnp,
         "order_index": e.order_index,
+        "archived_at": e.archived_at.isoformat() if e.archived_at else None,
     }
 
 
@@ -177,13 +179,22 @@ def restore_project(project_id: UUID, db: DbSession, ws: CurrentWorkspace, user:
 
 # --------- BOM ----------
 @router.get("/{project_id}/entries")
-def list_entries(project_id: UUID, db: DbSession, ws: CurrentWorkspace):
+def list_entries(
+    project_id: UUID,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    include_archived: bool = Query(default=False),
+):
     p = _get(db, ws.id, project_id)
-    rows = list(
-        db.execute(
-            select(ProjectEntry).where(ProjectEntry.workspace_id == ws.id).where(ProjectEntry.project_id == p.id).order_by(ProjectEntry.order_index)
-        ).scalars()
+    q = (
+        select(ProjectEntry)
+        .where(ProjectEntry.workspace_id == ws.id)
+        .where(ProjectEntry.project_id == p.id)
     )
+    if not include_archived:
+        # Lines a BOM sync retired (SM-011) stay in the table for history.
+        q = q.where(ProjectEntry.archived_at.is_(None))
+    rows = list(db.execute(q.order_by(ProjectEntry.order_index)).scalars())
     return ok([_serialize_entry(e) for e in rows])
 
 
@@ -278,6 +289,34 @@ def commit_bom(project_id: UUID, payload: BomImportCommitIn, db: DbSession, ws: 
     # the dep handle it.
     result = bom.commit(db, workspace_id=ws.id, user_id=user.id, project=project, payload=payload)
     return ok(result.model_dump())
+
+
+@router.post("/{project_id}/bom/sync")
+@limiter.limit("30/minute", key_func=workspace_key)
+def sync_bom(
+    request: Request,
+    project_id: UUID,
+    payload: BomSyncIn,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
+    """Update the BOM in place from an EDA export (SM-011).
+
+    Diff, not append: see `domain/projects/bom_sync.py` for the line
+    identity rule. `dry_run` returns the same diff and writes nothing.
+    """
+    project = _get(db, ws.id, project_id)
+    result = bom_sync.sync(
+        db,
+        ws=ws,
+        user=user,
+        project=project,
+        rows=payload.rows,
+        dry_run=payload.dry_run,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    return ok(result)
 
 
 @router.post("/{project_id}/bom/import-from-provider")

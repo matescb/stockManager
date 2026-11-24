@@ -60,7 +60,19 @@ the canonical record.
   `eda.lcsc_disabled` unless `MCP_FETCH_LCSC_ENABLED=true` (default false):
   EasyEDA's terms forbid automated access without permission. Name and
   arguments unchanged; the UI's LCSC button (REST) is unaffected.
-
+- **BOM sync in place (SM-011).** `POST /api/projects/{id}/bom/sync`
+  (MCP: `sync_project_bom`) diffs an EDA export against the project's BOM
+  instead of appending: lines are keyed by designator set, unchanged lines
+  are not written, changed ones are updated under the same id with one
+  audit row naming the fields, and lines no longer in the export are
+  archived (`archived_at`), not deleted, so builds keep their stage lines.
+  `dry_run` returns the diff without writing. BOM import now also accepts
+  the KiCad `StockManager` URL (`…/parts/<uuid>`) as an `id_code`, and
+  its MPN match no longer requires the row's manufacturer to agree (MPN is
+  unique per workspace; the manufacturer only breaks ties).
+  Shortage, reservation, kitting, `get_project_bom` and
+  `GET /api/projects/{id}/entries` skip archived lines (the latter takes
+  `?include_archived=true`). No migration.
 - **Workspace part policy.** The workspace now defines which fields a part
   must have, instead of every client deciding for itself. Admins edit the
   rules under Settings → Workspace → Part policy (`PUT /api/part-policy`);

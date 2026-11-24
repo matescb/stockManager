@@ -160,6 +160,27 @@ def test_project_entry_rejects_cross_workspace_part_id():
     assert r.status_code == 404, r.text
 
 
+def test_bom_sync_refuses_a_foreign_project_and_foreign_part_urls(db):
+    """SM-011: B cannot sync A's BOM, and B's part URL in A's BOM matches nothing."""
+    a = TestClient(app)
+    b = TestClient(app)
+    _signup(a, f"a-{uuid.uuid4().hex[:6]}@x.com")
+    _signup(b, f"b-{uuid.uuid4().hex[:6]}@x.com")
+    project_a = a.post("/api/projects", json={"name": "A board"}).json()["data"]["id"]
+    part_b = _create_part(b, "B-secret", mpn="B-SECRET-1")
+    rows = [{"designators": ["R1"], "id_code": f"https://parts.example/parts/{part_b}"}]
+
+    for dry_run in (True, False):
+        r = b.post(f"/api/projects/{project_a}/bom/sync", json={"rows": rows, "dry_run": dry_run})
+        assert r.status_code == 404, r.text
+        assert r.json()["code"] == ErrorCodes.PROJECT_NOT_FOUND
+    assert a.get(f"/api/projects/{project_a}/entries").json()["data"] == []
+
+    r = a.post(f"/api/projects/{project_a}/bom/sync", json={"rows": rows})
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["lines"]["added"][0]["part_id"] is None
+    assert r.json()["data"]["unmatched"] == 1
+
 def test_part_cad_keys_ws(db):
     """CAD-key matching must use the caller workspace, not just cad_key."""
     a = TestClient(app)

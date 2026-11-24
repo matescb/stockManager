@@ -98,8 +98,11 @@ List BOM entries for the project, sorted by `order_index`.
   "part_id": "…" | null, "meta_part_id": "…" | null,
   "name": "…", "quantity": 4.0, "attrition_pct": 2.5, "comments": "…",
   "designators": ["R1", "R2"], "cad_footprint": "…", "cad_key": "…",
-  "dnp": false, "order_index": 12 }
+  "dnp": false, "order_index": 12, "archived_at": null }
 ```
+
+Lines a BOM sync retired (`archived_at` set) are left out unless
+`?include_archived=true` is passed.
 
 `attrition_pct` is the per-BOM-line waste rate (Track B1) — see
 [`builds-and-bom.md`](../domain/builds-and-bom.md#required-quantity-formula).
@@ -236,6 +239,69 @@ Commit the preview into `project_entries` rows.
 - Created parts use the import workspace, have no linked provider, no default storage location, and no stock entries or lots.
 - Source: `backend/app/api/routes/projects.py:262-269`.
 - Service: `backend/app/domain/projects/bom_import.py::commit`.
+
+### `POST /api/projects/{project_id}/bom/sync`
+
+Bring the project's BOM in line with an EDA export **in place** (SM-011):
+unchanged lines are not written, changed lines keep their id, missing lines
+are archived rather than deleted. Replaces the delete-every-entry-and-reimport
+pattern, which cascades through build stage lines and purchase plans.
+
+**Request** — `BomSyncIn`
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `rows` | `BomSyncRowIn[]` | yes | At most 10 000. |
+| `dry_run` | bool | no | Default `false`. `true` returns the same diff and writes nothing. |
+
+`BomSyncRowIn` — every field optional; a null field leaves the existing
+line's value alone.
+
+| Field | Notes |
+|---|---|
+| `designators` | List, or a string; either is split on commas and whitespace (`"R1,R2"`, `"R1 R2"`). KiCad ranges with one prefix (`C6-C8`) are expanded; anything else with a `-` is kept as written. |
+| `quantity` | Integer ≥ 0. Defaults to the designator count, or 1. |
+| `id_code` | A bare part uuid, or the KiCad `StockManager` field `<APP_BASE_URL>/parts/<uuid>` (any host; the `/parts/<uuid>` path is required). |
+| `cad_key`, `ipn`, `mpn`, `manufacturer`, `name` | Part resolution, in `bom_import.py::_match_part` order: `id_code`, `cad_key`, `ipn`, `mpn` (the MPN alone decides; `manufacturer` only breaks a tie between an active and archived part), `name`. Parts of other workspaces never match. |
+| `value` | The line's name when `name` is absent. Not used for matching. |
+| `footprint`, `dnp`, `comments` | Written to `cad_footprint`, `dnp`, `comments`. |
+
+**Line identity** — a row and a line are the same line when their keys
+match: the designator set (stripped, upper-cased, sorted) when there are
+designators; otherwise the matched part id; otherwise `cad_key`; otherwise
+`name`/`value`/`mpn`, case-folded. Splitting `R1,R2` into `R1` + `R2` is
+one removal and two additions. Full rule: the module docstring of
+`backend/app/domain/projects/bom_sync.py`.
+
+**Response** — `200 OK` — envelope: `{ data, status }`
+
+```json
+{ "dry_run": false, "added": 1, "updated": 1, "removed": 1, "unchanged": 12, "unmatched": 1,
+  "lines": { "added": [{ "entry_id": "…", "designators": ["J1"], "part_id": null,
+                         "name": "1757255", "restored": false, "changed": [] }],
+             "updated": [{ "entry_id": "…", "designators": ["R1", "R2"], "part_id": "…",
+                           "name": "100k", "changed": ["quantity"] }],
+             "removed": […], "unchanged": […], "unmatched": […] } }
+```
+
+- `removed` lines get `archived_at`; build stages that reference them keep
+  their stage lines, and shortage, reservation and kitting skip them.
+- A row whose key matches an archived line un-archives that line (same id)
+  and is reported under `added` with `restored: true`.
+- `unmatched` lists the resulting lines with no part link; it overlaps the
+  other four. A row that resolves to no part never clears a link set by
+  hand with `.../match`.
+- `attrition_pct`, `meta_part_id` and `order_index` are never touched.
+- Audit: one row per added (`project_entry.sync_added`), restored
+  (`…sync_restored`), updated (`…sync_updated`, comment names the changed
+  fields, not their values) and removed (`…sync_removed`) line; none for
+  unchanged lines, none on a dry run.
+- Errors: `404 project.not_found`; `422 bom.sync_duplicate_line` (two rows
+  with one key) and `422 bom.sync_unkeyed_row` (a row with nothing to key
+  on), both with `rows` (indexes); `422` validation errors.
+- Rate limit: 30/minute per workspace. MCP twin: `sync_project_bom`.
+- Source: `backend/app/api/routes/projects.py:294-319`.
+- Service: `backend/app/domain/projects/bom_sync.py::sync`.
 
 ### `POST /api/projects/{project_id}/bom/import-from-provider`
 
