@@ -293,6 +293,33 @@ def test_designator_strings_and_kicad_ranges_are_split():
     assert kept.designators == ["R1-C3", "R5-R2", "TP-1", "R1-R5000"]
 
 
+@pytest.mark.parametrize(
+    "designators",
+    [
+        "R1-R999999999",  # one huge range: kept as written, never expanded
+        ",".join(["R1-R999"] * 50),  # many in-cap ranges: refused on the running count
+        ["R1"] * 2001,  # too many raw items
+        "R" * 40_001,  # too many raw characters
+    ],
+    ids=["huge-range", "amplified-ranges", "too-many-items", "too-long"],
+)
+def test_designator_expansion_is_bounded(authed_client, designators):
+    import time
+
+    project = _project(authed_client)
+    started = time.monotonic()
+    r = authed_client.post(
+        f"/api/projects/{project}/bom/sync",
+        json={"rows": [{"designators": designators}], "dry_run": True},
+    )
+    assert time.monotonic() - started < 2
+    if designators == "R1-R999999999":
+        assert r.status_code == 200, r.text
+        assert r.json()["data"]["lines"]["added"][0]["designators"] == ["R1-R999999999"]
+    else:
+        assert r.status_code == 422, r.text
+
+
 # 5 ---------------------------------------------------------------------------
 
 

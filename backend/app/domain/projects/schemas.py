@@ -156,18 +156,48 @@ BOM_SYNC_MAX_ROWS = 10_000
 # (`C6-C8`, `--ref-range-delimiter`, default "-"). Expanded so a line's
 # identity does not depend on the export setting. Same prefix on both
 # ends, ascending, and capped so a typo cannot mint a million designators.
-_REF_RANGE_RE = re.compile(r"^([A-Za-z_#]+)(\d+)-\1(\d+)$")
+_REF_RANGE_RE = re.compile(r"^([A-Za-z_#]{1,20})(\d{1,9})-\1(\d{1,9})$")
 _REF_RANGE_MAX = 1000
+# Per-row ceilings, checked BEFORE any splitting or expansion so the
+# validator's own work is bounded: raw characters across the field, and
+# the number of designators after expansion (the same 2000 the field's
+# `max_length` states). A range is sized against the remaining budget
+# before `range()` is called, so "R1-R999" repeated cannot amplify.
+BOM_SYNC_MAX_DESIGNATORS = 2000
+_DESIGNATORS_MAX_CHARS = 40_000
 
 
-def _expand_ref_range(ref: str) -> list[str]:
+def _expand_ref_range(ref: str, budget: int) -> list[str]:
+    """`ref` expanded if it is a KiCad range; raises once over `budget`."""
     match = _REF_RANGE_RE.match(ref)
     if not match:
+        count = 1
+    else:
+        start, end = int(match.group(2)), int(match.group(3))
+        expandable = start < end and end - start < _REF_RANGE_MAX
+        count = end - start + 1 if expandable else 1
+    if count > budget:
+        raise ValueError(f"more than {BOM_SYNC_MAX_DESIGNATORS} designators in one row")
+    if count == 1:
         return [ref]
-    prefix, start, end = match.group(1), int(match.group(2)), int(match.group(3))
-    if not start < end or end - start >= _REF_RANGE_MAX:
-        return [ref]
+    prefix = match.group(1)
     return [f"{prefix}{n}" for n in range(start, end + 1)]
+
+
+def _split_designator_items(items: list[object]) -> list[object]:
+    if len(items) > BOM_SYNC_MAX_DESIGNATORS:
+        raise ValueError(f"more than {BOM_SYNC_MAX_DESIGNATORS} designators in one row")
+    chars = sum(len(item) for item in items if isinstance(item, str))
+    if chars > _DESIGNATORS_MAX_CHARS:
+        raise ValueError(f"designators exceed {_DESIGNATORS_MAX_CHARS} characters")
+    out: list[object] = []
+    for item in items:
+        if not isinstance(item, str):
+            out.append(item)
+            continue
+        for ref in item.replace(",", " ").split():
+            out.extend(_expand_ref_range(ref, BOM_SYNC_MAX_DESIGNATORS - len(out)))
+    return out
 
 
 class BomSyncRowIn(BaseModel):
@@ -182,7 +212,7 @@ class BomSyncRowIn(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    designators: list[str] = Field(default_factory=list, max_length=2000)
+    designators: list[str] = Field(default_factory=list, max_length=BOM_SYNC_MAX_DESIGNATORS)
     quantity: int | None = Field(default=None, ge=0)
     mpn: str | None = Field(default=None, max_length=200)
     manufacturer: str | None = Field(default=None, max_length=200)
@@ -204,14 +234,7 @@ class BomSyncRowIn(BaseModel):
         items = [value] if isinstance(value, str) else value
         if not isinstance(items, list):
             return value
-        out: list[object] = []
-        for item in items:
-            if not isinstance(item, str):
-                out.append(item)
-                continue
-            for ref in item.replace(",", " ").split():
-                out.extend(_expand_ref_range(ref))
-        return out
+        return _split_designator_items(items)
 
 
 class BomSyncIn(BaseModel):
