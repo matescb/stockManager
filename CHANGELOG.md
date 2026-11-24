@@ -23,6 +23,14 @@ the canonical record.
   link now points at the stored local copy (the `datasheet` attachment)
   when one exists, with the provider URL kept as a small "source" link;
   without one it still links the provider and says "Not downloaded yet".
+- **MCP `export_parts` (SM-006).** A read-only tool that enumerates every
+  part in the workspace through an opaque cursor (keyset on part id, 1-200
+  per page, larger values clamped): id, name, MPN, manufacturer, category
+  path, EDA presence with content `sha256` for symbol / footprint / 3D /
+  SPICE, and on-hand / reserved / available from the ledger. Audits no
+  longer hit the `search_parts` / `find_parts_missing_eda` caps. A cursor it
+  did not mint is refused with `mcp.invalid_cursor`. Existing tools are
+  unchanged.
 - **Workspace part policy.** The workspace now defines which fields a part
   must have, instead of every client deciding for itself. Admins edit the
   rules under Settings → Workspace → Part policy (`PUT /api/part-policy`);

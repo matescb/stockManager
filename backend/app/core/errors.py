@@ -388,3 +388,6 @@ class ErrorCodes:
     # server bug, not a caller mistake, and the code says so — an agent
     # that sees it must not retry.
     MCP_UNDECLARED_WRITE = "mcp.undeclared_write"
+    # `export_parts` was handed a cursor it did not mint: tampered, from
+    # another listing, or not a cursor at all. Start again without one.
+    MCP_INVALID_CURSOR = "mcp.invalid_cursor"

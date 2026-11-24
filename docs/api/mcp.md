@@ -63,7 +63,7 @@ pins it.
 
 ## Tools
 
-25 tools — 13 read, 12 write. Names and arguments are the agent-facing contract;
+26 tools — 14 read, 12 write. Names and arguments are the agent-facing contract;
 the authoritative descriptions are the docstrings in `backend/app/mcp/tools/`,
 which are what the model actually reads.
 
@@ -88,6 +88,7 @@ earlier result has the other.
 | `get_part_policy` | Which fields this workspace requires on a part, and where to find them |
 | `validate_part` | Dry-run `create_part`: what the part policy would refuse, nothing written |
 | `part_policy_status` | What an existing part still lacks under the part policy |
+| `export_parts` | Every part, cursor-paged, with EDA hashes and on-hand / reserved / available — for audits |
 
 ### Write
 
@@ -276,6 +277,38 @@ both ends.
    distributor availability. `sourcing_offers` spends metered quota and is
    rate-limited to 60/minute — call it for the shortages, not for the BOM.
 
+### Audit the whole inventory
+
+`search_parts`, `find_parts_missing_eda` and `stock_levels` are capped, and no
+query is guaranteed to split the inventory into pages under the cap. For an
+audit, page `export_parts` instead:
+
+1. `export_parts(page_size=200)` — no `cursor` on the first call.
+2. Call again with `cursor=<next_cursor>` until `next_cursor` is `null`.
+
+Pages are ordered by part id (keyset paging), so every part present for the
+whole walk is returned exactly once; a part created mid-walk may be missed but
+nothing is ever repeated. Archived parts are skipped unless
+`include_archived=true` (they then carry `archived: true`). Each item:
+
+```json
+{"id": "…", "name": "…", "mpn": "…", "manufacturer": "…",
+ "category": {"id": "…", "name": "Ceramic", "path": "Capacitors / Ceramic"},
+ "eda": {"symbol": {"present": true, "sha256": "…"},
+         "footprint": {"present": true, "ref_external": "Resistor_SMD:R_0603_1608Metric"},
+         "model3d": {"present": false}, "spice": {"present": false}},
+ "stock": {"on_hand": 40, "reserved": 12, "available": 28},
+ "part_url": "…"}
+```
+
+`sha256` is the hosted file's content hash (for `model3d`, the footprint's
+first model by position); a slot that points into the user's own local KiCad
+library is present with `ref_external` and no hash. `present` is computed by
+the same helper as `find_parts_missing_eda`, so the two never disagree.
+`page_size` above 200 is **clamped** to 200 (not refused); the result's
+`page_size` echoes the value used. Each page costs a fixed handful of queries
+regardless of size. Works with a read-only token.
+
 ## Required arguments and refusals
 
 Every tool can additionally return
@@ -298,6 +331,7 @@ not repeated per row.
 | `get_part_policy` | — | — | — |
 | `validate_part` | — | same as `create_part` | `category.not_found`; `category.archived`; `part.invalid_field`. An unmet rule is `ok: false`, not a refusal |
 | `part_policy_status` | `part_id_or_mpn` | — | `part.not_found` |
+| `export_parts` | — | `cursor`, `page_size`, `include_archived` | `mcp.invalid_cursor` (a cursor this tool did not mint — start over without one) |
 | `sourcing_offers` | `part_id` | `qty` | `part.not_found` only. Every other failure is **degradation, not a refusal**: a part with no MPN, unconfigured sourcing, an exhausted budget and a provider error all return `status` (`no_mpn` / `not_configured` / `budget_blocked` / `provider_error`) with an empty `offers` list. Read that as "unknown", not "unavailable" |
 | `create_part` | one of `name` / `mpn` | `manufacturer`, `description`, `category_id`, `part_type`, `internal_part_number`, `footprint`, `notes_markdown` | `part.name_or_mpn_required`; `category.not_found`; `category.archived`; `part.invalid_field` (over-long value). **Not** `part.mpn_conflict` and **not** `part.policy_violation` — both are results, see above |
 | `set_part_category` | `part_id_or_mpn`, `category_id_or_name` | — | `part.not_found`; `category.not_found` (lists up to 10 existing names); `category.name_conflict` when two differ only in case |
@@ -422,6 +456,7 @@ the REST surface ([ADR-0002](../adr/0002-code-enforced-workspace-isolation.md)).
 | Decoded size of any base64 tool argument | 4 MiB |
 | `search_parts` results | 50 |
 | `find_parts_missing_eda` results | 100 |
+| `export_parts` page size | 200 (clamped; paged, never truncated) |
 | `set_part_specs` keys per call | 50 |
 | `set_part_specs` key / value length | 256 / 1024 characters |
 | `create_part` `mpn` / `manufacturer` / `internal_part_number` | 200 / 200 / 120 characters |
