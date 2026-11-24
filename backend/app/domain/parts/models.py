@@ -218,6 +218,15 @@ class PartDatasheet(WorkspaceOwned, Base):
       attachment ids, the converter version, page count). That keeps the
       conversion step a pure write to this JSONB document plus new
       attachments — no second migration.
+    * ``kind`` / ``title`` / ``origin`` (migration 0086, SM-016, ADR-0036)
+      widen the table from "the datasheet" to "the part's documents":
+      application notes, technical notes, design notes, programming
+      manuals and PCNs share the record shape and the retry bookkeeping.
+      ``origin`` says why the row exists — ``datasheet_field`` (the part's
+      ``datasheet_url`` custom field), ``media_link`` (a provider record's
+      document links, queued on create / refresh) or ``agent`` (queued by
+      the ``request_part_document`` MCP tool) — and is what splits the
+      cron backfill into its datasheet and document halves.
     """
 
     __tablename__ = "part_datasheets"
@@ -234,6 +243,11 @@ class PartDatasheet(WorkspaceOwned, Base):
         # The backfill's candidate scan and the "what failed" ops query.
         Index("ix_part_datasheets_ws_status", "workspace_id", "status"),
         Index("ix_part_datasheets_ws_part", "workspace_id", "part_id"),
+        # The document backfill's candidate scan and the per-workspace
+        # pending-request cap (migration 0086).
+        Index(
+            "ix_part_datasheets_ws_origin_status", "workspace_id", "origin", "status"
+        ),
     )
 
     part_id = Column(
@@ -244,7 +258,20 @@ class PartDatasheet(WorkspaceOwned, Base):
     )
     source_url = Column(Text, nullable=False)
     source_url_sha256 = Column(String(64), nullable=False)
-    # stored | failed
+    # datasheet | application_note | technical_note | design_note |
+    # programming_manual | pcn | other — `services/documents.py::DOCUMENT_KINDS`.
+    kind = Column(
+        String(40), nullable=False, default="datasheet", server_default=text("'datasheet'")
+    )
+    title = Column(String(300), nullable=True)
+    # datasheet_field | media_link | agent — see the class docstring.
+    origin = Column(
+        String(20),
+        nullable=False,
+        default="datasheet_field",
+        server_default=text("'datasheet_field'"),
+    )
+    # pending (queued, never attempted) | stored | failed
     status = Column(String(20), nullable=False, default="failed")
     attachment_id = Column(
         UUID(as_uuid=True),

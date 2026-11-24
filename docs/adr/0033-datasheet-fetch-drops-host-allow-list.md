@@ -6,6 +6,7 @@ Audience: engineer
 - **Date**: 2026-09-09
 - **Supersedes**: the datasheet half of SEC2-006's host allow-list
 - **Superseded by**: —
+- **Extended by**: [ADR-0036](0036-part-documents-cron-only-any-host.md) — the same policy for a cron-only `document` kind
 
 ## Context
 

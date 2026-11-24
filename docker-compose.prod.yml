@@ -361,6 +361,7 @@ services:
       DATASHEET_BACKFILL_BATCH_SIZE:
       DATASHEET_BACKFILL_MAX_ATTEMPTS:
       DATASHEET_BACKFILL_RETRY_AFTER_SECONDS:
+      DOCUMENT_BACKFILL_BATCH_SIZE:
       ASSET_FETCH_MIN_HOST_INTERVAL_SECONDS:
       ASSET_FETCH_USER_AGENT:
     # The ONLY cron sidecar that needs the uploads volume: it writes the
@@ -399,6 +400,12 @@ services:
     # that keeps the longest single command below stop_grace_period: 605s.
     # The job also commits per candidate, so even a `timeout` kill keeps the
     # work it finished.
+    #
+    # The same run then downloads queued part documents (application notes,
+    # PCNs, agent-requested PDFs — ADR-0036), at most
+    # DOCUMENT_BACKFILL_BATCH_SIZE of them. Neither half STARTS a fetch after
+    # the shared run budget (documents.RUN_BUDGET_SECONDS, 500s), so the worst
+    # case is that budget plus one in-flight fetch, still under 600.
     command: ["sh", "-c", "trap 'kill 0' TERM; trap 'kill 0' INT; mkdir -p /tmp/stockmanager-job-heartbeats; interval=$$(python -m app.cli.run_job datasheet-backfill --print-interval) || exit $$?; if [ $$interval -le 0 ]; then echo 'datasheet backfill disabled'; sleep infinity; fi; while true; do timeout 600 python -m app.cli.run_job datasheet-backfill; rc=$$?; if [ $$rc -eq 124 ]; then echo 'datasheet-backfill timed out after 600s (exit=124)'; elif [ $$rc -ne 0 ]; then echo \"datasheet-backfill failed (exit=$$rc)\"; fi; sleep $$interval; done"]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]

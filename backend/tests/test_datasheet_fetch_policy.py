@@ -905,3 +905,124 @@ def test_connect_and_read_timeouts_are_separate(monkeypatch):
     assert timeout.read == assets._READ_TIMEOUT_SEC
     assert timeout.read > timeout.connect
     assert assets._MAX_WALL_CLOCK_SEC > timeout.read
+
+
+# ---------------------------------------------------------------------------
+# The `document` kind (ADR-0036): application notes, PCNs, agent-queued PDFs.
+#
+# Same relaxation as `datasheet`, same two conditions, same controls — and
+# the same rule that only the cron backfill may ask for it.
+# ---------------------------------------------------------------------------
+
+_DOCUMENT_URL = "https://www.st.com/resource/en/application_note/an2867.pdf"
+
+
+def test_document_kind_is_fetched_without_allow_list_with_the_opt_in(monkeypatch):
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver(_PUBLIC_IP))
+    monkeypatch.setattr(assets, "_http_get", lambda _t: _pdf_response())
+
+    result = _fetch(_DOCUMENT_URL, kind="document")
+
+    assert result.failure_code is None
+    assert result.stored is not None and result.stored.ext == "pdf"
+
+
+def test_document_kind_without_the_opt_in_still_requires_the_allow_list(monkeypatch):
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver(_PUBLIC_IP))
+    called = {"hit": False}
+
+    def _spy(_target):  # pragma: no cover - must never run
+        called["hit"] = True
+        return _pdf_response()
+
+    monkeypatch.setattr(assets, "_http_get", _spy)
+
+    result = assets.fetch_asset(_DOCUMENT_URL, _ws(), "document")
+
+    assert result.failure_code == "host_not_allowed"
+    assert called["hit"] is False
+
+
+def test_request_path_helper_keeps_the_allow_list_for_documents(monkeypatch):
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver(_PUBLIC_IP))
+    monkeypatch.setattr(assets, "_http_get", lambda _t: _pdf_response())
+
+    assert assets.fetch_provider_asset(_DOCUMENT_URL, _ws(), "document") is None
+
+
+def test_document_kind_is_pdf_only(monkeypatch):
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver(_PUBLIC_IP))
+    monkeypatch.setattr(
+        assets,
+        "_http_get",
+        lambda _t: _pdf_response(body=b"<html></html>", content_type="text/html"),
+    )
+
+    # No `.pdf` in the path, so the type comes from the response alone.
+    result = _fetch("https://www.ti.com/lit/an/slva123", kind="document")
+
+    assert result.stored is None
+    assert result.failure_code == "unexpected_type"
+
+
+def test_document_kind_keeps_https_only_and_private_address_refusal(monkeypatch):
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver("10.0.0.7"))
+    monkeypatch.setattr(assets, "_http_get", lambda _t: _pdf_response())
+
+    assert _fetch(_DOCUMENT_URL, kind="document").failure_code == "ip_not_public"
+    assert (
+        _fetch(_DOCUMENT_URL.replace("https:", "http:"), kind="document").failure_code
+        is not None
+    )
+
+
+def test_document_opt_in_path_is_throttled(monkeypatch):
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver(_PUBLIC_IP))
+    monkeypatch.setattr(assets, "_http_get", lambda _t: _pdf_response())
+    slept = _record_sleeps(monkeypatch)
+
+    ws = _ws()
+    for _ in range(2):
+        assets.fetch_asset(_DOCUMENT_URL, ws, "document", allow_any_host=True)
+
+    assert slept == [5.0]
+
+
+def test_only_the_cron_backfill_modules_opt_in_to_any_host():
+    """`allow_any_host=True` appears in exactly the two backfill modules,
+    and nothing a request reaches imports their fetching entry points.
+
+    A source scan, deliberately: the guarantee is "no request handler or
+    MCP tool can reach an arbitrary host", which is a property of who
+    calls what, and a new caller is exactly what this has to catch.
+    """
+    from pathlib import Path
+
+    app_root = Path(assets.__file__).resolve().parents[3]
+    opted_in = sorted(
+        str(path.relative_to(app_root))
+        for path in app_root.rglob("*.py")
+        # `assets.py` defines the flag and documents it in prose.
+        if path.name != "assets.py"
+        and "allow_any_host=True" in path.read_text(encoding="utf-8")
+    )
+    assert opted_in == [
+        "domain/parts/services/datasheets.py",
+        "domain/parts/services/documents.py",
+    ]
+
+    fetching_entry_points = (
+        "fetch_document",
+        "backfill_documents",
+        "fetch_datasheet_for_part",
+        "backfill_missing_datasheets",
+        "fetch_asset(",
+    )
+    for surface in ("api", "mcp"):
+        for path in (app_root / surface).rglob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            for name in fetching_entry_points:
+                assert name not in text, (
+                    f"{path.relative_to(app_root)} references {name}: request "
+                    "handlers and MCP tools must not fetch documents (ADR-0036)"
+                )

@@ -13,13 +13,16 @@ original SEC2-006 behaviour: the hostname must be on `_ALLOWED_HOSTS`, the
 narrow Mouser/DigiKey list.
 
 The **unrestricted** one drops that list. It applies only when BOTH hold:
-`kind` is in `_UNRESTRICTED_KINDS` (today: `"datasheet"`) AND the caller
-passes `allow_any_host=True`. Datasheets live on 40+ manufacturer domains
-(vishay, ti, we-online, analog, panasonic, yageo, murata, …) and the
-allow-list meant essentially nothing localised.
+`kind` is in `_UNRESTRICTED_KINDS` (`"datasheet"`, and since ADR-0036
+`"document"` — application notes, technical notes, PCNs and the like) AND
+the caller passes `allow_any_host=True`. Datasheets live on 40+
+manufacturer domains (vishay, ti, we-online, analog, panasonic, yageo,
+murata, …) and the allow-list meant essentially nothing localised; the
+other documents live on the same domains.
 
-The opt-in is what keeps the surface small: the ONLY caller that passes it
-is the `datasheet-backfill` cron job (`services/datasheets.py`). Request-path
+The opt-in is what keeps the surface small: the ONLY callers that pass it
+are the two halves of the `datasheet-backfill` cron job
+(`services/datasheets.py` and `services/documents.py`). Request-path
 callers — provider import and provider refresh — keep the allow-list, so a
 user-triggered request can never reach a host outside it, and can never be
 made to block the single uvicorn worker (ADR-0012) on an arbitrary vendor.
@@ -122,11 +125,12 @@ _MAX_WALL_CLOCK_SEC = 45.0
 _MAX_BYTES = 10 * 1024 * 1024  # 10 MB ceiling — datasheet PDFs are usually 1-3 MB
 _CHUNK_SIZE = 64 * 1024  # 64 KB — streaming read granularity for the size-cap guard
 
-# Asset kinds exempt from the host allow-list (ADR-0033). Keep this set as
-# small as the product actually needs: every kind added here loses the
-# allow-list and keeps only the pinned-IP / HTTPS / redirect / size /
-# magic-byte controls.
-_UNRESTRICTED_KINDS: frozenset[str] = frozenset({"datasheet"})
+# Asset kinds exempt from the host allow-list (ADR-0033; `document` added by
+# ADR-0036). Keep this set as small as the product actually needs: every kind
+# added here loses the allow-list and keeps only the pinned-IP / HTTPS /
+# redirect / size / magic-byte / PDF-only controls. Both kinds are PDF-only on
+# the unrestricted path, and both are reached only from the cron backfill.
+_UNRESTRICTED_KINDS: frozenset[str] = frozenset({"datasheet", "document"})
 
 _DEFAULT_PORT_BY_SCHEME: dict[str, int] = {"http": 80, "https": 443}
 
@@ -645,8 +649,9 @@ def fetch_asset(
     `allow_any_host=True`. Everything else keeps the host allow-list.
 
     The opt-in is deliberate. Only the `datasheet-backfill` cron job passes
-    it. The request-path callers (provider import, provider refresh) do NOT,
-    so a user-triggered request can never make the backend open a connection
+    it (its datasheet half and, since ADR-0036, its document half). The
+    request-path callers (provider import, provider refresh) do NOT, so a
+    user-triggered request can never make the backend open a connection
     to a host outside the allow-list — and can never be made to block the
     single uvicorn worker (ADR-0012) for a 10s timeout plus a per-host
     throttle against an arbitrary vendor. Those parts get their datasheet
@@ -699,14 +704,15 @@ def fetch_asset(
 
     ext = _ext_from_response(resp.headers, url)
 
-    # A datasheet is a PDF. Without the host allow-list a vendor URL that
+    # A datasheet (or document) is a PDF. Without the host allow-list a vendor URL that
     # 200s with an HTML landing page (or anything else) would otherwise land
     # on disk as an opaque `.bin` for every part. Refuse instead: the caller
     # keeps the upstream URL, and the backfill records `unexpected_type`
     # rather than filling the store with junk.
     if unrestricted and ext != "pdf":
         log.warning(
-            "remote asset rejected: datasheet is not a PDF (ext=%s) from %s",
+            "remote asset rejected: %s is not a PDF (ext=%s) from %s",
+            kind,
             ext,
             target.redacted_ref,
         )

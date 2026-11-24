@@ -22,6 +22,7 @@ from app.domain.parts.models import Part
 from app.domain.parts.naming import canonical_name
 from app.domain.parts.provider_fields import PROVIDER_ASSET_CUSTOM_FIELD_KINDS
 from app.domain.parts.services.assets import fetch_provider_asset
+from app.domain.parts.services.documents import queue_media_links
 from app.domain.parts.services.provider_field_values import (
     truncate_provider_field_value,
 )
@@ -155,6 +156,12 @@ def create_from_provider_lookup(
         extra_fields=_asset_fields(r, workspace_id) if is_primary else _link_fields(r),
         request_id=request_id,
         category_assigned=category.assigned,
+    )
+    # Document links become PENDING rows for the cron download — DB only,
+    # no fetch, so bulk-import-from-scan stays inside its deadline
+    # (ADR-0036).
+    queue_media_links(
+        db, workspace_id=workspace_id, part=p, links=r.get("media_links"), user_id=user_id
     )
     # Last, and that is the whole point: the name renders from the
     # category `apply_provider_category` just filed the part under and

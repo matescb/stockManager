@@ -378,6 +378,136 @@ def _deepest_category_name(cat: Any) -> str | None:
     return name
 
 
+# ---- MediaLinks → part documents (SM-016, ADR-0036) -------------------
+#
+# The v4 ProductDetails `Product.MediaLinks[]` entries carry `MediaType`,
+# `Title`, `SmallPhoto`, `Thumbnail` and `Url`. No captured fixture in this
+# repo had them, so the names are DigiKey's published v4 schema; the mapper
+# reads them defensively and an entry it cannot read is dropped.
+#
+# Kept: documents an engineer reads — application notes / "Design
+# Resources", technical notes and white papers, PCB design / layout guides,
+# programming / user / reference manuals, and PCNs. Dropped: the datasheet
+# (already the `datasheet_url` field and its own backfill), photos, videos,
+# EDA / CAD / 3D / simulation models, HTML datasheets, training modules,
+# featured-product pages, catalogue pages, environmental certificates.
+
+# Media types dropped outright, matched as lower-case substrings.
+_MEDIA_TYPES_DROPPED: tuple[str, ...] = (
+    "datasheet",  # also catches "HTML Datasheet"
+    "photo",
+    "video",
+    "eda",
+    "cad",
+    "3d",
+    "model",
+    "training",
+    "featured product",
+    "online catalog",
+    "environmental",
+    "image",
+)
+# Title / media-type keywords → kind, first match wins (after the PCN and
+# "AN1234" checks in `_media_link_kind`).
+_MEDIA_KIND_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "programming_manual",
+        (
+            "programming",
+            "reference manual",
+            "user manual",
+            "user's manual",
+            "user guide",
+            "users guide",
+            "manual",
+        ),
+    ),
+    (
+        "design_note",
+        ("layout", "pcb", "design guide", "design note", "hardware design", "design consideration"),
+    ),
+    ("application_note", ("application note", "app note", "appnote", "application brief")),
+    (
+        "technical_note",
+        ("technical note", "tech note", "technote", "white paper", "whitepaper",
+         "technical brief", "errata", "technical article"),
+    ),
+)
+# What a kept media type means when its title names nothing more specific.
+_MEDIA_TYPE_DEFAULT_KIND: tuple[tuple[str, str], ...] = (
+    ("pcn", "pcn"),
+    ("application note", "application_note"),
+    ("design resource", "design_note"),
+    ("technical", "technical_note"),
+    ("white paper", "technical_note"),
+    ("manual", "programming_manual"),
+    ("user guide", "programming_manual"),
+)
+_MAX_MEDIA_LINKS = 25
+
+
+def _media_link_kind(media_type: str, title: str) -> str | None:
+    """The part-document kind for one MediaLinks entry, or None to drop it."""
+    mt = media_type.lower()
+    if any(word in mt for word in _MEDIA_TYPES_DROPPED):
+        return None
+    haystack = f"{mt} {title.lower()}"
+    if "pcn" in haystack or "product change notification" in haystack:
+        return "pcn"
+    # An "AN1234 …" title is an application note whatever else it says —
+    # "AN2867 Oscillator design guide" is not a PCB design note.
+    if title[:2].upper() == "AN" and title[2:3].isdigit():
+        return "application_note"
+    for kind, words in _MEDIA_KIND_KEYWORDS:
+        if any(word in haystack for word in words):
+            return kind
+    for word, kind in _MEDIA_TYPE_DEFAULT_KIND:
+        if word in mt:
+            return kind
+    # "Other Related Documents" and anything unrecognised: only when the
+    # title said what it is (handled above). Brochures and line cards go.
+    return None
+
+
+def _media_link_url(raw: Any) -> str | None:
+    """https URL for a MediaLinks `Url`; DigiKey often omits the scheme."""
+    url = str(raw or "").strip()
+    if not url:
+        return None
+    if url.startswith("//"):
+        return f"https:{url}"
+    if url.lower().startswith("http://"):
+        # The cron fetch is HTTPS-only (ADR-0033). Vendor document hosts
+        # serve the same path over TLS; one that does not fails with a
+        # recorded reason rather than being dropped silently here.
+        return f"https://{url[len('http://'):]}"
+    if url.lower().startswith("https://"):
+        return url
+    return None
+
+
+def _media_links_from_product(p: dict[str, Any]) -> list[dict[str, str]]:
+    """`[{kind, title, url, media_type}]` — document links only, deduped."""
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for link in p.get("MediaLinks") or []:
+        if not isinstance(link, dict):
+            continue
+        media_type = str(link.get("MediaType") or "").strip()
+        title = str(link.get("Title") or "").strip()
+        url = _media_link_url(link.get("Url"))
+        if not url or url in seen:
+            continue
+        kind = _media_link_kind(media_type, title)
+        if kind is None:
+            continue
+        seen.add(url)
+        out.append({"kind": kind, "title": title, "url": url, "media_type": media_type})
+        if len(out) >= _MAX_MEDIA_LINKS:
+            break
+    return out
+
+
 def _record_from_product(p: dict[str, Any]) -> dict[str, Any]:
     """Map a DigiKey ProductDetails Product object → canonical record."""
     specs_by_key: dict[str, list[str]] = {}
@@ -559,4 +689,7 @@ def _record_from_product(p: dict[str, Any]) -> dict[str, Any]:
         "image_url": photo_url,
         "source_url": product_url,
         "specs": specs,
+        # Document links (app notes, PCNs, manuals …) queued for the cron
+        # download on create / refresh — `services/documents.py`.
+        "media_links": _media_links_from_product(p),
     }

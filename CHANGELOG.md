@@ -28,6 +28,22 @@ the canonical record.
   persisted (DigiKey answers kept in-process for 10 minutes per workspace,
   Mouser not at all). Optional `list_categories` returns DigiKey's category
   tree. Contract in `docs/api/mcp.md` ("Catalogue search").
+- **Local part documents for agents (SM-016).** Besides the datasheet, the
+  hourly `datasheet-backfill` job now downloads a part's application notes,
+  technical notes, PCB design notes, programming / reference manuals and PCNs
+  as local PDF attachments (`file_type` = the kind). They are queued from
+  DigiKey's product `MediaLinks` on create / refresh (documents only — photos,
+  videos, EDA / 3D models, HTML datasheets and training pages are dropped) or
+  by an agent through the new MCP write tool
+  `request_part_document(part_id_or_mpn, url, kind, title?)`, which validates
+  the URL's shape, dedups, caps waiting requests per workspace
+  (`DOCUMENT_REQUEST_PENDING_CAP`, 200) and never fetches. The new read tool
+  `list_part_documents(part_id_or_mpn, kinds?)` lists the part's local PDFs
+  (user uploads included) with a `download_url` that works with the same
+  Bearer token, plus what is still queued. ADR-0036 extends ADR-0033's any-host
+  policy to a cron-only `document` kind; request handlers stay allow-listed.
+  Migration 0086 adds `part_datasheets.kind` / `title` / `origin` and the
+  `pending` status. New setting `DOCUMENT_BACKFILL_BATCH_SIZE` (default 10).
 
 - **Part image lightbox and local datasheet link.** Clicking the part
   thumbnail in the header now opens the full image in an in-page popup
