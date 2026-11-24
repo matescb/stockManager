@@ -2,7 +2,7 @@
 
 Audience: engineer
 
-Owns the workspace part policy: the rules saying which fields a part must carry, stored as one JSONB document on `workspaces.part_policy` (migration 0084). The workspace defines "part culture", not the client tool — the web form, the netsch CLI and MCP agents all read the same rules and get the same structured `missing` list back. Why it is enforced where it is: [ADR-0035](../../../../docs/adr/0035-workspace-part-policy.md).
+Owns the workspace part policy: the rules saying which fields a part must carry, stored as one JSONB document on `workspaces.part_policy` (migration 0085). The workspace defines "part culture", not the client tool — the web form, the netsch CLI and MCP agents all read the same rules and get the same structured `missing` list back. Why it is enforced where it is: [ADR-0035](../../../../docs/adr/0035-workspace-part-policy.md).
 
 ## Files
 

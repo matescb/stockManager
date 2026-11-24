@@ -67,5 +67,5 @@ refusal and report is the same structured `missing` list.
 
 - Source: `backend/app/domain/part_policy/service.py:499-517` (create enforcement)
 - Related: `backend/app/domain/parts/services/create_part.py:125`
-- Migration: `backend/alembic/versions/0084_workspace_part_policy.py`
+- Migration: `backend/alembic/versions/0085_workspace_part_policy.py`
 - API: [part-policy](../api/part-policy.md)

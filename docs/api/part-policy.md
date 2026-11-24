@@ -10,7 +10,7 @@ See [API conventions](./README.md) for envelope, errors, auth. All four routes m
 
 ## The rule
 
-A policy is a list of rules, stored whole on `workspaces.part_policy` (migration 0084). Default is NULL — no rules — so nothing changes until an admin writes one.
+A policy is a list of rules, stored whole on `workspaces.part_policy` (migration 0085). Default is NULL — no rules — so nothing changes until an admin writes one.
 
 | Field | Type | Notes |
 |---|---|---|
