@@ -262,7 +262,7 @@ line's value alone.
 | `designators` | List, or a string; either is split on commas and whitespace (`"R1,R2"`, `"R1 R2"`). KiCad ranges with one prefix (`C6-C8`) are expanded; anything else with a `-` is kept as written. |
 | `quantity` | Integer ≥ 0. Defaults to the designator count, or 1. |
 | `id_code` | A bare part uuid, or the KiCad `StockManager` field `<APP_BASE_URL>/parts/<uuid>` (any host; the `/parts/<uuid>` path is required). |
-| `cad_key`, `ipn`, `mpn`, `manufacturer`, `name` | Part resolution, in `bom_import.py::_match_part` order: `id_code`, `cad_key`, `ipn`, `mpn` (+ `manufacturer` when given), `name`. Parts of other workspaces never match. |
+| `cad_key`, `ipn`, `mpn`, `manufacturer`, `name` | Part resolution, in `bom_import.py::_match_part` order: `id_code`, `cad_key`, `ipn`, `mpn` (the MPN alone decides; `manufacturer` only breaks a tie between an active and archived part), `name`. Parts of other workspaces never match. |
 | `value` | The line's name when `name` is absent. Not used for matching. |
 | `footprint`, `dnp`, `comments` | Written to `cad_footprint`, `dnp`, `comments`. |
 

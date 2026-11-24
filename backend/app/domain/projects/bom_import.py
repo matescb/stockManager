@@ -297,11 +297,23 @@ def _match_part(db: Session, *, workspace_id: UUID, row: ParsedRow) -> Part | No
         ).scalars().first()
         if p:
             return p
-    # 4. exact MPN (+ manufacturer if present)
+    # 4. exact MPN. The MPN alone decides: it is unique per workspace among
+    #    active parts (`uq_parts_ws_mpn`), and EDA exports spell the
+    #    manufacturer however the symbol author did ("Amphenol RF" vs
+    #    "Amphenol"), so requiring it to match turned a sure hit into a
+    #    miss. The manufacturer only orders candidates — an active part
+    #    first, then one whose manufacturer agrees — for the archived
+    #    duplicates the partial index allows.
     if row.mpn:
-        q = select(Part).where(Part.workspace_id == workspace_id).where(Part.mpn == row.mpn)
+        order = [Part.archived_at.is_not(None)]
         if row.manufacturer:
-            q = q.where(func.lower(Part.manufacturer) == row.manufacturer.lower())
+            order.append(func.lower(Part.manufacturer) != row.manufacturer.lower())
+        q = (
+            select(Part)
+            .where(Part.workspace_id == workspace_id)
+            .where(Part.mpn == row.mpn)
+            .order_by(*order, Part.created_at)
+        )
         p = db.execute(q.limit(1)).scalars().first()
         if p:
             return p

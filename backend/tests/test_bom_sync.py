@@ -298,10 +298,12 @@ def test_designator_strings_and_kicad_ranges_are_split():
     [
         "R1-R999999999",  # one huge range: kept as written, never expanded
         ",".join(["R1-R999"] * 50),  # many in-cap ranges: refused on the running count
+        " ".join(["R1-R999"] * 2499),  # 5 000-ish tokens' worth, under the char caps
+        ",".join(["R1-R999"] * 5000),  # 5 000 tokens: over the per-string cap
         ["R1"] * 2001,  # too many raw items
         "R" * 40_001,  # too many raw characters
     ],
-    ids=["huge-range", "amplified-ranges", "too-many-items", "too-long"],
+    ids=["huge-range", "amplified-ranges", "budget", "5000-tokens", "too-many-items", "too-long"],
 )
 def test_designator_expansion_is_bounded(authed_client, designators):
     import time
@@ -318,6 +320,40 @@ def test_designator_expansion_is_bounded(authed_client, designators):
         assert r.json()["data"]["lines"]["added"][0]["designators"] == ["R1-R999999999"]
     else:
         assert r.status_code == 422, r.text
+
+
+def test_mpn_matches_whatever_the_manufacturer_spelling(authed_client, db):
+    """MPN is unique per workspace; the manufacturer is not a gate."""
+    c = authed_client
+    rf = create_part(c, "SMA jack", mpn="132289", manufacturer="Amphenol RF")
+    bare = create_part(c, "Header", mpn="61300311121")  # no manufacturer at all
+    project = _project(c)
+
+    out = _sync(
+        c,
+        project,
+        [
+            {"designators": ["J1"], "mpn": "132289", "manufacturer": "Amphenol"},
+            {"designators": ["J2"], "mpn": "61300311121", "manufacturer": "Wurth Elektronik"},
+        ],
+    )
+
+    by_ref = {line["designators"][0]: line["part_id"] for line in out["lines"]["added"]}
+    assert by_ref == {"J1": rf, "J2": bare}
+    assert out["unmatched"] == 0
+
+
+def test_mpn_prefers_the_active_part_then_the_manufacturer(authed_client, db):
+    """The tie-breaker for the archived duplicates `uq_parts_ws_mpn` allows."""
+    c = authed_client
+    old = create_part(c, "Old", mpn="DUP-1", manufacturer="Acme")
+    assert c.post(f"/api/parts/{old}/archive").status_code == 200
+    live = create_part(c, "Live", mpn="DUP-1", manufacturer="Other")
+    project = _project(c)
+
+    out = _sync(c, project, [{"designators": ["U1"], "mpn": "DUP-1", "manufacturer": "Acme"}])
+
+    assert out["lines"]["added"][0]["part_id"] == live
 
 
 # 5 ---------------------------------------------------------------------------

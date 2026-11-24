@@ -165,6 +165,7 @@ _REF_RANGE_MAX = 1000
 # before `range()` is called, so "R1-R999" repeated cannot amplify.
 BOM_SYNC_MAX_DESIGNATORS = 2000
 _DESIGNATORS_MAX_CHARS = 40_000
+_DESIGNATOR_ITEM_MAX_CHARS = 20_000
 
 
 def _expand_ref_range(ref: str, budget: int) -> list[str]:
@@ -187,8 +188,10 @@ def _expand_ref_range(ref: str, budget: int) -> list[str]:
 def _split_designator_items(items: list[object]) -> list[object]:
     if len(items) > BOM_SYNC_MAX_DESIGNATORS:
         raise ValueError(f"more than {BOM_SYNC_MAX_DESIGNATORS} designators in one row")
-    chars = sum(len(item) for item in items if isinstance(item, str))
-    if chars > _DESIGNATORS_MAX_CHARS:
+    lengths = [len(item) for item in items if isinstance(item, str)]
+    if lengths and max(lengths) > _DESIGNATOR_ITEM_MAX_CHARS:
+        raise ValueError(f"a designators string exceeds {_DESIGNATOR_ITEM_MAX_CHARS} characters")
+    if sum(lengths) > _DESIGNATORS_MAX_CHARS:
         raise ValueError(f"designators exceed {_DESIGNATORS_MAX_CHARS} characters")
     out: list[object] = []
     for item in items:

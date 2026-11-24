@@ -49,9 +49,8 @@ Notes:
 - The CSV uses a KiCad reference range (`C6-C8`). The server expands
   same-prefix ranges, so `C3,C4,C6-C8` and `C3,C4,C6,C7,C8` are the same
   line; nothing to do.
-- When a row carries both `mpn` and `manufacturer`, the MPN match also
-  compares the manufacturer (`bom_import.py::_match_part`). The current CSV
-  sends no manufacturer, so MPN alone matches, as before.
+- The MPN alone matches a part; a differently spelled manufacturer (or
+  none) does not stop it (`bom_import.py::_match_part`).
 - Better still, export the `StockManager` field and send it as `id_code`
   (`https://parts.matescb.cz/parts/<uuid>`): it is matched before the MPN
   and survives an MPN correction.

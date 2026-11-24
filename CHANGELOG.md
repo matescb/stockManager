@@ -67,7 +67,9 @@ the canonical record.
   audit row naming the fields, and lines no longer in the export are
   archived (`archived_at`), not deleted, so builds keep their stage lines.
   `dry_run` returns the diff without writing. BOM import now also accepts
-  the KiCad `StockManager` URL (`…/parts/<uuid>`) as an `id_code`.
+  the KiCad `StockManager` URL (`…/parts/<uuid>`) as an `id_code`, and
+  its MPN match no longer requires the row's manufacturer to agree (MPN is
+  unique per workspace; the manufacturer only breaks ties).
   Shortage, reservation, kitting, `get_project_bom` and
   `GET /api/projects/{id}/entries` skip archived lines (the latter takes
   `?include_archived=true`). No migration.
