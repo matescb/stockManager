@@ -1091,6 +1091,15 @@ def _local_target(port: int) -> assets._FetchTarget:
             b"x",
             id="slow-body",
         ),
+        # Close-delimited: no Content-Length, not chunked. The watchdog's
+        # shutdown reads as a clean end-of-body here, so without the
+        # post-loop check this returned 200 with a truncated `%PDF` body.
+        pytest.param(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/pdf\r\n"
+            b"Connection: close\r\n\r\n%PDF-1.7\n",
+            b"%PDF line\n",
+            id="slow-close-delimited-body",
+        ),
     ],
 )
 def test_wall_clock_budget_holds_against_a_real_dribbling_socket(

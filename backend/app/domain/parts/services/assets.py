@@ -706,6 +706,14 @@ def _stream_capped(target: _FetchTarget, watchdog: _Watchdog) -> _AssetResponse:
                     return _AssetResponse(status, headers, None)
                 chunks.append(chunk)
 
+            # Checked AFTER the loop too. When the watchdog shuts a
+            # close-delimited body down (no Content-Length, not chunked), the
+            # read sees EOF, h11 takes the close as end-of-body (and TLS
+            # tolerates the ragged EOF), so the loop ends "normally" with a
+            # TRUNCATED body — a `%PDF` prefix would pass the magic check and
+            # be stored for good.
+            if watchdog.fired or (time.monotonic() - started_at) > _MAX_WALL_CLOCK_SEC:
+                raise _WallClockExceeded(ref)
             return _AssetResponse(status, headers, b"".join(chunks))
 
 
