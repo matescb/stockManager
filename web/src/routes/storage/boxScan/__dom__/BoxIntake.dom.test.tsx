@@ -9,7 +9,13 @@ vi.mock("@/lib/auth", () => ({ useAuth: () => ({ workspaceId: "ws-1" }) }));
 vi.mock("@/lib/queryKeys", () => ({ useWsKey: (...a: unknown[]) => ["ws-1", ...a] }));
 vi.mock("@/components/scanner/Scanner", () => ({ default: () => <div data-testid="camera" /> }));
 vi.mock("sonner", () => ({ toast: { info: vi.fn(), error: vi.fn(), success: vi.fn() } }));
-const sounds = vi.hoisted(() => ({ playNeedMoreInfo: vi.fn(), playScanBeep: vi.fn() }));
+const sounds = vi.hoisted(() => ({
+  playScanSound: vi.fn(),
+  playScanBeep: vi.fn(),
+  isScanSoundMuted: () => false,
+  setScanSoundMuted: vi.fn(),
+  primeScanAudio: () => () => {},
+}));
 vi.mock("@/components/scanner/scanSounds", () => sounds);
 vi.mock("@/lib/api", async () => {
   const m = await import("./mocks");
@@ -44,7 +50,8 @@ beforeEach(() => {
   localStorage.clear();
   apiGet.mockReset();
   apiPost.mockReset();
-  sounds.playNeedMoreInfo.mockReset();
+  sounds.playScanSound.mockReset();
+  sounds.setScanSoundMuted.mockReset();
 });
 afterEach(cleanup);
 
@@ -132,6 +139,35 @@ describe("BoxIntake", () => {
     expect(screen.getByText("Create part…")).toBeTruthy();
   });
 
+  describe("scan sounds", () => {
+    it("beeps success on a resolved scan", async () => {
+      apiPost.mockImplementation((url: string) =>
+        url.endsWith("/scan/resolve")
+          ? Promise.resolve({ status: "existing_part", part, bag: null, provider: null })
+          : Promise.resolve({ status: "added", part, part_created: false, lot_id: "l1", quantity: 100, moved_from: [] }),
+      );
+      mount();
+      scan(RAW_A);
+      await screen.findByText("Added");
+      expect(sounds.playScanSound.mock.calls).toEqual([["success"]]);
+    });
+
+    it("buzzes error when the part cannot be found", async () => {
+      apiPost.mockResolvedValue({ status: "not_found", part: null, bag: null, provider: null });
+      mount();
+      scan(RAW_A);
+      await screen.findByText(/not in the library/);
+      expect(sounds.playScanSound.mock.calls).toEqual([["error"]]);
+    });
+
+    it("has a mute toggle that is remembered", () => {
+      mount();
+      fireEvent.click(screen.getByRole("button", { name: /Sound on/ }));
+      expect(sounds.setScanSoundMuted).toHaveBeenCalledWith(true);
+      expect(screen.getByRole("button", { name: /Sound off/ }).getAttribute("aria-pressed")).toBe("true");
+    });
+  });
+
   describe("follow-up scan for a label that lacks a field", () => {
     const murata = { ...part, id: "p2", name: "GRM188", mpn: "GRM188R71H104KA93D", manufacturer: "Murata" };
     const PROMPT = "Scan the Mfr. Part No barcode on this label (Murata · qty 100 · Mouser order 40489709 line 027)";
@@ -157,7 +193,7 @@ describe("BoxIntake", () => {
       scan(RAW_NO_1P);
 
       expect((await screen.findByTestId("follow-up-prompt")).textContent).toContain(PROMPT);
-      expect(sounds.playNeedMoreInfo).toHaveBeenCalledTimes(1);
+      expect(sounds.playScanSound.mock.calls).toEqual([["needs_info"]]);
       expect(screen.queryByText(/not in the library/)).toBeNull();
       const resolveCall = apiPost.mock.calls.find(c => c[0] === "/storage/box1/scan/resolve");
       expect(resolveCall?.[1].mpn).toBe("");
@@ -174,6 +210,7 @@ describe("BoxIntake", () => {
       expect(await screen.findByText("Added")).toBeTruthy();
       expect(screen.queryByTestId("follow-up-prompt")).toBeNull();
       expect(screen.getAllByTestId("intake-row")).toHaveLength(1);
+      expect(sounds.playScanSound.mock.calls).toEqual([["needs_info"], ["success"]]);
       expect(intakeBodies()).toEqual([
         expect.objectContaining({
           part_id: "p2",
@@ -219,7 +256,7 @@ describe("BoxIntake", () => {
       scan("[)>\x1e06\x1d1PLM358\x1d1TQQQ\x1e\x04");
 
       expect((await screen.findByTestId("follow-up-prompt")).textContent).toContain("Scan or type the quantity");
-      expect(sounds.playNeedMoreInfo).toHaveBeenCalledTimes(1);
+      expect(sounds.playScanSound.mock.calls).toEqual([["needs_info"]]);
       fireEvent.change(screen.getByPlaceholderText("or type the quantity"), { target: { value: "25" } });
       fireEvent.click(screen.getByRole("button", { name: "Use" }));
 

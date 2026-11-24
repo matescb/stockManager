@@ -33,7 +33,11 @@ the canonical record.
   plain (non-`[)>`) scan or typed text as the answer. The bag keeps the 2D
   label's quantity, order refs and `bag_signature`. Esc or Cancel stops
   waiting, and a new 2D label abandons the prompt and becomes its own bag.
-  The camera click moved to `components/scanner/scanSounds.ts`. Scan import
+  Box intake and audit also play a short beep for a resolved scan and a low
+  buzz for a failed one. A **Sound on/off** toggle is remembered in
+  localStorage, and the AudioContext starts on the first user gesture. The
+  WebAudio helper is `components/scanner/scanSounds.ts`; it has no audio
+  files and also plays the camera click. Scan import
   shows the no-MPN message and still offers quick-remove for a known bag.
 - **Keyboard-wedge separators on non-US layouts.** Ctrl+] / Ctrl+^ / Ctrl+D
   are also read by physical key, so a reader on a Czech layout no longer drops

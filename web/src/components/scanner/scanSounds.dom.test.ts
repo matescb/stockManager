@@ -37,3 +37,20 @@ describe("scan sounds", () => {
     expect(() => playNeedMoreInfo()).not.toThrow();
   });
 });
+
+describe("scan sound mute + kinds", () => {
+  it("plays nothing while muted, and remembers the choice", async () => {
+    vi.resetModules(); // fresh module: no AudioContext cached by earlier tests
+    const { setScanSoundMuted, isScanSoundMuted, playScanSound } = await import("./scanSounds");
+    const freqs = fakeAudio();
+    setScanSoundMuted(true);
+    expect(isScanSoundMuted()).toBe(true);
+    playScanSound("needs_info");
+    await Promise.resolve();
+    expect(freqs).toEqual([]);
+    setScanSoundMuted(false);
+    playScanSound("error");
+    await Promise.resolve();
+    expect(freqs).toEqual([160]);
+  });
+});

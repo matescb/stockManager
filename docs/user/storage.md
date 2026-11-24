@@ -62,13 +62,23 @@ Untick **Save each scan immediately** if you would rather check the list first a
 
 Scanning a box's printed label switches to that box.
 
+### Scan sounds
+
+Intake and Audit tell you how each scan went by sound:
+
+- **One short beep**: the scan worked.
+- **A low buzz**: it failed. The code was not a bag label, or the part is not in your library and your parts provider has no match. Look at the list for the reason.
+- **Two rising tones**: the app needs one more scan for this bag. See below.
+
+Click **Sound on** / **Sound off** next to **Camera on/off** to turn the sounds off or back on. The setting is remembered in this browser. Sound starts after your first click or key press on the page, because browsers block sound before then.
+
 ### When a label needs a second scan
 
 Some labels leave something out. When you put your own part number on a Mouser order, Mouser prints only that number in the bag's 2D code, not the maker's part number. Some labels have no quantity.
 
 When that happens:
 
-1. You hear two rising tones, different from the normal scan click.
+1. You hear two rising tones, different from the success beep.
 2. A yellow box at the top of the list says what to scan next. For example: **Scan the Mfr. Part No barcode on this label (Murata · qty 100 · Mouser order 40489709 line 027)**. The order and line tell you where to look the part up on mouser.com if the label has no barcode for it.
 3. Scan that barcode (the plain 1D one) with the same reader or the camera, or type the answer in the yellow box and click **Use**.
 4. The bag carries on as normal: it is matched in your library or looked up with your parts provider, then saved. It keeps the quantity, order, line and invoice from the 2D label. Re-scanning that 2D label later finds this bag.

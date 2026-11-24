@@ -9,7 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api";
 import { bagContext, noMpnMessage } from "@/lib/bagCode";
-import { playNeedMoreInfo } from "@/components/scanner/scanSounds";
+import { playScanSound } from "@/components/scanner/scanSounds";
 import { useWsKey } from "@/lib/queryKeys";
 import { boxScanApi, type IntakeBody } from "./api";
 import { firstMissing, parseFollowUpAnswer, type FollowUp } from "./followUp";
@@ -72,6 +72,7 @@ export default function BoxIntake() {
         patch(row.id, { phase: "saved", result: res, savedQuantity: row.quantity });
         void refresh();
       } catch (e) {
+        playScanSound("error");
         patch(row.id, { phase: "error", error: errorText(e) });
       }
     },
@@ -85,7 +86,7 @@ export default function BoxIntake() {
     if (!missing) return;
     setFollowUp({ rowId: row.id, missing, context: row.context ?? "" });
     setHighlight(row.id);
-    playNeedMoreInfo();
+    playScanSound("needs_info");
   }, []);
 
   /** Ask the server what `row` is; a label without an MPN that matches no
@@ -101,11 +102,14 @@ export default function BoxIntake() {
           patch(row.id, { phase: "needs_mpn", resolve: res });
           askFollowUp(row);
         } else if (res.status === "not_found") {
+          playScanSound("error");
           patch(row.id, { phase: "error", resolve: res, error: `${row.mpn} is not in the library, and the parts provider has no match (or none is configured)` });
         } else if (res.status === "bag_elsewhere") {
+          playScanSound("success");
           patch(row.id, { phase: "needs_choice", resolve: res });
         } else if (res.status === "bag_here" && res.bag) {
           const q = res.bag.quantity_here;
+          playScanSound("success");
           patch(row.id, {
             phase: "saved",
             resolve: res,
@@ -116,10 +120,15 @@ export default function BoxIntake() {
         } else {
           const ready = { ...row, resolve: res, phase: "ready" as const };
           patch(row.id, { phase: "ready", resolve: res });
-          if (!(row.quantity > 0)) askFollowUp(ready);
-          else if (autoSave) await save(ready);
+          if (!(row.quantity > 0)) {
+            askFollowUp(ready);
+          } else {
+            playScanSound("success");
+            if (autoSave) await save(ready);
+          }
         }
       } catch (e) {
+        playScanSound("error");
         patch(row.id, { phase: "error", error: errorText(e) });
       }
     },
@@ -159,6 +168,7 @@ export default function BoxIntake() {
       }
       const answer = parseFollowUpAnswer(pending.missing, input);
       if (!answer) {
+        playScanSound("error");
         toast.error(pending.missing === "quantity" ? "That is not a quantity — scan or type a number" : "That is not a part number");
         return false;
       }

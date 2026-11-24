@@ -11,7 +11,12 @@ vi.mock("@/lib/queryKeys", () => ({ useWsKey: (...a: unknown[]) => ["ws-1", ...a
 vi.mock("@/components/scanner/Scanner", () => ({ default: () => <div data-testid="camera" /> }));
 vi.mock("@/components/ConfirmDialog", () => ({ useConfirm: () => async () => true }));
 vi.mock("sonner", () => ({ toast: { info: vi.fn(), error: vi.fn(), success: vi.fn() } }));
-vi.mock("@/components/scanner/scanSounds", () => ({ playNeedMoreInfo: vi.fn(), playScanBeep: vi.fn() }));
+vi.mock("@/components/scanner/scanSounds", () => ({
+  playScanSound: vi.fn(),
+  isScanSoundMuted: () => false,
+  setScanSoundMuted: vi.fn(),
+  primeScanAudio: () => () => {},
+}));
 vi.mock("@/lib/api", async () => {
   const m = await import("./mocks");
   return { api: { get: m.apiGet, post: m.apiPost }, ApiError: m.FakeApiError };

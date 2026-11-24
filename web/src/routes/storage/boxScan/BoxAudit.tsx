@@ -14,7 +14,7 @@ import { useWsKey } from "@/lib/queryKeys";
 import { formatQuantity } from "@/lib/format";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { bagContext, noMpnMessage } from "@/lib/bagCode";
-import { playNeedMoreInfo } from "@/components/scanner/scanSounds";
+import { playScanSound } from "@/components/scanner/scanSounds";
 import type { StorageLocation } from "@/types";
 import { boxScanApi, bucketKey, type BoxBag } from "./api";
 import AuditExtras, { type ExtraBag } from "./AuditExtras";
@@ -124,9 +124,12 @@ export default function BoxAudit() {
         });
         if (needsMpn) {
           setFollowUp({ rowId: x.id, missing: "mpn", context: x.context ?? "" });
-          playNeedMoreInfo();
+          playScanSound("needs_info");
+        } else {
+          playScanSound("success");
         }
       } catch (e) {
+        playScanSound("error");
         patchExtra(x.id, { busy: false, error: errorText(e) });
       }
     },
@@ -151,6 +154,7 @@ export default function BoxAudit() {
       }
       const answer = parseFollowUpAnswer(pending.missing, input);
       if (!answer || !("mpn" in answer)) {
+        playScanSound("error");
         toast.error("That is not a part number");
         return;
       }
@@ -167,6 +171,7 @@ export default function BoxAudit() {
       const known = findBySignature(bagsRef.current, s.sig);
       if (known) {
         if (bucketKey(known) in draft.counted) toast.info("Already scanned");
+        playScanSound("success");
         markScanned(known);
         return;
       }
@@ -218,6 +223,7 @@ export default function BoxAudit() {
       setExtras(xs => xs.filter(e => e.id !== x.id));
       await qc.invalidateQueries({ queryKey: boxKey });
     } catch (e) {
+      playScanSound("error");
       patchExtra(x.id, { busy: false, error: errorText(e) });
     }
   }
