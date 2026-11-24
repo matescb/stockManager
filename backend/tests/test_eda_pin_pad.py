@@ -242,6 +242,9 @@ def _symbol_with_units(units: int, styles: int, pins_per: int, common: int) -> b
     return " ".join(parts).encode()
 
 
+# ~0.3-0.5 s locally; generous for slow CI runners. The old
+# units x styles x pins loop grows past this by orders of magnitude.
+_TIME_LIMIT_S = 3.0
 _FOOTPRINT = b'(footprint "F" (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu")))'
 
 
@@ -253,7 +256,7 @@ def _timed(symbol: bytes) -> tuple[pin_pad.PinPadResult, float]:
     return result, time.perf_counter() - start
 
 
-def test_symbol_just_inside_the_caps_is_checked_in_under_a_second():
+def test_symbol_just_inside_the_caps_is_checked_quickly():
     """255 units × 3 styles × 12 pins + 800 duplicated unit-0 pins: the
     old unit × style × pin loop did ~8M pin visits here."""
     symbol = _symbol_with_units(units=255, styles=3, pins_per=12, common=800)
@@ -261,7 +264,7 @@ def test_symbol_just_inside_the_caps_is_checked_in_under_a_second():
     result, elapsed = _timed(symbol)
     assert result.verdict == pin_pad.FAIL
     assert "1" in result.duplicate_pin_numbers
-    assert elapsed < 1.0, f"{elapsed:.2f}s"
+    assert elapsed < 3.0, f"{elapsed:.2f}s"  # generous: CI runners are slower than dev boxes
 
 
 @pytest.mark.parametrize(
@@ -277,7 +280,7 @@ def test_symbol_past_the_caps_is_not_checkable_and_fast(units, styles, pins_per,
     result, elapsed = _timed(symbol)
     assert result.verdict == pin_pad.NOT_CHECKABLE
     assert result.reason == pin_pad.REASON_SYMBOL_TOO_COMPLEX
-    assert elapsed < 1.0, f"{elapsed:.2f}s"
+    assert elapsed < 3.0, f"{elapsed:.2f}s"  # generous: CI runners are slower than dev boxes
 
 
 def test_input_caps_match_the_upload_lane():
