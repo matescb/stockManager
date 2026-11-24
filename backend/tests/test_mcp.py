@@ -423,6 +423,7 @@ async def test_disabled_flag_starts_no_session_manager(db, monkeypatch):
 
 _EXPECTED_WRITE_TOOLS = {
     "sourcing_offers",
+    "catalog_lookup",
     "set_part_eda",
     "upload_eda_asset",
     "import_vendor_zip",

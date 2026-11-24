@@ -6,7 +6,9 @@ import asyncio
 import logging
 import random
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
@@ -16,6 +18,23 @@ RETRYABLE_STATUSES = frozenset({429, 503})
 RETRYABLE_EXCEPTIONS = (httpx.ConnectError, httpx.ReadTimeout)
 
 logger = logging.getLogger(__name__)
+
+# Set by `retries_disabled()`. The agent path (`catalog_lookup`, SM-005)
+# must not sit in this transport's backoff — up to 8 s x 3 on a 429 — on a
+# worker thread; it returns the refusal to the agent with a retry hint
+# instead. A contextvar rather than a second pooled client so every other
+# caller keeps the shared pool and the ADR-0023 policy unchanged.
+_RETRIES_DISABLED: ContextVar[bool] = ContextVar("provider_retries_disabled", default=False)
+
+
+@contextmanager
+def retries_disabled() -> Iterator[None]:
+    """Within this block the sync retry transport makes exactly one attempt."""
+    token = _RETRIES_DISABLED.set(True)
+    try:
+        yield
+    finally:
+        _RETRIES_DISABLED.reset(token)
 
 
 class RetryingHTTPTransport(httpx.HTTPTransport):
@@ -42,11 +61,12 @@ class RetryingHTTPTransport(httpx.HTTPTransport):
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         response: httpx.Response | None = None
-        for attempt in range(self._max_retries + 1):
+        max_retries = 0 if _RETRIES_DISABLED.get() else self._max_retries
+        for attempt in range(max_retries + 1):
             try:
                 response = self._handle_once(request)
             except RETRYABLE_EXCEPTIONS as exc:
-                if attempt == self._max_retries:
+                if attempt == max_retries:
                     _log_exhausted(request, self._provider_name, attempt, exc=exc)
                     raise
                 delay = self._compute_delay(attempt)
@@ -56,7 +76,7 @@ class RetryingHTTPTransport(httpx.HTTPTransport):
 
             if response.status_code not in self._retryable:
                 return response
-            if attempt == self._max_retries:
+            if attempt == max_retries:
                 _log_exhausted(request, self._provider_name, attempt, response=response)
                 return response
 

@@ -6,7 +6,12 @@ from typing import Any
 
 import httpx
 
-from app.domain.parts.providers.base import MpnLookupResult, ProviderUpstreamError
+from app.domain.parts.providers.base import (
+    MpnLookupResult,
+    ProviderUpstreamError,
+    match_kind,
+)
+from app.domain.parts.services.provider_quota import QUOTA, account_key
 from app.domain.sourcing.providers import make_retrying_client
 
 _ENDPOINT = "https://api.mouser.com/api/v1/search/partnumber"
@@ -134,6 +139,9 @@ class MouserProvider:
         # manufacturer-MPN search, so leave the option off — the API then
         # searches both Mouser P/N and Manufacturer P/N with partial match.
         body = {"SearchByPartRequest": {"mouserPartNumber": mpn}}
+        # Mouser sends no remaining-count header, so this local count is
+        # all `provider_quota` has to go on (`source: "local-count"`).
+        QUOTA.note_call("mouser", account_key(self.api_key))
         try:
             data = _post_mouser(url, body)
         except ProviderUpstreamError:
@@ -193,12 +201,17 @@ class MouserProvider:
                 "found": True,
                 "result": candidates[0],
                 "candidates": candidates,
+                # Every candidate was filtered on an exact MPN; what is
+                # ambiguous is the manufacturer, not the part number.
+                "match": "exact",
                 "message": None,
             }
 
-        # Take the first match — for partial-match search this is the
-        # closest stocked variant.
-        p = parts[0]
+        # Prefer an exact-MPN hit: partial-match search can rank a longer
+        # MPN (LM358ADR) above the one asked for (LM358). Only with no
+        # exact hit does the first result — the closest stocked variant,
+        # reported as `match: "fuzzy"` — stand in.
+        p = exact_parts[0] if exact_parts else parts[0]
 
         # ---- ProductAttributes (often just packaging) ----------------
         # Mouser frequently emits duplicate keys (three "Packaging" rows
@@ -394,10 +407,14 @@ class MouserProvider:
             {"key": k, "value": " / ".join(specs_by_key[k])} for k in spec_order
         ]
 
+        found_mpn = p.get("ManufacturerPartNumber") or ""
         return {
             "found": True,
+            # Partial-match search: parts[0] may be a longer or different
+            # MPN than the one asked for, and this says so.
+            "match": match_kind(mpn, found_mpn),
             "result": {
-                "mpn": p.get("ManufacturerPartNumber") or mpn,
+                "mpn": found_mpn or mpn,
                 "manufacturer": p.get("Manufacturer") or None,
                 "description": description,
                 "category": p.get("Category") or None,

@@ -14,6 +14,7 @@ from app.mcp.tools._registry import REGISTRY, ToolSpec
 def load_tools() -> list[ToolSpec]:
     """The registered tools, importing the modules that define them."""
     from app.mcp.tools import (  # noqa: F401  (imported for side effect)
+        catalog,
         export,
         part_policy,
         read,

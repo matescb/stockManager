@@ -337,6 +337,11 @@ class ErrorCodes:
     EDA_NO_ENTRIES = "eda.no_entries"
     EDA_LCSC_NOT_FOUND = "eda.lcsc_not_found"
     EDA_LCSC_UNAVAILABLE = "eda.lcsc_unavailable"
+    # The MCP `fetch_lcsc` tool while `MCP_FETCH_LCSC_ENABLED` is false
+    # (the default): EasyEDA's terms forbid automated access, so agents
+    # do not call it until the owner says otherwise. The REST route —
+    # an owner's own click — is unaffected.
+    EDA_LCSC_DISABLED = "eda.lcsc_disabled"
     # part_eda config.
     EDA_REF_CONFLICT = "eda.ref_conflict"
     EDA_ARCHIVED = "eda.archived"
@@ -381,6 +386,17 @@ class ErrorCodes:
 
     # Legacy parts-provider lookup route.
     PROVIDER_UPSTREAM_ERROR = "provider.upstream_error"
+    # Agent-path provider calls (`catalog_lookup`, SM-005;
+    # `domain/parts/services/provider_quota.py`). The reserve is the part
+    # of the day's distributor allowance kept back for the owner's own UI,
+    # scan import and the `provider-refresh` job; only agent tools are
+    # refused when it is reached. `suspended` is DigiKey's ten-minute
+    # burst suspension (HTTP 403) — never reported as "no match".
+    PROVIDER_QUOTA_RESERVE_REACHED = "provider.quota_reserve_reached"
+    PROVIDER_SUSPENDED = "provider.suspended"
+    # Too soon after this workspace's previous call to the same provider
+    # (`PROVIDER_AGENT_MIN_SPACING_SECONDS`); carries `retry_after_ms`.
+    PROVIDER_PACING = "provider.pacing"
 
     # MCP surface (ADR-0030). Raised only by the runtime assertion in
     # `app/mcp/principal.py::unit_of_work`: a tool declared read-only

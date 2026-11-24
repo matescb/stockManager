@@ -38,6 +38,21 @@ class ProviderUpstreamError(ProviderError):
     default_status_code = 502
 
 
+class ProviderSuspendedError(ProviderUpstreamError):
+    """Provider has suspended this application for a while (DigiKey 403).
+
+    A subclass of `ProviderUpstreamError` so every existing handler keeps
+    treating it as "upstream unavailable"; the agent surface catches it
+    first and reports `provider.suspended` with the time left.
+    """
+
+    default_status_code = 503
+
+    def __init__(self, provider: str, message: str, *, retry_after: int) -> None:
+        super().__init__(provider, message)
+        self.retry_after = retry_after
+
+
 class ProviderTimeoutError(ProviderUpstreamError):
     """Provider request timed out."""
 

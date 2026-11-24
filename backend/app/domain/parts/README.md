@@ -24,7 +24,9 @@ Owns the `Part` aggregate (linked / local / meta / sub-assembly), MPN uniqueness
 | `services/assets.py` | Remote asset (image / datasheet) download → content-addressed storage; owns the two fetch policies |
 | `services/datasheets.py` | Local datasheet store — fetch/adopt, register as an `Attachment`, resumable backfill |
 | `services/bag_signature.py` | `compute_bag_signature` — SHA-256 over normalised raw bag code |
-| `services/provider_cache.py` | `lookup_with_cache` / `lookup_fresh` + per-provider circuit breaker |
+| `services/provider_cache.py` | `lookup_with_cache` / `lookup_fresh` + per-provider circuit breaker (and the 10-minute DigiKey 403 suspension) |
+| `services/provider_quota.py` | Agent-path quota: reserve, pacing, `X-RateLimit-Remaining` / local count (SM-005) |
+| `services/catalog_lookup.py` | `catalog_lookup` MCP tool's service: one record per provider, `match`, nothing persisted |
 | `services/provider_import.py` | Create a linked `Part` from a lookup result (part columns, assets, category, specs) |
 | `services/spec_reconcile.py` | **The single writer** for a provider payload → `custom_fields`, for create AND refresh |
 | `services/provider_field_values.py` | `truncate_provider_field_value` — the `custom_fields.value` cap, shared by all three writers |
