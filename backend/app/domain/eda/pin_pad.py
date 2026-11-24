@@ -34,6 +34,9 @@ Pins (symbol side):
   most one is visible (hidden duplicate power pins).
 * A symbol that `extends` another stores no pins of its own; the parent
   is not here, so it is `not-checkable`.
+* Past `MAX_PINS` / `MAX_UNITS` / `MAX_STYLES` a symbol is
+  `not-checkable` (`symbol_too_complex`): any member can upload a
+  symbol, and the check runs on the single worker.
 
 Pads (footprint side) — only ELECTRICAL pads take part:
 
@@ -71,6 +74,7 @@ REASON_SYMBOL_UNREADABLE = "symbol_unreadable"
 REASON_FOOTPRINT_UNREADABLE = "footprint_unreadable"
 REASON_SYMBOL_DERIVED = "symbol_derived"
 REASON_BODY_STYLES_DIFFER = "body_styles_differ"
+REASON_SYMBOL_TOO_COMPLEX = "symbol_too_complex"
 
 _ELECTRICAL_PAD_TYPES = frozenset({"smd", "thru_hole", "connect"})
 _POWER_PIN_TYPES = frozenset({"power_in", "power_out"})
@@ -78,6 +82,16 @@ _NO_CONNECT = "no_connect"
 # `NAME_<unit>_<style>` — KiCad's sub-symbol naming.
 _UNIT_SUFFIX = re.compile(r"_(\d+)_(\d+)$")
 _CACHE_SIZE = 1024
+# Complexity caps, far above any real part (the largest stock KiCad
+# symbols are ~2,000-ball FPGAs in a dozen units). A symbol past them
+# is `not-checkable`, not parsed further.
+MAX_PINS = 10_000
+MAX_UNITS = 256
+MAX_STYLES = 4
+# Input caps, the same as the upload lane's (`storage.MAX_BYTES_BY_KIND`);
+# a stored file is already under them, this guards a direct caller.
+_MAX_SYMBOL_BYTES = 1024 * 1024
+_MAX_FOOTPRINT_BYTES = 2 * 1024 * 1024
 
 
 class Unreadable(ValueError):
@@ -193,35 +207,92 @@ def symbol_pins(node: list) -> list[Pin]:
                 if isinstance(grand, list) and sexpr.head(grand) == "pin":
                     pin = _pin(grand, unit, style)
                     pins += [pin] if pin else []
+        if len(pins) > MAX_PINS:
+            break
+    _check_complexity(pins)
     return pins
+
+
+def _check_complexity(pins: list[Pin]) -> None:
+    units = len({p.unit for p in pins})
+    styles = len({p.style for p in pins})
+    if len(pins) > MAX_PINS or units > MAX_UNITS or styles > MAX_STYLES:
+        raise NotCheckable(
+            REASON_SYMBOL_TOO_COMPLEX,
+            f"symbol exceeds the check's limits ({MAX_PINS} pins, "
+            f"{MAX_UNITS} units, {MAX_STYLES} body styles)",
+        )
 
 
 def _in_style(pins: list[Pin], style: int) -> list[Pin]:
     return [p for p in pins if p.style in (0, style)]
 
 
+@dataclass(frozen=True)
+class _Group:
+    """What `_excused` needs to know about the pins sharing one number,
+    in a form two groups merge in O(1): `at` is the one position they
+    all share, or None once two positions differ."""
+
+    count: int
+    at: tuple[str, str] | None
+    power: bool
+    visible: int
+
+    @staticmethod
+    def of(pin: Pin) -> _Group:
+        return _Group(1, pin.at, pin.type in _POWER_PIN_TYPES, int(not pin.hidden))
+
+    def __add__(self, other: _Group) -> _Group:
+        return _Group(
+            self.count + other.count,
+            self.at if self.at == other.at else None,
+            self.power and other.power,
+            self.visible + other.visible,
+        )
+
+    def excused(self) -> bool:
+        if self.count < 2 or self.at is not None:  # single, or stacked
+            return True
+        return self.power and self.visible <= 1
+
+
+_Index = dict[str, _Group]
+
+
+def _merge(*indexes: _Index | None) -> _Index:
+    out: _Index = {}
+    for index in indexes:
+        for number, group in (index or {}).items():
+            out[number] = out[number] + group if number in out else group
+    return out
+
+
 def _duplicates(pins: list[Pin]) -> set[str]:
-    """Numbers repeated within one unit, minus what KiCad allows."""
-    units = {p.unit for p in pins if p.unit != 0} or {0}
-    styles = {p.style for p in pins if p.style != 0} or {0}
+    """Numbers repeated within one unit, minus what KiCad allows.
+
+    Unit 0 / style 0 pins belong to every unit / style. One pass buckets
+    the pins by (unit, style); each unit is then checked against the
+    common pins only for the numbers it actually has, so the work is
+    O(pins × styles), not O(units × styles × pins) — a crafted symbol
+    with hundreds of units must not pin the single worker.
+    """
+    buckets: dict[tuple[int, int], _Index] = defaultdict(dict)
+    for p in pins:
+        index = buckets[(p.unit, p.style)]
+        index[p.number] = index[p.number] + _Group.of(p) if p.number in index else _Group.of(p)
+    units = {u for u, _ in buckets if u != 0}
     found: set[str] = set()
-    for unit in units:
-        for style in styles:
-            by_number: dict[str, list[Pin]] = defaultdict(list)
-            for p in pins:
-                if p.unit in (0, unit) and p.style in (0, style):
-                    by_number[p.number].append(p)
-            found |= {n for n, group in by_number.items() if not _excused(group)}
+    for style in {s for _, s in buckets if s != 0} or {0}:
+        common = _merge(buckets.get((0, 0)), buckets.get((0, style)) if style else None)
+        found |= {n for n, g in common.items() if not g.excused()}
+        for unit in units:
+            own = _merge(buckets.get((unit, 0)), buckets.get((unit, style)) if style else None)
+            found |= {
+                n for n, g in own.items()
+                if not (g + common[n] if n in common else g).excused()
+            }
     return found
-
-
-def _excused(group: list[Pin]) -> bool:
-    if len(group) < 2:
-        return True
-    if len({p.at for p in group}) == 1:  # stacked
-        return True
-    power = all(p.type in _POWER_PIN_TYPES for p in group)
-    return power and sum(not p.hidden for p in group) <= 1
 
 
 # ---------------------------------------------------------------------
@@ -254,6 +325,8 @@ def electrical_pads(node: list) -> set[str]:
 
 
 def _parse_symbol(raw: bytes) -> list:
+    if len(raw) > _MAX_SYMBOL_BYTES:
+        raise Unreadable(f"symbol file exceeds {_MAX_SYMBOL_BYTES} bytes")
     try:
         found = sexpr.entries(raw.decode("utf-8"))
     except (UnicodeDecodeError, sexpr.SexprError) as exc:
@@ -264,6 +337,8 @@ def _parse_symbol(raw: bytes) -> list:
 
 
 def _parse_footprint(raw: bytes) -> list:
+    if len(raw) > _MAX_FOOTPRINT_BYTES:
+        raise Unreadable(f"footprint file exceeds {_MAX_FOOTPRINT_BYTES} bytes")
     try:
         node = sexpr.parse(raw.decode("utf-8"))
     except (UnicodeDecodeError, sexpr.SexprError) as exc:
@@ -286,10 +361,8 @@ def compare(pins: list[Pin], pads: set[str]) -> PinPadResult:
             detail="the symbol's two body styles number their pins differently",
         )
     numbers = {p.number for p in primary}
-    no_connect = {
-        n for n in numbers
-        if all(p.type == _NO_CONNECT for p in primary if p.number == n)
-    }
+    # A number is "no connect" only if EVERY pin carrying it is.
+    no_connect = numbers - {p.number for p in primary if p.type != _NO_CONNECT}
     missing = numbers - pads
     unused = pads - numbers
     dupes = _duplicates(pins)

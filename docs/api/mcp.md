@@ -632,7 +632,8 @@ The rules:
   `footprint_missing`, `symbol_external` / `footprint_external` (the entry is in
   the user's local KiCad library, including a category default),
   `symbol_unreadable` / `footprint_unreadable`, `symbol_derived` (the symbol
-  `extends` one that is not stored), `body_styles_differ`.
+  `extends` one that is not stored), `body_styles_differ`, `symbol_too_complex`
+  (over 10,000 pins, 256 units or 4 body styles: the check's work is bounded).
 
 `list_pin_pad_issues(verdict="all"|"fail"|"not-checkable", cursor, page_size)`
 walks every active part whose own EDA configuration names a symbol or a

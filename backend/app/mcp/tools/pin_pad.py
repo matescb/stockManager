@@ -60,7 +60,7 @@ def check_pin_pad(caller: Caller, part_id_or_mpn: str) -> dict[str, Any]:
     `reason` (`symbol_missing`, `footprint_missing`, `symbol_external` /
     `footprint_external` for an entry in the user's local KiCad library,
     `symbol_unreadable`, `footprint_unreadable`, `symbol_derived`,
-    `body_styles_differ`) and `detail`; `symbol_sha256`,
+    `body_styles_differ`, `symbol_too_complex`) and `detail`; `symbol_sha256`,
     `footprint_sha256`, `symbol_ref`, `footprint_ref`, `checked_at`; and
     `findings` with `pins_without_pad`, `pads_without_pin`,
     `duplicate_pin_numbers` (each fails the check) and

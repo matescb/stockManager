@@ -163,3 +163,86 @@ def test_cache_hit_skips_the_loader():
     first = pin_pad.check_cached("sym-cache-test", "fp-cache-test", load)
     second = pin_pad.check_cached("sym-cache-test", "fp-cache-test", load)
     assert first is second and len(calls) == 1
+
+
+# ---------------------------------------------------------------------
+# Bounded work on hostile input (security review of #959)
+# ---------------------------------------------------------------------
+
+
+def _pin_text(number: str, x: int, kind: str = "passive") -> str:
+    return f'(pin {kind} line (at {x} 0 0) (length 1) (number "{number}"))'
+
+
+def _symbol_with_units(units: int, styles: int, pins_per: int, common: int) -> bytes:
+    """`common` unit-0 pins all numbered "1" at distinct positions, plus
+    `units` × `styles` sub-symbols of `pins_per` pins each."""
+    parts = ['(symbol "HOSTILE"', '(symbol "HOSTILE_0_0"']
+    parts += [_pin_text("1", i) for i in range(common)]
+    parts.append(")")
+    for unit in range(1, units + 1):
+        for style in range(1, styles + 1):
+            parts.append(f'(symbol "HOSTILE_{unit}_{style}"')
+            parts += [_pin_text(str(n), n) for n in range(2, pins_per + 2)]
+            parts.append(")")
+    parts.append(")")
+    return " ".join(parts).encode()
+
+
+_FOOTPRINT = b'(footprint "F" (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu")))'
+
+
+def _timed(symbol: bytes) -> tuple[pin_pad.PinPadResult, float]:
+    import time
+
+    start = time.perf_counter()
+    result = pin_pad.check_bytes(symbol, _FOOTPRINT)
+    return result, time.perf_counter() - start
+
+
+def test_symbol_just_inside_the_caps_is_checked_in_under_a_second():
+    """255 units × 3 styles × 12 pins + 800 duplicated unit-0 pins: the
+    old unit × style × pin loop did ~8M pin visits here."""
+    symbol = _symbol_with_units(units=255, styles=3, pins_per=12, common=800)
+    assert len(symbol) <= 1024 * 1024
+    result, elapsed = _timed(symbol)
+    assert result.verdict == pin_pad.FAIL
+    assert "1" in result.duplicate_pin_numbers
+    assert elapsed < 1.0, f"{elapsed:.2f}s"
+
+
+@pytest.mark.parametrize(
+    ("units", "styles", "pins_per", "common"),
+    [
+        (300, 1, 1, 0),  # too many units
+        (2, 6, 1, 0),  # too many body styles
+        (1, 1, 1, 10_001),  # too many pins
+    ],
+)
+def test_symbol_past_the_caps_is_not_checkable_and_fast(units, styles, pins_per, common):
+    symbol = _symbol_with_units(units, styles, pins_per, common)
+    result, elapsed = _timed(symbol)
+    assert result.verdict == pin_pad.NOT_CHECKABLE
+    assert result.reason == pin_pad.REASON_SYMBOL_TOO_COMPLEX
+    assert elapsed < 1.0, f"{elapsed:.2f}s"
+
+
+def test_input_caps_match_the_upload_lane():
+    from app.domain.eda import storage
+
+    assert pin_pad._MAX_SYMBOL_BYTES == storage.MAX_BYTES_BY_KIND["symbol"]
+    assert pin_pad._MAX_FOOTPRINT_BYTES == storage.MAX_BYTES_BY_KIND["footprint"]
+    oversized = b" " * (pin_pad._MAX_SYMBOL_BYTES + 1)
+    assert pin_pad.check_bytes(oversized, _FOOTPRINT).reason == (
+        pin_pad.REASON_SYMBOL_UNREADABLE
+    )
+    big_fp = b" " * (pin_pad._MAX_FOOTPRINT_BYTES + 1)
+    symbol = (FIXTURES / "soic8.kicad_sym").read_bytes()
+    assert pin_pad.check_bytes(symbol, big_fp).reason == (
+        pin_pad.REASON_FOOTPRINT_UNREADABLE
+    )
+
+
+def test_deep_nesting_is_refused_by_the_parser():
+    deep = b'(symbol "D" ' + b"(x " * 100 + b")" * 101
+    assert pin_pad.check_bytes(deep, _FOOTPRINT).reason == pin_pad.REASON_SYMBOL_UNREADABLE
