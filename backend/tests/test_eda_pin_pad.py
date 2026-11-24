@@ -264,7 +264,7 @@ def test_symbol_just_inside_the_caps_is_checked_quickly():
     result, elapsed = _timed(symbol)
     assert result.verdict == pin_pad.FAIL
     assert "1" in result.duplicate_pin_numbers
-    assert elapsed < 3.0, f"{elapsed:.2f}s"  # generous: CI runners are slower than dev boxes
+    assert elapsed < _TIME_LIMIT_S, f"{elapsed:.2f}s"
 
 
 @pytest.mark.parametrize(
@@ -280,7 +280,7 @@ def test_symbol_past_the_caps_is_not_checkable_and_fast(units, styles, pins_per,
     result, elapsed = _timed(symbol)
     assert result.verdict == pin_pad.NOT_CHECKABLE
     assert result.reason == pin_pad.REASON_SYMBOL_TOO_COMPLEX
-    assert elapsed < 3.0, f"{elapsed:.2f}s"  # generous: CI runners are slower than dev boxes
+    assert elapsed < _TIME_LIMIT_S, f"{elapsed:.2f}s"
 
 
 def test_input_caps_match_the_upload_lane():
