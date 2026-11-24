@@ -13,6 +13,7 @@ who needs another locale can plumb it through later.
 """
 from __future__ import annotations
 
+import json
 import time
 from typing import Any, Callable
 from urllib.parse import quote
@@ -43,6 +44,19 @@ _LOCALE_CURR = "CZK"
 # readers see the same word the breaker uses.
 _SUSPENDED_MESSAGE = "DigiKey suspended this application (HTTP 403); retry in about 10 minutes"
 _RATE_LIMIT_MESSAGE = "DigiKey rate limit reached"
+# Any OTHER 403: the client id is not subscribed to Product Information,
+# or was revoked. Deliberately free of the quota/suspension words — it is
+# a credential problem (a hard failure for the ordinary 5-strike breaker),
+# not a reason to stop every lookup for ten minutes.
+_FORBIDDEN_MESSAGE = (
+    "DigiKey refused the credentials (HTTP 403): the application is not "
+    "authorised for the Product Information API"
+)
+# Where a seam leaves a 403's Retry-After header for `_refusal` to read.
+# The seams return `(status, body)` only, so the header rides in the body.
+_RETRY_AFTER_KEY = "_sm_retry_after"
+# Words in a 403 body that say "throttled", as opposed to "forbidden".
+_THROTTLE_WORDS = ("throttl", "rate limit", "ratelimit", "suspend", "too many", "burst")
 
 # DigiKey ParameterText values that are really package descriptors —
 # we lift the first match into the canonical `footprint`.
@@ -104,7 +118,7 @@ def _get_product_details(
         body = resp.json()
     except ValueError:
         body = {}
-    return resp.status_code, body
+    return resp.status_code, _mark_retry_after(resp, body)
 
 
 def _post_keyword_search(
@@ -124,7 +138,7 @@ def _post_keyword_search(
         body = resp.json()
     except ValueError:
         body = {}
-    return resp.status_code, body
+    return resp.status_code, _mark_retry_after(resp, body)
 
 
 class DigiKeyProvider:
@@ -212,7 +226,7 @@ class DigiKeyProvider:
                 "digikey",
                 f"DigiKey upstream returned HTTP {status}",
             )
-        refused = _refusal(status)
+        refused = _refusal(status, data)
         if refused is not None:
             return refused
 
@@ -261,7 +275,7 @@ class DigiKeyProvider:
             # A 403/429 here used to fall through to "no match for MPN",
             # which records the provider as never having heard of a part
             # it simply refused to look up.
-            refused = _refusal(kw_status)
+            refused = _refusal(kw_status, kw_data)
             if refused is not None:
                 return refused
             if kw_status >= 500:
@@ -278,6 +292,27 @@ class DigiKeyProvider:
         }
 
 
+def _mark_retry_after(resp: httpx.Response, body: Any) -> Any:
+    """Carry a 403's Retry-After header into the body `_refusal` reads."""
+    retry_after = resp.headers.get("Retry-After") if resp.status_code == 403 else None
+    if not retry_after:
+        return body
+    base = body if isinstance(body, dict) else {}
+    return {**base, _RETRY_AFTER_KEY: retry_after}
+
+
+def _is_throttle(body: Any) -> bool:
+    """Does this 403 look like DigiKey's burst suspension?
+
+    A Retry-After header is the strongest sign; otherwise the error text
+    has to say so. A bare 403 is a credential/subscription problem.
+    """
+    if isinstance(body, dict) and body.get(_RETRY_AFTER_KEY):
+        return True
+    text = json.dumps(body, default=str).lower() if body else ""
+    return any(word in text for word in _THROTTLE_WORDS)
+
+
 def _found(query: str, product: dict[str, Any]) -> MpnLookupResult:
     record = _record_from_product(product)
     return {
@@ -288,16 +323,20 @@ def _found(query: str, product: dict[str, Any]) -> MpnLookupResult:
     }
 
 
-def _refusal(status: int) -> MpnLookupResult | None:
+def _refusal(status: int, body: Any = None) -> MpnLookupResult | None:
     """DigiKey refusing to answer, as opposed to not knowing the part.
 
     429 is the day's (or minute's) allowance — matched by message in
     `provider_refresh_failures.looks_like_quota`, so the wording is load-
-    bearing. 403 is the ten-minute burst suspension (DigiKey API docs);
-    `suspended` makes `provider_cache` open the breaker for it.
+    bearing. A 403 that looks throttled (`_is_throttle`) is the ten-minute
+    burst suspension (DigiKey API docs); `suspended` makes `provider_cache`
+    open this credential's breaker for it. Any other 403 is a credential
+    problem and is reported as one.
     """
     if status == 429:
         return {"found": False, "result": None, "message": _RATE_LIMIT_MESSAGE}
+    if status == 403 and not _is_throttle(body):
+        return {"found": False, "result": None, "message": _FORBIDDEN_MESSAGE}
     if status == 403:
         return {
             "found": False,

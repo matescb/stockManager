@@ -27,8 +27,12 @@ Circuit breaker
     raise `ProviderUpstreamError` without hitting the network.  The counter
     resets on any success.
 
-    Per-provider, per-process state (in-memory dict).  Not persisted across
-    restarts (CLAUDE.md hard constraint: `--workers 1` in prod).
+    Per-process state (in-memory dict), keyed by provider AND credential
+    (`provider_quota.provider_account`, a hash of the client id / API key).
+    Keyed by provider name alone, one workspace's broken or unsubscribed
+    DigiKey credentials — or its burst suspension — would stop DigiKey for
+    every other workspace: a cross-tenant denial of service.  Not persisted
+    across restarts (CLAUDE.md hard constraint: `--workers 1` in prod).
 
 Suspension (SM-005)
     DigiKey answers a burst over its per-second threshold with HTTP 403 and
@@ -55,6 +59,7 @@ from typing import TYPE_CHECKING
 
 from app.core.time import utcnow
 from app.domain.parts.providers.base import ProviderUpstreamError
+from app.domain.parts.services.provider_quota import account_key, provider_account
 from app.domain.provider_errors import ProviderSuspendedError
 
 if TYPE_CHECKING:
@@ -186,17 +191,23 @@ class _CircuitBreaker:
             # re-opens instantly (already at threshold).
 
 
-# One breaker per provider name.  Built lazily.
-_breakers: dict[str, _CircuitBreaker] = {}
+# One breaker per (provider name, credential account).  Built lazily.
+_breakers: dict[tuple[str, str], _CircuitBreaker] = {}
 
 
-def _get_breaker(provider_name: str) -> _CircuitBreaker:
-    if provider_name not in _breakers:
-        _breakers[provider_name] = _CircuitBreaker(
+def _get_breaker(provider_name: str, account: str | None = None) -> _CircuitBreaker:
+    """The breaker for one provider credential.
+
+    `account` defaults to the key of "no credential", which is what
+    `provider_account` gives a test double with no client id / API key.
+    """
+    key = (provider_name, account if account is not None else account_key(None))
+    if key not in _breakers:
+        _breakers[key] = _CircuitBreaker(
             threshold=_CB_FAIL_THRESHOLD,
             open_sec=_CB_OPEN_SEC,
         )
-    return _breakers[provider_name]
+    return _breakers[key]
 
 
 # ---------------------------------------------------------------------------
@@ -204,9 +215,9 @@ def _get_breaker(provider_name: str) -> _CircuitBreaker:
 # ---------------------------------------------------------------------------
 
 
-def suspended_for(provider_name: str) -> int:
-    """Seconds left on *provider_name*'s suspension, 0 when there is none."""
-    return _get_breaker(provider_name).suspended_for()
+def suspended_for(provider_name: str, account: str | None = None) -> int:
+    """Seconds left on this credential's suspension, 0 when there is none."""
+    return _get_breaker(provider_name, account).suspended_for()
 
 
 def peek_cached(
@@ -273,7 +284,7 @@ def lookup_with_cache(provider: "PartsProvider", mpn: str) -> "MpnLookupResult":
     * Otherwise, call the provider, update the cache, and update the breaker.
     """
     normalized_mpn = mpn.strip()
-    breaker = _get_breaker(provider.name)
+    breaker = _get_breaker(provider.name, provider_account(provider))
 
     # 1. Check the cache first (before the breaker so cached hits bypass both).
     cached = _cache.get(provider.name, normalized_mpn)
@@ -311,7 +322,7 @@ def lookup_fresh(provider: "PartsProvider", mpn: str) -> "MpnLookupResult":
     ``lookup_with_cache`` calls see the fresh value.
     """
     normalized_mpn = mpn.strip()
-    breaker = _get_breaker(provider.name)
+    breaker = _get_breaker(provider.name, provider_account(provider))
 
     # Circuit breaker still applies — a manual refresh into a broken upstream
     # should fail fast, not pin the only uvicorn worker for 8 s.

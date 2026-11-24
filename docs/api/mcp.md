@@ -162,7 +162,8 @@ owner's daily distributor allowance ([below](#why-a-price-lookup-counts-as-a-wri
   exact MPN. With `manufacturer` given, each record carries
   `manufacturer_matches` and the matching candidate becomes the record.
 - **`misses`** lists providers that answered "no match"; **`errors`** lists
-  providers that refused, each `{provider, code, message}`. The call as a
+  providers that refused, each `{provider, code, message}` (plus
+  `retry_after_ms` for `provider.pacing`). The call as a
   whole is refused only when no provider answered at all, with the first
   provider's code and the quota of each in the message.
 - **`cache: "hit"`** means every answer came from the in-process provider
@@ -180,7 +181,7 @@ are not (`backend/app/domain/parts/services/provider_quota.py`):
 
 | Rule | Default | Setting |
 |---|---|---|
-| Live calls to one provider from one workspace are at least this far apart (the tool waits, it does not refuse) | 1 s | `PROVIDER_AGENT_MIN_SPACING_SECONDS` |
+| Live calls to one provider from one workspace are at least this far apart; a call sooner than that is refused with `provider.pacing` and `retry_after_ms` (the server never sleeps on it) | 1 s | `PROVIDER_AGENT_MIN_SPACING_SECONDS` |
 | Agent tools refuse when fewer calls than this remain today | 200 | `PROVIDER_AGENT_QUOTA_RESERVE` |
 | Daily allowance assumed when the provider sent no header today | 1000 / 1000 | `PROVIDER_DAILY_LIMIT_DIGIKEY` / `_MOUSER` |
 
@@ -192,11 +193,18 @@ configured allowance minus the calls this process counted, which cannot see
 the `provider-refresh` job's separate container. The state is per process,
 like the provider cache (one uvicorn worker in prod).
 
-A DigiKey 403 opens that provider's circuit breaker for ten minutes. Every
-lookup in that window — agent, UI or refresh — fails fast with "suspended …
-retry in Ns" instead of reaching DigiKey; cache hits are still served. It is
-never reported as "no match", and the `provider-refresh` job halts on it
-(exit 3) the way it does on a 429.
+A DigiKey 403 that looks like the burst suspension (a `Retry-After` header,
+or an error body mentioning throttling, rate limits or suspension) opens the
+circuit breaker **for that credential** for ten minutes. Every lookup with
+the same DigiKey client id in that window — agent, UI or refresh — fails
+fast with "suspended … retry in Ns" instead of reaching DigiKey; cache hits
+are still served, and other workspaces with their own credentials are
+unaffected (breakers are keyed by provider and a hash of the credential).
+It is never reported as "no match", and the `provider-refresh` job halts on
+it (exit 3) the way it does on a 429. Any other 403 — an app not subscribed
+to Product Information, a revoked client — is reported as a credential error
+(`provider.upstream_error`) and counts toward the ordinary breaker (five
+hard failures open it for 60 s, again per credential).
 
 ### Authoring a part
 
@@ -543,6 +551,7 @@ Codes specific to the provider tools:
 |---|---|---|
 | `provider.quota_reserve_reached` | Fewer calls than the reserve remain today; the rest is the owner's | Not today |
 | `provider.suspended` | The provider has blocked this application (DigiKey 403); the message says how long | After the stated wait |
+| `provider.pacing` | Less than the minimum spacing since this workspace's previous call to that provider; carries `retry_after_ms` | After `retry_after_ms` |
 | `provider.upstream_error` | The provider failed or rejected the credentials | Later |
 | `rate_limited` | The provider answered 429 | Later |
 | `part.provider_not_configured` | No credentials for the provider asked for, or none at all | No — ask the owner |

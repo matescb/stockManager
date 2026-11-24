@@ -138,8 +138,8 @@ class Settings(BaseSettings):
     # these; the UI, scan import and the `provider-refresh` job are not.
     # Minimum gap between two live calls to one provider from one
     # workspace. DigiKey suspends an application for ten minutes when a
-    # per-second threshold is exceeded; the tool sleeps up to this long
-    # rather than refusing.
+    # per-second threshold is exceeded. A call sooner than this is refused
+    # with `provider.pacing` and `retry_after_ms` (never slept on).
     PROVIDER_AGENT_MIN_SPACING_SECONDS: float = Field(default=1.0, ge=0, le=10)
     # Calls kept back from the day's allowance for the owner's own work.
     # Below this many remaining, agent tools refuse with

@@ -394,6 +394,9 @@ class ErrorCodes:
     # burst suspension (HTTP 403) — never reported as "no match".
     PROVIDER_QUOTA_RESERVE_REACHED = "provider.quota_reserve_reached"
     PROVIDER_SUSPENDED = "provider.suspended"
+    # Too soon after this workspace's previous call to the same provider
+    # (`PROVIDER_AGENT_MIN_SPACING_SECONDS`); carries `retry_after_ms`.
+    PROVIDER_PACING = "provider.pacing"
 
     # MCP surface (ADR-0030). Raised only by the runtime assertion in
     # `app/mcp/principal.py::unit_of_work`: a tool declared read-only

@@ -11,10 +11,12 @@ agent path is held to three rules the other callers are not:
   `PROVIDER_AGENT_QUOTA_RESERVE`, agent tools refuse with
   `provider.quota_reserve_reached`. Nothing else consults the reserve.
 * **Pacing.** Two live calls to one provider from one workspace are at
-  least `PROVIDER_AGENT_MIN_SPACING_SECONDS` apart. The caller sleeps for
-  the difference (at most that spacing) rather than being refused —
-  DigiKey suspends an application for ten minutes when a per-second
-  threshold is crossed, and one second of waiting is cheaper than that.
+  least `PROVIDER_AGENT_MIN_SPACING_SECONDS` apart. A call that comes too
+  soon is REFUSED with `provider.pacing` and `retry_after_ms`, not delayed:
+  sync MCP tools run on anyio's worker threadpool, and a sleeping tool
+  would hold one of those threads (and the app's single uvicorn worker's
+  capacity) for nothing. DigiKey suspends an application for ten minutes
+  when a per-second threshold is crossed, so the spacing is worth keeping.
 * **Reporting.** Every agent answer carries the `quota` object built by
   `snapshot()`.
 
@@ -41,6 +43,7 @@ prod runs one uvicorn worker. More workers need a shared store first.
 from __future__ import annotations
 
 import hashlib
+import math
 import time
 from dataclasses import dataclass
 from datetime import date
@@ -55,7 +58,9 @@ __all__ = [
     "ProviderQuota",
     "QuotaReserveReached",
     "QuotaStatus",
+    "PacingRefused",
     "account_key",
+    "provider_account",
 ]
 
 _REMAINING_HEADER = "x-ratelimit-remaining"
@@ -67,6 +72,17 @@ def account_key(credential: str | None) -> str:
     """A stable, non-reversible name for one provider credential."""
     digest = hashlib.sha256((credential or "").encode("utf-8")).hexdigest()
     return digest[:16]
+
+
+def provider_account(provider: Any) -> str:
+    """The account key for a built provider client.
+
+    DigiKey's allowance (and its burst suspension) belongs to the OAuth
+    client id, Mouser's to the API key. A test double with neither maps to
+    the hash of "", which is stable, so it still gets one ledger.
+    """
+    credential = getattr(provider, "client_id", None) or getattr(provider, "api_key", None)
+    return account_key(credential)
 
 
 @dataclass(frozen=True)
@@ -91,6 +107,18 @@ class QuotaReserveReached(Exception):
             "for the owner's own lookups; try again tomorrow or ask the owner"
         )
         self.status = status
+
+
+class PacingRefused(Exception):
+    """Too soon after this workspace's previous call to the provider."""
+
+    def __init__(self, provider: str, retry_after_ms: int) -> None:
+        super().__init__(
+            f"{provider} was called by this workspace less than the minimum "
+            f"spacing ago; retry in {retry_after_ms} ms (retry_after_ms={retry_after_ms})"
+        )
+        self.provider = provider
+        self.retry_after_ms = retry_after_ms
 
 
 @dataclass
@@ -135,11 +163,9 @@ class ProviderQuota:
         self,
         *,
         clock: Callable[[], float] = time.monotonic,
-        sleep: Callable[[float], None] = time.sleep,
         today: Callable[[], date] = _default_today,
     ) -> None:
         self.clock = clock
-        self.sleep = sleep
         self.today = today
         self._lock = Lock()
         self._accounts: dict[tuple[str, str], _Account] = {}
@@ -195,24 +221,24 @@ class ProviderQuota:
             raise QuotaReserveReached(status)
         return status
 
-    def pace(self, workspace_id: UUID, provider: str) -> float:
-        """Wait until this workspace may call *provider* again.
+    def pace(self, workspace_id: UUID, provider: str) -> None:
+        """Claim this workspace's next call slot for *provider*, or refuse.
 
-        The slot is claimed under the lock BEFORE sleeping, so two
-        concurrent callers queue one spacing apart instead of both
-        computing the same wait and firing together. Returns the seconds
-        waited.
+        Raises `PacingRefused` (with the milliseconds to wait) when the
+        previous call was less than the spacing ago. The slot is claimed
+        under the lock, so of two concurrent callers exactly one proceeds.
+        Never sleeps.
         """
         spacing = float(_settings().PROVIDER_AGENT_MIN_SPACING_SECONDS)
         key = (workspace_id, provider)
         with self._lock:
             now = self.clock()
-            slot = max(now, self._next_slot.get(key, now))
-            self._next_slot[key] = slot + spacing
-        wait = slot - now
-        if wait > 0:
-            self.sleep(wait)
-        return max(0.0, wait)
+            earliest = self._next_slot.get(key, now)
+            if earliest > now:
+                # Rounded before ceil: float clocks turn 0.7 s into 700.0001.
+                wait_ms = math.ceil(round((earliest - now) * 1000, 3))
+                raise PacingRefused(provider, max(1, wait_ms))
+            self._next_slot[key] = now + spacing
 
     def snapshot(self, provider: str, account: str, *, spent: int) -> dict[str, Any]:
         """The `quota` object every agent answer carries."""

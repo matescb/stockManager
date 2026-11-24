@@ -40,12 +40,16 @@ the canonical record.
   and Mouser's partial matches now say they are fuzzy (`MpnLookupResult`
   gains a `match` key; `found` is unchanged). Nothing is written. It is
   declared a write (quota follows cost), so a read-only token is refused.
-  Agent-path calls are paced (1 s per provider per workspace), refused with
+  Agent-path calls are paced (1 s per provider per workspace; a call too
+  soon is refused with `provider.pacing` and `retry_after_ms`), refused with
   `provider.quota_reserve_reached` when fewer than 200 calls remain today
   (DigiKey's `X-RateLimit-Remaining`, else a local count), and report a
   `quota` object; the UI, scan import and `provider-refresh` are not held to
-  the reserve. A DigiKey 403 is now a ten-minute suspension for every caller
-  (`provider.suspended`, breaker open) instead of a miss — including a 403
+  the reserve. A DigiKey 403 that looks throttled (Retry-After, or a body
+  saying so) is now a ten-minute suspension of that credential for every
+  caller (`provider.suspended`; breakers are keyed per credential, so other
+  workspaces are unaffected); other 403s are credential errors. Either way
+  it is no longer a miss — including a 403
   or 429 from the keyword fallback, which used to read as "no match" — and
   `provider-refresh` halts on it with exit 3. Settings
   `PROVIDER_AGENT_MIN_SPACING_SECONDS`, `PROVIDER_AGENT_QUOTA_RESERVE`,

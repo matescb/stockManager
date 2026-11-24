@@ -3,7 +3,7 @@ plus the `fetch_lcsc` gate.
 
 Driven through the real MCP client like `test_mcp.py`, with the provider
 network seams stubbed the way `test_secondary_provider.py` stubs them and
-the pacer given a fake clock so nothing here sleeps. Each test names the
+the pacer given a fake clock so the spacing can be stepped over. Each test names the
 acceptance point it covers (edaflow `modules/stockmanager.md`).
 """
 from __future__ import annotations
@@ -58,7 +58,6 @@ def _mouser_part(manufacturer: str, mpn: str = MPN) -> dict:
 def clock(monkeypatch) -> FakeClock:
     fake = FakeClock()
     monkeypatch.setattr(QUOTA, "clock", fake)
-    monkeypatch.setattr(QUOTA, "sleep", fake.sleep)
     return fake
 
 
@@ -82,8 +81,11 @@ def _mouser_secondary(c: TestClient) -> None:
     assert r.status_code == 200, r.text
 
 
+_THROTTLED = {"ErrorMessage": "Your application has been throttled; burst limit exceeded"}
+
+
 def _stub_digikey(monkeypatch, *, status: int = 200, product: dict | None = None,
-                  remaining: str | None = None) -> list[str]:
+                  remaining: str | None = None, error_body: dict | None = None) -> list[str]:
     """Stub the seams; `remaining` plays the X-RateLimit-Remaining header."""
     calls: list[str] = []
     monkeypatch.setattr(dk, "_post_token",
@@ -94,7 +96,9 @@ def _stub_digikey(monkeypatch, *, status: int = 200, product: dict | None = None
         if remaining is not None:
             QUOTA.note_remaining("digikey", account_key(client_id),
                                  {"X-RateLimit-Remaining": remaining})
-        return status, ({"Product": product or _dk_product(mpn)} if status == 200 else {})
+        if status == 200:
+            return status, {"Product": product or _dk_product(mpn)}
+        return status, error_body or {}
 
     monkeypatch.setattr(dk, "_get_product_details", details)
     return calls
@@ -182,7 +186,8 @@ async def test_sm001_5_cache_hit_spends_no_quota_and_says_so(
     assert (second["cache"], second["quota"][0]["spent"]) == ("hit", 0)
     assert second["records"][0]["retrieved_at"] == first["records"][0]["retrieved_at"]
     assert calls == [MPN], "the second answer never reached DigiKey"
-    assert clock.slept == [], "a cache hit is not paced either"
+    # A cache hit is not paced either: the second call came 0 s after the
+    # first and was not refused with provider.pacing.
 
 
 async def test_sm001_lookup_writes_nothing(authed_client, token, monkeypatch, clock, db):
@@ -261,38 +266,92 @@ async def test_sm005_3_one_provider_at_reserve_does_not_silence_the_other(
     assert out["errors"][0]["code"] == "provider.quota_reserve_reached"
 
 
-async def test_sm005_4_consecutive_live_calls_are_paced(
+async def test_sm005_4_a_live_call_within_the_spacing_is_refused_with_retry_after(
     authed_client, token, monkeypatch, clock
 ):
     _digikey_primary(authed_client)
-    starts: list[float] = []
-    _stub_digikey(monkeypatch)
-    inner = dk._get_product_details
-
-    def timed(token_, client_id, mpn):
-        starts.append(clock.now)
-        clock.now += 0.1
-        return inner(token_, client_id, mpn)
-
-    monkeypatch.setattr(dk, "_get_product_details", timed)
+    calls = _stub_digikey(monkeypatch)
     async with mcp_session(token) as s:
         await call(s, "catalog_lookup", mpn=MPN)
-        await call(s, "catalog_lookup", mpn="OPA2192IDR")
-    assert len(starts) == 2
-    assert starts[1] - starts[0] >= 1.0
+        clock.now += 0.4
+        refused = await call_error(s, "catalog_lookup", mpn="OPA2192IDR")
+        clock.now += 0.6
+        again = await call(s, "catalog_lookup", mpn="OPA2192IDR")
+    assert "provider.pacing" in refused and "retry_after_ms=600" in refused
+    assert again["records"][0]["mpn"] == "OPA2192IDR"
+    assert calls == [MPN, "OPA2192IDR"], "the refused call never reached DigiKey"
+
+
+async def test_sm005_4_pacing_with_all_providers_lists_retry_after_ms(
+    authed_client, token, monkeypatch, clock
+):
+    _digikey_primary(authed_client)
+    _mouser_secondary(authed_client)
+    _stub_digikey(monkeypatch)
+    _stub_mouser(monkeypatch, [_mouser_part("Texas Instruments", "OPA2192IDR")])
+    async with mcp_session(token) as s:
+        await call(s, "catalog_lookup", mpn=MPN, provider="digikey")
+        out = await call(s, "catalog_lookup", mpn="OPA2192IDR")
+    assert [r["source"] for r in out["records"]] == ["mouser"]
+    [err] = out["errors"]
+    assert err["code"] == "provider.pacing" and err["retry_after_ms"] == 1000
 
 
 async def test_sm005_5_digikey_403_is_suspended_not_no_match(
     authed_client, token, monkeypatch, clock
 ):
     _digikey_primary(authed_client)
-    calls = _stub_digikey(monkeypatch, status=403)
+    calls = _stub_digikey(monkeypatch, status=403, error_body=_THROTTLED)
     async with mcp_session(token) as s:
         first = await call_error(s, "catalog_lookup", mpn=MPN)
+        clock.now += 5  # past the pacing slot; the breaker still holds
         second = await call_error(s, "catalog_lookup", mpn="OPA2192IDR")
     assert "provider.suspended" in first and "no match" not in first
     assert "provider.suspended" in second and "retry in" in second
     assert calls == [MPN], "the open breaker kept the second call off the network"
+
+
+async def test_sm005_5_suspension_in_one_workspace_spares_another(
+    authed_client, monkeypatch, clock
+):
+    """Cross-tenant: breakers are per credential, not per provider name."""
+    from app.main import app
+    from tests._factories import signup_user
+
+    _digikey_primary(authed_client)
+    other = TestClient(app)
+    signup_user(other)
+    r = other.patch("/api/workspaces/current", json={
+        "parts_provider": "digikey",
+        "parts_provider_api_key": "other-client-id",
+        "parts_provider_api_secret": "other-secret",
+    })
+    assert r.status_code == 200, r.text
+    monkeypatch.setattr(dk, "_post_token",
+                        lambda cid, secret: {"access_token": "tok", "expires_in": 600})
+
+    def details(token_, client_id, mpn):
+        if client_id == "fake-client-id":
+            return 403, _THROTTLED
+        return 200, {"Product": _dk_product(mpn)}
+
+    monkeypatch.setattr(dk, "_get_product_details", details)
+    async with mcp_session(_mint(authed_client)["token"]) as s:
+        assert "provider.suspended" in await call_error(s, "catalog_lookup", mpn=MPN)
+    async with mcp_session(_mint(other)["token"]) as s:
+        out = await call(s, "catalog_lookup", mpn="OPA2192IDR")
+    assert out["records"][0]["source"] == "digikey"
+
+
+async def test_a_bare_403_is_a_credential_error_not_suspended(
+    authed_client, token, monkeypatch, clock
+):
+    _digikey_primary(authed_client)
+    _stub_digikey(monkeypatch, status=403, error_body={"ErrorMessage": "Unauthorized client"})
+    async with mcp_session(token) as s:
+        message = await call_error(s, "catalog_lookup", mpn=MPN)
+    assert "provider.upstream_error" in message and "credentials" in message
+    assert "provider.suspended" not in message
 
 
 # ---------------------------------------------------------------------------

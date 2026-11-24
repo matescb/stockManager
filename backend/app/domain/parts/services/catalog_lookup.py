@@ -41,8 +41,9 @@ from app.domain.parts.services.provider_cache import (
 )
 from app.domain.parts.services.provider_quota import (
     QUOTA,
+    PacingRefused,
     QuotaReserveReached,
-    account_key,
+    provider_account,
 )
 from app.domain.parts.services.provider_refresh import (
     RefreshError,
@@ -86,7 +87,7 @@ class _Answer:
     cache: str = "miss"
     result: dict[str, Any] | None = None
     retrieved_at: Any = None
-    error: dict[str, str] | None = None
+    error: dict[str, Any] | None = None
     miss: str | None = None
 
 
@@ -143,22 +144,19 @@ def _order(name: str) -> int:
     return PROVIDER_ORDER.index(name) if name in PROVIDER_ORDER else len(PROVIDER_ORDER)
 
 
-def _account(client: Any) -> str:
-    return account_key(getattr(client, "client_id", None) or getattr(client, "api_key", None))
-
 
 # ---------------------------------------------------------------------------
 # one provider
 # ---------------------------------------------------------------------------
 def _ask(workspace_id: UUID, client: Any, mpn: str) -> _Answer:
-    name, account = client.name, _account(client)
+    name, account = client.name, provider_account(client)
     entry = peek_cached(name, mpn)
     if entry is not None:
         result, retrieved_at = entry
         answer = _Answer(name, QUOTA.snapshot(name, account, spent=0), cache="hit")
         return _classify(answer, result, retrieved_at)
 
-    left = suspended_for(name)
+    left = suspended_for(name, account)
     if left:
         return _refused(name, account, ErrorCodes.PROVIDER_SUSPENDED,
                         f"{name} has suspended this application (HTTP 403); retry in {left}s")
@@ -167,7 +165,12 @@ def _ask(workspace_id: UUID, client: Any, mpn: str) -> _Answer:
     except QuotaReserveReached as exc:
         return _refused(name, account, ErrorCodes.PROVIDER_QUOTA_RESERVE_REACHED, str(exc))
 
-    QUOTA.pace(workspace_id, name)
+    try:
+        QUOTA.pace(workspace_id, name)
+    except PacingRefused as exc:
+        answer = _refused(name, account, ErrorCodes.PROVIDER_PACING, str(exc))
+        answer.error["retry_after_ms"] = exc.retry_after_ms
+        return answer
     before = QUOTA.calls_today(name, account)
     try:
         result = lookup_with_cache(client, mpn)

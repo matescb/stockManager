@@ -7,8 +7,9 @@ The MCP-level acceptance tests are in `test_mcp_catalog.py`.
 Acceptance points (docs: edaflow `modules/stockmanager.md`):
   SM-005.2  quota object, `header` vs `local-count`
   SM-005.3  reserve refusal
-  SM-005.4  pacing >= spacing between two calls
-  SM-005.5  DigiKey 403 -> 10-minute breaker, `suspended`, never "no match"
+  SM-005.4  pacing: a call within the spacing is refused (provider.pacing)
+  SM-005.5  throttled DigiKey 403 -> 10-minute breaker per credential,
+            `suspended`, never "no match"; other 403s are credential errors
   SM-001.2  keyword fallback -> `match: "fuzzy"`
 """
 from __future__ import annotations
@@ -27,6 +28,7 @@ from app.domain.parts.providers.digikey import DigiKeyProvider
 from app.domain.parts.providers.mouser import MouserProvider
 from app.domain.parts.services.provider_quota import (
     QUOTA,
+    PacingRefused,
     ProviderQuota,
     QuotaReserveReached,
     account_key,
@@ -41,14 +43,10 @@ ACCOUNT = account_key(CLIENT_ID)
 class FakeClock:
     def __init__(self, start: float = 1000.0) -> None:
         self.now = start
-        self.slept: list[float] = []
 
     def __call__(self) -> float:
         return self.now
 
-    def sleep(self, seconds: float) -> None:
-        self.slept.append(seconds)
-        self.now += seconds
 
 
 def _product(mpn: str) -> dict:
@@ -111,28 +109,79 @@ def test_mouser_partial_match_is_fuzzy(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# SM-005.5 — DigiKey 403 is a suspension, not a miss
+# SM-005.5 — DigiKey 403: throttled -> suspension, anything else -> credentials
 # ---------------------------------------------------------------------------
-def test_sm005_5_productdetails_403_is_suspended_not_no_match(monkeypatch):
+_THROTTLED = {"ErrorMessage": "Your application has been throttled; burst limit exceeded"}
+
+
+def test_sm005_5_throttled_403_is_suspended_not_no_match(monkeypatch):
     _stub_token(monkeypatch)
-    monkeypatch.setattr(dk, "_get_product_details", lambda t, c, m: (403, {}))
+    monkeypatch.setattr(dk, "_get_product_details", lambda t, c, m: (403, _THROTTLED))
     out = DigiKeyProvider(CLIENT_ID, "s").lookup_mpn("OPA192IDBVT")
     assert out["found"] is False
     assert out["suspended"] is True
     assert "no match" not in out["message"]
 
 
-@pytest.mark.parametrize("status,flag", [(403, "suspended"), (429, None)])
-def test_sm005_5_keyword_fallback_refusal_is_not_no_match(monkeypatch, status, flag):
+def test_a_bare_403_is_a_credential_error_not_a_suspension(monkeypatch):
+    """Unsubscribed or revoked credentials must not read as a 10-minute
+    suspension — nor as "no match"."""
+    _stub_token(monkeypatch)
+    monkeypatch.setattr(
+        dk, "_get_product_details",
+        lambda t, c, m: (403, {"ErrorMessage": "The client is not authorized"}),
+    )
+    out = DigiKeyProvider(CLIENT_ID, "s").lookup_mpn("OPA192IDBVT")
+    assert not out.get("suspended")
+    assert "credentials" in out["message"] and "no match" not in out["message"]
+    assert not looks_like_quota(out["message"])
+
+
+def test_a_bare_403_trips_only_the_ordinary_breaker(monkeypatch):
+    clock = FakeClock()
+    monkeypatch.setattr(cache_mod, "_clock", clock)
+    _stub_token(monkeypatch)
+    monkeypatch.setattr(dk, "_get_product_details", lambda t, c, m: (403, {}))
+    provider = DigiKeyProvider(CLIENT_ID, "s")
+    for i in range(cache_mod._CB_FAIL_THRESHOLD):
+        cache_mod.lookup_with_cache(provider, f"M{i}")
+    assert cache_mod.suspended_for("digikey", ACCOUNT) == 0
+    with pytest.raises(ProviderUpstreamError) as exc:
+        cache_mod.lookup_with_cache(provider, "NEXT")
+    assert not isinstance(exc.value, ProviderSuspendedError)
+
+
+@pytest.mark.parametrize("status,body,flag", [
+    (403, _THROTTLED, "suspended"),
+    (429, {}, None),
+])
+def test_sm005_5_keyword_fallback_refusal_is_not_no_match(monkeypatch, status, body, flag):
     """Before SM-005 a 403/429 from the fallback fell through to 'no match'."""
     _stub_token(monkeypatch)
     monkeypatch.setattr(dk, "_get_product_details", lambda t, c, m: (404, {}))
-    monkeypatch.setattr(dk, "_post_keyword_search", lambda t, c, k, limit=5: (status, {}))
+    monkeypatch.setattr(dk, "_post_keyword_search", lambda t, c, k, limit=5: (status, body))
     out = DigiKeyProvider(CLIENT_ID, "s").lookup_mpn("OPA192IDBVT")
     assert "no match" not in out["message"]
     assert looks_like_quota(out["message"]), "the provider-refresh job must halt on it"
     if flag:
         assert out[flag] is True
+
+
+def test_sm005_5_retry_after_header_on_the_real_seam_means_suspended(monkeypatch):
+    """The seam carries a 403's Retry-After into the body; an empty body
+    with that header is still the burst suspension."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, headers={"Retry-After": "600"})
+
+    @contextmanager
+    def fake_client(*, provider_name, timeout):
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            yield client
+
+    monkeypatch.setattr(dk, "make_retrying_client", fake_client)
+    _stub_token(monkeypatch)
+    out = DigiKeyProvider(CLIENT_ID, "s").lookup_mpn("OPA192IDBVT")
+    assert out["suspended"] is True
 
 
 def test_sm005_5_403_opens_the_breaker_for_ten_minutes(monkeypatch):
@@ -143,14 +192,14 @@ def test_sm005_5_403_opens_the_breaker_for_ten_minutes(monkeypatch):
 
     def details(t, c, m):
         calls.append(m)
-        return (403, {})
+        return (403, _THROTTLED)
 
     monkeypatch.setattr(dk, "_get_product_details", details)
     provider = DigiKeyProvider(CLIENT_ID, "s")
 
     first = cache_mod.lookup_with_cache(provider, "OPA192IDBVT")
     assert first["suspended"] is True
-    assert cache_mod.suspended_for("digikey") == 600
+    assert cache_mod.suspended_for("digikey", ACCOUNT) == 600
 
     clock.now += 599
     with pytest.raises(ProviderSuspendedError) as exc:
@@ -165,11 +214,33 @@ def test_sm005_5_403_opens_the_breaker_for_ten_minutes(monkeypatch):
     assert cache_mod.lookup_with_cache(provider, "OTHER-MPN")["found"] is True
 
 
+def test_one_credential_suspended_does_not_stop_another(monkeypatch):
+    """Cross-tenant: workspace A's suspension must not deny workspace B,
+    which uses different DigiKey credentials."""
+    clock = FakeClock()
+    monkeypatch.setattr(cache_mod, "_clock", clock)
+    _stub_token(monkeypatch)
+
+    def details(t, client_id, m):
+        if client_id == "client-a":
+            return (403, _THROTTLED)
+        return (200, {"Product": _product(m)})
+
+    monkeypatch.setattr(dk, "_get_product_details", details)
+    a = DigiKeyProvider("client-a", "s")
+    b = DigiKeyProvider("client-b", "s")
+    assert cache_mod.lookup_with_cache(a, "MPN-A")["suspended"] is True
+    with pytest.raises(ProviderSuspendedError):
+        cache_mod.lookup_with_cache(a, "MPN-B")
+    assert cache_mod.suspended_for("digikey", account_key("client-b")) == 0
+    assert cache_mod.lookup_with_cache(b, "MPN-B")["found"] is True
+
+
 def test_suspension_also_stops_lookup_fresh(monkeypatch):
     """The refresh path must not hammer a suspended provider either."""
     clock = FakeClock()
     monkeypatch.setattr(cache_mod, "_clock", clock)
-    cache_mod._get_breaker("digikey").suspend(600)
+    cache_mod._get_breaker("digikey", ACCOUNT).suspend(600)
     with pytest.raises(ProviderSuspendedError):
         cache_mod.lookup_fresh(DigiKeyProvider(CLIENT_ID, "s"), "X")
 
@@ -283,27 +354,56 @@ def test_sm005_3_reserve_is_configurable(monkeypatch):
 # ---------------------------------------------------------------------------
 # SM-005.4 — pacing
 # ---------------------------------------------------------------------------
-def test_sm005_4_two_calls_are_at_least_the_spacing_apart():
+def test_sm005_4_a_second_call_within_the_spacing_is_refused():
     clock = FakeClock()
-    q = ProviderQuota(clock=clock, sleep=clock.sleep)
+    q = ProviderQuota(clock=clock)
     ws = uuid.uuid4()
-    starts = []
-    for _ in range(3):
+    q.pace(ws, "digikey")
+    clock.now += 0.3
+    with pytest.raises(PacingRefused) as exc:
         q.pace(ws, "digikey")
-        starts.append(clock.now)
-        clock.now += 0.2  # the call itself
-    gaps = [b - a for a, b in zip(starts, starts[1:])]
-    assert all(gap >= 1.0 for gap in gaps), gaps
+    assert exc.value.retry_after_ms == 700
+    assert "retry_after_ms=700" in str(exc.value)
+
+
+def test_sm005_4_allowed_calls_are_at_least_the_spacing_apart():
+    """Retrying after retry_after_ms always lands on an allowed slot, and
+    every allowed call is >= the spacing after the previous one."""
+    clock = FakeClock()
+    q = ProviderQuota(clock=clock)
+    ws = uuid.uuid4()
+    allowed = []
+    for _ in range(20):
+        try:
+            q.pace(ws, "digikey")
+            allowed.append(clock.now)
+            clock.now += 0.25
+        except PacingRefused as exc:
+            clock.now += exc.retry_after_ms / 1000
+    gaps = [b - a for a, b in zip(allowed, allowed[1:])]
+    assert len(allowed) > 3 and all(gap >= 1.0 for gap in gaps), gaps
+
+
+def test_refused_call_does_not_push_the_slot_back():
+    clock = FakeClock()
+    q = ProviderQuota(clock=clock)
+    ws = uuid.uuid4()
+    q.pace(ws, "digikey")
+    for _ in range(3):
+        clock.now += 0.2
+        with pytest.raises(PacingRefused):
+            q.pace(ws, "digikey")
+    clock.now += 0.4  # 1.0 s after the first, allowed call
+    q.pace(ws, "digikey")
 
 
 def test_sm005_4_pacing_is_per_workspace_and_provider():
     clock = FakeClock()
-    q = ProviderQuota(clock=clock, sleep=clock.sleep)
+    q = ProviderQuota(clock=clock)
     ws = uuid.uuid4()
     q.pace(ws, "digikey")
     q.pace(ws, "mouser")
-    q.pace(uuid.uuid4(), "digikey")
-    assert clock.slept == []
+    q.pace(uuid.uuid4(), "digikey")  # none of these raise
 
 
 def test_sm005_4_spacing_is_configurable(monkeypatch):
@@ -311,16 +411,20 @@ def test_sm005_4_spacing_is_configurable(monkeypatch):
 
     monkeypatch.setattr(settings(), "PROVIDER_AGENT_MIN_SPACING_SECONDS", 2.5)
     clock = FakeClock()
-    q = ProviderQuota(clock=clock, sleep=clock.sleep)
+    q = ProviderQuota(clock=clock)
     ws = uuid.uuid4()
     q.pace(ws, "digikey")
-    assert q.pace(ws, "digikey") == pytest.approx(2.5)
+    with pytest.raises(PacingRefused) as exc:
+        q.pace(ws, "digikey")
+    assert exc.value.retry_after_ms == 2500
 
 
-def test_no_wait_once_the_spacing_has_passed():
-    clock = FakeClock()
-    q = ProviderQuota(clock=clock, sleep=clock.sleep)
+def test_pacing_never_sleeps(monkeypatch):
+    import time as _time
+
+    monkeypatch.setattr(_time, "sleep", lambda s: pytest.fail("pace() slept"))
+    q = ProviderQuota()
     ws = uuid.uuid4()
     q.pace(ws, "digikey")
-    clock.now += 5
-    assert q.pace(ws, "digikey") == 0.0
+    with pytest.raises(PacingRefused):
+        q.pace(ws, "digikey")

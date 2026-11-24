@@ -64,7 +64,9 @@ def catalog_lookup(
     the reserve the provider refuses with `provider.quota_reserve_reached`
     — the reserve is kept for the owner's own work, so do not retry
     today. `provider.suspended` means the provider has blocked calls for
-    a few minutes; it is NOT "no match". The call as a whole fails only
+    a few minutes; it is NOT "no match". `provider.pacing` means you
+    called the same provider less than a second ago: wait
+    `retry_after_ms` and call again. The call as a whole fails only
     when no provider could answer.
     """
     try:
