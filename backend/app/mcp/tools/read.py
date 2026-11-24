@@ -141,7 +141,10 @@ def get_part(caller: Caller, id_or_mpn: str) -> dict[str, Any]:
     name, or `manual` for a value a user entered. When more than one
     source answered, the best one (manual, then DigiKey, then Mouser) is
     shown and the others are listed under `alternates` — read them before
-    calling a part obsolete or active.
+    calling a part obsolete or active. `eccn`, `hts` and `msl` are not
+    stored from providers (the refresh drops them as non-spec data), so
+    they read `unknown` unless a user entered them; `catalog_lookup`
+    returns them live from the provider.
     """
     part = resolve_part(caller, id_or_mpn)
     catalog, specs = custom_fields_for(caller, part)
