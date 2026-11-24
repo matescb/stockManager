@@ -1,11 +1,13 @@
 import { Link } from "react-router-dom";
 import { ArrowRightLeft, Check, Loader2, Plus, Trash2, Undo2 } from "lucide-react";
 import type { IntakeRow } from "./intakeRows";
+import MpnEntry from "./MpnEntry";
 
 type Props = {
   row: IntakeRow;
   highlighted: boolean;
   onQuantity: (q: number) => void;
+  onMpn: (mpn: string) => void;
   onSave: (onExisting?: "move" | "add_new") => void;
   onUpdateCount: () => void;
   onUndo: () => void;
@@ -17,6 +19,7 @@ function title(row: IntakeRow): { name: string; sub: string | null; isNew: boole
   if (part) return { name: part.name, sub: [part.mpn, part.manufacturer].filter(Boolean).join(" · "), isNew: !!row.result?.part_created };
   const prov = row.resolve?.provider;
   if (prov) return { name: prov.mpn, sub: [prov.manufacturer, prov.description].filter(Boolean).join(" · "), isNew: true };
+  if (!row.mpn) return { name: "No part number on label", sub: row.comments ?? null, isNew: false };
   return { name: row.mpn, sub: null, isNew: false };
 }
 
@@ -25,6 +28,7 @@ function statusText(row: IntakeRow): { text: string; tone: string } {
     case "resolving": return { text: "Looking up…", tone: "text-muted" };
     case "saving": return { text: "Saving…", tone: "text-muted" };
     case "error": return { text: row.error ?? "Failed", tone: "text-danger" };
+    case "needs_mpn": return { text: row.noMpnMessage ?? "This label has no manufacturer part number — type the MPN.", tone: "text-warning" };
     case "needs_choice": return { text: "Recorded in another box", tone: "text-warning" };
     case "ready":
       return row.quantity > 0
@@ -37,7 +41,7 @@ function statusText(row: IntakeRow): { text: string; tone: string } {
   }
 }
 
-export default function IntakeRowCard({ row, highlighted, onQuantity, onSave, onUpdateCount, onUndo, onDismiss }: Props) {
+export default function IntakeRowCard({ row, highlighted, onQuantity, onMpn, onSave, onUpdateCount, onUndo, onDismiss }: Props) {
   const t = title(row);
   const s = statusText(row);
   const busy = row.phase === "resolving" || row.phase === "saving";
@@ -66,6 +70,7 @@ export default function IntakeRowCard({ row, highlighted, onQuantity, onSave, on
             <Link to="/parts/create" className="text-accent hover:underline">Create part…</Link>
           )}
         </div>
+        {row.phase === "needs_mpn" && <MpnEntry id={row.id} onSubmit={onMpn} />}
       </div>
       <div className="flex items-center gap-2 shrink-0">
         <label className="sr-only" htmlFor={`qty-${row.id}`}>Bag quantity</label>

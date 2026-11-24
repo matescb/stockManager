@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { apiGet, apiPost, FakeApiError, RAW_A } from "./mocks";
+import { apiGet, apiPost, FakeApiError, RAW_A, RAW_NO_1P } from "./mocks";
 
 vi.mock("@/instrument", () => ({}));
 vi.mock("@/lib/auth", () => ({ useAuth: () => ({ workspaceId: "ws-1" }) }));
@@ -126,5 +126,65 @@ describe("BoxIntake", () => {
     scan(RAW_A);
     expect(await screen.findByText(/not in the library/)).toBeTruthy();
     expect(screen.getByText("Create part…")).toBeTruthy();
+  });
+
+  describe("bag label without a manufacturer part number", () => {
+    const murata = { ...part, id: "p2", name: "GRM188", mpn: "GRM188R71H104KA93D", manufacturer: "Murata" };
+
+    function mockResolve() {
+      apiPost.mockImplementation((url: string, body: { mpn?: string }) => {
+        if (url.endsWith("/scan/resolve")) {
+          return Promise.resolve(
+            body.mpn
+              ? { status: "existing_part", part: murata, bag: null, provider: null }
+              : { status: "not_found", part: null, bag: null, provider: null },
+          );
+        }
+        return Promise.resolve({ status: "added", part: murata, part_created: false, lot_id: "l3", quantity: 100, moved_from: [] });
+      });
+    }
+
+    it("explains the missing MPN instead of a provider miss, and never sends the raw code as MPN", async () => {
+      mockResolve();
+      mount();
+      scan(RAW_NO_1P);
+
+      expect(await screen.findByText(/has no manufacturer part number \(Murata · qty 100 · customer P\/N C201,C202,C503\)/)).toBeTruthy();
+      expect(screen.queryByText(/not in the library/)).toBeNull();
+      const resolveCall = apiPost.mock.calls.find(c => c[0] === "/storage/box1/scan/resolve");
+      expect(resolveCall?.[1].mpn).toBe("");
+      expect(resolveCall?.[1].raw_bag_code).toBe(RAW_NO_1P);
+    });
+
+    it("saves with the label's quantity and order refs once the MPN is typed", async () => {
+      mockResolve();
+      mount();
+      scan(RAW_NO_1P);
+      await screen.findByText(/has no manufacturer part number/);
+
+      fireEvent.change(screen.getByPlaceholderText("Mfr. part number"), { target: { value: "GRM188R71H104KA93D" } });
+      fireEvent.click(screen.getByRole("button", { name: /Look up/ }));
+
+      expect(await screen.findByText("Added")).toBeTruthy();
+      expect(apiPost.mock.calls.find(c => c[0] === "/storage/box1/intake")?.[1]).toMatchObject({
+        part_id: "p2",
+        quantity: 100,
+        comments: "Order 40489709 · line 027 · invoice 092571642",
+        raw_bag_code: RAW_NO_1P,
+      });
+    });
+
+    it("completes the waiting label with the next bare part-number scan", async () => {
+      mockResolve();
+      mount();
+      scan(RAW_NO_1P);
+      await screen.findByText(/has no manufacturer part number/);
+
+      scan("GRM188R71H104KA93D");
+
+      expect(await screen.findByText("Added")).toBeTruthy();
+      expect(screen.getAllByTestId("intake-row")).toHaveLength(1);
+      expect(apiPost.mock.calls.find(c => c[0] === "/storage/box1/intake")?.[1]).toMatchObject({ quantity: 100 });
+    });
   });
 });

@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { bagSignature } from "@/lib/bagCode";
-import { apiGet, apiPost, RAW_A, RAW_B } from "./mocks";
+import { apiGet, apiPost, RAW_A, RAW_B, RAW_NO_1P } from "./mocks";
 
 vi.mock("@/instrument", () => ({}));
 vi.mock("@/lib/auth", () => ({ useAuth: () => ({ workspaceId: "ws-1" }) }));
@@ -103,5 +103,23 @@ describe("BoxAudit", () => {
     expect(await screen.findByText(/Found here, not recorded/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Add to box/ }));
     await waitFor(() => expect(apiPost).toHaveBeenCalledWith("/storage/box1/intake", expect.objectContaining({ part_id: "p1", quantity: 10 })));
+  });
+
+  it("asks for the MPN of an unrecorded bag whose label has none", async () => {
+    await setup();
+    apiPost.mockImplementation((url: string, body: { mpn?: string }) =>
+      url.endsWith("/scan/resolve")
+        ? Promise.resolve(body.mpn ? { status: "existing_part", part, bag: null, provider: null } : { status: "not_found", part: null, bag: null, provider: null })
+        : Promise.resolve({ status: "added", part, part_created: false, lot_id: "lm", quantity: 100, moved_from: [] }),
+    );
+    scan(RAW_NO_1P);
+
+    expect(await screen.findByText(/has no manufacturer part number/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: /Add to box/ }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByPlaceholderText("Mfr. part number"), { target: { value: "LM358" } });
+    fireEvent.click(screen.getByRole("button", { name: /Look up/ }));
+    await screen.findByText(/Part is in the library/);
+    fireEvent.click(screen.getByRole("button", { name: /Add to box/ }));
+    await waitFor(() => expect(apiPost).toHaveBeenCalledWith("/storage/box1/intake", expect.objectContaining({ part_id: "p1", quantity: 100 })));
   });
 });

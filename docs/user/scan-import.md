@@ -38,6 +38,7 @@ Filling a specific box, especially with parts already in your library? Open the 
    - **Duplicate** — that exact bag (same signature) is already in your queue or already in stock. Click **Open existing** to jump to it instead.
    - **Found bag (re-scan)** — you've scanned this exact bag before and it's in stock. The "Quick remove" mini-form appears: enter how many you used and click the button to subtract from this bag.
    - **Failed** — the supplier lookup failed. Re-scan to retry, or remove the row.
+   - **This label has no manufacturer part number** — the label carries only your own part number. Remove the row, then type the MPN under **Manual entry** and set the quantity.
 
 > _Screenshot: the queue with one Found row, one Found bag (re-scan) row, and one Duplicate row._
 

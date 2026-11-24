@@ -13,6 +13,7 @@ import { api, ApiError } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
 import { formatQuantity } from "@/lib/format";
 import { useConfirm } from "@/components/ConfirmDialog";
+import { noMpnMessage } from "@/lib/bagCode";
 import type { StorageLocation } from "@/types";
 import { boxScanApi, bucketKey, type BoxBag } from "./api";
 import AuditExtras, { type ExtraBag } from "./AuditExtras";
@@ -29,7 +30,7 @@ import {
 } from "./auditState";
 import { newRowId } from "./intakeRows";
 import ScanPanel from "./ScanPanel";
-import type { ScannedBag } from "./scanCode";
+import { isPlainMpnScan, type ScannedBag } from "./scanCode";
 
 function errorText(e: unknown): string {
   return e instanceof ApiError ? e.userMessage : "Request failed";
@@ -91,7 +92,41 @@ export default function BoxAudit() {
     });
 
   const setMissing = (k: string, m: MissingAction) => setDraft(d => ({ ...d, missing: { ...d.missing, [k]: m } }));
-  const patchExtra = (id: string, p: Partial<ExtraBag>) => setExtras(xs => xs.map(x => (x.id === id ? { ...x, ...p } : x)));
+  const patchExtra = useCallback(
+    (id: string, p: Partial<ExtraBag>) => setExtras(xs => xs.map(x => (x.id === id ? { ...x, ...p } : x))),
+    [],
+  );
+
+  /** Look a not-recorded bag up (library only — an audit never spends
+   *  provider quota). A label without an MPN waits for one. */
+  const resolveExtra = useCallback(
+    async (x: ExtraBag) => {
+      try {
+        const res = await boxScanApi.resolve(storageId, {
+          mpn: x.mpn,
+          provider_lookup: false,
+          ...(x.sig ? { bag_signature: x.sig, raw_bag_code: x.raw } : {}),
+        });
+        patchExtra(x.id, {
+          resolve: res,
+          busy: false,
+          needsMpn: res.status === "not_found" && !x.mpn,
+          quantity: x.quantity || res.bag?.locations[0]?.quantity || 0,
+        });
+      } catch (e) {
+        patchExtra(x.id, { busy: false, error: errorText(e) });
+      }
+    },
+    [patchExtra, storageId],
+  );
+
+  const supplyMpn = useCallback(
+    (x: ExtraBag, mpn: string) => {
+      patchExtra(x.id, { mpn, busy: true, needsMpn: false, error: undefined });
+      void resolveExtra({ ...x, mpn });
+    },
+    [patchExtra, resolveExtra],
+  );
 
   const onBag = useCallback(
     async (s: ScannedBag) => {
@@ -105,6 +140,11 @@ export default function BoxAudit() {
         toast.info("Already scanned");
         return;
       }
+      const waiting = isPlainMpnScan(s) ? extrasRef.current.find(x => x.needsMpn) : undefined;
+      if (waiting) {
+        supplyMpn(waiting, s.bag.mpn.trim());
+        return;
+      }
       const extra: ExtraBag = {
         id: newRowId(),
         mpn: s.bag.mpn.trim(),
@@ -114,21 +154,13 @@ export default function BoxAudit() {
         lotName: s.lotName,
         lotSerial: s.bag.serial ?? null,
         comments: s.comments,
+        ...(s.bag.noMpn ? { noMpnMessage: noMpnMessage(s.bag) } : {}),
         busy: true,
       };
       setExtras(xs => [extra, ...xs]);
-      try {
-        const res = await boxScanApi.resolve(storageId, {
-          mpn: extra.mpn,
-          provider_lookup: false,
-          ...(s.sig ? { bag_signature: s.sig, raw_bag_code: s.raw } : {}),
-        });
-        patchExtra(extra.id, { resolve: res, busy: false, quantity: extra.quantity || res.bag?.locations[0]?.quantity || 0 });
-      } catch (e) {
-        patchExtra(extra.id, { busy: false, error: errorText(e) });
-      }
+      await resolveExtra(extra);
     },
-    [draft.counted, markScanned, storageId],
+    [draft.counted, markScanned, resolveExtra, supplyMpn],
   );
 
   async function addExtra(x: ExtraBag) {
@@ -219,6 +251,7 @@ export default function BoxAudit() {
           extras={extras}
           onQuantity={(id, q) => patchExtra(id, { quantity: q })}
           onAdd={x => void addExtra(x)}
+          onMpn={supplyMpn}
           onDismiss={id => setExtras(xs => xs.filter(x => x.id !== id))}
         />
 

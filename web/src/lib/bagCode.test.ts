@@ -5,7 +5,7 @@
  * test here corresponds to a regression that hit users.
  */
 import { describe, it, expect } from "vitest";
-import { parseBagCode, bagLotName, bagComments, bagSignature } from "./bagCode";
+import { parseBagCode, bagLotName, bagComments, bagSignature, noMpnMessage } from "./bagCode";
 import bagSignaturesFixture from "./__fixtures__/bagSignatures.json";
 
 describe("parseBagCode — separator handling", () => {
@@ -62,6 +62,79 @@ describe("parseBagCode — separator handling", () => {
     const b = parseBagCode(raw);
     expect(b.customerRef).toBe("#44861 A #44920");
     expect(b.mpn).toBe("FOO");
+  });
+});
+
+describe("parseBagCode — separators lost (keyboard-wedge reader)", () => {
+  // Owner's Mouser bag as a USB wedge reader typed it: RS/GS dropped, so
+  // every DI abuts the previous value. The label carries the customer
+  // part number (P) but no 1P.
+  const MOUSER_NO_1P =
+    "[)>06K4048970914K027PC201,C202,C503Q10011K0925716424LJP1VMurata";
+
+  it("recovers every field of a Mouser label whose DIs abut alphanumerics", () => {
+    const b = parseBagCode(MOUSER_NO_1P);
+    expect(b.customerRef).toBe("40489709");
+    expect(b.lineItem).toBe("027");
+    expect(b.distributorPn).toBe("C201,C202,C503");
+    expect(b.quantity).toBe(100);
+    expect(b.invoiceRef).toBe("092571642");
+    expect(b.manufacturer).toBe("Murata");
+  });
+
+  it("flags a bag label with no 1P instead of passing the raw code on as the MPN", () => {
+    const b = parseBagCode(MOUSER_NO_1P);
+    expect(b.mpn).toBe("");
+    expect(b.noMpn).toBe(true);
+    expect(noMpnMessage(b)).toContain("Murata · qty 100 · customer P/N C201,C202,C503");
+  });
+
+  it("keeps the traceability comment for a no-MPN label", () => {
+    expect(bagComments(parseBagCode(MOUSER_NO_1P))).toBe(
+      "Order 40489709 · line 027 · invoice 092571642",
+    );
+  });
+
+  it("recovers the MPN from a separator-less Mouser label that has 1P", () => {
+    const b = parseBagCode("[)>06K#44861 A #4492014K0171P98266-0897Q311K0781013064LHU1VMolex");
+    expect(b.mpn).toBe("98266-0897");
+    expect(b.noMpn).toBeUndefined();
+    expect(b.customerRef).toBe("#44861 A #44920");
+    expect(b.lineItem).toBe("017");
+    expect(b.quantity).toBe(3);
+    expect(b.invoiceRef).toBe("078101306");
+    expect(b.manufacturer).toBe("Molex");
+  });
+
+  it("recovers the MPN from a separator-less DigiKey label (empty K field)", () => {
+    const b = parseBagCode(
+      "[)>06P296-1395-1-ND1PSN74HC595NK1K8423695110K1001234569D21451TA1B2C311K14LMYQ511ZPICK12Z1234567813Z99999920Z0000000000",
+    );
+    expect(b.mpn).toBe("SN74HC595N");
+    expect(b.distributorPn).toBe("296-1395-1-ND");
+    expect(b.poNumber).toBe("84236951");
+    expect(b.dateCode).toBe("2145");
+    expect(b.lotBatch).toBe("A1B2C3");
+    expect(b.quantity).toBe(5);
+  });
+
+  it("does not split an MPN at letters that look like a DI", () => {
+    expect(parseBagCode("[)>061PLM317TQ10")).toMatchObject({ mpn: "LM317T", quantity: 10 });
+    expect(parseBagCode("[)>061PRC0603FR-0710KLQ5")).toMatchObject({ mpn: "RC0603FR-0710KL", quantity: 5 });
+  });
+
+  it("reports no MPN for a headed code it cannot read at all", () => {
+    const b = parseBagCode("[)>06XYZ");
+    expect(b).toMatchObject({ mpn: "", noMpn: true });
+    expect(b.quantity).toBeUndefined();
+  });
+
+  it("ignores a trailing RS/EOT when it is the only separator", () => {
+    expect(parseBagCode("[)>\x1e06\x1d1PFOO\x1e\x04").mpn).toBe("FOO");
+  });
+
+  it("keeps a DI-prefixed 1D code without header as the MPN guess", () => {
+    expect(parseBagCode("Q100").mpn).toBe("Q100");
   });
 });
 

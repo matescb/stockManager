@@ -36,6 +36,27 @@ describe("WedgeBuffer", () => {
     expect(buf.push({ key: "Enter", time: 13 })).toBe("[)>\x1e06\x1d1PX1");
   });
 
+  it("recognises separators by physical key on non-US layouts", () => {
+    // Czech QWERTZ: the reader's Ctrl+] arrives as key ")" code BracketRight.
+    const buf = new WedgeBuffer();
+    burst(buf, "[)>", 1, 1);
+    buf.push({ key: "ˇ", code: "Digit6", ctrlKey: true, time: 4 });
+    burst(buf, "06", 5, 1);
+    buf.push({ key: ")", code: "BracketRight", ctrlKey: true, time: 7 });
+    burst(buf, "1PX1", 8, 1);
+    expect(buf.push({ key: "Enter", time: 13 })).toBe("[)>\x1e06\x1d1PX1");
+  });
+
+  it("keeps AltGr characters (Ctrl+Alt) as typed", () => {
+    // Czech AltGr+X = "#" — Windows reports it with ctrlKey and altKey.
+    const buf = new WedgeBuffer();
+    buf.push({ key: "K", time: 1 });
+    buf.push({ key: "#", code: "KeyX", ctrlKey: true, altKey: true, time: 2 });
+    buf.push({ key: "]", code: "KeyG", ctrlKey: true, altKey: true, time: 3 });
+    burst(buf, "4486", 4, 1);
+    expect(buf.push({ key: "Enter", time: 9 })).toBe("K#]4486");
+  });
+
   it("ignores modifier keys and starts fresh after a pause", () => {
     const buf = new WedgeBuffer();
     burst(buf, "junk", 0);

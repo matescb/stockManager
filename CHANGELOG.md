@@ -15,6 +15,22 @@ the canonical record.
 
 ## Unreleased
 
+- **Bag labels scanned without separators, or without an MPN.** A USB reader
+  that drops the label's GS/RS separators ran every field together, and a
+  Mouser label that carries only the customer part number (P) and no 1P then
+  sent the whole `[)>06K…` string to the provider as the MPN, which wasted a
+  metered call and reported "not in the library". The parser now cuts a
+  separator-less label into fields by value shape (Q, 14K, 11K, 1K, 10K
+  digits; 10D/9D YYWW; 4L two letters; 1V last), so `Q10011K…` reads as
+  Q=100 + 11K. It leaves a field out when two readings are equally good. A
+  label with no 1P sets `noMpn` with an empty MPN. Box intake and audit then
+  ask for the MPN in the row (or take the next bare part-number scan) and
+  keep the label's quantity and order refs. Scan import says why the row has
+  no MPN and still offers quick-remove for a known bag. The keyboard-wedge
+  listener now reads the reader's separators by physical key, so Ctrl+]
+  works on a Czech layout. It also keeps AltGr characters such as `#`. The
+  provider cache and the box-scan endpoints refuse a `[)>…` string as an MPN.
+  `bag_signature` is unchanged.
 - **`catalog_search` facets on broad DigiKey searches (SM-002 fix).** Production
   returned empty `categories`, `status` and `parametric_filters` for a
   44,740-result search. The parser's field names were right (they match the

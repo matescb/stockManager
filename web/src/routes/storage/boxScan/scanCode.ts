@@ -20,7 +20,9 @@ export async function classifyScan(raw: string): Promise<Scanned> {
   const label = LABEL_URL.exec(text);
   if (label && /^https?:\/\//i.test(text)) return { kind: "box_label", code: label[1] };
   const bag = parseBagCode(raw);
-  if (!bag.mpn.trim()) return { kind: "unreadable", raw };
+  // A no-MPN bag label is still a bag: its signature can match a recorded
+  // bag, and its quantity / order refs are kept while the MPN is typed.
+  if (!bag.mpn.trim() && !bag.noMpn) return { kind: "unreadable", raw };
   return {
     kind: "bag",
     raw,
@@ -29,4 +31,10 @@ export async function classifyScan(raw: string): Promise<Scanned> {
     lotName: bagLotName(bag),
     comments: bagComments(bag),
   };
+}
+
+/** A bare part number (1D "Mfr. Part No" barcode or typed text) rather
+ *  than an ECIA bag label — used to complete a label that had no MPN. */
+export function isPlainMpnScan(s: ScannedBag): boolean {
+  return !s.bag.noMpn && !s.raw.trim().startsWith("[)>");
 }

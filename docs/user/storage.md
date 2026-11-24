@@ -56,6 +56,7 @@ What each row tells you:
 - **Already in this box**: this bag was scanned into this box before. Only its count changes if you edit it.
 - **Recorded in another box**: the bag is on record somewhere else. Click **Move here** if you moved it, or **Add as new bag** if it is a second bag with an identical label.
 - **Not in the library**: the provider has no match for the MPN. Use **Create part…** and then add it by MPN.
+- **This label has no manufacturer part number**: some Mouser labels carry only your own part number (what you typed when ordering), not the maker's. Scan the **Mfr. Part No** barcode on the same label, or type the MPN into the row and click **Look up**. The quantity and order details from the label are kept.
 
 Untick **Save each scan immediately** if you would rather check the list first and then click **Save all**. **Undo** sets a just-added bag back to zero.
 
@@ -77,6 +78,14 @@ Use this to make the records match what is really in the box. Open the box and c
 Stock entered before bag tracking existed shows as **old record, not tracked per bag** and is written off by default. Scan the actual bags to replace it.
 
 Progress is kept if you reload the page. **Start over** clears it.
+
+A bag whose label has no manufacturer part number shows under **Found here, not recorded** with a box for the MPN. Type it and click **Look up**, or scan the label's **Mfr. Part No** barcode.
+
+## Set up a USB barcode reader
+
+Bag labels hold several fields separated by invisible control characters. A reader set up as a keyboard sends each separator as a key combination (Ctrl+]). The app understands that on any keyboard layout, including Czech.
+
+If scans still come through with the fields run together, the app usually recovers them, but not always. In the reader's setup guide, look for a setting such as **Transmit GS as FNC1 / ASCII 29** or **Function key mapping** and turn it on. If the reader can only send a text stand-in, choose `{GS}`.
 
 ## Set a default location for a part
 
@@ -105,3 +114,4 @@ You cannot archive a location that is set as a part's default storage. Either ch
 - **The receive form's Storage dropdown doesn't list a bin you expect** — it's archived, or marked **Mark as full**. Open the location's Settings tab and untick **Mark as full**, or restore from archive.
 - **Adding a part to a single-part bin fails** — the bin already has a different part. Move the existing stock out, or pick another bin.
 - **You can't archive a bin** — a part has it set as its default mandatory storage. Open the part's Settings tab and clear **Default storage location**, or untick **mandatory**.
+- **A scanned bag shows the wrong order number or quantity** — the reader dropped the label's separators. See [Set up a USB barcode reader](#set-up-a-usb-barcode-reader).

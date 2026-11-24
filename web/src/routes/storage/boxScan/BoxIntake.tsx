@@ -8,12 +8,13 @@ import { useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api";
+import { noMpnMessage } from "@/lib/bagCode";
 import { useWsKey } from "@/lib/queryKeys";
 import { boxScanApi, type IntakeBody } from "./api";
 import IntakeRowCard from "./IntakeRowCard";
 import { loadIntakeDraft, newRowId, saveIntakeDraft, type IntakeRow } from "./intakeRows";
 import ScanPanel from "./ScanPanel";
-import type { ScannedBag } from "./scanCode";
+import { isPlainMpnScan, type ScannedBag } from "./scanCode";
 
 const AUTO_SAVE_PREF = "boxIntake:autoSave";
 
@@ -71,15 +72,18 @@ export default function BoxIntake() {
     [patch, refresh, storageId],
   );
 
-  const addRow = useCallback(
+  /** Ask the server what `row` is; a label without an MPN that matches no
+   *  recorded bag waits for the operator to supply one. */
+  const resolveRow = useCallback(
     async (row: IntakeRow) => {
-      setRows(rs => [row, ...rs]);
       try {
         const res = await boxScanApi.resolve(storageId, {
           mpn: row.mpn,
           ...(row.sig ? { bag_signature: row.sig, raw_bag_code: row.raw } : {}),
         });
-        if (res.status === "not_found") {
+        if (res.status === "not_found" && !row.mpn) {
+          patch(row.id, { phase: "needs_mpn", resolve: res });
+        } else if (res.status === "not_found") {
           patch(row.id, { phase: "error", resolve: res, error: `${row.mpn} is not in the library, and the parts provider has no match (or none is configured)` });
         } else if (res.status === "bag_elsewhere") {
           patch(row.id, { phase: "needs_choice", resolve: res });
@@ -104,12 +108,37 @@ export default function BoxIntake() {
     [autoSave, patch, save, storageId],
   );
 
+  const addRow = useCallback(
+    async (row: IntakeRow) => {
+      setRows(rs => [row, ...rs]);
+      await resolveRow(row);
+    },
+    [resolveRow],
+  );
+
+  /** Complete a no-MPN row: keep its quantity, lot and order refs. */
+  const supplyMpn = useCallback(
+    (row: IntakeRow, mpn: string) => {
+      const next = { ...row, mpn, phase: "resolving" as const, error: undefined };
+      patch(row.id, { mpn, phase: "resolving", error: undefined });
+      void resolveRow(next);
+    },
+    [patch, resolveRow],
+  );
+
   const onBag = useCallback(
     (b: ScannedBag) => {
       const dupe = b.sig ? rowsRef.current.find(r => r.sig === b.sig) : undefined;
       if (dupe) {
         setHighlight(dupe.id);
         toast.info("Bag already scanned — edit its count below");
+        return;
+      }
+      // A bare part number scanned right after a label without one
+      // completes that label (the "Mfr. Part No" barcode on the same bag).
+      const waiting = isPlainMpnScan(b) ? rowsRef.current.find(r => r.phase === "needs_mpn") : undefined;
+      if (waiting) {
+        supplyMpn(waiting, b.bag.mpn.trim());
         return;
       }
       void addRow({
@@ -121,10 +150,11 @@ export default function BoxIntake() {
         lotName: b.lotName,
         lotSerial: b.bag.serial ?? null,
         comments: b.comments,
+        ...(b.bag.noMpn ? { noMpnMessage: noMpnMessage(b.bag) } : {}),
         phase: "resolving",
       });
     },
-    [addRow],
+    [addRow, supplyMpn],
   );
 
   const onManual = useCallback(
@@ -198,6 +228,7 @@ export default function BoxIntake() {
             row={r}
             highlighted={highlight === r.id}
             onQuantity={q => patch(r.id, { quantity: q })}
+            onMpn={mpn => supplyMpn(r, mpn)}
             onSave={choice => void save(r, choice)}
             onUpdateCount={() => void updateCount(r)}
             onUndo={() => void undo(r)}

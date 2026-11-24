@@ -8,6 +8,16 @@
  * EOT 0x04). Readers in "function key" mode send them as Ctrl+^, Ctrl+]
  * and Ctrl+D; they are mapped back here so `bagSignature()` sees the same
  * raw bytes the camera decoder would have produced.
+ *
+ * The reader sends a physical key (HID usage), not a character, so on a
+ * non-US layout Ctrl+] arrives with `key` set to whatever that key types
+ * there (")" on Czech QWERTZ) — the separator was silently dropped and the
+ * bag code reached the parser with its fields run together. Separators
+ * are therefore also recognised by `code` (layout-independent).
+ *
+ * AltGr is reported as Ctrl+Alt on Windows; an AltGr character ("#", "@",
+ * "[" … on Czech/German layouts) is a printable character, not a control
+ * code, and is kept as typed.
  */
 
 const CTRL_KEYS: Record<string, string> = {
@@ -18,7 +28,20 @@ const CTRL_KEYS: Record<string, string> = {
   D: "\x04",
 };
 
-export type WedgeKey = { key: string; ctrlKey?: boolean; time: number };
+// Same separators by physical key, for layouts where `key` differs.
+const CTRL_CODES: Record<string, string> = {
+  BracketRight: "\x1d", // GS
+  Digit6: "\x1e", // RS (Ctrl+Shift+6 = Ctrl+^)
+  KeyD: "\x04", // EOT
+};
+
+export type WedgeKey = { key: string; code?: string; ctrlKey?: boolean; altKey?: boolean; time: number };
+
+/** The control character a Ctrl chord stands for, or undefined. */
+export function ctrlSeparator(k: Pick<WedgeKey, "key" | "code" | "ctrlKey" | "altKey">): string | undefined {
+  if (!k.ctrlKey || k.altKey) return undefined;
+  return CTRL_KEYS[k.key] ?? (k.code ? CTRL_CODES[k.code] : undefined);
+}
 
 export class WedgeBuffer {
   private buf = "";
@@ -39,8 +62,8 @@ export class WedgeBuffer {
       this.buf = "";
       return code.length >= this.minLength ? code : null;
     }
-    if (k.ctrlKey) {
-      const ch = CTRL_KEYS[k.key];
+    if (k.ctrlKey && !k.altKey) {
+      const ch = ctrlSeparator(k);
       if (ch) this.buf += ch;
       return null;
     }
@@ -61,11 +84,17 @@ export function listenForWedgeScans(onScan: (code: string) => void): () => void 
   const buffer = new WedgeBuffer();
   const handler = (e: KeyboardEvent) => {
     if (isEditable(e.target)) return;
-    const code = buffer.push({ key: e.key, ctrlKey: e.ctrlKey, time: e.timeStamp || performance.now() });
+    const code = buffer.push({
+      key: e.key,
+      code: e.code,
+      ctrlKey: e.ctrlKey,
+      altKey: e.altKey,
+      time: e.timeStamp || performance.now(),
+    });
     if (code !== null) {
       e.preventDefault();
       onScan(code);
-    } else if (e.ctrlKey && CTRL_KEYS[e.key]) {
+    } else if (ctrlSeparator(e)) {
       // Ctrl+D would otherwise open the bookmark dialog mid-scan.
       e.preventDefault();
     }
