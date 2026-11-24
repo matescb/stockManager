@@ -56,10 +56,36 @@ What each row tells you:
 - **Already in this box**: this bag was scanned into this box before. Only its count changes if you edit it.
 - **Recorded in another box**: the bag is on record somewhere else. Click **Move here** if you moved it, or **Add as new bag** if it is a second bag with an identical label.
 - **Not in the library**: the provider has no match for the MPN. Use **Create part…** and then add it by MPN.
+- **This label has no manufacturer part number**: see [When a label needs a second scan](#when-a-label-needs-a-second-scan).
 
 Untick **Save each scan immediately** if you would rather check the list first and then click **Save all**. **Undo** sets a just-added bag back to zero.
 
 Scanning a box's printed label switches to that box.
+
+### Scan sounds
+
+Intake and Audit tell you how each scan went by sound:
+
+- **One short beep**: the scan worked. With the camera you hear only its click when it reads the code, with no extra beep.
+- **A low buzz**: it failed. The code was not a bag label, or the part is not in your library and your parts provider has no match. Look at the list for the reason.
+- **Two rising tones**: the app needs one more scan for this bag. See below.
+
+Click **Sound on** / **Sound off** next to **Camera on/off** to turn the sounds off or back on. The setting is remembered in this browser. Sound starts after your first click or key press on the page, because browsers block sound before then.
+
+### When a label needs a second scan
+
+Some labels leave something out. When you put your own part number on a Mouser order, Mouser prints only that number in the bag's 2D code, not the maker's part number. Some labels have no quantity.
+
+When that happens:
+
+1. You hear two rising tones, different from the success beep.
+2. A yellow box at the top of the list says what to scan next. For example: **Scan the Mfr. Part No barcode on this label (Murata · qty 100 · Mouser order 40489709 line 027)**. The order and line tell you where to look the part up on mouser.com if the label has no barcode for it.
+3. Scan that barcode (the plain 1D one) with the same reader or the camera, or type the answer in the yellow box and click **Use**.
+4. The bag carries on as normal: it is matched in your library or looked up with your parts provider, then saved. It keeps the quantity, order, line and invoice from the 2D label. Re-scanning that 2D label later finds this bag.
+
+If the label has no quantity, the yellow box asks you to **Scan or type the quantity** instead. A reader may ignore very short codes such as `10`, so type small numbers.
+
+Press **Esc** or click **Cancel** to stop waiting. The bag stays in the list with its own MPN box, so you can finish it later. If you scan another bag's 2D label while the app is waiting, the app stops waiting and adds the new bag. The earlier bag stays in the list with its MPN box.
 
 ## Check a box (Audit)
 
@@ -77,6 +103,14 @@ Use this to make the records match what is really in the box. Open the box and c
 Stock entered before bag tracking existed shows as **old record, not tracked per bag** and is written off by default. Scan the actual bags to replace it.
 
 Progress is kept if you reload the page. **Start over** clears it.
+
+A bag whose label has no manufacturer part number shows under **Found here, not recorded**, and the app waits for its **Mfr. Part No** barcode the same way as in [Intake](#when-a-label-needs-a-second-scan). You can also type the MPN into the bag's own box and click **Look up**.
+
+## Set up a USB barcode reader
+
+Bag labels hold several fields separated by invisible control characters. A reader set up as a keyboard sends each separator as a key combination (Ctrl+]). The app understands that on any keyboard layout, including Czech.
+
+If scans still come through with the fields run together, the app usually recovers them, but not always. In the reader's setup guide, look for a setting such as **Transmit GS as FNC1 / ASCII 29** or **Function key mapping** and turn it on. If the reader can only send a text stand-in, choose `{GS}`.
 
 ## Set a default location for a part
 
@@ -105,3 +139,4 @@ You cannot archive a location that is set as a part's default storage. Either ch
 - **The receive form's Storage dropdown doesn't list a bin you expect** — it's archived, or marked **Mark as full**. Open the location's Settings tab and untick **Mark as full**, or restore from archive.
 - **Adding a part to a single-part bin fails** — the bin already has a different part. Move the existing stock out, or pick another bin.
 - **You can't archive a bin** — a part has it set as its default mandatory storage. Open the part's Settings tab and clear **Default storage location**, or untick **mandatory**.
+- **A scanned bag shows the wrong order number or quantity** — the reader dropped the label's separators. See [Set up a USB barcode reader](#set-up-a-usb-barcode-reader).

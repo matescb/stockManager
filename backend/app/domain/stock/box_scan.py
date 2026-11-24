@@ -34,6 +34,7 @@ from app.domain.lots.models import Lot
 from app.domain.parts.models import Part
 from app.domain.parts.services.bag_signature import compute_bag_signature
 from app.domain.parts.services.mpn_unique import active_part_by_mpn, is_mpn_unique_violation
+from app.domain.parts.services.provider_cache import BAG_LABEL_MESSAGE, is_bag_label_code
 from app.domain.parts.services.provider_import import create_from_provider_lookup
 from app.domain.stock.models import StockEntry
 from app.domain.stock.schemas import (
@@ -202,7 +203,7 @@ def resolve_scan(
             return _resolved("bag_here" if info["here"] else "bag_elsewhere", part=part, bag=info)
 
     mpn = (payload.mpn or "").strip()
-    if not mpn:
+    if not mpn or is_bag_label_code(mpn):
         return _resolved("not_found")
     part = active_part_by_mpn(db, workspace_id=workspace_id, mpn=mpn)
     if part is not None:
@@ -291,6 +292,8 @@ def _part_for_intake(
     mpn = (payload.mpn or "").strip()
     if not mpn:
         raise BoxScanError(ErrorCodes.BOX_SCAN_NO_PART, "part_id or mpn is required", status=422)
+    if is_bag_label_code(mpn):
+        raise BoxScanError(ErrorCodes.BOX_SCAN_NO_PART, BAG_LABEL_MESSAGE, status=422)
     p = active_part_by_mpn(db, workspace_id=workspace_id, mpn=mpn)
     if p is not None:
         return p, False

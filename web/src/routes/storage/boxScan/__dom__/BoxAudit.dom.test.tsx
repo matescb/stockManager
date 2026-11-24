@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { bagSignature } from "@/lib/bagCode";
-import { apiGet, apiPost, RAW_A, RAW_B } from "./mocks";
+import { apiGet, apiPost, RAW_A, RAW_B, RAW_NO_1P } from "./mocks";
 
 vi.mock("@/instrument", () => ({}));
 vi.mock("@/lib/auth", () => ({ useAuth: () => ({ workspaceId: "ws-1" }) }));
@@ -11,6 +11,12 @@ vi.mock("@/lib/queryKeys", () => ({ useWsKey: (...a: unknown[]) => ["ws-1", ...a
 vi.mock("@/components/scanner/Scanner", () => ({ default: () => <div data-testid="camera" /> }));
 vi.mock("@/components/ConfirmDialog", () => ({ useConfirm: () => async () => true }));
 vi.mock("sonner", () => ({ toast: { info: vi.fn(), error: vi.fn(), success: vi.fn() } }));
+vi.mock("@/components/scanner/scanSounds", () => ({
+  playScanSound: vi.fn(),
+  isScanSoundMuted: () => false,
+  setScanSoundMuted: vi.fn(),
+  primeScanAudio: () => () => {},
+}));
 vi.mock("@/lib/api", async () => {
   const m = await import("./mocks");
   return { api: { get: m.apiGet, post: m.apiPost }, ApiError: m.FakeApiError };
@@ -103,5 +109,24 @@ describe("BoxAudit", () => {
     expect(await screen.findByText(/Found here, not recorded/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Add to box/ }));
     await waitFor(() => expect(apiPost).toHaveBeenCalledWith("/storage/box1/intake", expect.objectContaining({ part_id: "p1", quantity: 10 })));
+  });
+
+  it("asks for the MPN of an unrecorded bag whose label has none, via a follow-up scan", async () => {
+    await setup();
+    apiPost.mockImplementation((url: string, body: { mpn?: string }) =>
+      url.endsWith("/scan/resolve")
+        ? Promise.resolve(body.mpn ? { status: "existing_part", part, bag: null, provider: null } : { status: "not_found", part: null, bag: null, provider: null })
+        : Promise.resolve({ status: "added", part, part_created: false, lot_id: "lm", quantity: 100, moved_from: [] }),
+    );
+    scan(RAW_NO_1P);
+
+    expect((await screen.findByTestId("follow-up-prompt")).textContent).toContain("Scan the Mfr. Part No barcode on this label (Murata · qty 100");
+    expect(screen.getByText(/has no manufacturer part number/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: /Add to box/ }) as HTMLButtonElement).disabled).toBe(true);
+    scan("LM358");
+    await screen.findByText(/Part is in the library/);
+    expect(screen.queryByTestId("follow-up-prompt")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Add to box/ }));
+    await waitFor(() => expect(apiPost).toHaveBeenCalledWith("/storage/box1/intake", expect.objectContaining({ part_id: "p1", quantity: 100 })));
   });
 });

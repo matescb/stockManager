@@ -320,6 +320,25 @@ def _record_outcome(breaker: _CircuitBreaker, call: "Callable[[], dict]") -> dic
     return result
 
 
+# An ECIA / ANSI MH10.8.2 bag-label envelope starts with this. Such a
+# string is never a manufacturer part number — a client that sends one
+# has failed to parse a bag code (e.g. a label with no 1P field), and the
+# provider would only spend metered quota on a guaranteed miss.
+BAG_LABEL_HEADER = "[)>"
+BAG_LABEL_MESSAGE = (
+    "that is a bag label code, not a manufacturer part number "
+    "(the label carries no 1P field)"
+)
+
+
+def is_bag_label_code(mpn: str | None) -> bool:
+    return (mpn or "").strip().startswith(BAG_LABEL_HEADER)
+
+
+def _bag_label_refusal() -> "MpnLookupResult":
+    return {"found": False, "result": None, "message": BAG_LABEL_MESSAGE}
+
+
 def lookup_with_cache(provider: "PartsProvider", mpn: str) -> "MpnLookupResult":
     """Call ``provider.lookup_mpn(mpn)`` with TTL caching and circuit-breaking.
 
@@ -329,6 +348,8 @@ def lookup_with_cache(provider: "PartsProvider", mpn: str) -> "MpnLookupResult":
     * Otherwise, call the provider, update the cache, and update the breaker.
     """
     normalized_mpn = mpn.strip()
+    if is_bag_label_code(normalized_mpn):
+        return _bag_label_refusal()
     breaker = _get_breaker(provider.name, provider_account(provider))
 
     # 1. Check the cache first (before the breaker so cached hits bypass both).
@@ -367,6 +388,8 @@ def lookup_fresh(provider: "PartsProvider", mpn: str) -> "MpnLookupResult":
     ``lookup_with_cache`` calls see the fresh value.
     """
     normalized_mpn = mpn.strip()
+    if is_bag_label_code(normalized_mpn):
+        return _bag_label_refusal()
     breaker = _get_breaker(provider.name, provider_account(provider))
 
     # Circuit breaker still applies — a manual refresh into a broken upstream

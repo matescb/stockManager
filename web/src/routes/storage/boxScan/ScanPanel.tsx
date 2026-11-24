@@ -3,15 +3,16 @@
  * Bluetooth keyboard-wedge reader, pasted bag code, and "add by MPN".
  * Scanning a printed box label switches to the same mode for that box.
  */
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type React from "react";
 import { useNavigate } from "react-router-dom";
-import { Camera, CameraOff, Keyboard, Plus } from "lucide-react";
+import { Camera, CameraOff, Keyboard, Plus, Volume2, VolumeX } from "lucide-react";
 import { toast } from "sonner";
 import Scanner, { type ScanResult } from "@/components/scanner/Scanner";
 import { useKeyboardWedge } from "@/components/scanner/useKeyboardWedge";
+import { isScanSoundMuted, playScanSound, primeScanAudio, setScanSoundMuted } from "@/components/scanner/scanSounds";
 import { api, ApiError } from "@/lib/api";
-import { classifyScan, type ScannedBag } from "./scanCode";
+import { classifyScan, type ScanSource, type ScannedBag } from "./scanCode";
 
 const SYMBOLOGIES = ["DataMatrix", "QR"] as const;
 const CAMERA_PREF = "boxScan:camera";
@@ -35,18 +36,28 @@ type Props = {
 export default function ScanPanel({ boxId, mode, onBag, onManual }: Props) {
   const navigate = useNavigate();
   const [camera, setCamera] = useState(readCameraPref);
+  const [muted, setMuted] = useState(isScanSoundMuted);
+
+  // Browsers only let audio start after a user gesture.
+  useEffect(() => primeScanAudio(), []);
+
+  function toggleMuted() {
+    setScanSoundMuted(!muted);
+    setMuted(!muted);
+  }
   const [code, setCode] = useState("");
   const [mpn, setMpn] = useState("");
   const [qty, setQty] = useState("");
 
   const handle = useCallback(
-    async (raw: string) => {
-      const scanned = await classifyScan(raw);
+    async (raw: string, source: ScanSource) => {
+      const scanned = await classifyScan(raw, source);
       if (scanned.kind === "bag") {
         onBag(scanned);
         return;
       }
       if (scanned.kind === "unreadable") {
+        playScanSound("error");
         toast.error("Code not recognised as a part bag");
         return;
       }
@@ -66,8 +77,9 @@ export default function ScanPanel({ boxId, mode, onBag, onManual }: Props) {
     [boxId, mode, navigate, onBag],
   );
 
-  useKeyboardWedge(handle);
-  const onCamera = useCallback((s: ScanResult) => void handle(s.data), [handle]);
+  const onWedge = useCallback((raw: string) => void handle(raw, "wedge"), [handle]);
+  useKeyboardWedge(onWedge);
+  const onCamera = useCallback((s: ScanResult) => void handle(s.data, "camera"), [handle]);
 
   function toggleCamera() {
     const next = !camera;
@@ -82,7 +94,7 @@ export default function ScanPanel({ boxId, mode, onBag, onManual }: Props) {
   function submitCode(e: React.FormEvent) {
     e.preventDefault();
     if (!code.trim()) return;
-    void handle(code);
+    void handle(code, "paste");
     setCode("");
   }
 
@@ -101,10 +113,22 @@ export default function ScanPanel({ boxId, mode, onBag, onManual }: Props) {
         <div className="text-xs text-muted inline-flex items-center gap-1.5">
           <Keyboard size={14} /> USB / Bluetooth reader ready — just scan.
         </div>
-        <button type="button" className="btn btn-sm inline-flex items-center gap-1" onClick={toggleCamera}>
-          {camera ? <CameraOff size={14} /> : <Camera size={14} />}
-          {camera ? "Camera off" : "Camera on"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="btn btn-sm inline-flex items-center gap-1"
+            aria-pressed={muted}
+            title={muted ? "Scan sounds are off" : "Scan sounds are on"}
+            onClick={toggleMuted}
+          >
+            {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+            {muted ? "Sound off" : "Sound on"}
+          </button>
+          <button type="button" className="btn btn-sm inline-flex items-center gap-1" onClick={toggleCamera}>
+            {camera ? <CameraOff size={14} /> : <Camera size={14} />}
+            {camera ? "Camera off" : "Camera on"}
+          </button>
+        </div>
       </div>
       {camera && <Scanner onScan={onCamera} symbologies={SYMBOLOGIES} className="flex flex-col h-[40vh]" />}
       <form className="flex gap-2" onSubmit={submitCode}>

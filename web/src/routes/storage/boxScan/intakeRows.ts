@@ -1,7 +1,7 @@
 /** Row model + per-box session draft for the intake page. */
 import type { IntakeResult, ResolveResult } from "./api";
 
-export type IntakePhase = "resolving" | "needs_choice" | "ready" | "saving" | "saved" | "error";
+export type IntakePhase = "resolving" | "needs_mpn" | "needs_choice" | "ready" | "saving" | "saved" | "error";
 
 export type IntakeRow = {
   id: string;
@@ -14,6 +14,14 @@ export type IntakeRow = {
   lotName?: string | null;
   lotSerial?: string | null;
   comments?: string | null;
+  /** Set when the scanned label had no 1P — the message to show while
+   *  the operator supplies the MPN. */
+  noMpnMessage?: string;
+  /** Which bag, for a follow-up prompt ("Murata · qty 100 · Mouser order …"). */
+  context?: string;
+  /** Last scan for this row came from the camera (which already clicked):
+   *  no success beep. */
+  camera?: boolean;
   phase: IntakePhase;
   resolve?: ResolveResult;
   result?: Pick<IntakeResult, "status" | "lot_id" | "part" | "part_created">;

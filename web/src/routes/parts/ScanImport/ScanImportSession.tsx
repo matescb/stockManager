@@ -17,7 +17,7 @@ import type React from "react";
 import { ClipboardPaste, Plus } from "lucide-react";
 import Scanner, { type ScanResult } from "@/components/scanner/Scanner";
 import { api, ApiError } from "@/lib/api";
-import { parseBagCode, bagSignature } from "@/lib/bagCode";
+import { parseBagCode, bagSignature, noMpnMessage } from "@/lib/bagCode";
 import type { MpnLookupResult, Part } from "@/types";
 import {
   SCAN_IMPORT_SYMBOLOGIES,
@@ -92,13 +92,16 @@ export default function ScanImportSession({
       const parsed = parseBagCode(s.data);
       const sig = await bagSignature(s.data);
       const mpn = parsed.mpn.trim();
-      if (!mpn) return;
+      // A bag label without a 1P still gets a row: it may be a bag already
+      // in stock (quick-remove works by signature), and otherwise the
+      // operator needs to be told why it can't be looked up.
+      if (!mpn && !parsed.noMpn) return;
 
       // Dedup by signature first, MPN as fallback.
       if (sig && seenSigs.current.has(sig)) return;
-      if (!sig && seenMpns.current.has(mpn)) return;
+      if (!sig && (!mpn || seenMpns.current.has(mpn))) return;
       if (sig) seenSigs.current.add(sig);
-      seenMpns.current.add(mpn);
+      if (mpn) seenMpns.current.add(mpn);
 
       const rowId = newRowId();
       const initialQty = parsed.quantity ?? 0;
@@ -125,6 +128,13 @@ export default function ScanImportSession({
             });
             return;
           }
+        }
+
+        // Never send a label without an MPN to the provider: it is a
+        // guaranteed miss that spends metered quota.
+        if (!mpn) {
+          setState({ kind: "error", message: noMpnMessage(parsed) });
+          return;
         }
 
         // 2. Same-MPN duplicate.

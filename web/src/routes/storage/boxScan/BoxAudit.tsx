@@ -13,6 +13,8 @@ import { api, ApiError } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
 import { formatQuantity } from "@/lib/format";
 import { useConfirm } from "@/components/ConfirmDialog";
+import { bagContext, noMpnMessage } from "@/lib/bagCode";
+import { playScanSound } from "@/components/scanner/scanSounds";
 import type { StorageLocation } from "@/types";
 import { boxScanApi, bucketKey, type BoxBag } from "./api";
 import AuditExtras, { type ExtraBag } from "./AuditExtras";
@@ -30,6 +32,8 @@ import {
 import { newRowId } from "./intakeRows";
 import ScanPanel from "./ScanPanel";
 import type { ScannedBag } from "./scanCode";
+import { parseFollowUpAnswer, type FollowUp } from "./followUp";
+import FollowUpPrompt from "./FollowUpPrompt";
 
 function errorText(e: unknown): string {
   return e instanceof ApiError ? e.userMessage : "Request failed";
@@ -70,6 +74,11 @@ export default function BoxAudit() {
   bagsRef.current = bags;
   const extrasRef = useRef(extras);
   extrasRef.current = extras;
+  // Audit asks only for a missing MPN: an unrecorded bag's count comes
+  // from the label or the bag's existing record, and is editable inline.
+  const [followUp, setFollowUp] = useState<FollowUp | null>(null);
+  const followUpRef = useRef(followUp);
+  followUpRef.current = followUp;
 
   useEffect(() => saveAuditDraft(storageId, draft), [storageId, draft]);
   useEffect(() => {
@@ -91,13 +100,78 @@ export default function BoxAudit() {
     });
 
   const setMissing = (k: string, m: MissingAction) => setDraft(d => ({ ...d, missing: { ...d.missing, [k]: m } }));
-  const patchExtra = (id: string, p: Partial<ExtraBag>) => setExtras(xs => xs.map(x => (x.id === id ? { ...x, ...p } : x)));
+  const patchExtra = useCallback(
+    (id: string, p: Partial<ExtraBag>) => setExtras(xs => xs.map(x => (x.id === id ? { ...x, ...p } : x))),
+    [],
+  );
+
+  /** Look a not-recorded bag up (library only — an audit never spends
+   *  provider quota). A label without an MPN waits for one. */
+  const resolveExtra = useCallback(
+    async (x: ExtraBag) => {
+      try {
+        const res = await boxScanApi.resolve(storageId, {
+          mpn: x.mpn,
+          provider_lookup: false,
+          ...(x.sig ? { bag_signature: x.sig, raw_bag_code: x.raw } : {}),
+        });
+        const needsMpn = res.status === "not_found" && !x.mpn;
+        patchExtra(x.id, {
+          resolve: res,
+          busy: false,
+          needsMpn,
+          quantity: x.quantity || res.bag?.locations[0]?.quantity || 0,
+        });
+        if (needsMpn) {
+          setFollowUp({ rowId: x.id, missing: "mpn", context: x.context ?? "" });
+          playScanSound("needs_info");
+        } else if (!x.camera) {
+          playScanSound("success");
+        }
+      } catch (e) {
+        playScanSound("error");
+        patchExtra(x.id, { busy: false, error: errorText(e) });
+      }
+    },
+    [patchExtra, storageId],
+  );
+
+  const supplyMpn = useCallback(
+    (x: ExtraBag, mpn: string, camera = false) => {
+      patchExtra(x.id, { mpn, camera, busy: true, needsMpn: false, error: undefined });
+      void resolveExtra({ ...x, mpn, camera });
+    },
+    [patchExtra, resolveExtra],
+  );
+
+  const answerFollowUp = useCallback(
+    (input: ScannedBag | string) => {
+      const pending = followUpRef.current;
+      const x = pending && extrasRef.current.find(e => e.id === pending.rowId);
+      if (!pending || !x) {
+        setFollowUp(null);
+        return;
+      }
+      const answer = parseFollowUpAnswer(pending.missing, input);
+      if (!answer || !("mpn" in answer)) {
+        playScanSound("error");
+        toast.error("That is not a part number");
+        return;
+      }
+      setFollowUp(null);
+      supplyMpn(x, answer.mpn, typeof input !== "string" && input.source === "camera");
+    },
+    [supplyMpn],
+  );
+
+  const cancelFollowUp = useCallback(() => setFollowUp(null), []);
 
   const onBag = useCallback(
     async (s: ScannedBag) => {
       const known = findBySignature(bagsRef.current, s.sig);
       if (known) {
         if (bucketKey(known) in draft.counted) toast.info("Already scanned");
+        if (s.source !== "camera") playScanSound("success");
         markScanned(known);
         return;
       }
@@ -105,30 +179,34 @@ export default function BoxAudit() {
         toast.info("Already scanned");
         return;
       }
+      if (followUpRef.current) {
+        // Same rule as intake: a plain scan answers, a new 2D label
+        // abandons the prompt and is handled as its own bag.
+        if (!s.raw.trim().startsWith("[)>")) {
+          answerFollowUp(s);
+          return;
+        }
+        setFollowUp(null);
+        toast.info("The previous bag still needs its part number — finish it in the list");
+      }
       const extra: ExtraBag = {
         id: newRowId(),
         mpn: s.bag.mpn.trim(),
         quantity: s.bag.quantity ?? 0,
         sig: s.sig,
         raw: s.raw,
+        camera: s.source === "camera",
         lotName: s.lotName,
         lotSerial: s.bag.serial ?? null,
         comments: s.comments,
+        context: bagContext(s.bag),
+        ...(s.bag.noMpn ? { noMpnMessage: noMpnMessage(s.bag) } : {}),
         busy: true,
       };
       setExtras(xs => [extra, ...xs]);
-      try {
-        const res = await boxScanApi.resolve(storageId, {
-          mpn: extra.mpn,
-          provider_lookup: false,
-          ...(s.sig ? { bag_signature: s.sig, raw_bag_code: s.raw } : {}),
-        });
-        patchExtra(extra.id, { resolve: res, busy: false, quantity: extra.quantity || res.bag?.locations[0]?.quantity || 0 });
-      } catch (e) {
-        patchExtra(extra.id, { busy: false, error: errorText(e) });
-      }
+      await resolveExtra(extra);
     },
-    [draft.counted, markScanned, storageId],
+    [answerFollowUp, draft.counted, markScanned, resolveExtra],
   );
 
   async function addExtra(x: ExtraBag) {
@@ -146,6 +224,7 @@ export default function BoxAudit() {
       setExtras(xs => xs.filter(e => e.id !== x.id));
       await qc.invalidateQueries({ queryKey: boxKey });
     } catch (e) {
+      playScanSound("error");
       patchExtra(x.id, { busy: false, error: errorText(e) });
     }
   }
@@ -194,6 +273,7 @@ export default function BoxAudit() {
     <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
       <ScanPanel boxId={storageId} mode="audit" onBag={s => void onBag(s)} />
       <div className="space-y-4">
+        {followUp && <FollowUpPrompt followUp={followUp} onAnswer={answerFollowUp} onCancel={cancelFollowUp} />}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="text-sm">
             <strong>{scanned.length}</strong> of {bags.length} bags scanned
@@ -219,7 +299,14 @@ export default function BoxAudit() {
           extras={extras}
           onQuantity={(id, q) => patchExtra(id, { quantity: q })}
           onAdd={x => void addExtra(x)}
-          onDismiss={id => setExtras(xs => xs.filter(x => x.id !== id))}
+          onMpn={(x, mpn) => {
+            if (followUp?.rowId === x.id) setFollowUp(null);
+            supplyMpn(x, mpn);
+          }}
+          onDismiss={id => {
+            if (followUp?.rowId === id) setFollowUp(null);
+            setExtras(xs => xs.filter(x => x.id !== id));
+          }}
         />
 
         <section className="space-y-2">

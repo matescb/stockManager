@@ -18,6 +18,7 @@ Shared frontend infra: HTTP client, auth context, theme, query keys, mutations h
 | `schemas.ts` | Zod schemas mirroring API responses |
 | `format.ts` | Date / money / quantity formatters (locale-pinned). `formatQuantity` is the single seam for every quantity the UI shows — see [quantities](../../../docs/frontend/quantities.md) |
 | `bagCode.ts` | MIL-STD-130N parser + normaliser; produces the same signature the server computes |
+| `bagCodeSegment.ts` | Field recovery for a bag code whose GS/RS separators were lost (value-shape scoring); parsing only, never touches the signature |
 | `providerCatalog.ts` | Catalog vs spec custom-field key list (mirror of the server-side list) |
 | `partType.ts` | How `part_type` is written on screen — `linked · DigiKey` for a provider-backed part |
 | `cn.ts` | `cn(...)` className combiner |

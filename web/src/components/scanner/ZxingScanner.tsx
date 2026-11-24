@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { readBarcodes, prepareZXingModule, type ReadInputBarcodeFormat } from "zxing-wasm/reader";
 import { useAuth } from "@/lib/auth";
 import { readScannerDevicePreference, scannerDevicePreferenceKey } from "./storage";
+import { playScanBeep } from "./scanSounds";
 
 /**
  * Open-source ZXing-C++ wasm decoder. Default scanner backend so workspaces
@@ -59,43 +60,6 @@ const DEFAULT_SYMBOLOGIES = ["Code128", "Code39", "QR", "DataMatrix", "PDF417"];
 
 const SCAN_PERIOD_MS = 160;        // ~6 Hz; ZXing on a recent phone returns in ~30-80ms
 const DUPLICATE_WINDOW_MS = 1200;  // suppress repeated reads of the same code
-
-/**
- * Audible + haptic feedback when a code lands. Scandit's SDK does this
- * for free; with the open-source decoder we have to wire it up ourselves.
- * A short 880Hz square-ish tone via WebAudio + a 50ms vibration. Both are
- * best-effort: phones on silent or browsers without WebAudio just skip.
- */
-let _audioCtx: AudioContext | null = null;
-function scanFeedback(): void {
-  try {
-    const Ctx: typeof AudioContext | undefined =
-      window.AudioContext ?? window.webkitAudioContext;
-    if (Ctx) {
-      // Reuse a single AudioContext — Chrome caps the count per tab and
-      // every new context is left running until GC.
-      if (!_audioCtx) _audioCtx = new Ctx();
-      const ctx = _audioCtx;
-      // iOS / mobile Safari suspends the context until a user gesture; the
-      // first tap that mounts the scanner usually counts. Resume on each
-      // beep to be safe — no-op if already running.
-      if (ctx.state === "suspended") ctx.resume().catch(() => {});
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "square";
-      osc.frequency.value = 880;
-      gain.gain.setValueAtTime(0.08, ctx.currentTime);
-      // ~80ms decay envelope so it sounds like a single click, not a tone.
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.08);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.09);
-    }
-  } catch { /* WebAudio unavailable / blocked — skip */ }
-  try {
-    if (typeof navigator.vibrate === "function") navigator.vibrate(50);
-  } catch { /* vibrate API absent — skip */ }
-}
 
 // Software-crop range. Above ~4× the decoder is fed visibly-pixelated input
 // and the slider stops being useful.
@@ -319,7 +283,7 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
               if (!isDup) {
                 lastHitRef.current = { data: hit.text, t: now };
                 const sym = PUBLIC_NAME_BY_ZXING[hit.format] ?? hit.format ?? "?";
-                scanFeedback();
+                playScanBeep();
                 onScanRef.current({ data: hit.text, symbology: sym });
               }
             }

@@ -261,12 +261,12 @@ function ScanCard({
   return (
     <div data-testid={row.state.kind === "bag_rescan" ? "scan-row-bag-rescan" : undefined} className="rounded-md border border-border bg-panel2/40 p-3">
       <div className="flex items-start justify-between gap-2">
-        <div className="font-mono text-sm">{row.bag.mpn}</div>
+        <div className="font-mono text-sm">{row.bag.mpn || "No part number on label"}</div>
         <button
           type="button"
           className="btn-ghost btn-sm"
           onClick={onRemove}
-          aria-label={`Remove ${row.bag.mpn}`}
+          aria-label={`Remove ${row.bag.mpn || "scan"}`}
         >
           <Trash2 size={14} className="text-danger" />
         </button>

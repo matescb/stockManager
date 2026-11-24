@@ -8,8 +8,12 @@ import { useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api";
+import { bagContext, noMpnMessage } from "@/lib/bagCode";
+import { playScanSound } from "@/components/scanner/scanSounds";
 import { useWsKey } from "@/lib/queryKeys";
 import { boxScanApi, type IntakeBody } from "./api";
+import { firstMissing, parseFollowUpAnswer, type FollowUp } from "./followUp";
+import FollowUpPrompt from "./FollowUpPrompt";
 import IntakeRowCard from "./IntakeRowCard";
 import { loadIntakeDraft, newRowId, saveIntakeDraft, type IntakeRow } from "./intakeRows";
 import ScanPanel from "./ScanPanel";
@@ -36,8 +40,11 @@ export default function BoxIntake() {
   const [rows, setRows] = useState<IntakeRow[]>(() => loadIntakeDraft(storageId));
   const [autoSave, setAutoSave] = useState(readAutoSave);
   const [highlight, setHighlight] = useState<string | null>(null);
+  const [followUp, setFollowUp] = useState<FollowUp | null>(null);
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
+  const followUpRef = useRef(followUp);
+  followUpRef.current = followUp;
 
   useEffect(() => saveIntakeDraft(storageId, rows), [storageId, rows]);
 
@@ -65,26 +72,44 @@ export default function BoxIntake() {
         patch(row.id, { phase: "saved", result: res, savedQuantity: row.quantity });
         void refresh();
       } catch (e) {
+        playScanSound("error");
         patch(row.id, { phase: "error", error: errorText(e) });
       }
     },
     [patch, refresh, storageId],
   );
 
-  const addRow = useCallback(
+  /** Hold `row` as the one pending bag if a scanned label left something
+   *  out, with the distinct "need more info" tone. */
+  const askFollowUp = useCallback((row: IntakeRow) => {
+    const missing = row.raw ? firstMissing(row) : null;
+    if (!missing) return;
+    setFollowUp({ rowId: row.id, missing, context: row.context ?? "" });
+    setHighlight(row.id);
+    playScanSound("needs_info");
+  }, []);
+
+  /** Ask the server what `row` is; a label without an MPN that matches no
+   *  recorded bag waits for the operator to supply one. */
+  const resolveRow = useCallback(
     async (row: IntakeRow) => {
-      setRows(rs => [row, ...rs]);
       try {
         const res = await boxScanApi.resolve(storageId, {
           mpn: row.mpn,
           ...(row.sig ? { bag_signature: row.sig, raw_bag_code: row.raw } : {}),
         });
-        if (res.status === "not_found") {
+        if (res.status === "not_found" && !row.mpn) {
+          patch(row.id, { phase: "needs_mpn", resolve: res });
+          askFollowUp(row);
+        } else if (res.status === "not_found") {
+          playScanSound("error");
           patch(row.id, { phase: "error", resolve: res, error: `${row.mpn} is not in the library, and the parts provider has no match (or none is configured)` });
         } else if (res.status === "bag_elsewhere") {
+          if (!row.camera) playScanSound("success");
           patch(row.id, { phase: "needs_choice", resolve: res });
         } else if (res.status === "bag_here" && res.bag) {
           const q = res.bag.quantity_here;
+          if (!row.camera) playScanSound("success");
           patch(row.id, {
             phase: "saved",
             resolve: res,
@@ -95,13 +120,69 @@ export default function BoxIntake() {
         } else {
           const ready = { ...row, resolve: res, phase: "ready" as const };
           patch(row.id, { phase: "ready", resolve: res });
-          if (autoSave) await save(ready);
+          if (!(row.quantity > 0)) {
+            askFollowUp(ready);
+          } else {
+            if (!row.camera) playScanSound("success");
+            if (autoSave) await save(ready);
+          }
         }
       } catch (e) {
+        playScanSound("error");
         patch(row.id, { phase: "error", error: errorText(e) });
       }
     },
-    [autoSave, patch, save, storageId],
+    [askFollowUp, autoSave, patch, save, storageId],
+  );
+
+  const addRow = useCallback(
+    async (row: IntakeRow) => {
+      setRows(rs => [row, ...rs]);
+      await resolveRow(row);
+    },
+    [resolveRow],
+  );
+
+  /** Complete a no-MPN row: keep its quantity, lot, order refs and the
+   *  signature of the original 2D label. */
+  const supplyMpn = useCallback(
+    (row: IntakeRow, mpn: string, camera = false) => {
+      const next = { ...row, mpn, camera, phase: "resolving" as const, error: undefined };
+      patch(row.id, { mpn, phase: "resolving", error: undefined });
+      void resolveRow(next);
+    },
+    [patch, resolveRow],
+  );
+
+  const cancelFollowUp = useCallback(() => setFollowUp(null), []);
+
+  /** Apply a scanned or typed answer to the pending bag. Returns false when
+   *  the input does not answer the question (the prompt stays). */
+  const answerFollowUp = useCallback(
+    (input: ScannedBag | string): boolean => {
+      const pending = followUpRef.current;
+      const row = pending && rowsRef.current.find(r => r.id === pending.rowId);
+      if (!pending || !row) {
+        setFollowUp(null);
+        return false;
+      }
+      const answer = parseFollowUpAnswer(pending.missing, input);
+      if (!answer) {
+        playScanSound("error");
+        toast.error(pending.missing === "quantity" ? "That is not a quantity — scan or type a number" : "That is not a part number");
+        return false;
+      }
+      setFollowUp(null);
+      if ("mpn" in answer) {
+        supplyMpn(row, answer.mpn, typeof input !== "string" && input.source === "camera");
+      } else {
+        const next = { ...row, quantity: answer.quantity };
+        patch(row.id, { quantity: answer.quantity });
+        if (autoSave && row.phase === "ready") void save(next);
+      }
+      return true;
+    },
+    [autoSave, patch, save, supplyMpn],
   );
 
   const onBag = useCallback(
@@ -112,19 +193,32 @@ export default function BoxIntake() {
         toast.info("Bag already scanned — edit its count below");
         return;
       }
+      if (followUpRef.current) {
+        // A plain scan answers the pending bag. A new 2D label abandons the
+        // prompt (the bag keeps its inline entry box) and is its own bag.
+        if (!b.raw.trim().startsWith("[)>")) {
+          answerFollowUp(b);
+          return;
+        }
+        setFollowUp(null);
+        toast.info("The previous bag still needs its part number — finish it in the list");
+      }
       void addRow({
         id: newRowId(),
         mpn: b.bag.mpn.trim(),
         quantity: b.bag.quantity ?? 0,
         sig: b.sig,
         raw: b.raw,
+        camera: b.source === "camera",
         lotName: b.lotName,
         lotSerial: b.bag.serial ?? null,
         comments: b.comments,
+        context: bagContext(b.bag),
+        ...(b.bag.noMpn ? { noMpnMessage: noMpnMessage(b.bag) } : {}),
         phase: "resolving",
       });
     },
-    [addRow],
+    [addRow, answerFollowUp],
   );
 
   const onManual = useCallback(
@@ -166,6 +260,7 @@ export default function BoxIntake() {
     <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
       <ScanPanel boxId={storageId} mode="intake" onBag={onBag} onManual={onManual} />
       <div className="space-y-3">
+        {followUp && <FollowUpPrompt followUp={followUp} onAnswer={t => void answerFollowUp(t)} onCancel={cancelFollowUp} />}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="text-sm text-muted">
             {saved.length} saved · {pending.length} waiting · {rows.length} scanned
@@ -198,10 +293,17 @@ export default function BoxIntake() {
             row={r}
             highlighted={highlight === r.id}
             onQuantity={q => patch(r.id, { quantity: q })}
+            onMpn={mpn => {
+              if (followUp?.rowId === r.id) setFollowUp(null);
+              supplyMpn(r, mpn);
+            }}
             onSave={choice => void save(r, choice)}
             onUpdateCount={() => void updateCount(r)}
             onUndo={() => void undo(r)}
-            onDismiss={() => setRows(rs => rs.filter(x => x.id !== r.id))}
+            onDismiss={() => {
+              if (followUp?.rowId === r.id) setFollowUp(null);
+              setRows(rs => rs.filter(x => x.id !== r.id));
+            }}
           />
         ))}
       </div>

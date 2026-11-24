@@ -24,14 +24,27 @@
  *
  * The parser tries three passes, in order:
  *  1. Split on real or substitute separators.
- *  2. If that yields a single chunk, fall back to **inline DI scanning**
- *     — locate known DI prefixes by regex and slice between them.
+ *  2. If that yields a single chunk and the `[)>` header is present, cut
+ *     the string into fields with `segmentWithoutSeparators` (DIs may abut
+ *     alphanumeric values; see bagCodeSegment.ts). If that finds no
+ *     reading, or there is no header, fall back to **inline DI scanning**
+ *     — locate known DI prefixes after a non-alphanumeric and slice.
  *  3. If neither pass found a Data Identifier and the input has no `[)>`
  *     header, treat the whole string as a plain MPN (1D-barcode case).
+ *
+ * A header-bearing code with no 1P field yields `mpn: ""` and
+ * `noMpn: true` — some Mouser labels carry only the customer part number
+ * (P). The raw ECIA string is never offered as an MPN: sent to a parts
+ * provider it only spends metered quota on a guaranteed miss.
  */
+import { segmentWithoutSeparators, type SegmentField } from "./bagCodeSegment";
+
 
 export type BagCode = {
   mpn: string;
+  /** True when the code is an ECIA bag label (`[)>` header) that carries
+   *  no manufacturer part number (1P). `mpn` is then "". */
+  noMpn?: boolean;
   quantity?: number;
   distributorPn?: string;
   /** Manufacturer name as printed on the bag (1V). Useful as a sanity
@@ -42,6 +55,8 @@ export type BagCode = {
   dateCode?: string;
   /** Manufacturer's lot/batch identifier (1T). */
   lotBatch?: string;
+  /** Country of origin (4L), ISO 3166 alpha-2. */
+  countryOfOrigin?: string;
   /** Serial number (1S) — only present on serialized parts. */
   serial?: string;
   /** Order / PO / line / invoice references — handy for traceability.
@@ -186,80 +201,130 @@ export async function bagSignature(raw: string): Promise<string | null> {
     .join("");
 }
 
+function toFields(chunks: string[]): SegmentField[] {
+  return chunks.map(findDI).filter((f): f is SegmentField => f !== null);
+}
+
+function assignField(out: BagCode, f: SegmentField): void {
+  switch (f.di) {
+    case "1P":
+      out.mpn = f.value;
+      break;
+    case "30P":
+    case "P":
+      if (!out.distributorPn) out.distributorPn = f.value;
+      break;
+    case "Q": {
+      const n = parseInt(f.value, 10);
+      if (Number.isFinite(n) && n > 0) out.quantity = n;
+      break;
+    }
+    case "1V":
+      out.manufacturer = f.value;
+      break;
+    case "10D":
+    case "9D":
+      // Prefer 10D (per ANSI MH10.8.2) but accept 9D as fallback.
+      if (!out.dateCode) out.dateCode = f.value;
+      break;
+    case "1T":
+      out.lotBatch = f.value;
+      break;
+    case "1S":
+      out.serial = f.value;
+      break;
+    case "K":
+      out.customerRef = f.value;
+      break;
+    case "1K":
+      out.poNumber = f.value;
+      break;
+    case "14K":
+      out.lineItem = f.value;
+      break;
+    case "11K":
+      out.invoiceRef = f.value;
+      break;
+    case "4L":
+      out.countryOfOrigin = f.value;
+      break;
+    // 13Z (arbitrary) and T are intentionally not surfaced.
+  }
+}
+
 export function parseBagCode(raw: string): BagCode {
   const input = normalizeControlPictures((raw ?? "").trim());
   if (!input) return { mpn: "", raw };
 
+  const hasHeader = input.startsWith("[)>");
   const stripped = stripHeader(input);
 
   // Pass 1 — split on separators.
-  let chunks = stripped.split(SEPARATOR_RE).map(c => c.trim()).filter(Boolean);
+  const chunks = stripped.split(SEPARATOR_RE).map(c => c.trim()).filter(Boolean);
 
-  // Pass 2 — if pass 1 didn't produce multiple fields, try inline DI scan.
-  if (chunks.length <= 1) {
-    chunks = inlineSplit(stripped);
-  }
+  // Pass 2 — no separators: grammar-aware segmentation for a headed
+  // ECIA code, else the older inline DI scan.
+  // (Trailing RS/EOT alone still leave a single chunk — segment that.)
+  const single = chunks[0] ?? "";
+  const fields: SegmentField[] =
+    chunks.length > 1
+      ? toFields(chunks)
+      : (hasHeader && single && segmentWithoutSeparators(single)) || toFields(inlineSplit(single));
 
   // Pass 3 — if no DI was ever found and there's no header marker, the
   // input is almost certainly just the MPN itself (plain 1D barcode).
-  const anyDi = chunks.some(c => findDI(c) !== null);
-  if (!anyDi && !input.startsWith("[)>")) {
+  if (fields.length === 0 && !hasHeader) {
     return { mpn: input, raw };
   }
 
   const out: BagCode = { mpn: "", raw };
+  for (const f of fields) assignField(out, f);
 
-  for (const chunk of chunks) {
-    const f = findDI(chunk);
-    if (!f) continue;
-    switch (f.di) {
-      case "1P":
-        out.mpn = f.value;
-        break;
-      case "30P":
-      case "P":
-        if (!out.distributorPn) out.distributorPn = f.value;
-        break;
-      case "Q": {
-        const n = parseInt(f.value, 10);
-        if (Number.isFinite(n) && n > 0) out.quantity = n;
-        break;
-      }
-      case "1V":
-        out.manufacturer = f.value;
-        break;
-      case "10D":
-      case "9D":
-        // Prefer 10D (per ANSI MH10.8.2) but accept 9D as fallback.
-        if (!out.dateCode) out.dateCode = f.value;
-        break;
-      case "1T":
-        out.lotBatch = f.value;
-        break;
-      case "1S":
-        out.serial = f.value;
-        break;
-      case "K":
-        out.customerRef = f.value;
-        break;
-      case "1K":
-        out.poNumber = f.value;
-        break;
-      case "14K":
-        out.lineItem = f.value;
-        break;
-      case "11K":
-        out.invoiceRef = f.value;
-        break;
-      // 4L (country of origin), 13Z (arbitrary), T are intentionally
-      // not surfaced — niche enough to keep out of the UI.
-    }
+  if (!out.mpn) {
+    // A bag label without a 1P: say so instead of passing the raw ECIA
+    // string on as an MPN. Without a header (a DI-prefixed 1D code such
+    // as "Q100") keep the old behaviour — the input is the best guess.
+    if (hasHeader) out.noMpn = true;
+    else out.mpn = input;
   }
 
-  // No 1P found in any field but a header was present → fall back to the
-  // raw input rather than silently dropping the scan. The provider lookup
-  // will most likely return "no match" and the operator can correct.
-  if (!out.mpn) out.mpn = input;
-
   return out;
+}
+
+/** Where to look the bag up: "Mouser order 40489709 line 027". Mouser is
+ *  the distributor that prints a 14K line item next to its K order ref. */
+export function bagOrderRef(b: BagCode): string | null {
+  if (b.customerRef && b.lineItem) return `Mouser order ${b.customerRef} line ${b.lineItem}`;
+  if (b.customerRef) return `order ${b.customerRef}`;
+  if (b.poNumber) return `order ${b.poNumber}`;
+  return null;
+}
+
+/** Which bag this is, for a follow-up prompt:
+ *  "Murata · qty 100 · Mouser order 40489709 line 027". */
+export function bagContext(b: BagCode): string {
+  const parts: string[] = [];
+  if (b.manufacturer) parts.push(b.manufacturer);
+  if (b.quantity) parts.push(`qty ${b.quantity}`);
+  const order = bagOrderRef(b);
+  if (order) parts.push(order);
+  return parts.join(" · ");
+}
+
+/** `bagContext` plus the customer P/N:
+ *  "Murata · qty 100 · Mouser order 40489709 line 027 · customer P/N C201,C202,C503". */
+export function bagSummary(b: BagCode): string {
+  const context = bagContext(b);
+  if (!b.distributorPn) return context;
+  return [context, `customer P/N ${b.distributorPn}`].filter(Boolean).join(" · ");
+}
+
+/** User-facing explanation for a bag label that has no manufacturer part
+ *  number. Shared by every scan flow so the wording stays the same. */
+export function noMpnMessage(b: BagCode): string {
+  const summary = bagSummary(b);
+  return (
+    `This label has no manufacturer part number${summary ? ` (${summary})` : ""}. ` +
+    "Scan the 'Mfr. Part No' barcode on the label, or type the MPN."
+  );
 }
