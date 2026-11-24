@@ -17,6 +17,7 @@ from app.domain._quantity import QUANTITY_ZERO, quantity_out
 from app.domain.builds import service as builds_service
 from app.domain.categories import service as categories_service
 from app.domain.eda.models import PartEda
+from app.domain.parts import lifecycle_compliance
 from app.domain.parts.models import Part
 from app.domain.projects.models import Project, ProjectEntry
 from app.domain.stock import service as stock_service
@@ -130,9 +131,21 @@ def get_part(caller: Caller, id_or_mpn: str) -> dict[str, Any]:
     `locations` breakdown by storage location name), `eda` (whether a
     schematic symbol, PCB footprint, 3D model and SPICE model are
     configured), and `part_url`.
+
+    Also `lifecycle` {`status` (active | nrnd | last-time-buy | obsolete |
+    discontinued | preliminary | unknown), `raw` (the provider's own
+    string), `discontinued`, `end_of_life`, `source`, `refreshed_at`} and
+    `compliance` {`rohs`, `reach`, `eccn`, `hts`, `msl`, `source`,
+    `refreshed_at`}, read from the rows the provider refresh stored.
+    `unknown` means no source supplied a value; `source` is the provider
+    name, or `manual` for a value a user entered. When more than one
+    source answered, the best one (manual, then DigiKey, then Mouser) is
+    shown and the others are listed under `alternates` — read them before
+    calling a part obsolete or active.
     """
     part = resolve_part(caller, id_or_mpn)
     catalog, specs = custom_fields_for(caller, part)
+    life = lifecycle_compliance.for_parts(caller.db, caller.ws, [part.id])[part.id]
 
     on_hand = stock_service.current_quantity(
         caller.db, workspace_id=caller.ws.id, part_id=part.id
@@ -167,6 +180,8 @@ def get_part(caller: Caller, id_or_mpn: str) -> dict[str, Any]:
             },
             "eda": eda_status(caller, part),
             "low_stock_report_quantity": quantity_out(part.low_stock_report_quantity),
+            "lifecycle": life["lifecycle"],
+            "compliance": life["compliance"],
         }
     )
 

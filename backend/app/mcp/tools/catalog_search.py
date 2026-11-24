@@ -60,8 +60,10 @@ def catalog_search(
     value ids from THAT answer. Put the part type and package in
     keywords ("ceramic capacitor 0603 C0G"), not the value: DigiKey
     writes capacitance as 0.1µF / 100pF, so "100nF" matches nothing;
-    select the value with parameter_filters instead. `hints` says when
-    either applies.
+    select the value with parameter_filters instead. A package or size in
+    keywords ("0603", "SOT-23") does NOT restrict the package at DigiKey —
+    narrow it with the "Package / Case" parametric filter once a leaf
+    category is chosen. `hints` says when any of this applies.
 
     Args:
         keywords: Free text, e.g. "100nF 0603 C0G".
@@ -73,7 +75,9 @@ def catalog_search(
         status: A DigiKey status id from `facets.status` (e.g. Active).
         in_stock / rohs: Both providers. has_datasheet: DigiKey only.
         sort: "price", "stock", "mpn", "manufacturer", "status", "min_qty";
-            prefix "-" for descending. DigiKey only.
+            prefix "-" for descending. DigiKey only. Omitted, DigiKey is
+            asked for "-stock" (most in stock first): its own default order
+            is not relevance. `applied_sort` says what each provider used.
         limit: Candidates per provider, default 20, at most 50.
         offset: Skip this many results — page with offset += limit.
         provider: "digikey", "mouser", or "all" (default).
@@ -93,6 +97,8 @@ def catalog_search(
     parametric_filters with ids, names and counts; `categories_from` is
     "candidates" when DigiKey sent no category facet and the list was
     built from this page's candidates), `hints`, `applied_filters`,
+    `applied_sort` per provider ({sort, field, order, source:
+    "caller"|"default"}; Mouser {sort: null, source: "provider"}),
     `cache`, and `quota` as in catalog_lookup. Same refusals as
     catalog_lookup (provider.quota_reserve_reached, provider.suspended,
     provider.pacing with retry_after_ms), plus provider.invalid_filter.

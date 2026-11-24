@@ -90,9 +90,18 @@ async def test_sm002_1_keyword_search_candidates_total_facets_applied(token, dig
     assert facets["categories"][0]["id"] == "60"
     assert facets["manufacturers"][0]["count"] == 312
     assert facets["parametric_filters"] == [], "DigiKey leaves them null on a broad search"
-    assert out["hints"] == [digikey_search.HINT_NARROW_FOR_PARAMETRICS]
-    assert out["applied_filters"]["digikey"] == {"Keywords": "100nF 0603 C0G", "Limit": 2,
-                                                 "Offset": 0}
+    assert out["hints"] == [
+        digikey_search.HINT_NARROW_FOR_PARAMETRICS,
+        digikey_search.HINT_PACKAGE_KEYWORD.format(token="0603"),
+    ]
+    assert out["applied_filters"]["digikey"] == {
+        "Keywords": "100nF 0603 C0G", "Limit": 2, "Offset": 0,
+        "SortOptions": {"Field": "QuantityAvailable", "SortOrder": "Descending"},
+    }
+    assert out["applied_sort"] == {"digikey": {
+        "sort": "-stock", "field": "QuantityAvailable", "order": "Descending",
+        "source": "default",
+    }}
     assert out["quota"][0]["spent"] == 1
 
 
@@ -165,6 +174,18 @@ async def test_both_providers_side_by_side_never_merged(token, digikey, mouser, 
     assert out["total"] == {"digikey": 12, "mouser": 2204}
     assert mouser[0]["SearchByKeywordRequest"]["searchOptions"] == "InStock"
     assert "apiKey" not in json.dumps(out) and "fake-mouser-key" not in json.dumps(out)
+    # Mouser takes no sort: its own order, said so rather than left blank.
+    assert out["applied_sort"]["mouser"] == {"sort": None, "source": "provider"}
+    assert out["applied_sort"]["digikey"]["source"] == "default"
+
+
+async def test_an_explicit_sort_is_sent_as_asked_and_reported(token, digikey, clock):
+    async with mcp_session(token) as s:
+        out = await call(s, "catalog_search", keywords="100nF 0603 C0G", sort="price")
+    assert digikey[-1]["SortOptions"] == {"Field": "Price", "SortOrder": "Ascending"}
+    assert out["applied_sort"]["digikey"] == {
+        "sort": "price", "field": "Price", "order": "Ascending", "source": "caller",
+    }
 
 
 async def test_sm002_4_nothing_is_written_or_flushed(token, digikey, mouser, clock, db):

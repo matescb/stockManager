@@ -48,7 +48,7 @@ from app.domain.parts.providers.digikey import (
 from app.domain.parts.services.provider_quota import QUOTA, account_key
 from app.domain.sourcing.providers import make_retrying_client
 
-__all__ = ["SearchQuery", "categories", "search"]
+__all__ = ["DEFAULT_SORT", "SearchQuery", "applied_sort", "categories", "search"]
 
 _KEYWORD_SEARCH_PATH = "/products/v4/search/keyword"
 _CATEGORIES_PATH = "/products/v4/search/categories"
@@ -89,7 +89,36 @@ HINT_VALUE_KEYWORDS = (
     "value, search by type/package, then narrow with category_id and parameter_filters."
 )
 
-#: Our sort names -> DigiKey `SortOptions.Field`.
+#: A package / case-size token in the keywords. DigiKey's keyword matcher
+#: does not restrict the package by it ("0603" returns 0201 parts first,
+#: live-confirmed), so `hints` points at the "Package / Case" facet.
+_PACKAGE_TOKEN = re.compile(
+    r"(?<![\w.])(?:"
+    r"01005|0201|0402|0603|0805|1008|1206|1210|1806|1812|2010|2220|2512"
+    r"|SOT-?\d{2,3}(?:-\d{1,2})?|SOD-?\d{2,3}|SC-?70(?:-\d)?"
+    r"|T?SSOP-?\d*|MSOP-?\d*|SOIC-?\d*|SOP-?\d*|VSSOP-?\d*"
+    r"|[UVWX]?QFN-?\d*|[UVWX]?DFN-?\d*|[LT]?QFP-?\d*|BGA-?\d*"
+    r"|TO-?\d{2,3}(?:AB|AA|AC)?|D2?PAK|SM[ABC]|DO-?\d{2,3}(?:A[ABC])?"
+    r")(?![\w.])",
+    re.IGNORECASE,
+)
+HINT_PACKAGE_KEYWORD = (
+    "DigiKey's keyword search does not restrict the package or case size by a token "
+    "like {token}: results in other packages come first. Choose a leaf category_id, "
+    "then narrow with the \"Package / Case\" entry of facets.parametric_filters."
+)
+
+#: The order an agent call gets when the caller passes no `sort`. DigiKey's
+#: own default is not relevance (live-confirmed: the same first five come
+#: back across differently filtered queries), so the default puts parts
+#: in stock first. `applied_sort` in every answer says what was used.
+DEFAULT_SORT = "-stock"
+
+#: Our sort names -> DigiKey `SortOptions.Field`. The enum values are the
+#: v4 ProductSearch OpenAPI's `SortOptions.Field` (None, Packaging,
+#: ProductStatus, DigiKeyProductNumber, ManufacturerProductNumber,
+#: Manufacturer, MinimumQuantity, QuantityAvailable, Price, Supplier,
+#: PriceManufacturerStandardPackage); `SortOrder` is Ascending|Descending.
 SORT_FIELDS: dict[str, str] = {
     "price": "Price",
     "stock": "QuantityAvailable",
@@ -144,13 +173,28 @@ def build_payload(q: SearchQuery) -> dict[str, Any]:
     payload: dict[str, Any] = {"Keywords": q.keywords, "Limit": q.limit, "Offset": q.offset}
     if options:
         payload["FilterOptionsRequest"] = options
-    if q.sort:
-        name = q.sort.lstrip("-")
-        payload["SortOptions"] = {
-            "Field": SORT_FIELDS[name],
-            "SortOrder": "Descending" if q.sort.startswith("-") else "Ascending",
-        }
+    sort = effective_sort(q)
+    payload["SortOptions"] = {
+        "Field": SORT_FIELDS[sort.lstrip("-")],
+        "SortOrder": "Descending" if sort.startswith("-") else "Ascending",
+    }
     return payload
+
+
+def effective_sort(q: SearchQuery) -> str:
+    """The caller's `sort`, or `DEFAULT_SORT` when they passed none."""
+    return q.sort or DEFAULT_SORT
+
+
+def applied_sort(q: SearchQuery) -> dict[str, Any]:
+    """What `SortOptions` this query sent, for the answer's `applied_sort`."""
+    sort = effective_sort(q)
+    return {
+        "sort": sort,
+        "field": SORT_FIELDS[sort.lstrip("-")],
+        "order": "Descending" if sort.startswith("-") else "Ascending",
+        "source": "caller" if q.sort else "default",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +245,7 @@ def search(provider: DigiKeyProvider, q: SearchQuery) -> dict[str, Any]:
         "candidates": [_candidate(p) for p in products],
         "facets": facets,
         "applied_filters": payload,
+        "applied_sort": applied_sort(q),
     }
     hints = _hints(q, total, facets)
     if hints:
@@ -214,6 +259,9 @@ def _hints(q: SearchQuery, total: int | None, facets: dict[str, Any]) -> list[st
         hints.append(HINT_VALUE_KEYWORDS)
     if total and not facets["parametric_filters"]:
         hints.append(HINT_LEAF_CATEGORY if q.category_id else HINT_NARROW_FOR_PARAMETRICS)
+    package = _PACKAGE_TOKEN.search(q.keywords or "")
+    if package and not q.parameter_filters:
+        hints.append(HINT_PACKAGE_KEYWORD.format(token=package.group(0)))
     return hints
 
 

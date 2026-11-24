@@ -76,7 +76,7 @@ earlier result has the other.
 | Tool | Answers |
 |---|---|
 | `search_parts` | Free-text search over name, MPN, manufacturer, IPN, description |
-| `get_part` | One part: specs, catalog metadata, stock by location, CAD status |
+| `get_part` | One part: specs, catalog metadata, stock by location, CAD status, [lifecycle and compliance](#lifecycle-and-compliance) |
 | `get_part_eda` | A part's KiCad configuration, with resolved `PCM_SM_…` refs |
 | `find_parts_missing_eda` | "What still needs a footprint?" — by `symbol`/`footprint`/`model3d`/`spice` |
 | `stock_levels` | On-hand / reserved / available, one part or the whole inventory |
@@ -88,7 +88,7 @@ earlier result has the other.
 | `get_part_policy` | Which fields this workspace requires on a part, and where to find them |
 | `validate_part` | Dry-run `create_part`: what the part policy would refuse, nothing written |
 | `part_policy_status` | What an existing part still lacks under the part policy |
-| `export_parts` | Every part, cursor-paged, with EDA hashes and on-hand / reserved / available — for audits |
+| `export_parts` | Every part, cursor-paged, with EDA hashes, on-hand / reserved / available, lifecycle and compliance — for audits |
 | `list_part_documents` | A part's local PDFs (datasheet, app notes, PCNs, manuals, uploads) with a Bearer-downloadable `download_url`, plus what is still queued (see [Part documents](#part-documents)) |
 
 ### Write
@@ -135,8 +135,12 @@ owner's daily distributor allowance ([below](#why-a-price-lookup-counts-as-a-wri
       "manufacturer": "Texas Instruments",
       "description": "IC OPAMP GP 1 CIRCUIT SOT23-5",
       "category": "Instrumentation, Op Amps, Buffer Amps",
-      "lifecycle": {"status": "Active"},
-      "compliance": {"RoHS": "ROHS3 Compliant", "MSL": "1 (Unlimited)"},
+      "lifecycle": {"status": "active", "raw": "Active", "discontinued": false,
+                    "end_of_life": false, "source": "digikey",
+                    "refreshed_at": "2026-11-24T10:02:11+00:00"},
+      "compliance": {"rohs": "ROHS3 Compliant", "reach": "REACH Unaffected",
+                     "eccn": "EAR99", "hts": "8542.33.0001", "msl": "1 (Unlimited)",
+                     "source": "digikey", "refreshed_at": "2026-11-24T10:02:11+00:00"},
       "datasheet_url": "https://www.ti.com/lit/ds/symlink/opa192.pdf",
       "stock": 5234,
       "price_breaks": [{"qty": 1, "unit_price": "52.1000 CZK"}],
@@ -154,8 +158,10 @@ owner's daily distributor allowance ([below](#why-a-price-lookup-counts-as-a-wri
 - **One record per provider, never merged.** `source`, the provider's own
   `product_url` (unmodified) and `retrieved_at` are on every record —
   DigiKey's terms require its data to be attributed and not aggregated with
-  other data "without distinction". `lifecycle` and `compliance` are the
-  providers' raw values; structuring them is SM-004.
+  other data "without distinction". `lifecycle` and `compliance` have the
+  [`get_part` shape](#lifecycle-and-compliance), built from this provider's
+  record (`source` is the provider, `refreshed_at` the retrieval time;
+  Mouser records may add `suggested_replacement`, flagged parts `ncnr`).
 - **`match`** is `exact` only when the provider's MPN is the one asked for
   (case-insensitive). DigiKey's keyword fallback and Mouser's partial match
   return `fuzzy` with the MPN actually found in `mpn`. The top-level `match`
@@ -181,6 +187,51 @@ owner's daily distributor allowance ([below](#why-a-price-lookup-counts-as-a-wri
   429/503 with backoff (up to 8 s, three times, ADR-0023). Agent calls make
   one attempt; a 429 comes back under `errors` as `rate_limited`, with
   `retry_after_ms` when DigiKey sent `Retry-After`.
+
+### Lifecycle and compliance
+
+`get_part` and each `export_parts` item carry two blocks (SM-004), read from
+the catalog rows the provider refresh already stores — no second copy, no
+write:
+
+```json
+"lifecycle": {"status": "active", "raw": "Active", "discontinued": false,
+              "end_of_life": false, "source": "digikey",
+              "refreshed_at": "2026-11-20T08:14:03+00:00",
+              "alternates": [{"source": "mouser", "status": "obsolete", "raw": "Obsolete",
+                              "discontinued": true, "end_of_life": false,
+                              "refreshed_at": "2026-11-21T09:00:00+00:00"}]},
+"compliance": {"rohs": "ROHS3 Compliant", "reach": "REACH Unaffected",
+               "eccn": "unknown", "hts": "unknown", "msl": "unknown",
+               "source": "digikey", "refreshed_at": "2026-11-20T08:14:03+00:00"}
+```
+
+- **`source`** is the provider that supplied the values, or `manual` for a
+  value a user entered or edited. Sources rank manual, then DigiKey, then
+  Mouser (`PROVIDER_PRECEDENCE`); every other source that answered is listed
+  under `alternates`, so a part obsolete at one distributor and active at the
+  other shows both.
+- **`unknown`** means no source supplied the value (and `source: "unknown"`
+  when none supplied any). A provider's missing `Discontinued` / `End of
+  life` flag reads `false`; a manual source asserts no flags (`unknown`).
+- **`refreshed_at`** is the later of the rows' `updated_at` and the
+  provider link's `last_refresh_at`.
+- **ECCN, HTS and MSL** are on ADR-0034's junk list: the refresh retires
+  them instead of storing them, so on a stored part they are `unknown`
+  unless entered by hand. `catalog_lookup` returns them from the live record.
+- **`status`** is normalised; `raw` keeps the provider's string. Without a
+  status string a `Discontinued` flag gives `discontinued`, an `End of
+  life` flag `last-time-buy`.
+
+| raw (DigiKey `ProductStatus` / Mouser `LifecycleStatus`) | `status` |
+|---|---|
+| Not Recommended for New Designs, Not For New Designs, NRND | `nrnd` |
+| Last Time Buy, End of Life | `last-time-buy` |
+| Obsolete | `obsolete` |
+| Discontinued at Digi-Key, Discontinued | `discontinued` |
+| Preliminary, Pre-Release, Coming Soon | `preliminary` |
+| Active, Production, New Product, New at Mouser | `active` |
+| anything else (e.g. Factory Special Order), or nothing | `unknown` |
 
 ### Catalogue search
 
@@ -216,7 +267,11 @@ transport retries.
     "parametric_filters": []
   },
   "hints": ["DigiKey returns parametric_filters and status only once a search is narrow …"],
-  "applied_filters": {"digikey": {"Keywords": "100nF 0603 C0G", "Limit": 2, "Offset": 0}},
+  "applied_filters": {"digikey": {"Keywords": "100nF 0603 C0G", "Limit": 2, "Offset": 0,
+                                  "SortOptions": {"Field": "QuantityAvailable",
+                                                  "SortOrder": "Descending"}}},
+  "applied_sort": {"digikey": {"sort": "-stock", "field": "QuantityAvailable",
+                               "order": "Descending", "source": "default"}},
   "cache": "miss",
   "quota": [{"provider": "digikey", "spent": 1, "remaining_day": 640,
              "reserve": 200, "source": "header"}]
@@ -252,8 +307,23 @@ transport retries.
   provider answered. "Parametric Filtering Not Support at Parent Category
   Level" also adds a `hint`: use a leaf `category_id`, or fewer keywords.
 - **`hints`** (when present) gives the agent the next step: narrow by
-  category to get parametric filters, or drop an SI-prefixed value
-  (`100nF`, `4.7uH`) from keywords after a zero-result search.
+  category to get parametric filters, drop an SI-prefixed value
+  (`100nF`, `4.7uH`) from keywords after a zero-result search, or — when
+  keywords hold a package / size token (`0603`, `SOT-23`, `SOIC-8`, `QFN`…)
+  and no parametric filter is applied — narrow the package through the
+  "Package / Case" parametric facet: DigiKey's keyword matcher does not
+  restrict it (`0603` returns 0201 parts first).
+- **Default order: most in stock first.** DigiKey's own default order is not
+  relevance (the same first five come back across differently filtered
+  queries), so a call without `sort` sends `SortOptions {Field:
+  "QuantityAvailable", SortOrder: "Descending"}` (`-stock`). An explicit
+  `sort` is sent unchanged; its names map to the v4 `SortOptions.Field`
+  enum (`price` Price, `stock` QuantityAvailable, `mpn`
+  ManufacturerProductNumber, `manufacturer` Manufacturer, `status`
+  ProductStatus, `min_qty` MinimumQuantity; `-` = Descending).
+  `applied_sort` reports per provider `{sort, field, order, source:
+  "caller" | "default"}`; Mouser takes no sort and reports `{sort: null,
+  source: "provider"}`.
 - **Mouser does keyword search only** — `keywords`, `in_stock`, `rohs`
   (mapped to `searchOptions` None / Rohs / InStock / RohsAndInStock), `limit`,
   `offset`. Any DigiKey-only argument (`category_id`, `manufacturer_ids`,

@@ -18,7 +18,8 @@ nothing is ever served twice.
 for the category index, two for EDA presence (the same helper
 `find_parts_missing_eda` uses, so the two tools cannot disagree about
 what "has a footprint" means), two for the content hashes, two for the
-ledger roll-ups. The count does not grow with `page_size`.
+ledger roll-ups, two for lifecycle / compliance. The count does not grow
+with `page_size`.
 """
 from __future__ import annotations
 
@@ -40,6 +41,7 @@ from app.domain.eda.models import (
     EdaSymbol,
     PartEda,
 )
+from app.domain.parts import lifecycle_compliance
 from app.domain.parts.models import Part
 from app.domain.stock import service as stock_service
 from app.mcp.principal import Caller
@@ -92,7 +94,8 @@ def export_parts(
     {`present`, `sha256`?, `ref_external`?} — `sha256` is the hosted
     file's content hash, absent when the slot points at the user's own
     local KiCad library (`ref_external`) — and `stock` with `on_hand`,
-    `reserved` (committed to open builds) and `available`.
+    `reserved` (committed to open builds) and `available`, plus
+    `lifecycle` and `compliance` in the shape `get_part` documents.
     """
     page_size = max(1, min(page_size, MAX_PAGE_SIZE))
     after = _seek_position(cursor)
@@ -158,6 +161,7 @@ def _items(caller: Caller, parts: Sequence[Part]) -> list[dict[str, Any]]:
     reserved = stock_service.bulk_current_quantities(
         caller.db, workspace_id=caller.ws.id, part_ids=ids, status="reserved"
     )
+    life = lifecycle_compliance.for_parts(caller.db, caller.ws, ids)
 
     items = []
     for part in parts:
@@ -176,6 +180,8 @@ def _items(caller: Caller, parts: Sequence[Part]) -> list[dict[str, Any]]:
                 "available": quantity_out(have - held),
             },
             "part_url": part_url(part.id),
+            "lifecycle": life[part.id]["lifecycle"],
+            "compliance": life[part.id]["compliance"],
         }
         if part.archived_at is not None:
             item["archived"] = True
