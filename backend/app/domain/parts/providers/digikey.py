@@ -293,12 +293,23 @@ class DigiKeyProvider:
 
 
 def _mark_retry_after(resp: httpx.Response, body: Any) -> Any:
-    """Carry a 403's Retry-After header into the body `_refusal` reads."""
-    retry_after = resp.headers.get("Retry-After") if resp.status_code == 403 else None
+    """Carry a 403/429's Retry-After header into the body `_refusal` reads."""
+    refused = resp.status_code in (403, 429)
+    retry_after = resp.headers.get("Retry-After") if refused else None
     if not retry_after:
         return body
     base = body if isinstance(body, dict) else {}
     return {**base, _RETRY_AFTER_KEY: retry_after}
+
+
+def _retry_after_ms(body: Any) -> int | None:
+    """Retry-After (delta-seconds form only) as milliseconds, if present."""
+    raw = body.get(_RETRY_AFTER_KEY) if isinstance(body, dict) else None
+    try:
+        seconds = float(str(raw).strip()) if raw else None
+    except ValueError:
+        return None
+    return int(seconds * 1000) if seconds is not None and seconds >= 0 else None
 
 
 def _is_throttle(body: Any) -> bool:
@@ -334,7 +345,11 @@ def _refusal(status: int, body: Any = None) -> MpnLookupResult | None:
     problem and is reported as one.
     """
     if status == 429:
-        return {"found": False, "result": None, "message": _RATE_LIMIT_MESSAGE}
+        out: MpnLookupResult = {"found": False, "result": None, "message": _RATE_LIMIT_MESSAGE}
+        retry_ms = _retry_after_ms(body)
+        if retry_ms is not None:
+            out["retry_after_ms"] = retry_ms
+        return out
     if status == 403 and not _is_throttle(body):
         return {"found": False, "result": None, "message": _FORBIDDEN_MESSAGE}
     if status == 403:

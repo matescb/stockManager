@@ -30,13 +30,16 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+import httpx
+
 from app.core.errors import ErrorCodes
 from app.core.time import utcnow
 from app.domain.parts.provider_credentials import active_credential_rows
 from app.domain.parts.providers.base import match_kind
 from app.domain.parts.services.provider_cache import (
-    lookup_with_cache,
-    peek_cached,
+    lookup_fresh,
+    peek_workspace_cached,
+    store_workspace_result,
     suspended_for,
 )
 from app.domain.parts.services.provider_quota import (
@@ -52,6 +55,7 @@ from app.domain.parts.services.provider_refresh import (
 )
 from app.domain.parts.services.provider_refresh_failures import looks_like_quota
 from app.domain.provider_errors import ProviderError, ProviderSuspendedError
+from app.domain.sourcing.providers._retry_transport import retries_disabled
 
 __all__ = ["CatalogLookupRefused", "PROVIDER_ORDER", "catalog_lookup"]
 
@@ -150,7 +154,10 @@ def _order(name: str) -> int:
 # ---------------------------------------------------------------------------
 def _ask(workspace_id: UUID, client: Any, mpn: str) -> _Answer:
     name, account = client.name, provider_account(client)
-    entry = peek_cached(name, mpn)
+    # This workspace's own earlier answer only — never the cross-workspace
+    # shared cache, whose hit and `retrieved_at` would reveal another
+    # workspace's lookups (see `provider_cache._ws_cache`).
+    entry = peek_workspace_cached(workspace_id, name, mpn)
     if entry is not None:
         result, retrieved_at = entry
         answer = _Answer(name, QUOTA.snapshot(name, account, spent=0), cache="hit")
@@ -171,19 +178,43 @@ def _ask(workspace_id: UUID, client: Any, mpn: str) -> _Answer:
         answer = _refused(name, account, ErrorCodes.PROVIDER_PACING, str(exc))
         answer.error["retry_after_ms"] = exc.retry_after_ms
         return answer
+    return _live(workspace_id, client, name, account, mpn)
+
+
+def _live(workspace_id: UUID, client: Any, name: str, account: str, mpn: str) -> _Answer:
+    """One live call: no transport retries, every failure kept per provider.
+
+    `lookup_fresh`, not `lookup_with_cache`: a shared-cache hit would come
+    back with `spent: 0`, which again tells this workspace someone else
+    asked. Retries are off so a 429 is handed back to the agent with its
+    retry hint instead of holding a worker thread through the backoff.
+    Messages are fixed strings or the provider error's own (which never
+    carries a URL) — `str(exc)` of an httpx error can quote the Mouser URL
+    and its API key.
+    """
     before = QUOTA.calls_today(name, account)
+
+    def spent() -> int:
+        return QUOTA.calls_today(name, account) - before
+
     try:
-        result = lookup_with_cache(client, mpn)
+        with retries_disabled():
+            result = lookup_fresh(client, mpn)
     except ProviderSuspendedError as exc:
-        return _refused(name, account, ErrorCodes.PROVIDER_SUSPENDED, exc.message,
-                        spent=QUOTA.calls_today(name, account) - before)
+        return _refused(name, account, ErrorCodes.PROVIDER_SUSPENDED, exc.message, spent=spent())
     except ProviderError as exc:
-        return _refused(name, account, ErrorCodes.PROVIDER_UPSTREAM_ERROR, exc.message,
-                        spent=QUOTA.calls_today(name, account) - before)
-    spent = max(0, QUOTA.calls_today(name, account) - before)
-    answer = _Answer(name, QUOTA.snapshot(name, account, spent=spent))
-    cached = peek_cached(name, mpn)
-    return _classify(answer, result, cached[1] if cached else utcnow())
+        code = (ErrorCodes.RATE_LIMITED if looks_like_quota(exc.message)
+                else ErrorCodes.PROVIDER_UPSTREAM_ERROR)
+        return _refused(name, account, code, exc.message, spent=spent())
+    except (httpx.HTTPError, ValueError) as exc:
+        message = f"{name} request failed ({type(exc).__name__})"
+        return _refused(name, account, ErrorCodes.PROVIDER_UPSTREAM_ERROR, message,
+                        spent=spent())
+    store_workspace_result(workspace_id, name, mpn, result)
+    answer = _Answer(name, QUOTA.snapshot(name, account, spent=max(0, spent())))
+    # The cached entry's own timestamp, so a later hit reports the same one.
+    stored = peek_workspace_cached(workspace_id, name, mpn)
+    return _classify(answer, result, stored[1] if stored else utcnow())
 
 
 def _refused(name: str, account: str, code: str, message: str, *, spent: int = 0) -> _Answer:
@@ -213,6 +244,8 @@ def _classify(answer: _Answer, result: dict[str, Any], retrieved_at: Any) -> _An
     else:
         code = ErrorCodes.PROVIDER_UPSTREAM_ERROR
     answer.error = {"provider": answer.provider, "code": code, "message": message}
+    if result.get("retry_after_ms") is not None:
+        answer.error["retry_after_ms"] = result["retry_after_ms"]
     return answer
 
 

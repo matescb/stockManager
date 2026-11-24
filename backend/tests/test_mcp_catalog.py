@@ -8,6 +8,9 @@ acceptance point it covers (edaflow `modules/stockmanager.md`).
 """
 from __future__ import annotations
 
+import json
+
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
@@ -384,3 +387,67 @@ async def test_fetch_lcsc_works_again_when_enabled(authed_client, token, monkeyp
     async with mcp_session(token) as s:
         message = await call_error(s, "fetch_lcsc", part_id="LCSC-GATE-1", lcsc_id="C25804")
     assert "eda.lcsc_not_found" in message
+
+
+# ---------------------------------------------------------------------------
+# Review follow-ups
+# ---------------------------------------------------------------------------
+async def test_another_workspaces_lookup_is_not_visible_as_a_cache_hit(
+    authed_client, monkeypatch, clock
+):
+    """The shared provider cache is keyed provider:mpn across workspaces.
+    `cache: "hit"`, `spent: 0` or a borrowed `retrieved_at` would tell B
+    that A looked this MPN up, and when."""
+    from app.main import app
+    from tests._factories import signup_user
+
+    _digikey_primary(authed_client)
+    other = TestClient(app)
+    signup_user(other)
+    _digikey_primary(other)
+    calls = _stub_digikey(monkeypatch)
+
+    async with mcp_session(_mint(authed_client)["token"]) as s:
+        a = await call(s, "catalog_lookup", mpn=MPN)
+    clock.now += 5
+    async with mcp_session(_mint(other)["token"]) as s:
+        b = await call(s, "catalog_lookup", mpn=MPN)
+        b_again = await call(s, "catalog_lookup", mpn=MPN)
+    assert a["cache"] == "miss"
+    assert b["cache"] == "miss" and b["quota"][0]["spent"] == 1
+    assert b["records"][0]["retrieved_at"] != a["records"][0]["retrieved_at"]
+    assert calls == [MPN, MPN], "B's first lookup went to DigiKey itself"
+    assert b_again["cache"] == "hit", "B's own lookup is cached for B"
+
+
+async def test_an_unexpected_http_error_keeps_the_other_provider_and_hides_the_url(
+    authed_client, token, monkeypatch, clock
+):
+    _digikey_primary(authed_client)
+    _mouser_secondary(authed_client)
+    _stub_digikey(monkeypatch)
+
+    def broken(url, body):
+        raise httpx.RemoteProtocolError(f"peer closed connection: {url}")
+
+    monkeypatch.setattr("app.domain.parts.providers.mouser._post_mouser", broken)
+    async with mcp_session(token) as s:
+        out = await call(s, "catalog_lookup", mpn=MPN)
+    assert [r["source"] for r in out["records"]] == ["digikey"]
+    [err] = out["errors"]
+    assert err["code"] == "provider.upstream_error"
+    assert "fake-mouser-key" not in json.dumps(out) and "apiKey" not in json.dumps(out)
+
+
+async def test_a_digikey_429_is_returned_with_retry_after_ms(
+    authed_client, token, monkeypatch, clock
+):
+    _digikey_primary(authed_client)
+    _mouser_secondary(authed_client)
+    _stub_digikey(monkeypatch, status=429, error_body={dk._RETRY_AFTER_KEY: "12"})
+    _stub_mouser(monkeypatch, [_mouser_part("Texas Instruments")])
+    async with mcp_session(token) as s:
+        out = await call(s, "catalog_lookup", mpn=MPN)
+    [err] = out["errors"]
+    assert err["code"] == "rate_limited" and err["retry_after_ms"] == 12000
+    assert [r["source"] for r in out["records"]] == ["mouser"]

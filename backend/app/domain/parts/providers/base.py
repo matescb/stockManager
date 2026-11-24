@@ -38,6 +38,8 @@ class MpnLookupResult(TypedDict, total=False):
     # application (DigiKey: HTTP 403 after a burst). Not a miss, and not
     # the day's quota: `provider_cache` opens the breaker on it.
     suspended: bool
+    # A rate-limit refusal's Retry-After, when the provider sent one.
+    retry_after_ms: int
 
 
 # Canonical record shape (the `result` payload):

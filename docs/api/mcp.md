@@ -166,9 +166,17 @@ owner's daily distributor allowance ([below](#why-a-price-lookup-counts-as-a-wri
   `retry_after_ms` for `provider.pacing`). The call as a
   whole is refused only when no provider answered at all, with the first
   provider's code and the quota of each in the message.
-- **`cache: "hit"`** means every answer came from the in-process provider
-  cache (24 h for hits, 5 min for clean misses) and spent nothing; each
-  record also carries its own `cache`.
+- **`cache: "hit"`** means every answer came from THIS workspace's own
+  earlier `catalog_lookup` (24 h for hits, 5 min for clean misses) and spent
+  nothing; each record also carries its own `cache`. The agent path never
+  answers from the cross-workspace provider cache the UI uses: a hit there
+  (or its `retrieved_at`, or `spent: 0`) would reveal that another workspace
+  looked the MPN up. A first lookup in a workspace always goes to the
+  provider.
+- **No transport retries.** The shared provider transport normally retries
+  429/503 with backoff (up to 8 s, three times, ADR-0023). Agent calls make
+  one attempt; a 429 comes back under `errors` as `rate_limited`, with
+  `retry_after_ms` when DigiKey sent `Retry-After`.
 
 ### Provider quota
 
@@ -191,7 +199,10 @@ this answer cost — 0 on a cache hit), `remaining_day`, `reserve`, and
 today, less any calls this process made since; `"local-count"` is the
 configured allowance minus the calls this process counted, which cannot see
 the `provider-refresh` job's separate container. The state is per process,
-like the provider cache (one uvicorn worker in prod).
+like the provider cache (one uvicorn worker in prod). Both numbers are
+approximate: `spent` is the change in this process's count for that
+credential during the call, so a UI lookup running at the same moment can
+land in it, and a DigiKey 401 token refresh counts a second call.
 
 A DigiKey 403 that looks like the burst suspension (a `Retry-After` header,
 or an error body mentioning throttling, rate limits or suspension) opens the

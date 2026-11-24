@@ -207,9 +207,11 @@ class MouserProvider:
                 "message": None,
             }
 
-        # Take the first match — for partial-match search this is the
-        # closest stocked variant.
-        p = parts[0]
+        # Prefer an exact-MPN hit: partial-match search can rank a longer
+        # MPN (LM358ADR) above the one asked for (LM358). Only with no
+        # exact hit does the first result — the closest stocked variant,
+        # reported as `match: "fuzzy"` — stand in.
+        p = exact_parts[0] if exact_parts else parts[0]
 
         # ---- ProductAttributes (often just packaging) ----------------
         # Mouser frequently emits duplicate keys (three "Packaging" rows

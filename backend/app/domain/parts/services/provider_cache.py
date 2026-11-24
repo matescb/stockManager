@@ -130,7 +130,8 @@ class _TtlLruCache:
             return None
         value, expires_at, retrieved_at = item
         if _clock() >= expires_at:
-            del self._store[key]
+            # pop, not del: a concurrent reader may have evicted it already.
+            self._store.pop(key, None)
             return None
         # Move to end (most-recently-used).
         self._store.move_to_end(key)
@@ -149,6 +150,15 @@ class _TtlLruCache:
 
 # Module-level singleton shared across all requests (same process, --workers 1).
 _cache = _TtlLruCache(maxsize=_MAX_ENTRIES, default_ttl=_HIT_TTL_SEC)
+
+# The AGENT-visible cache, keyed per workspace. The shared cache above is
+# keyed provider:mpn across workspaces, which is fine for the UI (it says
+# nothing about the hit) but not for `catalog_lookup`, whose answer reports
+# `cache: "hit"` and the entry's `retrieved_at`: served from the shared
+# cache, that would tell workspace A that someone else looked the MPN up,
+# and when. So the agent path reads only this cache and fetches fresh on a
+# miss; nothing about another workspace's lookups is observable.
+_ws_cache = _TtlLruCache(maxsize=_MAX_ENTRIES, default_ttl=_HIT_TTL_SEC)
 
 
 # ---------------------------------------------------------------------------
@@ -202,12 +212,14 @@ def _get_breaker(provider_name: str, account: str | None = None) -> _CircuitBrea
     `provider_account` gives a test double with no client id / API key.
     """
     key = (provider_name, account if account is not None else account_key(None))
-    if key not in _breakers:
-        _breakers[key] = _CircuitBreaker(
-            threshold=_CB_FAIL_THRESHOLD,
-            open_sec=_CB_OPEN_SEC,
+    breaker = _breakers.get(key)
+    if breaker is None:
+        # setdefault is atomic under the GIL: two threads racing here get
+        # the SAME breaker, so a suspension never lands on an orphan.
+        breaker = _breakers.setdefault(
+            key, _CircuitBreaker(threshold=_CB_FAIL_THRESHOLD, open_sec=_CB_OPEN_SEC)
         )
-    return _breakers[key]
+    return breaker
 
 
 # ---------------------------------------------------------------------------
@@ -220,15 +232,30 @@ def suspended_for(provider_name: str, account: str | None = None) -> int:
     return _get_breaker(provider_name, account).suspended_for()
 
 
-def peek_cached(
-    provider_name: str, mpn: str
-) -> "tuple[MpnLookupResult, datetime] | None":
-    """A cached result and its fetch time, without touching the network.
+def _ws_key(workspace_id: object, provider_name: str) -> str:
+    return f"ws:{workspace_id}:{provider_name}"
 
-    The agent path uses this to serve a hit WITHOUT pacing or a quota
-    check, since a hit spends nothing (SM-001 acceptance 5).
+
+def peek_workspace_cached(
+    workspace_id: object, provider_name: str, mpn: str
+) -> "tuple[MpnLookupResult, datetime] | None":
+    """This workspace's own cached agent answer and its fetch time."""
+    return _ws_cache.get_entry(_ws_key(workspace_id, provider_name), mpn.strip())
+
+
+def store_workspace_result(
+    workspace_id: object, provider_name: str, mpn: str, result: "MpnLookupResult"
+) -> None:
+    """Remember an agent answer for this workspace, with the shared TTLs.
+
+    Same rule as `lookup_with_cache`: hits for a day, clean misses for five
+    minutes, refusals and failures not at all.
     """
-    return _cache.get_entry(provider_name, mpn.strip())
+    key = _ws_key(workspace_id, provider_name)
+    if result.get("found"):
+        _ws_cache.set(key, mpn.strip(), result, ttl=_HIT_TTL_SEC)
+    elif "no match" in (result.get("message") or "").lower():
+        _ws_cache.set(key, mpn.strip(), result, ttl=_MISS_TTL_SEC)
 
 
 def _refuse_if_open(provider_name: str, breaker: _CircuitBreaker) -> None:

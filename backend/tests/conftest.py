@@ -270,6 +270,7 @@ def _reset_provider_cache_and_breakers():
 
     # Clear TTL cache entries.
     _cache_mod._cache._store.clear()
+    _cache_mod._ws_cache._store.clear()
     # Reset all circuit breakers.
     _cache_mod._breakers.clear()
     # And the agent-path quota ledger / pacer (SM-005), same reasoning.
@@ -277,6 +278,7 @@ def _reset_provider_cache_and_breakers():
     yield
     # Clean up after the test as well (belt-and-suspenders).
     _cache_mod._cache._store.clear()
+    _cache_mod._ws_cache._store.clear()
     _cache_mod._breakers.clear()
     QUOTA.reset()
 

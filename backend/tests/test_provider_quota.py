@@ -428,3 +428,52 @@ def test_pacing_never_sleeps(monkeypatch):
     q.pace(ws, "digikey")
     with pytest.raises(PacingRefused):
         q.pace(ws, "digikey")
+
+
+# ---------------------------------------------------------------------------
+# Review follow-ups
+# ---------------------------------------------------------------------------
+def test_mouser_prefers_the_exact_mpn_over_a_longer_first_hit(monkeypatch):
+    """Partial-match search can rank LM358ADR above LM358; the exact hit
+    must win, and be labelled exact (provider-refresh needs it too)."""
+    payload = {
+        "Errors": [],
+        "SearchResults": {"Parts": [
+            {"ManufacturerPartNumber": "LM358ADR", "Manufacturer": "Texas Instruments"},
+            {"ManufacturerPartNumber": "LM358", "Manufacturer": "Texas Instruments"},
+        ]},
+    }
+    monkeypatch.setattr("app.domain.parts.providers.mouser._post_mouser", lambda u, b: payload)
+    out = MouserProvider("k").lookup_mpn("LM358")
+    assert out["match"] == "exact"
+    assert out["result"]["mpn"] == "LM358"
+
+
+def test_retries_disabled_makes_one_attempt_and_never_sleeps(monkeypatch):
+    import time as _time
+
+    from app.domain.sourcing.providers._retry_transport import (
+        RetryingHTTPTransport,
+        retries_disabled,
+    )
+
+    attempts = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        return httpx.Response(429, headers={"Retry-After": "5"})
+
+    monkeypatch.setattr(_time, "sleep", lambda s: pytest.fail("transport slept"))
+    transport = RetryingHTTPTransport(inner=httpx.MockTransport(handler), provider_name="digikey")
+    with httpx.Client(transport=transport) as client, retries_disabled():
+        assert client.get("https://api.digikey.com/x").status_code == 429
+    assert attempts == [1]
+
+
+def test_digikey_429_carries_retry_after_ms(monkeypatch):
+    _stub_token(monkeypatch)
+    monkeypatch.setattr(
+        dk, "_get_product_details", lambda t, c, m: (429, {dk._RETRY_AFTER_KEY: "30"})
+    )
+    out = DigiKeyProvider(CLIENT_ID, "s").lookup_mpn("OPA192IDBVT")
+    assert out["retry_after_ms"] == 30000 and looks_like_quota(out["message"])
