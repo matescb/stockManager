@@ -82,6 +82,10 @@ MAX_TITLE_LENGTH = 300
 # A DigiKey MCU carries dozens of PCNs. More than this per part is noise the
 # hourly sweep would spend days on.
 MAX_MEDIA_LINKS_PER_PART = 25
+# Documents fetched per WORKSPACE per run. Without it the oldest-first order
+# lets one workspace's backlog (200 agent requests, each retried after a day)
+# take every slot of every run and starve all the others.
+DOCUMENT_BACKFILL_PER_WORKSPACE = 3
 
 PDF_MIME = "application/pdf"
 
@@ -359,11 +363,19 @@ def fetch_document(db: Session, *, ws: Workspace, part: Part, row: PartDatasheet
     if row.status == ds.STATUS_STORED and row.attachment_id is not None:
         return True
     fetch_kind = "datasheet" if row.kind == "datasheet" else FETCH_KIND_DOCUMENT
+    # Committed before the fetch so a run killed mid-download leaves this
+    # row in cooldown rather than first in line forever (`begin_attempt`).
+    ds.begin_attempt(db, row, user_id=None)
     result = assets.fetch_asset(
         row.source_url, str(ws.id), fetch_kind, allow_any_host=True
     )
     if result.stored is None:
-        ds._mark_failed(row, failure_code=result.failure_code or "unknown", user_id=None)
+        ds._mark_failed(
+            row,
+            failure_code=result.failure_code or "unknown",
+            user_id=None,
+            attempt_recorded=True,
+        )
         db.flush()
         ds._log_audit(
             db,
@@ -436,8 +448,22 @@ def _document_candidates(db: Session, *, limit: int) -> list[tuple[UUID, UUID, U
             & (PartDatasheet.last_attempt_at > retry_cutoff)
         )
     )
-    stmt = (
-        select(PartDatasheet.workspace_id, PartDatasheet.part_id, PartDatasheet.id)
+    # Fair across workspaces: rank each workspace's due rows oldest-first,
+    # keep at most DOCUMENT_BACKFILL_PER_WORKSPACE of them, and interleave by
+    # rank — every workspace's oldest row before anyone's second.
+    ranked = (
+        select(
+            PartDatasheet.workspace_id,
+            PartDatasheet.part_id,
+            PartDatasheet.id,
+            PartDatasheet.created_at,
+            func.row_number()
+            .over(
+                partition_by=PartDatasheet.workspace_id,
+                order_by=(PartDatasheet.created_at, PartDatasheet.id),
+            )
+            .label("ws_rank"),
+        )
         .join(
             Part,
             (Part.id == PartDatasheet.part_id)
@@ -447,7 +473,12 @@ def _document_candidates(db: Session, *, limit: int) -> list[tuple[UUID, UUID, U
         .where(PartDatasheet.archived_at.is_(None))
         .where(Part.archived_at.is_(None))
         .where(~settled)
-        .order_by(PartDatasheet.created_at, PartDatasheet.id)
+        .subquery()
+    )
+    stmt = (
+        select(ranked.c.workspace_id, ranked.c.part_id, ranked.c.id)
+        .where(ranked.c.ws_rank <= DOCUMENT_BACKFILL_PER_WORKSPACE)
+        .order_by(ranked.c.ws_rank, ranked.c.created_at, ranked.c.id)
         .limit(limit)
     )
     return [tuple(r) for r in db.execute(stmt).all()]  # type: ignore[misc]
@@ -543,7 +574,7 @@ def _sha256_of(storage_key: str, record: PartDatasheet | None) -> str | None:
 
 
 def _pending_status(row: PartDatasheet) -> str:
-    if row.status == ds.STATUS_FAILED:
+    if row.status == ds.STATUS_FAILED or (row.attempts or 0) > 0:
         if row.attempts >= settings().DATASHEET_BACKFILL_MAX_ATTEMPTS:
             return "failed"
         return "retrying"

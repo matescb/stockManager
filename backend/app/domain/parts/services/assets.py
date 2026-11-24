@@ -65,7 +65,11 @@ exception, the per-host throttle, called out at the end):
   outright rather than silently forwarded to an arbitrary host.
 - **Wall-clock budget.** httpx's `timeout` is per operation, so a host
   that dribbles a byte every 9s never trips it. `_MAX_WALL_CLOCK_SEC`
-  bounds the whole fetch.
+  bounds the whole fetch, and it is enforced at the SOCKET: `_Watchdog`
+  shuts the connection down when the budget runs out, which also covers a
+  dribbled TLS handshake or header block and a body read that never
+  returns (checking the clock between `iter_bytes` chunks alone did not —
+  httpx buffers a sized chunk until it is full). ADR-0036.
 - **A real User-Agent.** httpx's default (`python-httpx/<version>`) is
   403'd outright by Akamai-fronted vendor origins — that is what stalled
   the first production backfill, not the pinned request shape (measured:
@@ -123,7 +127,6 @@ _READ_TIMEOUT_SEC = 20.0
 # `timeout 600`.
 _MAX_WALL_CLOCK_SEC = 45.0
 _MAX_BYTES = 10 * 1024 * 1024  # 10 MB ceiling — datasheet PDFs are usually 1-3 MB
-_CHUNK_SIZE = 64 * 1024  # 64 KB — streaming read granularity for the size-cap guard
 
 # Asset kinds exempt from the host allow-list (ADR-0033; `document` added by
 # ADR-0036). Keep this set as small as the product actually needs: every kind
@@ -133,6 +136,81 @@ _CHUNK_SIZE = 64 * 1024  # 64 KB — streaming read granularity for the size-cap
 _UNRESTRICTED_KINDS: frozenset[str] = frozenset({"datasheet", "document"})
 
 _DEFAULT_PORT_BY_SCHEME: dict[str, int] = {"http": 80, "https": 443}
+
+
+class _Watchdog:
+    """Hard wall-clock deadline for one fetch, enforced at the socket.
+
+    httpx's timeouts are per operation, and checking the clock between body
+    chunks only helps when chunks arrive: `iter_bytes(chunk_size=…)` buffers
+    until the chunk is full, and nothing at all is checked while the TLS
+    handshake or the response headers are being dribbled. So the deadline is
+    enforced from outside the reading thread instead: a timer that, when it
+    fires, `shutdown()`s the connection's socket, which makes the blocked
+    `recv` return and httpx raise. `_http_get` then reports
+    `_WallClockExceeded`.
+
+    The socket is reached through httpcore's `trace` extension
+    (`connection.connect_tcp.complete` carries the network stream). We keep
+    an `os.dup` of its descriptor rather than the descriptor number: the dup
+    is ours until `disarm()` closes it, so the timer can never shut down a
+    descriptor number the process has since reused for another connection,
+    and the dup survives `wrap_socket` detaching the plain socket object at
+    the start of TLS.
+    """
+
+    def __init__(self, seconds: float) -> None:
+        self._lock = threading.Lock()
+        self._dup: socket.socket | None = None
+        self._armed = True
+        self.fired = False
+        self._timer = threading.Timer(seconds, self._fire)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def trace(self, event_name: str, info: dict) -> None:
+        if not event_name.endswith(".connect_tcp.complete"):
+            return
+        stream = info.get("return_value")
+        sock = stream.get_extra_info("socket") if stream is not None else None
+        if sock is None:
+            return
+        try:
+            dup = socket.socket(fileno=os.dup(sock.fileno()))
+        except OSError:
+            return
+        with self._lock:
+            if not self._armed:
+                dup.close()
+                return
+            if self._dup is not None:
+                self._dup.close()
+            self._dup = dup
+            if self.fired:
+                self._shutdown_locked()
+
+    def _fire(self) -> None:
+        with self._lock:
+            if not self._armed:
+                return
+            self.fired = True
+            self._shutdown_locked()
+
+    def _shutdown_locked(self) -> None:
+        if self._dup is None:
+            return
+        try:
+            self._dup.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    def disarm(self) -> None:
+        self._timer.cancel()
+        with self._lock:
+            self._armed = False
+            if self._dup is not None:
+                self._dup.close()
+                self._dup = None
 
 
 class _WallClockExceeded(Exception):
@@ -547,6 +625,24 @@ def _http_get(target: _FetchTarget) -> _AssetResponse:
     other refusal.
     """
     ref = target.redacted_ref
+    watchdog = _Watchdog(_MAX_WALL_CLOCK_SEC)
+    try:
+        return _stream_capped(target, watchdog)
+    except _WallClockExceeded:
+        raise
+    except Exception:
+        # The watchdog shut the socket down: whatever httpx made of that
+        # (ReadError, RemoteProtocolError, an SSL error) is the budget.
+        if watchdog.fired:
+            raise _WallClockExceeded(ref) from None
+        raise
+    finally:
+        watchdog.disarm()
+
+
+def _stream_capped(target: _FetchTarget, watchdog: _Watchdog) -> _AssetResponse:
+    """The request itself; `_http_get` owns the deadline around it."""
+    ref = target.redacted_ref
     started_at = time.monotonic()
     timeout = httpx.Timeout(
         connect=_CONNECT_TIMEOUT_SEC,
@@ -568,7 +664,7 @@ def _http_get(target: _FetchTarget) -> _AssetResponse:
                 # with one.
                 "User-Agent": settings().ASSET_FETCH_USER_AGENT,
             },
-            extensions={"sni_hostname": target.sni_hostname},
+            extensions={"sni_hostname": target.sni_hostname, "trace": watchdog.trace},
         ) as resp:
             headers = dict(resp.headers)
             status = resp.status_code
@@ -593,11 +689,12 @@ def _http_get(target: _FetchTarget) -> _AssetResponse:
 
             chunks: list[bytes] = []
             total = 0
-            for chunk in resp.iter_bytes(chunk_size=_CHUNK_SIZE):
-                # Wall-clock budget. Checked per chunk because that is the
-                # only place a slow-dribble server gives us control back —
-                # its per-read timer is reset by every byte it sends.
-                if (time.monotonic() - started_at) > _MAX_WALL_CLOCK_SEC:
+            # No `chunk_size`: with one, httpx buffers until the chunk is
+            # full, so a 1-byte-per-15s server never hands control back. Each
+            # chunk here is whatever one read produced. The watchdog is what
+            # bounds a read that never returns; this check just stops early.
+            for chunk in resp.iter_bytes():
+                if watchdog.fired or (time.monotonic() - started_at) > _MAX_WALL_CLOCK_SEC:
                     raise _WallClockExceeded(ref)
                 total += len(chunk)
                 if total > _MAX_BYTES:

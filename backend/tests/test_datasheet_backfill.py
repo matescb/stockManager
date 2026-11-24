@@ -823,9 +823,11 @@ def test_each_candidate_is_committed_before_the_next_fetch(db, monkeypatch):
 
     assert datasheets.backfill_missing_datasheets(db) == 3
 
-    # One commit per candidate, each landing after that candidate's fetch.
-    assert commits == [1, 2, 3], (
-        f"expected a commit after every fetch, got {commits!r}"
+    # Two commits per candidate: the attempt BEFORE its fetch (so a run
+    # killed mid-download leaves the row in cooldown — ADR-0036), and the
+    # outcome after it.
+    assert commits == [0, 1, 1, 2, 2, 3], (
+        f"expected a commit before and after every fetch, got {commits!r}"
     )
 
 

@@ -349,6 +349,17 @@ validation on every hop, with a capped chain and loop detection. That is a
 new state machine touching this ADR's security model, so it is its own change:
 issue #918.
 
+### The wall-clock budget was not enforced (fixed by ADR-0036)
+
+The budget was checked between body chunks of `iter_bytes(chunk_size=64 KB)`.
+httpx buffers such a chunk until it is full, so a server sending one byte every
+few seconds never handed control back, and nothing was checked at all while
+headers or the TLS handshake were dribbled; the mocked test passed because the
+mock yielded one byte per call. It is now enforced at the socket by
+`assets._Watchdog`, and the backfill commits each attempt before its fetch.
+See [ADR-0036](0036-part-documents-cron-only-any-host.md) ("Hard deadline and
+fairness").
+
 ## Known limitations
 
 Tracked in issue #916, deliberately out of scope here:

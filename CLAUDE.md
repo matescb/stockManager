@@ -182,8 +182,12 @@ them, that's the bug.
   request goes to that **IP literal** with `Host:` and the `sni_hostname`
   extension preserving the real name — so httpx never re-resolves and
   check/connect cannot disagree. Plus HTTPS-only, `follow_redirects=False`,
-  no `user:pass@` URLs, the 10 MB streaming cap, a 30s wall-clock budget
-  (httpx's timeout is per-operation, so a slow-dribble host never trips it),
+  no `user:pass@` URLs, the 10 MB streaming cap, a 45s wall-clock budget
+  enforced at the socket by `assets._Watchdog` (httpx's timeout is
+  per-operation, so a slow-dribble host — body, headers or TLS handshake —
+  never trips it; don't go back to a between-chunks clock check), the
+  attempt committed BEFORE each fetch so a killed run cannot leave a hanging
+  URL first in line,
   magic-byte validation and PDF-only. The per-host throttle is gated on the
   same opt-in and must stay that way: it is a blocking sleep, and
   bulk-import-from-scan fetches up to 50 images from one CDN host inside a

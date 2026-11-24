@@ -605,3 +605,58 @@ async def test_list_part_documents_with_a_read_only_token_and_bearer_download(
         note["download_url"][len(base):], headers={"Authorization": f"Bearer {foreign}"}
     )
     assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Security-review follow-ups: attempt committed before the fetch; fairness.
+# ---------------------------------------------------------------------------
+
+
+def test_the_attempt_is_committed_before_the_fetch_starts(authed_client, db, monkeypatch):
+    """A run killed mid-download must leave the row in cooldown.
+
+    The fetch below raises BaseException (what a SIGTERM-ish kill looks like
+    to the loop): nothing after it runs, so whatever the row says afterwards
+    is what was committed before the network call.
+    """
+    part_id = create_part(authed_client, "Hang", mpn="HANG-1")
+    _queue(db, part_id, _APP_NOTE)
+
+    class _Killed(BaseException):
+        pass
+
+    def _hang(*_a, **_k):
+        raise _Killed()
+
+    monkeypatch.setattr(assets, "fetch_asset", _hang)
+    with pytest.raises(_Killed):
+        datasheets.backfill_missing_datasheets(db)
+    db.rollback()  # the kill: drop everything not yet committed
+
+    (row,) = _rows(db, part_id)
+    assert row.attempts == 1
+    assert row.last_attempt_at is not None
+    # ...so the next run leaves it alone for the cooldown.
+    assert documents._document_candidates(db, limit=10) == []
+
+
+def test_document_candidates_are_fair_across_workspaces(authed_client, db, monkeypatch):
+    noisy = create_part(authed_client, "Noisy", mpn="NOISY-1")
+    for i in range(8):
+        _queue(db, noisy, f"https://www.st.com/noisy/{i}.pdf")
+
+    other = TestClient(app)
+    signup_user(other, email=f"quiet-{uuid.uuid4().hex[:8]}@x.com")
+    quiet = create_part(other, "Quiet", mpn="QUIET-1")
+    _queue(db, quiet, "https://www.ti.com/quiet.pdf")
+
+    picked = documents._document_candidates(db, limit=10)
+    by_ws: dict = {}
+    for ws_id, _part, _row in picked:
+        by_ws[ws_id] = by_ws.get(ws_id, 0) + 1
+    noisy_ws = db.get(Part, uuid.UUID(noisy)).workspace_id
+    quiet_ws = db.get(Part, uuid.UUID(quiet)).workspace_id
+    assert by_ws == {noisy_ws: documents.DOCUMENT_BACKFILL_PER_WORKSPACE, quiet_ws: 1}
+    # The quiet workspace's only row is served in the first round, even
+    # though the noisy one queued earlier.
+    assert quiet_ws in {ws for ws, _p, _r in picked[:2]}

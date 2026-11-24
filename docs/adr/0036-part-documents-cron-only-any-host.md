@@ -72,6 +72,30 @@ same manufacturer hosts the datasheets do. The owner decided (2026-11-24):
    Bearer API token (a GET, so a read-only token is enough), is
    workspace-scoped, and always answers `Content-Disposition: attachment`.
 
+### Hard deadline and fairness (security review of #955)
+
+Opening the unrestricted path to agent-supplied URLs made a hanging host an
+availability problem for every workspace, so three things changed with it:
+
+1. **The wall-clock budget is real.** It used to be checked only between
+   `iter_bytes(chunk_size=64 KB)` chunks, which httpx buffers until full, and
+   not at all during the TLS handshake or headers. `assets._Watchdog` now arms
+   a timer per fetch and, when it fires, `shutdown()`s the connection's socket
+   (reached through httpcore's `trace` extension; an `os.dup` of the
+   descriptor is held so a reused descriptor number can never be hit). The
+   blocked read returns and the fetch fails `too_slow`. This applies to every
+   `fetch_asset` caller, allow-listed request paths included. Pinned by
+   real-socket tests (slow headers, slow body) that fail on the old code.
+2. **The attempt is committed before the fetch** (`datasheets.begin_attempt`,
+   both halves). A run killed by `timeout 600` used to roll the attempt back,
+   leaving the hanging row "never attempted" and first in the oldest-first
+   order, so one URL could stall the job for good. Now a kill leaves the row
+   in its 24 h cooldown with an attempt spent.
+3. **Document candidates are picked fairly**: ranked per workspace
+   (`ROW_NUMBER() OVER (PARTITION BY workspace_id ORDER BY created_at)`), at
+   most `DOCUMENT_BACKFILL_PER_WORKSPACE` (3) per run, interleaved by rank, so
+   one workspace's backlog cannot starve the others.
+
 ## Consequences
 
 - **Good**: agents get the paperwork for a part as local files with

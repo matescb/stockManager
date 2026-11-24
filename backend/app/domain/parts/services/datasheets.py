@@ -299,14 +299,39 @@ def _mark_stored(
     row.updated_by = user_id
 
 
-def _mark_failed(row: PartDatasheet, *, failure_code: str, user_id: UUID | None) -> None:
+def begin_attempt(db: Session, row: PartDatasheet, *, user_id: UUID | None) -> None:
+    """Count the attempt and COMMIT it before any network call.
+
+    A fetch that hangs past the sidecar's `timeout 600` is killed, and a
+    kill rolls back whatever is uncommitted. If the attempt were only
+    recorded after `fetch_asset` returned, the hanging row would be left
+    "never attempted", the oldest-first candidate order would hand it back
+    first on the next run, and that one URL would stall the job forever.
+    Committed here, a killed run leaves the row inside its retry cooldown
+    with one attempt spent, and five of those retire it.
+    """
+    row.attempts = (row.attempts or 0) + 1
+    row.last_attempt_at = utcnow()
+    row.updated_by = user_id
+    db.flush()
+    db.commit()
+
+
+def _mark_failed(
+    row: PartDatasheet,
+    *,
+    failure_code: str,
+    user_id: UUID | None,
+    attempt_recorded: bool = False,
+) -> None:
+    """`attempt_recorded`: `begin_attempt` already counted this one."""
     row.status = STATUS_FAILED
     if failure_code in _TERMINAL_FAILURES:
         # Spend the whole budget at once. `_candidate_rows` already treats
         # `attempts >= max` as settled, so this retires the row without
         # needing a separate "terminal" column to carry the same fact.
         row.attempts = settings().DATASHEET_BACKFILL_MAX_ATTEMPTS
-    else:
+    elif not attempt_recorded:
         row.attempts = (row.attempts or 0) + 1
     row.last_attempt_at = utcnow()
     row.failure_code = failure_code
@@ -465,15 +490,19 @@ def fetch_datasheet_for_part(
         # Idempotent: already downloaded under this exact URL.
         return row
 
-    # `allow_any_host=True` is the ADR-0033 opt-in. This module is the ONLY
-    # caller that passes it, and it is only reached from the cron backfill —
-    # never from a request handler.
+    begin_attempt(db, row, user_id=user_id)
+    # `allow_any_host=True` is the ADR-0033 opt-in. Only this module and
+    # `documents.py` pass it, and both are reached only from the cron
+    # backfill — never from a request handler.
     result = assets.fetch_asset(
         source_url, str(ws.id), "datasheet", allow_any_host=True
     )
     if result.stored is None:
         _mark_failed(
-            row, failure_code=result.failure_code or "unknown", user_id=user_id
+            row,
+            failure_code=result.failure_code or "unknown",
+            user_id=user_id,
+            attempt_recorded=True,
         )
         db.flush()
         _log_audit(

@@ -40,11 +40,15 @@ rewriting the table. The three CHECKs are validated by one scan each
 under ACCESS EXCLUSIVE — the table is small (one row per datasheet, ~260
 in prod), so that is milliseconds.
 
-Reversibility: total for datasheets. `downgrade()` deletes the document
-rows (``origin <> 'datasheet_field'`` — the only rows that can be
-``pending``) so the table again holds only what 0079 described, restores
-0079's status CHECK and drops the three columns. Their attachments stay:
-they are ordinary part attachments and the part still lists them.
+Reversibility: total for datasheets. `downgrade()` deletes the rows 0079
+cannot describe — every ``pending`` row (0079's CHECK has no such status)
+and every non-datasheet ``kind`` — restores 0079's status CHECK and drops
+the three columns. It deliberately does NOT delete by ``origin``: a real
+datasheet row can carry ``origin = 'agent'`` or ``'media_link'`` (an agent
+queued the part's own datasheet URL, and the datasheet half later reuses
+that row by URL and stores it), and those records must survive a
+rollback. Deleted documents' attachments stay: they are ordinary part
+attachments and the part still lists them.
 """
 
 from __future__ import annotations
@@ -110,7 +114,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ix_part_datasheets_ws_origin_status", table_name="part_datasheets")
-    op.execute("DELETE FROM part_datasheets WHERE origin <> 'datasheet_field'")
+    op.execute(
+        "DELETE FROM part_datasheets WHERE status = 'pending' OR kind <> 'datasheet'"
+    )
     op.drop_constraint("ck_part_datasheets_origin", "part_datasheets", type_="check")
     op.drop_constraint("ck_part_datasheets_kind", "part_datasheets", type_="check")
     op.drop_constraint("ck_part_datasheets_status", "part_datasheets", type_="check")
