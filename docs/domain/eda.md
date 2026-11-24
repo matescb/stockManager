@@ -15,6 +15,7 @@ Created by `backend/alembic/versions/0068_eda_domain.py` — the only migration 
 | `EdaDatafile` | `eda_datafiles` | `backend/app/domain/eda/models.py:103` |
 | `EdaFootprintModel` | `eda_footprint_models` | `backend/app/domain/eda/models.py:131` |
 | `PartEda` | `part_eda` | `backend/app/domain/eda/models.py:170` |
+| `PartSpiceBinding` | `part_spice_bindings` | `backend/app/domain/eda/models.py` (migration 0087, SM-009) |
 
 All but `eda_footprint_models` are `WorkspaceOwned` (`backend/app/domain/_mixins.py:11-20`), which supplies `id`, `workspace_id`, `created_at`, `updated_at`, `created_by`, `updated_by`, `archived_at`.
 
@@ -73,6 +74,16 @@ The rest is KiCad symbol metadata: `value`, `keywords`, `footprint_filters` (`AR
 `archived_at` exists on `part_eda` from the mixin but is **never set**. The configuration is deleted outright, because a soft-archived one would still collide on `uq_part_eda_part` on the way back and there is no tombstone worth keeping (`models.py:187-190`).
 
 Migration 0068 adds **no BEFORE triggers**, unlike `parts.category_id` in 0067, because nothing writes these five tables outside the service. See [workspace-isolation](workspace-isolation.md).
+
+### `part_spice_bindings`
+
+The structured SPICE pin binding for one part (SM-009, migration 0087), 1:1 with `parts` through `uq_part_spice_bindings_part`. A sibling of `part_eda` rather than columns on it, because `set_part_eda` replaces the whole `part_eda` row from its arguments and would reset columns nobody passed back.
+
+Columns: `part_id` → `parts.id` CASCADE; `spice_datafile_id` → `eda_datafiles.id` SET NULL (the file the ports were read from); `subckt` (the `.subckt` name, or the `.model` name for a primitive); `model_kind` `subckt`|`model`|`native_primitive`|`none` (CHECK; a second CHECK keeps `subckt` and `model_sha256` NOT NULL for the two file kinds); `params` and `fallback` for the file-less kinds; `unconnected_ports` JSONB (model ports no symbol pin drives); `device_type` (`.model` only); `ports` JSONB ordered list; `pin_map` JSONB `{symbol_pin: port | null}`, NULL until a mapping is confirmed; `symbol_pins_source` `hosted_symbol`|`declared`; `sim_pins_derived`; `model_sha256`; NG-010 header metadata `model_source`, `build_requirement`, `grade`, `header_pins`; `validated`, `validated_at`; mixin timestamps.
+
+`part_eda.sim_pins` stays the carrier the KiCad HTTP library emits as `Sim.Pins`; a confirmed binding **derives** it (`spice_binding.py::bind`, KiCad's `symbolPin=modelPin` form in natural pin order, not-connected pins left out). Whether a binding still holds is decided at **read** time (`spice_binding.py::binding_issues`) against the live `part_eda` row — another file, other bytes, or a `sim_pins` that no longer equals the derived value make it unvalidated, whichever path made the change. `validated` is the write-time verdict, cleared (never deleted) when `upload_eda_asset` puts new bytes on a bound part.
+
+The parser is `spice_model.py`: top-level `.subckt` / `.model` only, `+` continuations, `*` `;` `$` comments, `PARAMS:` or the first `k=v` token ends the port list. `.model` cards get KiCad's built-in pin names (`D` → `A K`; BJT → `C B E`; JFET/MOSFET/VDMOS → `D G S`); other card types are not checkable. Two file-less kinds keep a part without a model file from being blank: `native_primitive` (KiCad's built-in R / C / L with ports `+ -`, D with `A K`, plus `params`) and `none` (`fallback` text). They never write `part_eda`, refuse a part that has a file attached, and become an unconfirmed file binding when a file is uploaded onto the part. It also reads the NG-010 header the ngSPICE model library's `bin/export-model` writes. No backfill: existing free-text `sim_pins` are reported (`source: "free-text"`, `validated: false`) and listed by `list_spice_binding_issues`, never rewritten. No BEFORE trigger, for the reason 0068 gives. Agent surface: [MCP — SPICE pin binding](../api/mcp.md#spice-pin-binding).
 
 ## Storage lanes
 

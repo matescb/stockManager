@@ -427,6 +427,7 @@ _EXPECTED_WRITE_TOOLS = {
     "catalog_search",
     "request_part_document",
     "set_part_eda",
+    "set_spice_binding",
     "upload_eda_asset",
     "import_vendor_zip",
     "fetch_lcsc",
@@ -575,6 +576,7 @@ def _read_tool_arguments(client: TestClient) -> dict[str, dict]:
         "list_part_documents": {"part_id_or_mpn": part_id},
         "check_pin_pad": {"part_id_or_mpn": part_id},
         "list_pin_pad_issues": {},
+        "list_spice_binding_issues": {},
     }
 
 

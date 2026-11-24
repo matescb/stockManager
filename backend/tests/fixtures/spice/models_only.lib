@@ -1,0 +1,4 @@
+* .model-only file: a primitive diode and a resistor card.
+.model DSIMPLE D(Is=1e-14 N=1.8
++ Rs=0.5)
+.MODEL RMOD R (TC1=0.001)

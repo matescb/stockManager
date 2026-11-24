@@ -1,0 +1,16 @@
+* OPA192 - synthetic macro-model for SM-009 parser tests (not a vendor file).
+* Interface line split with + continuations, PARAMS: and inline comments.
+*
+.SUBCKT OPA192 IN+ IN-   ; non-inverting, inverting
++ V+ V- $ supplies
++ OUT
++ PARAMS: GAIN=1e5 IOS=1n
++ VOS=25u
+R_IN IN+ IN- 1e12
+E_GAIN MID 0 IN+ IN- {GAIN}
+.subckt OPA192_INNER A B
+R1 A B 1k
+.ends OPA192_INNER
+X_INNER MID OUT OPA192_INNER
+.MODEL DX D(IS=1e-14)
+.ENDS OPA192

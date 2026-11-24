@@ -365,6 +365,23 @@ class ErrorCodes:
     # a stored blob is missing or unparseable, which the content-addressed
     # append-only store makes a "can't happen" — hence 503, not 4xx.
     EDA_PREVIEW_UNAVAILABLE = "eda.preview_unavailable"
+    # Structured SPICE binding (SM-009, domain/eda/spice_binding.py).
+    EDA_SPICE_MODEL_MISSING = "eda.spice_model_missing"
+    EDA_SPICE_NO_MODEL = "eda.spice_no_model"
+    EDA_SPICE_SUBCKT_AMBIGUOUS = "eda.spice_subckt_ambiguous"
+    EDA_SPICE_SUBCKT_UNKNOWN = "eda.spice_subckt_unknown"
+    EDA_SPICE_NOT_CHECKABLE = "eda.spice_model_not_checkable"
+    EDA_SPICE_SYMBOL_PINS_UNKNOWN = "eda.spice_symbol_pins_unknown"
+    EDA_SPICE_SYMBOL_PINS_CONFLICT = "eda.spice_symbol_pins_conflict"
+    EDA_SPICE_PIN_UNMAPPED = "eda.spice_pin_unmapped"
+    EDA_SPICE_PIN_UNKNOWN = "eda.spice_pin_unknown"
+    EDA_SPICE_PORT_UNKNOWN = "eda.spice_port_unknown"
+    EDA_SPICE_PORT_DUPLICATE = "eda.spice_port_duplicate"
+    EDA_SPICE_PORT_COUNT_MISMATCH = "eda.spice_port_count_mismatch"
+    EDA_SPICE_SIM_PINS_TOO_LONG = "eda.spice_sim_pins_too_long"
+    EDA_SPICE_KIND_CONFLICT = "eda.spice_kind_conflict"
+    EDA_SPICE_NOT_APPLICABLE = "eda.spice_not_applicable"
+    EDA_SPICE_FIELD_TOO_LONG = "eda.spice_field_too_long"
 
     # Reports router.
     REPORT_PROJECT_NOT_FOUND = "report.project_not_found"

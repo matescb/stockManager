@@ -63,7 +63,7 @@ pins it.
 
 ## Tools
 
-33 tools — 17 read, 16 write. Names and arguments are the agent-facing contract;
+35 tools — 18 read, 17 write. Names and arguments are the agent-facing contract;
 the authoritative descriptions are the docstrings in `backend/app/mcp/tools/`,
 which are what the model actually reads.
 
@@ -77,7 +77,7 @@ earlier result has the other.
 |---|---|
 | `search_parts` | Free-text search over name, MPN, manufacturer, IPN, description |
 | `get_part` | One part: specs, catalog metadata, stock by location, CAD status, [lifecycle and compliance](#lifecycle-and-compliance) |
-| `get_part_eda` | A part's KiCad configuration, with resolved `PCM_SM_…` refs and its `pin_pad_check` |
+| `get_part_eda` | A part's KiCad configuration, with resolved `PCM_SM_…` refs, its `pin_pad_check` and its `spice_binding` (see [SPICE pin binding](#spice-pin-binding)) |
 | `find_parts_missing_eda` | "What still needs a footprint?" — by `symbol`/`footprint`/`model3d`/`spice` |
 | `stock_levels` | On-hand / reserved / available, one part or the whole inventory |
 | `list_storage_locations` | Bins and their constraints |
@@ -91,6 +91,7 @@ earlier result has the other.
 | `export_parts` | Every part, cursor-paged, with EDA hashes, on-hand / reserved / available, lifecycle and compliance — for audits |
 | `check_pin_pad` | Do the symbol's pin numbers and the footprint's pad numbers match? (see [Pin/pad check](#pinpad-check)) |
 | `list_pin_pad_issues` | Every part whose pin/pad check fails or cannot run, cursor-paged |
+| `list_spice_binding_issues` | Parts whose `sim_pins` (KiCad `Sim.Pins`) is unchecked free text or a binding that no longer holds — cursor-paged, read-only (see [SPICE pin binding](#spice-pin-binding)) |
 | `list_part_documents` | A part's local PDFs (datasheet, app notes, PCNs, manuals, uploads) with a Bearer-downloadable `download_url`, plus what is still queued (see [Part documents](#part-documents)) |
 
 ### Write
@@ -101,7 +102,8 @@ earlier result has the other.
 | `catalog_lookup` | Look an MPN up at DigiKey / Mouser; nothing is written (see below) |
 | `catalog_search` | Keyword / parametric search at DigiKey / Mouser with facets; nothing is written (see below) |
 | `set_part_eda` | Replace a part's KiCad configuration |
-| `upload_eda_asset` | Add a symbol / footprint / 3D model / SPICE file (base64) |
+| `upload_eda_asset` | Add a symbol / footprint / 3D model / SPICE file (base64); a SPICE file's `.subckt` / `.model` ports come back as `spice_models` |
+| `set_spice_binding` | Map a part's symbol pins to its SPICE model's ports, checked, and derive `sim_pins` (see [SPICE pin binding](#spice-pin-binding)) |
 | `import_vendor_zip` | Import a SnapEDA / SamacSys / UltraLibrarian archive (base64) |
 | `fetch_lcsc` | Fetch and convert CAD data from LCSC / EasyEDA — **disabled by default**, see [Disabling](#disabling) |
 | `add_stock` | Add stock |
@@ -542,6 +544,72 @@ both ends.
 5. `check_pin_pad(part_id_or_mpn=…)` — confirm the symbol's pin numbers and the
    footprint's pad numbers match before the part goes on a board. Vendor
    symbols and footprints come from different generators.
+6. For a part with a SPICE model: `set_spice_binding(part_id_or_mpn=…,
+   pin_map={…})` — **after** step 4, because `set_part_eda` resets `sim_pins`
+   (see [SPICE pin binding](#spice-pin-binding)).
+
+### SPICE pin binding
+
+`part_eda.sim_pins` is what the KiCad HTTP library emits as `Sim.Pins`
+(`"1=OUT 2=V- 3=IN+ 4=IN- 5=V+"` — KiCad's `symbolPin=modelPin` form, space
+separated). It used to be free text nothing checked; a wrong order simulates
+silently wrong (SM-009). The emitted field names `Sim.Device`, `Sim.Pins`,
+`Sim.Params` and `Sim.Library` are unchanged.
+
+1. `upload_eda_asset(kind="spice", …, part_id=…)` parses the file and returns
+   `spice_models: [{name, kind: "subckt"|"model", ports, device_type?}]`
+   (plus `ng010_header` for a file exported by the ngSPICE model library's
+   `bin/export-model`). When the part now points at that file and it defines
+   exactly one model, the subckt and ports are stored as an **unvalidated**
+   binding (`spice_binding_updated: true`). New bytes on a part that already
+   had a binding mark it unvalidated and keep its `pin_map` for
+   re-confirmation; nothing is deleted.
+2. `set_spice_binding(part_id_or_mpn, pin_map, subckt?, symbol_pins?,
+   unconnected_ports?)` checks `pin_map` — `{symbol_pin: port | null}`, null
+   meaning not connected — against the symbol (a hosted symbol's pins are
+   read from its file; otherwise, and for a derived `extends` symbol, pass
+   `symbol_pins`) and the model: every symbol pin mapped, every target port
+   present, every port used exactly once or listed in `unconnected_ports`
+   (an LTspice `NC` node, the other channels of a one-channel model). Two
+   symbol pins on one net (a second VIN pin, an exposed pad) map one to the
+   port and the rest to null. It then stores the binding as validated and
+   writes `sim_pins` in symbol-pin order. It touches no other column of the
+   part's configuration.
+   - `model_kind="native_primitive"` records a part simulated as KiCad's
+     built-in `R`, `C`, `L` (ports `+ -`) or `D` (`A K`) with `params`
+     (`Sim.Params` text) and no file; `pin_map` is optional (without it the
+     record is kept, `not_confirmed`).
+   - `model_kind="none"` records that there is no model, with `fallback`
+     text (what to simulate with instead). It takes no `pin_map`.
+   - Both file-less kinds take an optional `source` (e.g. the ngSPICE
+     inventory manifest), refuse a part with a SPICE file attached
+     (`eda.spice_kind_conflict`) and never write `part_eda` — the HTTP
+     library emits `Sim.*` only for a part with a file. A later upload of a
+     file onto the part turns the record into an unconfirmed file binding.
+3. `get_part_eda` returns `spice_binding`: `{source: "binding", validated,
+   issues, subckt, model_kind, device_type, ports, pin_map, sim_pins,
+   model_sha256, model_source, build_requirement, grade, header_pins, …}`, or
+   `{source: "free-text", validated: false, sim_pins}` for a hand-written
+   value with no binding. `validated` is computed at read time — a different
+   file, different bytes or an edited `sim_pins` make it false, whichever
+   path made the change. `issues` says why: `not_confirmed`,
+   `awaiting_reconfirmation`, `model_changed`, `model_detached`,
+   `sim_pins_edited`; for the file-less kinds `no_model` (always, for
+   `none`) and `model_file_attached`.
+4. `list_spice_binding_issues(cursor?, page_size≤100)` lists every part
+   that is not validated, with, for free text, what comparing it with the
+   attached file found (`port_count_mismatch`, `port_unknown`,
+   `sim_pins_unparseable`, `model_ambiguous`, `no_model_in_file`,
+   `model_unreadable`, `no_model_attached`). File-less records are listed
+   only when a file has since been attached. It reads only.
+
+**What the parser reads.** Top-level `.subckt NAME ports… [PARAMS: …]` with
+`+` continuations, `*` / `;` / `$` comments, any case; nested subcircuits are
+skipped. The port list ends at `PARAMS:` or the first `k=v` token. A
+`.model` card gets the pin names KiCad's own models use: `D` → `A K`;
+`NPN`/`PNP` → `C B E`; `NJF`/`PJF`/`NMOS`/`PMOS`/`VDMOS` → `D G S`. Any
+other card type is refused as `eda.spice_model_not_checkable`. A file with
+several models needs `subckt`.
 
 ### Check a BOM against stock
 
@@ -720,6 +788,7 @@ not repeated per row.
 | `check_pin_pad` | `part_id_or_mpn` | — | `part.not_found`. A missing, external or unreadable file is `verdict: not-checkable` with a `reason`, not a refusal |
 | `list_pin_pad_issues` | — | `verdict`, `cursor`, `page_size` | `mcp.invalid_cursor` (a cursor this tool did not mint) |
 | `list_part_documents` | `part_id_or_mpn` | `kinds` | `part.not_found`; `document.invalid_kind` |
+| `list_spice_binding_issues` | — | `cursor`, `page_size` | `mcp.invalid_cursor` |
 | `request_part_document` | `part_id_or_mpn`, `url`, `kind` | `title` | `part.not_found`; `document.invalid_url`; `document.invalid_kind`; `document.invalid_title` (> 300 characters); `document.queue_full` (200 requests already waiting in this workspace — wait for the hourly job) |
 | `catalog_lookup` | `mpn` | `manufacturer`, `provider` | `part.provider_not_configured`; `part.provider_missing_mpn`; when NO provider answered, the first provider's `provider.quota_reserve_reached` / `provider.suspended` / `provider.pacing` / `rate_limited` / `provider.upstream_error`. A provider that refuses while another answers is listed under `errors`, not refused |
 | `catalog_search` | `keywords` (unless `list_categories`) | `category_id`, `manufacturer_ids`, `parameter_filters`, `status`, `in_stock`, `rohs`, `has_datasheet`, `sort`, `limit`, `offset`, `provider`, `list_categories` | `provider.invalid_filter`; `provider.unsupported_filter`; `part.provider_not_configured`; and, when no provider answered, the same provider codes as `catalog_lookup` |
@@ -733,6 +802,7 @@ not repeated per row.
 | `move_stock` | `part_id`, `qty`, `from_location_id`, `to_location_id` | — | `resource.not_found` for either end; `stock.operation_error` for a non-positive `qty` or too little stock at the source; `stock.constraint_violation` on the destination |
 | `set_part_eda` | `part_id` | the other eleven | `eda_symbol.not_found`, `eda_footprint.not_found`, `eda_datafile.not_found`; `eda.ref_conflict` when both `<slot>_id` and `<slot>_ref_external` are set; `eda.archived` for a retired entry |
 | `upload_eda_asset` | `kind`, `filename`, `content_base64` | `part_id`, `category_slug` | `eda.unsupported_kind`, `eda.invalid_file`, `eda.empty_file`, `eda.file_too_large`, `eda.multiple_symbols`, `eda.legacy_format` |
+| `set_spice_binding` | `part_id_or_mpn` | `pin_map` (required for `file`), `model_kind`, `subckt`, `symbol_pins`, `unconnected_ports`, `device_type`, `params`, `fallback`, `source` | `part.not_found`; `eda.spice_model_missing`; `eda.file_not_found`; `eda.spice_no_model`; `eda.spice_subckt_ambiguous` / `eda.spice_subckt_unknown` (both list `available`); `eda.spice_model_not_checkable`; `eda.spice_symbol_pins_unknown`; `eda.spice_symbol_pins_conflict`; `eda.spice_pin_unknown`; `eda.spice_pin_unmapped`; `eda.spice_port_unknown`; `eda.spice_port_duplicate`; `eda.spice_port_count_mismatch`; `eda.spice_sim_pins_too_long`; `eda.spice_kind_conflict`; `eda.spice_not_applicable`; `eda.spice_field_too_long` |
 | `import_vendor_zip` | `part_id`, `content_base64` | `overwrite` | `eda.invalid_archive`, `eda.archive_too_large`, `eda.no_entries` |
 | `fetch_lcsc` | `part_id`, `lcsc_id` | `overwrite` | `eda.lcsc_not_found`, `eda.lcsc_unavailable` |
 | `sync_project_bom` | `project_id`, `rows` | `dry_run` | `project.not_found`; `bom.sync_invalid_row`; `bom.sync_duplicate_line`; `bom.sync_unkeyed_row`. Same diff as `POST /api/projects/{id}/bom/sync` — see [projects.md](./projects.md#post-apiprojectsproject_idbomsync) |
@@ -869,6 +939,7 @@ the REST surface ([ADR-0002](../adr/0002-code-enforced-workspace-isolation.md)).
 | `find_parts_missing_eda` results | 100 |
 | `export_parts` page size | 200 (clamped; paged, never truncated) |
 | `list_pin_pad_issues` page size / parts scanned per call | 100 (clamped) / 500 |
+| `list_spice_binding_issues` page size | 100 (clamped; paged) |
 | `set_part_specs` keys per call | 50 |
 | `set_part_specs` key / value length | 256 / 1024 characters |
 | `create_part` `mpn` / `manufacturer` / `internal_part_number` | 200 / 200 / 120 characters |
@@ -892,6 +963,11 @@ behalf, and the trail names someone who can be asked about it.
 Stock movements are the exception, and match the REST path: no audit row,
 because the `stock_entries` ledger row *is* the record and carries its own
 `created_by`.
+
+`set_spice_binding` has no REST twin; it records `part_spice_binding.set`
+(`subckt=…,ports=N,sha256=…`). An `upload_eda_asset` that records or
+unvalidates a binding adds `part_spice_binding.model_recorded`
+(`sha256=…,validated=false`).
 
 `set_part_specs` has no REST twin — one call writes many rows — so it records
 one `part.specs_updated` row naming the keys that moved and never their values.

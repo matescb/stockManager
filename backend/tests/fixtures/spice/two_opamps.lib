@@ -1,0 +1,9 @@
+* Two top-level subcircuits in one file, lower-case directives,
+* LTspice-style defaults without PARAMS:.
+.subckt OPA_A inp inn vcc vee out Rload=10k
+R1 inp inn 1meg
+.ends
+.subckt OPA_B 1 2 3
++ 4 5
+R1 1 2 1meg
+.ends OPA_B

@@ -15,6 +15,22 @@ the canonical record.
 
 ## Unreleased
 
+- **Structured SPICE pin binding (SM-009).** `part_eda.sim_pins` (KiCad
+  `Sim.Pins`) was free text nothing checked. Migration 0087 adds
+  `part_spice_bindings`: the model's `.subckt` (or `.model`) name and ordered
+  ports parsed from the file, a `{symbol_pin: port}` map, the sha256 it was
+  checked against and NG-010 header metadata (source, build requirement,
+  grade, pin order). New MCP tools `set_spice_binding` (validates the map
+  against the symbol and the model with stable `eda.spice_*` codes, then
+  derives `sim_pins`) and `list_spice_binding_issues` (read-only, cursor-paged).
+  `get_part_eda` gains `spice_binding`; `upload_eda_asset` returns
+  `spice_models` for a SPICE file and records an unvalidated binding when it
+  attaches one. A part without a model file can be recorded as
+  `native_primitive` (built-in R/C/L/D with parameters) or `none` (with the
+  fallback to use), and model ports no symbol pin drives are listed as
+  `unconnected_ports`. Emitted `Sim.*` field names are unchanged and no
+  existing row is rewritten: free-text values read as `source: "free-text",
+  validated: false`.
 - **Bag labels scanned without separators, or without an MPN.** A USB reader
   that drops the label's GS/RS separators ran every field together. A Mouser
   label made for an order with customer part numbers carries only P, no 1P.

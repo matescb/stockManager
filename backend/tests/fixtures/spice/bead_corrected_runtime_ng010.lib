@@ -1,0 +1,21 @@
+* BEAD1 - single-file export of the converted LTspice model (ngSPICE model library, NG-010)
+* Catalogue entry: name=BEAD1 kind=subcircuit output=cmp/bead/00000.lib
+* Manufacturer: not established; base part number: not established
+* Source: lib/cmp/standard_bead.db sha256 6666666666666666666666666666666666666666666666666666666666666666
+* Converted file: cmp/bead/00000.lib sha256 7777777777777777777777777777777777777777777777777777777777777777
+* Build: needs patched+runtime; ngbehavior=ltpsa required: True
+*   stock ngspice first error: synthetic first error
+*   needs patched+runtime: pinned ngspice 47 with ngconvert.cm loaded before parsing
+*   (.control / pre_codemodel $ngconvert_cm / .endc after the title; env ngconvert_cm;
+*   -D ngbehavior=ltpsa). Not usable on stock ngspice.
+*   identities: ngspice-47 sha256:8888888888888888888888888888888888888888888888888888888888888888 + runtime
+* Grade (NG-006): valid_for=[] builds=[]
+* Pins (in order): p n
+* Correction NG009-001 (proposed): Rser 3 -> 3m; APPLIED in this file; see corrections/NG009-001.yaml
+* Licence: Vendor model, copyright held by its owner; redistribution terms not established.
+* Exported by tools/export_model.py at ngSPICE commit 0000000
+
+* SYNTHETIC body (SM-009 test fixture).
+.subckt BEAD1 p n
+R1 p n 1
+.ends BEAD1

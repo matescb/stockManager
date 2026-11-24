@@ -22,6 +22,7 @@ def load_tools() -> list[ToolSpec]:
         pin_pad,
         read,
         sourcing,
+        spice,
         write,
         write_inventory,
         write_parts,
