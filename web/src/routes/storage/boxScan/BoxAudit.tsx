@@ -125,7 +125,7 @@ export default function BoxAudit() {
         if (needsMpn) {
           setFollowUp({ rowId: x.id, missing: "mpn", context: x.context ?? "" });
           playScanSound("needs_info");
-        } else {
+        } else if (!x.camera) {
           playScanSound("success");
         }
       } catch (e) {
@@ -137,9 +137,9 @@ export default function BoxAudit() {
   );
 
   const supplyMpn = useCallback(
-    (x: ExtraBag, mpn: string) => {
-      patchExtra(x.id, { mpn, busy: true, needsMpn: false, error: undefined });
-      void resolveExtra({ ...x, mpn });
+    (x: ExtraBag, mpn: string, camera = false) => {
+      patchExtra(x.id, { mpn, camera, busy: true, needsMpn: false, error: undefined });
+      void resolveExtra({ ...x, mpn, camera });
     },
     [patchExtra, resolveExtra],
   );
@@ -159,7 +159,7 @@ export default function BoxAudit() {
         return;
       }
       setFollowUp(null);
-      supplyMpn(x, answer.mpn);
+      supplyMpn(x, answer.mpn, typeof input !== "string" && input.source === "camera");
     },
     [supplyMpn],
   );
@@ -171,7 +171,7 @@ export default function BoxAudit() {
       const known = findBySignature(bagsRef.current, s.sig);
       if (known) {
         if (bucketKey(known) in draft.counted) toast.info("Already scanned");
-        playScanSound("success");
+        if (s.source !== "camera") playScanSound("success");
         markScanned(known);
         return;
       }
@@ -195,6 +195,7 @@ export default function BoxAudit() {
         quantity: s.bag.quantity ?? 0,
         sig: s.sig,
         raw: s.raw,
+        camera: s.source === "camera",
         lotName: s.lotName,
         lotSerial: s.bag.serial ?? null,
         comments: s.comments,

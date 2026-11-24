@@ -7,7 +7,19 @@ import { apiGet, apiPost, FakeApiError, RAW_A, RAW_NO_1P } from "./mocks";
 vi.mock("@/instrument", () => ({}));
 vi.mock("@/lib/auth", () => ({ useAuth: () => ({ workspaceId: "ws-1" }) }));
 vi.mock("@/lib/queryKeys", () => ({ useWsKey: (...a: unknown[]) => ["ws-1", ...a] }));
-vi.mock("@/components/scanner/Scanner", () => ({ default: () => <div data-testid="camera" /> }));
+const wedge = vi.hoisted(() => ({ onScan: null as null | ((code: string) => void) }));
+vi.mock("@/components/scanner/useKeyboardWedge", () => ({
+  useKeyboardWedge: (cb: (code: string) => void) => {
+    wedge.onScan = cb;
+  },
+}));
+const camera = vi.hoisted(() => ({ onScan: null as null | ((r: { data: string; symbology: string }) => void) }));
+vi.mock("@/components/scanner/Scanner", () => ({
+  default: ({ onScan }: { onScan: (r: { data: string; symbology: string }) => void }) => {
+    camera.onScan = onScan;
+    return <div data-testid="camera" />;
+  },
+}));
 vi.mock("sonner", () => ({ toast: { info: vi.fn(), error: vi.fn(), success: vi.fn() } }));
 const sounds = vi.hoisted(() => ({
   playScanSound: vi.fn(),
@@ -148,6 +160,30 @@ describe("BoxIntake", () => {
       );
       mount();
       scan(RAW_A);
+      await screen.findByText("Added");
+      expect(sounds.playScanSound.mock.calls).toEqual([["success"]]);
+    });
+
+    it("skips the success beep for a camera scan (the camera already clicked)", async () => {
+      apiPost.mockImplementation((url: string) =>
+        url.endsWith("/scan/resolve")
+          ? Promise.resolve({ status: "existing_part", part, bag: null, provider: null })
+          : Promise.resolve({ status: "added", part, part_created: false, lot_id: "l1", quantity: 100, moved_from: [] }),
+      );
+      mount();
+      camera.onScan!({ data: RAW_A, symbology: "DataMatrix" });
+      await screen.findByText("Added");
+      expect(sounds.playScanSound).not.toHaveBeenCalled();
+    });
+
+    it("beeps success for a USB / keyboard-wedge scan", async () => {
+      apiPost.mockImplementation((url: string) =>
+        url.endsWith("/scan/resolve")
+          ? Promise.resolve({ status: "existing_part", part, bag: null, provider: null })
+          : Promise.resolve({ status: "added", part, part_created: false, lot_id: "l1", quantity: 100, moved_from: [] }),
+      );
+      mount();
+      wedge.onScan!(RAW_A);
       await screen.findByText("Added");
       expect(sounds.playScanSound.mock.calls).toEqual([["success"]]);
     });

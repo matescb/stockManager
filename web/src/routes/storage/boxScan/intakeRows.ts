@@ -19,6 +19,9 @@ export type IntakeRow = {
   noMpnMessage?: string;
   /** Which bag, for a follow-up prompt ("Murata · qty 100 · Mouser order …"). */
   context?: string;
+  /** Last scan for this row came from the camera (which already clicked):
+   *  no success beep. */
+  camera?: boolean;
   phase: IntakePhase;
   resolve?: ResolveResult;
   result?: Pick<IntakeResult, "status" | "lot_id" | "part" | "part_created">;

@@ -12,7 +12,7 @@ import Scanner, { type ScanResult } from "@/components/scanner/Scanner";
 import { useKeyboardWedge } from "@/components/scanner/useKeyboardWedge";
 import { isScanSoundMuted, playScanSound, primeScanAudio, setScanSoundMuted } from "@/components/scanner/scanSounds";
 import { api, ApiError } from "@/lib/api";
-import { classifyScan, type ScannedBag } from "./scanCode";
+import { classifyScan, type ScanSource, type ScannedBag } from "./scanCode";
 
 const SYMBOLOGIES = ["DataMatrix", "QR"] as const;
 const CAMERA_PREF = "boxScan:camera";
@@ -50,8 +50,8 @@ export default function ScanPanel({ boxId, mode, onBag, onManual }: Props) {
   const [qty, setQty] = useState("");
 
   const handle = useCallback(
-    async (raw: string) => {
-      const scanned = await classifyScan(raw);
+    async (raw: string, source: ScanSource) => {
+      const scanned = await classifyScan(raw, source);
       if (scanned.kind === "bag") {
         onBag(scanned);
         return;
@@ -77,8 +77,9 @@ export default function ScanPanel({ boxId, mode, onBag, onManual }: Props) {
     [boxId, mode, navigate, onBag],
   );
 
-  useKeyboardWedge(handle);
-  const onCamera = useCallback((s: ScanResult) => void handle(s.data), [handle]);
+  const onWedge = useCallback((raw: string) => void handle(raw, "wedge"), [handle]);
+  useKeyboardWedge(onWedge);
+  const onCamera = useCallback((s: ScanResult) => void handle(s.data, "camera"), [handle]);
 
   function toggleCamera() {
     const next = !camera;
@@ -93,7 +94,7 @@ export default function ScanPanel({ boxId, mode, onBag, onManual }: Props) {
   function submitCode(e: React.FormEvent) {
     e.preventDefault();
     if (!code.trim()) return;
-    void handle(code);
+    void handle(code, "paste");
     setCode("");
   }
 

@@ -105,11 +105,11 @@ export default function BoxIntake() {
           playScanSound("error");
           patch(row.id, { phase: "error", resolve: res, error: `${row.mpn} is not in the library, and the parts provider has no match (or none is configured)` });
         } else if (res.status === "bag_elsewhere") {
-          playScanSound("success");
+          if (!row.camera) playScanSound("success");
           patch(row.id, { phase: "needs_choice", resolve: res });
         } else if (res.status === "bag_here" && res.bag) {
           const q = res.bag.quantity_here;
-          playScanSound("success");
+          if (!row.camera) playScanSound("success");
           patch(row.id, {
             phase: "saved",
             resolve: res,
@@ -123,7 +123,7 @@ export default function BoxIntake() {
           if (!(row.quantity > 0)) {
             askFollowUp(ready);
           } else {
-            playScanSound("success");
+            if (!row.camera) playScanSound("success");
             if (autoSave) await save(ready);
           }
         }
@@ -146,8 +146,8 @@ export default function BoxIntake() {
   /** Complete a no-MPN row: keep its quantity, lot, order refs and the
    *  signature of the original 2D label. */
   const supplyMpn = useCallback(
-    (row: IntakeRow, mpn: string) => {
-      const next = { ...row, mpn, phase: "resolving" as const, error: undefined };
+    (row: IntakeRow, mpn: string, camera = false) => {
+      const next = { ...row, mpn, camera, phase: "resolving" as const, error: undefined };
       patch(row.id, { mpn, phase: "resolving", error: undefined });
       void resolveRow(next);
     },
@@ -174,7 +174,7 @@ export default function BoxIntake() {
       }
       setFollowUp(null);
       if ("mpn" in answer) {
-        supplyMpn(row, answer.mpn);
+        supplyMpn(row, answer.mpn, typeof input !== "string" && input.source === "camera");
       } else {
         const next = { ...row, quantity: answer.quantity };
         patch(row.id, { quantity: answer.quantity });
@@ -209,6 +209,7 @@ export default function BoxIntake() {
         quantity: b.bag.quantity ?? 0,
         sig: b.sig,
         raw: b.raw,
+        camera: b.source === "camera",
         lotName: b.lotName,
         lotSerial: b.bag.serial ?? null,
         comments: b.comments,

@@ -17,6 +17,8 @@ export type ExtraBag = {
   noMpnMessage?: string;
   /** Which bag, for the follow-up prompt. */
   context?: string;
+  /** Last scan came from the camera: no success beep (it already clicked). */
+  camera?: boolean;
   resolve?: ResolveResult;
   busy: boolean;
   error?: string;

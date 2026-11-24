@@ -66,7 +66,7 @@ Scanning a box's printed label switches to that box.
 
 Intake and Audit tell you how each scan went by sound:
 
-- **One short beep**: the scan worked.
+- **One short beep**: the scan worked. With the camera you hear only its click when it reads the code, with no extra beep.
 - **A low buzz**: it failed. The code was not a bag label, or the part is not in your library and your parts provider has no match. Look at the list for the reason.
 - **Two rising tones**: the app needs one more scan for this bag. See below.
 
