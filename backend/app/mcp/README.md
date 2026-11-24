@@ -21,6 +21,7 @@ this way. Don't restate either here.
 | `tools/_shared.py` | Resolution (`resolve_part`, `resolve_category`, …), result serialisation, and the `audit` helper |
 | `tools/read.py` | The 10 read tools |
 | `tools/sourcing.py` | `sourcing_offers` — a read-shaped tool declared as a write |
+| `tools/catalog_search.py` | `catalog_search` — DigiKey / Mouser keyword and parametric search, declared as a write; rules in `domain/parts/services/catalog_search.py` |
 | `tools/catalog.py` | `catalog_lookup` — DigiKey / Mouser lookup, declared as a write; rules in `domain/parts/services/catalog_lookup.py` and `provider_quota.py` |
 | `tools/write.py` | The 4 KiCad-library write tools |
 | `tools/write_inventory.py` | The 4 inventory write tools (stock, categories) |

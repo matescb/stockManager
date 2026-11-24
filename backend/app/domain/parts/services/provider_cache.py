@@ -55,7 +55,7 @@ import math
 import time
 from collections import OrderedDict
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 from app.core.time import utcnow
 from app.domain.parts.providers.base import ProviderUpstreamError
@@ -275,12 +275,30 @@ def _refuse_if_open(provider_name: str, breaker: _CircuitBreaker) -> None:
         )
 
 
+def guarded_call(provider: Any, call: "Callable[[], dict]") -> dict:
+    """Run any provider call under this credential's breaker.
+
+    For calls other than `lookup_mpn` (`catalog_search`, SM-002): refused
+    while the breaker is open or the credential is suspended, and the
+    answer folded into the breaker exactly as a lookup's is — `found` is
+    success, `suspended` opens it for ten minutes, a hard-failure message
+    counts toward the five-strike threshold.
+    """
+    breaker = _get_breaker(provider.name, provider_account(provider))
+    _refuse_if_open(provider.name, breaker)
+    return _record_outcome(breaker, call)
+
+
 def _live_call(
     provider: "PartsProvider", mpn: str, breaker: _CircuitBreaker
 ) -> "MpnLookupResult":
     """Call the provider and fold the answer into the breaker state."""
+    return _record_outcome(breaker, lambda: provider.lookup_mpn(mpn))  # type: ignore[return-value]
+
+
+def _record_outcome(breaker: _CircuitBreaker, call: "Callable[[], dict]") -> dict:
     try:
-        result = provider.lookup_mpn(mpn)
+        result = call()
     except ProviderUpstreamError:
         breaker.record_failure()
         raise

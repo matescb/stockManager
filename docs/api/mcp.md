@@ -96,6 +96,7 @@ earlier result has the other.
 |---|---|
 | `sourcing_offers` | Distributor price and stock for a part (see below) |
 | `catalog_lookup` | Look an MPN up at DigiKey / Mouser; nothing is written (see below) |
+| `catalog_search` | Keyword / parametric search at DigiKey / Mouser with facets; nothing is written (see below) |
 | `set_part_eda` | Replace a part's KiCad configuration |
 | `upload_eda_asset` | Add a symbol / footprint / 3D model / SPICE file (base64) |
 | `import_vendor_zip` | Import a SnapEDA / SamacSys / UltraLibrarian archive (base64) |
@@ -178,6 +179,76 @@ owner's daily distributor allowance ([below](#why-a-price-lookup-counts-as-a-wri
   429/503 with backoff (up to 8 s, three times, ADR-0023). Agent calls make
   one attempt; a 429 comes back under `errors` as `rate_limited`, with
   `retry_after_ms` when DigiKey sent `Retry-After`.
+
+### Catalogue search
+
+`catalog_search(keywords, category_id?, manufacturer_ids?, parameter_filters?,
+status?, in_stock?, rohs?, has_datasheet?, sort?, limit?, offset?, provider?,
+list_categories?)` is part research: "0603 C0G 100 nF, at least 50 V, active,
+in stock". It writes nothing and follows `catalog_lookup`'s rules — declared a
+write, one candidate list per provider (never merged), `source` /
+`product_url` / `retrieved_at` on every candidate, the [provider
+quota](#provider-quota) with `quota` per provider, one attempt with no
+transport retries.
+
+```json
+{
+  "keywords": "100nF 0603 C0G", "limit": 2, "offset": 0,
+  "total": {"digikey": 1342},
+  "candidates": [
+    {"source": "digikey", "mpn": "GRM1885C1H104JA01D",
+     "manufacturer": "Murata Electronics",
+     "description": "CAP CER 0.1UF 50V C0G/NP0 0603", "category": "Ceramic Capacitors",
+     "status": "Active",
+     "key_parameters": {"Capacitance": "0.1 µF", "Voltage - Rated": "50V"},
+     "stock": 41230, "unit_price_qty1": "9.4100 CZK",
+     "datasheet_url": "…", "product_url": "https://www.digikey.cz/…",
+     "retrieved_at": "2026-11-24T10:02:11+00:00"}
+  ],
+  "facets": {
+    "source": "digikey",
+    "categories": [{"id": "60", "name": "Ceramic Capacitors", "count": 1342, "root": "Capacitors"}],
+    "manufacturers": [{"id": "490", "name": "Murata Electronics", "count": 312}],
+    "status": [{"id": "0", "name": "Active", "count": 1290}],
+    "parametric_filters": [
+      {"parameter_id": 14, "name": "Voltage - Rated",
+       "values": [{"id": "64", "name": "50V", "count": 640}]}
+    ]
+  },
+  "applied_filters": {"digikey": {"Keywords": "100nF 0603 C0G", "Limit": 2, "Offset": 0}},
+  "cache": "miss",
+  "quota": [{"provider": "digikey", "spent": 1, "remaining_day": 640,
+             "reserve": 200, "source": "header"}]
+}
+```
+
+- **Narrow with ids from `facets`.** `category_id`, `manufacturer_ids`,
+  `status` and `parameter_filters: [{parameter_id, value_ids}]` take the ids
+  DigiKey returned in a previous answer. Parametric filters need
+  `category_id` (DigiKey scopes parameter ids per category), else
+  `provider.invalid_filter`. `applied_filters` echoes the request body that
+  was actually sent, per provider.
+- **Mouser does keyword search only** — `keywords`, `in_stock`, `rohs`
+  (mapped to `searchOptions` None / Rohs / InStock / RohsAndInStock), `limit`,
+  `offset`. Any DigiKey-only argument (`category_id`, `manufacturer_ids`,
+  `parameter_filters`, `status`, `has_datasheet`, `sort`, `list_categories`)
+  with `provider: "mouser"` is refused with `provider.unsupported_filter`;
+  with `"all"`, Mouser is listed under `errors` with that code and DigiKey
+  still answers. Nothing is silently dropped.
+- **Paging.** `limit` is per provider, default 20, clamped to 1–50; page with
+  `offset += limit`. `total` is per provider.
+- **Compact.** At most 8 `key_parameters` per candidate; facets are capped
+  (10 categories, 20 manufacturers, 20 parametric filters of at most 12
+  values each, `values_truncated: true` when cut).
+- **`list_categories: true`** adds DigiKey's category tree two levels deep as
+  `categories`; `keywords` may then be empty. The tree is cached in-process
+  for a day.
+- **Nothing is persisted.** No part, spec, attachment, cache or audit row.
+  DigiKey's terms forbid building "your own database" from its data, so the
+  most kept is an in-process copy of a DigiKey response for 10 minutes, keyed
+  by workspace and the exact request (`cache: "hit"`, `spent: 0`). Mouser's
+  caching terms have not been read, so a Mouser answer lives for the request
+  only.
 
 ### Provider quota
 
@@ -444,6 +515,7 @@ not repeated per row.
 | `part_policy_status` | `part_id_or_mpn` | — | `part.not_found` |
 | `export_parts` | — | `cursor`, `page_size`, `include_archived` | `mcp.invalid_cursor` (a cursor this tool did not mint — start over without one) |
 | `catalog_lookup` | `mpn` | `manufacturer`, `provider` | `part.provider_not_configured`; `part.provider_missing_mpn`; when NO provider answered, the first provider's `provider.quota_reserve_reached` / `provider.suspended` / `provider.pacing` / `rate_limited` / `provider.upstream_error`. A provider that refuses while another answers is listed under `errors`, not refused |
+| `catalog_search` | `keywords` (unless `list_categories`) | `category_id`, `manufacturer_ids`, `parameter_filters`, `status`, `in_stock`, `rohs`, `has_datasheet`, `sort`, `limit`, `offset`, `provider`, `list_categories` | `provider.invalid_filter`; `provider.unsupported_filter`; `part.provider_not_configured`; and, when no provider answered, the same provider codes as `catalog_lookup` |
 | `sourcing_offers` | `part_id` | `qty` | `part.not_found` only. Every other failure is **degradation, not a refusal**: a part with no MPN, unconfigured sourcing, an exhausted budget and a provider error all return `status` (`no_mpn` / `not_configured` / `budget_blocked` / `provider_error`) with an empty `offers` list. Read that as "unknown", not "unavailable" |
 | `create_part` | one of `name` / `mpn` | `manufacturer`, `description`, `category_id`, `part_type`, `internal_part_number`, `footprint`, `notes_markdown` | `part.name_or_mpn_required`; `category.not_found`; `category.archived`; `part.invalid_field` (over-long value). **Not** `part.mpn_conflict` and **not** `part.policy_violation` — both are results, see above |
 | `set_part_category` | `part_id_or_mpn`, `category_id_or_name` | — | `part.not_found`; `category.not_found` (lists up to 10 existing names); `category.name_conflict` when two differ only in case |
@@ -569,6 +641,8 @@ Codes specific to the provider tools:
 | `provider.upstream_error` | The provider failed or rejected the credentials | Later |
 | `rate_limited` | The provider answered 429 | Later |
 | `part.provider_not_configured` | No credentials for the provider asked for, or none at all | No — ask the owner |
+| `provider.unsupported_filter` | `catalog_search`: a filter the provider cannot apply (Mouser: anything but keywords / in_stock / rohs) | No — drop it or use DigiKey |
+| `provider.invalid_filter` | `catalog_search`: no keywords, or parametric filters without `category_id` | No — fix the call |
 | `eda.lcsc_disabled` | `fetch_lcsc` is parked for agents ([Disabling](#disabling)) | No |
 
 The code leads because it is the half that does not get reworded. A stack trace

@@ -1,0 +1,235 @@
+{
+ "Products": [
+  {
+   "Description": {
+    "ProductDescription": "CAP CER 0.1UF 50V C0G/NP0 0603",
+    "DetailedDescription": "CAP CER 0.1UF 50V C0G/NP0 0603 Surface Mount"
+   },
+   "Manufacturer": {
+    "Id": 490,
+    "Name": "Murata Electronics"
+   },
+   "ManufacturerProductNumber": "GRM1885C1H104JA01D",
+   "UnitPrice": 9.41,
+   "ProductUrl": "https://www.digikey.cz/en/products/detail/murata-electronics/GRM1885C1H104JA01D/1234567",
+   "DatasheetUrl": "https://www.example-mfr.com/datasheets/GRM1885C1H104JA01D.pdf",
+   "PhotoUrl": "https://mm.digikey.com/Volume0/opasdata/d220001/medias/images/GRM1885C1H104JA01D.jpg",
+   "ProductVariations": [
+    {
+     "DigiKeyProductNumber": "GRM1885C1H104JA01DCT-ND",
+     "PackageType": {
+      "Id": 2,
+      "Name": "Cut Tape (CT)"
+     },
+     "StandardPricing": [
+      {
+       "BreakQuantity": 1,
+       "UnitPrice": 9.41,
+       "TotalPrice": 9.41
+      },
+      {
+       "BreakQuantity": 10,
+       "UnitPrice": 5.646,
+       "TotalPrice": 56.46
+      }
+     ],
+     "MinimumOrderQuantity": 1,
+     "QuantityAvailableforPackageType": 41230
+    }
+   ],
+   "QuantityAvailable": 41230,
+   "ProductStatus": {
+    "Id": 0,
+    "Status": "Active"
+   },
+   "Discontinued": false,
+   "EndOfLife": false,
+   "Ncnr": false,
+   "Category": {
+    "CategoryId": 3,
+    "Name": "Capacitors",
+    "ChildCategories": [
+     {
+      "CategoryId": 60,
+      "Name": "Ceramic Capacitors",
+      "ChildCategories": []
+     }
+    ]
+   },
+   "Parameters": [
+    {
+     "ParameterId": 2049,
+     "ParameterText": "Capacitance",
+     "ParameterType": "String",
+     "ValueId": "3046",
+     "ValueText": "0.1 µF"
+    },
+    {
+     "ParameterId": 3,
+     "ParameterText": "Tolerance",
+     "ParameterType": "String",
+     "ValueId": "131",
+     "ValueText": "±5%"
+    },
+    {
+     "ParameterId": 14,
+     "ParameterText": "Voltage - Rated",
+     "ParameterType": "String",
+     "ValueId": "64",
+     "ValueText": "50V"
+    },
+    {
+     "ParameterId": 17,
+     "ParameterText": "Temperature Coefficient",
+     "ParameterType": "String",
+     "ValueId": "39",
+     "ValueText": "C0G, NP0"
+    },
+    {
+     "ParameterId": 16,
+     "ParameterText": "Package / Case",
+     "ParameterType": "String",
+     "ValueId": "39158",
+     "ValueText": "0603 (1608 Metric)"
+    },
+    {
+     "ParameterId": 252,
+     "ParameterText": "Operating Temperature",
+     "ParameterType": "String",
+     "ValueId": "51",
+     "ValueText": "-55°C ~ 125°C"
+    },
+    {
+     "ParameterId": 69,
+     "ParameterText": "Mounting Type",
+     "ParameterType": "String",
+     "ValueId": "409393",
+     "ValueText": "Surface Mount, MLCC"
+    },
+    {
+     "ParameterId": 1500,
+     "ParameterText": "Applications",
+     "ParameterType": "String",
+     "ValueId": "1",
+     "ValueText": "General Purpose"
+    },
+    {
+     "ParameterId": 46,
+     "ParameterText": "Ratings",
+     "ParameterType": "String",
+     "ValueId": "-",
+     "ValueText": "-"
+    },
+    {
+     "ParameterId": 1531,
+     "ParameterText": "Height - Seated (Max)",
+     "ParameterType": "String",
+     "ValueId": "9",
+     "ValueText": "0.034\" (0.87mm)"
+    }
+   ],
+   "Classifications": {
+    "ReachStatus": "REACH Unaffected",
+    "RohsStatus": "ROHS3 Compliant",
+    "MoistureSensitivityLevel": "1  (Unlimited)",
+    "ExportControlClassNumber": "EAR99",
+    "HtsusCode": "8532.24.0020"
+   }
+  }
+ ],
+ "ProductsCount": 12,
+ "ExactMatches": [],
+ "FilterOptions": {
+  "Manufacturers": [
+   {
+    "Id": 490,
+    "Value": "Murata Electronics",
+    "ProductCount": 12
+   }
+  ],
+  "Packaging": [
+   {
+    "Id": 2,
+    "Value": "Cut Tape (CT)",
+    "ProductCount": 1100
+   }
+  ],
+  "Status": [
+   {
+    "Id": 0,
+    "Value": "Active",
+    "ProductCount": 12
+   },
+   {
+    "Id": 7,
+    "Value": "Obsolete",
+    "ProductCount": 0
+   }
+  ],
+  "Series": [],
+  "ParametricFilters": [
+   {
+    "Category": {
+     "Id": 60,
+     "Name": "Ceramic Capacitors"
+    },
+    "ParameterType": "String",
+    "ParameterId": 14,
+    "ParameterName": "Voltage - Rated",
+    "FilterValues": [
+     {
+      "ProductCount": 12,
+      "ValueId": "64",
+      "ValueName": "50V",
+      "RangeFilterType": "Min"
+     }
+    ]
+   },
+   {
+    "Category": {
+     "Id": 60,
+     "Name": "Ceramic Capacitors"
+    },
+    "ParameterType": "String",
+    "ParameterId": 17,
+    "ParameterName": "Temperature Coefficient",
+    "FilterValues": [
+     {
+      "ProductCount": 12,
+      "ValueId": "39",
+      "ValueName": "C0G, NP0",
+      "RangeFilterType": null
+     }
+    ]
+   }
+  ],
+  "TopCategories": [
+   {
+    "RootCategory": {
+     "Id": 3,
+     "Name": "Capacitors",
+     "ProductCount": 1342
+    },
+    "Category": {
+     "Id": 60,
+     "Name": "Ceramic Capacitors",
+     "ProductCount": 12
+    },
+    "Score": 1.0,
+    "ImageUrl": "https://mm.digikey.com/category/ceramic.jpg"
+   }
+  ],
+  "MarketPlaceFilters": [
+   "NoFilter",
+   "ExcludeMarketPlace",
+   "MarketPlaceOnly"
+  ]
+ },
+ "SearchLocaleUsed": {
+  "Site": "CZ",
+  "Language": "en",
+  "Currency": "CZK",
+  "ShipToCountry": "cz"
+ },
+ "AppliedParametricFiltersDto": []
+}

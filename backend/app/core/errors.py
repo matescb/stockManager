@@ -401,6 +401,13 @@ class ErrorCodes:
     # Too soon after this workspace's previous call to the same provider
     # (`PROVIDER_AGENT_MIN_SPACING_SECONDS`); carries `retry_after_ms`.
     PROVIDER_PACING = "provider.pacing"
+    # `catalog_search` (SM-002). `unsupported_filter`: a filter the named
+    # provider cannot apply (Mouser has keyword search only) — refused rather
+    # than silently dropped, so a result never looks narrower than it is.
+    # `invalid_filter`: arguments that cannot form a valid search at all
+    # (no keywords, parametric filters without a category).
+    PROVIDER_UNSUPPORTED_FILTER = "provider.unsupported_filter"
+    PROVIDER_INVALID_FILTER = "provider.invalid_filter"
 
     # MCP surface (ADR-0030). Raised only by the runtime assertion in
     # `app/mcp/principal.py::unit_of_work`: a tool declared read-only

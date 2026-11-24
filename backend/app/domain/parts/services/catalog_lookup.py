@@ -57,7 +57,7 @@ from app.domain.parts.services.provider_refresh_failures import looks_like_quota
 from app.domain.provider_errors import ProviderError, ProviderSuspendedError
 from app.domain.sourcing.providers._retry_transport import retries_disabled
 
-__all__ = ["CatalogLookupRefused", "PROVIDER_ORDER", "catalog_lookup"]
+__all__ = ["CatalogLookupRefused", "PROVIDER_ORDER", "catalog_lookup", "configured_clients"]
 
 #: Answer order. DigiKey first, matching `PROVIDER_PRECEDENCE`; nothing is
 #: merged, so this is presentation only.
@@ -106,7 +106,7 @@ def catalog_lookup(
     query = (mpn or "").strip()
     if not query:
         raise CatalogLookupRefused(ErrorCodes.PART_PROVIDER_MISSING_MPN, "mpn is empty")
-    clients = _clients(db, ws, provider)
+    clients = configured_clients(db, ws, provider)
     answers = [_ask(ws.id, client, query) for client in clients]
     return _response(query, manufacturer, answers)
 
@@ -114,7 +114,7 @@ def catalog_lookup(
 # ---------------------------------------------------------------------------
 # which providers
 # ---------------------------------------------------------------------------
-def _clients(db, ws, provider: str) -> list[Any]:
+def configured_clients(db, ws, provider: str) -> list[Any]:
     if provider != "all":
         try:
             return [provider_target(db, ws, provider).client]
