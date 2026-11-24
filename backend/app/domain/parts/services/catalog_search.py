@@ -310,6 +310,9 @@ def _response(q: SearchQuery, answers: list[_Answer]) -> dict[str, Any]:
     cats = next((a.categories for a in answered if a.categories is not None), None)
     if cats is not None:
         out["categories"] = cats
+    hints = [h for a in answered for h in a.result.get("hints") or []]
+    if hints:
+        out["hints"] = hints
     if errors:
         out["errors"] = errors
     return out

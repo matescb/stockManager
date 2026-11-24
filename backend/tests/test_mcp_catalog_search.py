@@ -89,7 +89,8 @@ async def test_sm002_1_keyword_search_candidates_total_facets_applied(token, dig
     assert facets["source"] == "digikey"
     assert facets["categories"][0]["id"] == "60"
     assert facets["manufacturers"][0]["count"] == 312
-    assert facets["parametric_filters"][0]["values"][0]["id"] == "64"
+    assert facets["parametric_filters"] == [], "DigiKey leaves them null on a broad search"
+    assert out["hints"] == [digikey_search.HINT_NARROW_FOR_PARAMETRICS]
     assert out["applied_filters"]["digikey"] == {"Keywords": "100nF 0603 C0G", "Limit": 2,
                                                  "Offset": 0}
     assert out["quota"][0]["spent"] == 1
@@ -107,7 +108,10 @@ async def test_sm002_2_requery_with_facet_ids_narrows(token, digikey, clock):
     async with mcp_session(token) as s:
         broad = await call(s, "catalog_search", keywords="100nF 0603 C0G")
         cat = broad["facets"]["categories"][0]["id"]
-        volt = next(f for f in broad["facets"]["parametric_filters"]
+        clock.now += 2
+        by_category = await call(s, "catalog_search", keywords="100nF 0603 C0G",
+                                 category_id=cat)
+        volt = next(f for f in by_category["facets"]["parametric_filters"]
                     if f["name"] == "Voltage - Rated")
         clock.now += 2
         narrow = await call(
