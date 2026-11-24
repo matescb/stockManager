@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
@@ -20,8 +20,14 @@ export function useSourcingFilters(budgetDisabledUntil: number | null) {
     queryFn: ({ signal }) => api.get<SourcingWorkspaceSettings>("/workspaces/current", { signal }),
   });
 
-  useEffect(() => {
-    if (!workspace || defaultsApplied) return;
+  // Applied DURING render, not in an effect. An effect runs after the
+  // commit that first shows the workspace's distributor checkboxes, so
+  // there was one committed frame with every box unchecked and the
+  // selects empty — visible as a flicker, and caught by the filters
+  // test whenever its DOM query landed in that frame (flaky in CI).
+  // Setting state while rendering makes React re-render before it
+  // commits, so the controls never appear without their defaults.
+  if (workspace && !defaultsApplied) {
     setCountry(defaultFromActiveList(workspace.sourcing_country_code, workspace.active_countries));
     setCurrency(defaultFromActiveList(workspace.sourcing_currency_code, workspace.active_currencies));
     setDistributors(distributorsFromActiveList(
@@ -29,7 +35,7 @@ export function useSourcingFilters(budgetDisabledUntil: number | null) {
       workspace.active_distributors,
     ));
     setDefaultsApplied(true);
-  }, [workspace, defaultsApplied]);
+  }
 
   const filterWarnings = useMemo(() => {
     if (!workspace || !defaultsApplied) return [];
