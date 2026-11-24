@@ -56,6 +56,8 @@ EXPECTED_PARTS_ROUTES: set[tuple[str, str]] = {
     ("GET", "/api/parts/{part_id}/eda"),
     ("PUT", "/api/parts/{part_id}/eda"),
     ("DELETE", "/api/parts/{part_id}/eda"),
+    ("GET", "/api/parts/{part_id}/eda/assets"),
+    ("PUT", "/api/parts/{part_id}/eda/{kind}/review"),
     # Vendor imports (eda_import router, third mount under /api/parts).
     ("POST", "/api/parts/{part_id}/eda/import"),
     ("POST", "/api/parts/{part_id}/eda/fetch-lcsc"),

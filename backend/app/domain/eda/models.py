@@ -346,3 +346,98 @@ class PartSpiceBinding(WorkspaceOwned, Base):
     header_pins = Column(JSONB(none_as_null=True), nullable=True)
     validated = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     validated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+# SM-010 vocabularies. Kept here beside the model so the CHECK
+# constraints, the migration and the service read one list.
+ASSET_KINDS = ("symbol", "footprint", "model3d", "spice")
+MODEL_KINDS = ("vendor", "converted", "fitted")
+REVIEW_STATES = ("unreviewed", "reviewed", "rejected")
+
+
+class EdaAssetMetadata(WorkspaceOwned, Base):
+    """What is known about ONE version of one hosted EDA file (SM-010).
+
+    Keyed by the asset row AND its `sha256`: replacing a file's bytes
+    moves the row's `sha256` (`service.update_entry` re-stores in place),
+    so the lookup for the new version misses and the new version reads
+    as `unreviewed` with no metadata — nothing has to remember to reset
+    it. The old version's row stays as history.
+
+    Exactly one of `symbol_id` / `footprint_id` / `datafile_id` is set
+    (3D models and SPICE files both live in `eda_datafiles`). Real FKs
+    with CASCADE rather than a polymorphic `object_id`, so a hard-deleted
+    library entry takes its metadata with it without a cleanup listener.
+
+    `source` on the asset row stays what it is — the server-set import
+    channel. `origin` here is where the file came from in the human
+    sense (a URL, "datasheet rev C"), written by whoever knows.
+
+    The review columns are written only by `PUT /api/parts/{id}/eda/
+    {kind}/review` from a browser session of an admin/owner; no API
+    token can change them. Migration 0088.
+    """
+
+    __tablename__ = "eda_asset_metadata"
+    __table_args__ = (
+        CheckConstraint(
+            "num_nonnulls(symbol_id, footprint_id, datafile_id) = 1",
+            name="ck_eda_asset_metadata_one_asset",
+        ),
+        CheckConstraint(
+            "model_kind IS NULL OR model_kind IN ('vendor', 'converted', 'fitted')",
+            name="ck_eda_asset_metadata_model_kind",
+        ),
+        CheckConstraint(
+            "review_state IN ('unreviewed', 'reviewed', 'rejected')",
+            name="ck_eda_asset_metadata_review_state",
+        ),
+        Index(
+            "uq_eda_asset_metadata_symbol_sha",
+            "symbol_id",
+            "sha256",
+            unique=True,
+            postgresql_where=text("symbol_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_eda_asset_metadata_footprint_sha",
+            "footprint_id",
+            "sha256",
+            unique=True,
+            postgresql_where=text("footprint_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_eda_asset_metadata_datafile_sha",
+            "datafile_id",
+            "sha256",
+            unique=True,
+            postgresql_where=text("datafile_id IS NOT NULL"),
+        ),
+    )
+
+    symbol_id = Column(
+        UUID(as_uuid=True), ForeignKey("eda_symbols.id", ondelete="CASCADE"), nullable=True
+    )
+    footprint_id = Column(
+        UUID(as_uuid=True), ForeignKey("eda_footprints.id", ondelete="CASCADE"), nullable=True
+    )
+    datafile_id = Column(
+        UUID(as_uuid=True), ForeignKey("eda_datafiles.id", ondelete="CASCADE"), nullable=True
+    )
+    sha256 = Column(String(64), nullable=False)
+
+    origin = Column(String(1000), nullable=True)
+    model_kind = Column(String(12), nullable=True)
+    simulators = Column(ARRAY(String(40)), nullable=True)
+    valid_for = Column(ARRAY(String(120)), nullable=True)
+    not_valid_for = Column(ARRAY(String(120)), nullable=True)
+    note = Column(String(2000), nullable=True)
+
+    review_state = Column(
+        String(12), nullable=False, default="unreviewed", server_default=text("'unreviewed'")
+    )
+    reviewed_by = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    review_against = Column(String(500), nullable=True)

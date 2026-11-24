@@ -15,6 +15,17 @@ the canonical record.
 
 ## Unreleased
 
+- **EDA asset metadata and review (SM-010).** Migration 0088 adds
+  `eda_asset_metadata`, keyed by a hosted symbol / footprint / 3D model /
+  SPICE file AND its sha256, so a new file version reads as `unreviewed`.
+  It records `origin`, SPICE `model_kind` (vendor | converted | fitted),
+  `simulators`, `valid_for`, `not_valid_for`, `note` and a review
+  `{state, by, at, against}`. New MCP tool `set_asset_metadata` (member
+  tokens; merge semantics); `get_part_eda` gains `assets`. Review is written
+  only by `PUT /api/parts/{id}/eda/{kind}/review` from an owner/admin browser
+  session — every API token gets `eda.review_requires_owner`. The CAD tab
+  shows the state per file with Mark reviewed / Reject for owners. `source`
+  is unchanged and no existing row is rewritten.
 - **Structured SPICE pin binding (SM-009).** `part_eda.sim_pins` (KiCad
   `Sim.Pins`) was free text nothing checked. Migration 0087 adds
   `part_spice_bindings`: the model's `.subckt` (or `.model`) name and ordered

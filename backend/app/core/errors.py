@@ -385,6 +385,13 @@ class ErrorCodes:
     EDA_SPICE_EXPORT_SCHEMA_UNSUPPORTED = "eda.spice_export_schema_unsupported"
     EDA_SPICE_FALLBACK_TOKEN_UNKNOWN = "eda.spice_fallback_token_unknown"
     EDA_SPICE_NATIVE_INVALID = "eda.spice_native_invalid"
+    # EDA asset metadata + review (SM-010, domain/eda/asset_metadata.py).
+    EDA_ASSET_METADATA_INVALID = "eda.asset_metadata_invalid"
+    EDA_ASSET_NOT_ATTACHED = "eda.asset_not_attached"
+    EDA_ASSET_CHANGED = "eda.asset_changed"
+    # Review fields are written only from an admin/owner browser session;
+    # every API token (MCP or REST) and every lesser role gets this.
+    EDA_REVIEW_REQUIRES_OWNER = "eda.review_requires_owner"
 
     # Reports router.
     REPORT_PROJECT_NOT_FOUND = "report.project_not_found"

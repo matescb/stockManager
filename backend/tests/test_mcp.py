@@ -427,6 +427,7 @@ _EXPECTED_WRITE_TOOLS = {
     "catalog_search",
     "request_part_document",
     "set_part_eda",
+    "set_asset_metadata",
     "set_spice_binding",
     "upload_eda_asset",
     "import_vendor_zip",

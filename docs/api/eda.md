@@ -238,6 +238,42 @@ Each slot is named **either** by a hosted id or by an external ref, never both. 
 
 Drop the configuration. A hard delete, not an archive (`service.py:647-654`). Deleting a configuration that does not exist is a `200`, not a `404`.
 
+### `GET /api/parts/{part_id}/eda/assets`
+
+`{assets, can_review}` — `assets` is the same per-slot map `get_part_eda`
+returns over MCP ([mcp.md § Asset metadata and review](./mcp.md#asset-metadata-and-review)):
+origin, SPICE `model_kind`, simulators, `valid_for` / `not_valid_for`, note
+and `review: {state, by, by_name, at, against}` for the **current sha256**
+of each hosted file. `can_review` is true only for an `owner` / `admin`
+browser session. Archived parts included.
+
+- Source: `backend/app/api/routes/eda_asset_review.py`
+- Service: `backend/app/domain/eda/asset_metadata.py`
+
+### `PUT /api/parts/{part_id}/eda/{kind}/review`
+
+`kind` is `symbol` | `footprint` | `model3d` | `spice`. Body (`extra="forbid"`):
+`{state: "unreviewed"|"reviewed"|"rejected", against?: str≤500, sha256?: str}`.
+Records the reviewer and time on the file's current version; `unreviewed`
+clears reviewer, time and `against`. Returns `{kind, asset}`. Audit:
+`eda_asset_review.set` (`kind=…,sha256=…,state=…`).
+
+**Who.** A workspace `owner` or `admin` signed in with a **session cookie**.
+Every API token — including the owner's own full-access token — and every
+member or viewer session is refused. Descriptive metadata has no REST writer;
+it is the MCP `set_asset_metadata` tool.
+
+| Status | Code | When |
+|---|---|---|
+| 403 | `eda.review_requires_owner` | API token, or a member session |
+| 403 | `resource.insufficient_role` | viewer (the router's member gate fires first) |
+| 404 | `part.not_found` | unknown or other-workspace part |
+| 409 | `eda.asset_not_attached` | the slot is empty or names a local KiCad library |
+| 409 | `eda.asset_changed` | `sha256` was sent and the file has been replaced since |
+| 422 | `eda.asset_metadata_invalid` | `against` too long |
+
+Rate limit `60/minute` per workspace.
+
 ## Importers
 
 Three entry points, one plan. `vendor_zip.py` and `lcsc.py` decide what an archive or an LCSC part offers, touching no database and no filesystem; `importer.py` is the only thing that writes it down. See [domain/eda § import pipeline](../domain/eda.md#the-import-pipeline).

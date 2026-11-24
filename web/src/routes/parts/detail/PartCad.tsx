@@ -32,6 +32,7 @@ import { InlineQueryError, type QueryLike } from "@/components/QueryStateBoundar
 import { SymbolPreview } from "@/components/eda/SymbolPreview";
 import { FootprintPreview } from "@/components/eda/FootprintPreview";
 import { ModelPreview } from "@/components/eda/ModelPreview";
+import { PartCadAssetReview } from "./PartCadAssetReview";
 import type {
   EdaDatafile,
   EdaFootprint,
@@ -375,6 +376,8 @@ export default function PartCad() {
       <button className="btn-primary" onClick={save} disabled={busy}>
         {busy ? "Saving…" : "Save"}
       </button>
+
+      <PartCadAssetReview partId={partId ?? ""} />
     </div>
   );
 }

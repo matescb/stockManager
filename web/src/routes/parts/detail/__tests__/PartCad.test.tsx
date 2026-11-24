@@ -109,6 +109,8 @@ function mockReads(config: unknown = emptyConfig) {
     // fixtures still match.
     const bare = path.split("?")[0];
     if (bare === `/parts/${PART_ID}/eda`) return Promise.resolve(config);
+    if (bare === `/parts/${PART_ID}/eda/assets`)
+      return Promise.resolve({ assets: {}, can_review: false });
     if (bare === "/eda/symbols") return Promise.resolve(symbols);
     if (bare === "/eda/footprints") return Promise.resolve(footprints);
     if (bare === "/eda/datafiles") return Promise.resolve(datafiles);
