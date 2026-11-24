@@ -114,7 +114,10 @@ def test_put_assigns_ids_defaults_and_is_audited(authed_client, db):
         "hint": None,
     }
     assert authed_client.get("/api/part-policy").json()["data"]["rules"] == rules
-    assert db.query(AuditLog).filter(AuditLog.action == "part_policy.updated").count() == 1
+    row = db.query(AuditLog).filter(AuditLog.action == "part_policy.updated").one()
+    assert row.workspace_id is not None
+    assert [str(t) for t in row.target_ids] == [str(row.workspace_id)]
+    assert row.comment == "rules=2"
 
     # Replace, not merge.
     assert _set_policy(authed_client, []) == []
@@ -381,6 +384,17 @@ def test_validate_refuses_a_foreign_category(db):
     foreign = _category(a, "Foreign")["id"]
     r = b.post("/api/parts/validate", json={"mpn": "X-1", "category_id": foreign})
     assert r.status_code == 404, r.text
+
+
+def test_validate_refuses_a_foreign_storage_location(db):
+    a, b = TestClient(app), TestClient(app)
+    signup_user(a)
+    signup_user(b)
+    r = a.post("/api/storage", json={"name": "A-shelf"})
+    assert r.status_code in (200, 201), r.text
+    loc = r.json()["data"]["id"]
+    body = {"mpn": "X-2", "default_storage_location_id": loc}
+    assert b.post("/api/parts/validate", json=body).status_code == 404
 
 
 def test_policy_status_refuses_a_foreign_part(db):
