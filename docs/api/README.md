@@ -41,6 +41,7 @@ slowapi, per-process bucket store, per-IP. The reverse proxy must set `X-Forward
 | [invitations](invitations.md) | `/api/invitations` | Accept invitation (no workspace context) |
 | [parts](parts.md) | `/api/parts` | parts_core + parts_assets + parts_refresh + parts_scan + parts_provider |
 | [categories](categories.md) | `/api/categories` | Part categories + per-category EDA defaults |
+| [part-policy](part-policy.md) | `/api/part-policy`, `/api/parts/validate`, `/api/parts/{id}/policy-status` | Workspace part policy: required fields, dry-run validate, completeness |
 | [eda](eda.md) | `/api/eda`, `/api/parts/{id}/eda` | KiCad library CRUD, uploads, vendor-zip + LCSC import, client setup |
 | [kicad](kicad.md) | `/kicad-api` | KiCad's own protocols: the HTTP library and the PCM repository. **Not** the envelope |
 | [stock](stock.md) | `/api/stock`, `/api/lots` | Add/remove/move/adjust + lot management |
@@ -55,7 +56,7 @@ slowapi, per-process bucket store, per-IP. The reverse proxy must set `X-Forward
 | [label-templates](label-templates.md) | `/api/label-templates` | Label layouts, the JScript render engine, and test printing |
 | [tokens](tokens.md) | `/api/tokens` | Personal access tokens for KiCad / agent access |
 | [agents](agents.md) | — | Cross-cutting guide for non-browser clients: token auth, error codes, curl quickstart |
-| [mcp](mcp.md) | `/mcp` | MCP server for AI assistants: connecting, the 22 tools, rate limits, read-only semantics |
+| [mcp](mcp.md) | `/mcp` | MCP server for AI assistants: connecting, the 25 tools, rate limits, read-only semantics |
 | [audit](audit.md) | `/api/audit` | Activity log query |
 | [search](search.md) | `/api/search` | Cross-entity search |
 | [catalog](catalog.md) | `/catalog` | Public token-gated read-only catalog |

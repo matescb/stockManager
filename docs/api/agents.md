@@ -125,6 +125,7 @@ actually branch on:
 | `auth.token_no_token_management` | 403 | A session-only route. Needs a human in a browser. |
 | `resource.insufficient_role` | 403 | The owner's membership role is too low. Carries `required_role`. |
 | `rate_limited` | 429 | Carries `retry_after_seconds`. |
+| `part.policy_violation` | 422 | Part create refused by the workspace part policy. Carries `missing` — see [Creating parts: the part policy](#creating-parts-the-part-policy). |
 
 **Cross-workspace is `404`, never `403`.** An id belonging to another workspace
 is indistinguishable from one that does not exist. This is the workspace
@@ -146,6 +147,7 @@ One row per area. Prefixes are the mount points in `backend/app/main.py:548-649`
 | Area | Prefix | What an agent does with it | Reference |
 |---|---|---|---|
 | Parts | `/api/parts` | The central entity. Create, search by `mpn`, read `on_hand` / `available`, patch metadata, attach files. | [parts](parts.md) |
+| Part policy | `/api/part-policy`, `/api/parts/validate`, `/api/parts/{id}/policy-status` | Which fields this workspace requires on a part. Read it, validate before creating, check completeness after. | [part-policy](part-policy.md) |
 | Categories | `/api/categories` | File parts into a tree that also supplies KiCad defaults (refdes prefix, symbol/footprint refs). | [categories](categories.md) |
 | EDA | `/api/eda`, `/api/parts/{id}/eda` | Upload `.kicad_sym` / `.kicad_mod` / STEP / SPICE, wire them to a part, import a vendor zip. Multipart. | [eda](eda.md) |
 | Stock | `/api/stock` | `add` / `remove` / `move` / `adjust`. Append-only ledger — never patch a quantity, post a delta. | [stock](stock.md) |
@@ -197,7 +199,8 @@ curl -sS -H "$AUTH" -H 'Content-Type: application/json' \
 
 `201`, and `data.id` is the category id used below.
 
-**3. Create a part in it.**
+**3. Create a part in it.** Validate first if the workspace has a part policy
+— see [Creating parts: the part policy](#creating-parts-the-part-policy).
 
 ```bash
 curl -sS -H "$AUTH" -H 'Content-Type: application/json' \
@@ -261,6 +264,36 @@ Low-stock rows carry `on_hand`, `reserved`, `available`, `threshold` and
 `short_by`, sorted by `short_by` descending — the report to drive a reorder
 agent from.
 
+## Creating parts: the part policy
+
+The workspace — not the client — decides which fields a part must have. Don't
+hard-code a field list; read it. Full contract: [part-policy](part-policy.md).
+
+1. `GET /api/part-policy` once per session. `rules[]` say which `field` is
+   required, `when` (`create` blocks the create, `complete` only reports), for
+   which `scope`, and a `hint` saying where to find the value. An empty list
+   means only `name` or `mpn` is required.
+2. `POST /api/parts/validate` with the body you intend to create. Nothing is
+   written. Read `missing`: for each item with `when: "create"`, fill `field`
+   using its `hint`; for `category_id`, pick an `id` from `allowed`. Repeat
+   until `ok` is `true`. If `existing_part` is set, the MPN already exists —
+   reuse that id instead of creating.
+3. `POST /api/parts`. If it still answers `422` with `code:
+   "part.policy_violation"`, the top-level `missing` is the same list — fill
+   and retry. Never loop on the same body.
+4. Attach what the `complete` items ask for (datasheet, symbol, footprint,
+   SPICE model), then `GET /api/parts/{id}/policy-status` until `complete` is
+   `true`.
+
+```bash
+curl -sS -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"mpn": "RC0402FR-0710KL", "category_id": "<CATEGORY_ID>"}' \
+  "$SM/api/parts/validate"
+```
+
+`validate` is a POST, so a `read_only` token cannot call it; `GET
+/api/part-policy` and `policy-status` work with one.
+
 ## Machine-readable schema
 
 `GET /openapi.json` in non-prod environments (it is disabled in prod on
@@ -285,7 +318,7 @@ for the values to write into it.
 ## MCP
 
 If the client is an AI assistant rather than a script, there is a second door:
-an MCP server at `/mcp`, authenticated by the same token, exposing 22 named
+an MCP server at `/mcp`, authenticated by the same token, exposing 25 named
 tools over the same services these routes call. It exists because a general
 REST surface makes an assistant spend its context re-deriving the domain model.
 Prefer it for assistants; prefer the routes above for anything scripted. See

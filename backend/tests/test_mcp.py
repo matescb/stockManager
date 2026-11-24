@@ -564,6 +564,9 @@ def _read_tool_arguments(client: TestClient) -> dict[str, dict]:
         "list_projects": {},
         "get_project_bom": {"project_id": project_id},
         "bom_shortages": {"project_id": project_id, "build_qty": 3},
+        "get_part_policy": {},
+        "validate_part": {"mpn": "CLEAN-2", "category_id": slug},
+        "part_policy_status": {"part_id_or_mpn": part_id},
     }
 
 

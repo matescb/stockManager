@@ -15,6 +15,22 @@ the canonical record.
 
 ## Unreleased
 
+- **Workspace part policy.** The workspace now defines which fields a part
+  must have, instead of every client deciding for itself. Admins edit the
+  rules under Settings → Workspace → Part policy (`PUT /api/part-policy`);
+  each rule names a field (part columns, or `datasheet` / `eda.symbol` /
+  `eda.footprint` / `eda.spice` / `eda.model3d`), a scope (categories with
+  their subcategories, part types), `when` — `create` refuses the part,
+  `complete` only reports it — and a hint telling an agent where to find
+  the value. `POST /api/parts` answers `422 part.policy_violation` with a
+  structured `missing` list; `POST /api/parts/validate` is the dry run and
+  `GET /api/parts/{id}/policy-status` says what a part still lacks. MCP
+  gains `get_part_policy`, `validate_part` and `part_policy_status`, and
+  `create_part` returns the `missing` list as a result (plus `footprint`
+  and `notes_markdown` arguments). Stored on `workspaces.part_policy`
+  (migration 0085, nullable, no backfill): an empty policy changes nothing.
+  ADR-0035; contract in `docs/api/part-policy.md`.
+
 - **Box intake and box audit.** Two scan modes on every storage
   location ([phase 15](docs/phases/15-box-intake-and-audit.md)).
   - **Intake** (`/storage/:id/intake`, "Scan into here") adds each

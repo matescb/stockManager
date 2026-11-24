@@ -36,6 +36,7 @@ from fastapi import HTTPException, status
 from pydantic import ValidationError
 
 from app.core.errors import ErrorCodes, raise_http
+from app.domain.part_policy.service import evaluate_part
 from app.domain.parts.models import Part
 from app.domain.parts.schemas import PartIn
 from app.domain.parts.services.create_part import create_part as _create_part
@@ -76,6 +77,8 @@ def create_part(
     category_id: str | None = None,
     part_type: Literal["local", "linked"] | None = None,
     internal_part_number: str | None = None,
+    footprint: str | None = None,
+    notes_markdown: str | None = None,
 ) -> dict[str, Any]:
     """Create a part in this workspace, or report the one that exists.
 
@@ -92,35 +95,52 @@ def create_part(
             "linked" for one whose data comes from a parts provider.
         internal_part_number: Your own part number for it, if you use
             one.
+        footprint: The package, e.g. "0402" or "SOIC-8".
+        notes_markdown: Free-form notes, Markdown.
 
-    **At least one of `name` and `mpn` is required.**
+    **At least one of `name` and `mpn` is required.** The workspace's
+    part policy may require more — call `validate_part` with the same
+    arguments first; it answers without creating anything.
 
-    When `mpn` is already used by a part here, nothing is created and
-    the call SUCCEEDS with `found_existing: true` and that part — an
-    MPN is one part, so finding it is the right answer. Check that flag
-    before telling the user you added something. Otherwise
-    `found_existing` is false and `part` is the new row.
+    Three outcomes, told apart by `created` and `found_existing`:
+
+    * `mpn` is already used by a part here: nothing is created and the
+      call SUCCEEDS with `found_existing: true` and that part — an MPN
+      is one part, so finding it is the right answer. Check that flag
+      before telling the user you added something.
+    * the part policy refuses it: nothing is created, `created: false`,
+      `error: "part.policy_violation"`, and `missing` lists each
+      required field as `{field, rule_id, when, message, hint,
+      allowed?}`. Fill those in (the `hint` says where the value comes
+      from; for `category_id`, `allowed` lists the categories) and call
+      again.
+    * otherwise `created: true` and `part` is the new row. `incomplete`
+      lists what the policy still wants attached before the part counts
+      as complete (datasheet, symbol, footprint, …) — the same list
+      `part_policy_status` gives.
 
     Stock is not set here; call `add_stock` afterwards.
     """
-    fields: dict[str, Any] = {
-        "name": name,
-        "mpn": mpn,
-        "manufacturer": manufacturer,
-        "description": description,
-        "internal_part_number": internal_part_number,
-        "part_type": part_type,
-    }
-    supplied = {k: v for k, v in fields.items() if v is not None}
-    if category_id is not None:
-        supplied["category_id"] = resolve_category_ref(caller, category_id).id
-
-    payload = _payload(supplied)
+    payload = build_part_in(
+        caller,
+        name=name,
+        mpn=mpn,
+        manufacturer=manufacturer,
+        description=description,
+        category_id=category_id,
+        part_type=part_type,
+        internal_part_number=internal_part_number,
+        footprint=footprint,
+        notes_markdown=notes_markdown,
+    )
     try:
         part = _create_part(
             caller.db, ws=caller.ws, user_id=caller.user.id, payload=payload
         )
     except HTTPException as exc:
+        violation = _policy_violation(exc)
+        if violation is not None:
+            return violation
         # STRIPPED, matching what the service pre-checked against. An MPN
         # copied out of a schematic or a BOM cell carries trailing space
         # more often than not, and looking the existing part back up by
@@ -132,7 +152,7 @@ def create_part(
         )
         if existing is None:
             raise
-        return {"found_existing": True, "part": part_summary(existing)}
+        return {"found_existing": True, "created": False, "part": part_summary(existing)}
 
     audit(
         caller,
@@ -141,7 +161,65 @@ def create_part(
         target_id=part.id,
         comment="fields=" + ",".join(sorted(set(payload.model_fields_set) | {"name"})),
     )
-    return {"found_existing": False, "part": part_summary(part)}
+    status_ = evaluate_part(caller.db, ws=caller.ws, part=part)
+    return {
+        "found_existing": False,
+        "created": True,
+        "part": part_summary(part),
+        "incomplete": status_["missing"],
+    }
+
+
+def build_part_in(
+    caller: Caller,
+    *,
+    name: str | None,
+    mpn: str | None,
+    manufacturer: str | None,
+    description: str | None,
+    category_id: str | None,
+    part_type: str | None,
+    internal_part_number: str | None,
+    footprint: str | None,
+    notes_markdown: str | None,
+) -> PartIn:
+    """The `PartIn` `create_part` would submit — shared with `validate_part`
+    so the dry run judges exactly the payload the create would send.
+    """
+    fields: dict[str, Any] = {
+        "name": name,
+        "mpn": mpn,
+        "manufacturer": manufacturer,
+        "description": description,
+        "internal_part_number": internal_part_number,
+        "part_type": part_type,
+        "footprint": footprint,
+        "notes_markdown": notes_markdown,
+    }
+    supplied = {k: v for k, v in fields.items() if v is not None}
+    if category_id is not None:
+        supplied["category_id"] = resolve_category_ref(caller, category_id).id
+    return _payload(supplied)
+
+
+def _policy_violation(exc: HTTPException) -> dict[str, Any] | None:
+    """A policy refusal as a structured result, or None for anything else.
+
+    Returned rather than raised: a tool error reaches the model as one
+    line of text, and `missing` is a list of objects the agent has to
+    act on field by field. Nothing was written, so there is no partial
+    state for a success-shaped answer to hide.
+    """
+    detail = exc.detail
+    if not isinstance(detail, dict) or detail.get("code") != ErrorCodes.PART_POLICY_VIOLATION:
+        return None
+    return {
+        "found_existing": False,
+        "created": False,
+        "error": ErrorCodes.PART_POLICY_VIOLATION,
+        "message": detail.get("message"),
+        "missing": detail.get("missing", []),
+    }
 
 
 def _payload(supplied: dict[str, Any]) -> PartIn:

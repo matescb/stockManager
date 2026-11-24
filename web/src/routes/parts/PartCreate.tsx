@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { z } from "zod";
-import { api, ApiError, getConflictDetail } from "@/lib/api";
+import { api, ApiError, getConflictDetail, getPolicyViolation, type PolicyMissingItem } from "@/lib/api";
 import { useApiMutation } from "@/lib/mutations";
 import { useQuery } from "@tanstack/react-query";
 import { useWsKey } from "@/lib/queryKeys";
@@ -47,6 +47,9 @@ export default function PartCreate() {
   // part's id + name; we surface a link straight to it instead of forcing
   // the operator to manually search.
   const [conflict, setConflict] = useState<{ id: string; name: string } | null>(null);
+  // A 422 `part.policy_violation` lists the fields the workspace part
+  // policy requires at create (Settings → Workspace → Part policy).
+  const [policyMissing, setPolicyMissing] = useState<PolicyMissingItem[] | null>(null);
   // The lookup preview lets the user see what will be loaded from the
   // provider before clicking Create. After the part exists, we run a
   // single refresh-from-provider call which writes all the provider
@@ -96,6 +99,12 @@ export default function PartCreate() {
       nav(`/parts/${res.id}/info`);
     },
     onError: (e) => {
+      const missing = getPolicyViolation(e);
+      if (missing) {
+        setPolicyMissing(missing);
+        setErr(null);
+        return;
+      }
       const detail = getConflictDetail(e);
       if (detail) {
         setConflict({ id: detail.existing_id, name: detail.existing_name });
@@ -132,6 +141,7 @@ export default function PartCreate() {
     e.preventDefault();
     setErr(null);
     setConflict(null);
+    setPolicyMissing(null);
     setRefreshFailed(null);
     const payload: PartCreateRequest = {
       part_type: form.part_type,
@@ -190,6 +200,19 @@ export default function PartCreate() {
           <Link to={`/parts/${conflict.id}/info`} className="text-accent underline">
             Open existing part →
           </Link>
+        </div>
+      )}
+      {policyMissing && (
+        <div data-testid="policy-violation-banner" className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm space-y-1">
+          <p>The workspace part policy needs these before the part can be created:</p>
+          <ul className="list-disc pl-5 space-y-1">
+            {policyMissing.map(m => (
+              <li key={m.rule_id}>
+                <strong>{m.message}</strong>
+                {m.hint && <span className="text-muted"> — {m.hint}</span>}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

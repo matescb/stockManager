@@ -13,6 +13,7 @@ import { CatalogTokensCard, type CatalogToken } from "./CatalogTokensCard";
 import { CopyOnceTokenBanner } from "./CopyOnceTokenBanner";
 import { InvitationsCard, type Invitation } from "./InvitationsCard";
 import { MembersCard, type Member } from "./MembersCard";
+import { PartPolicyCard } from "./PartPolicyCard";
 import { PartsProviderCard } from "./PartsProviderCard";
 import { ProvidersCard, type ProviderCredential } from "./ProvidersCard";
 import { SourcingCard } from "./SourcingCard";
@@ -110,6 +111,11 @@ export default function WorkspaceSettings() {
   const { data: members, refetch: refetchMembers } = membersQuery;
   const { data: invites, refetch: refetchInvites } = invitesQuery;
   const { data: catalogTokens, refetch: refetchCatalogTokens } = catalogTokensQuery;
+  // The role isn't on /auth/me; read it off the membership list (same
+  // approach as ApiTokens). Only gates the edit controls — the PUT is
+  // admin-gated server-side regardless.
+  const myRole = members?.find(m => m.user_id === me?.user?.id)?.role;
+  const isAdmin = myRole === "admin" || myRole === "owner";
 
   const [newName, setNewName] = useState("");
   const [scannerLicense, setScannerLicense] = useState("");
@@ -334,6 +340,7 @@ export default function WorkspaceSettings() {
       {cur && <ProvidersCard workspace={cur} workspaceId={workspaceId} />}
       {cur && <SourcingCard workspace={cur} workspaceId={workspaceId} />}
       {cur && <ActiveListsCard workspace={cur} workspaceId={workspaceId} />}
+      <PartPolicyCard workspaceId={workspaceId} isAdmin={isAdmin} />
 
       {cur && (
         <div className="card p-4 mb-4 space-y-3 text-sm">

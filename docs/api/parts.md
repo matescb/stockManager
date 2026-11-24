@@ -176,6 +176,7 @@ Create a new part.
 
 - `422` — neither `name` nor `mpn` supplied (`parts_core.py:148-152`).
 - `409 Conflict` — pre-check found another live part in this workspace with the same `mpn`. Body includes `existing_id`, `existing_name` (`parts_core.py:156-170`). See [ADR-0004](../adr/0004-mpn-uniqueness-per-workspace.md).
+- `422 part.policy_violation` — the body fails a `when="create"` rule of the workspace part policy. Top-level `missing` lists each unmet rule; dry-run with `POST /api/parts/validate` first. See [part-policy](part-policy.md).
 
 **Notes**
 

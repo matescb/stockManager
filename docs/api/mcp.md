@@ -63,7 +63,7 @@ pins it.
 
 ## Tools
 
-22 tools — 10 read, 12 write. Names and arguments are the agent-facing contract;
+25 tools — 13 read, 12 write. Names and arguments are the agent-facing contract;
 the authoritative descriptions are the docstrings in `backend/app/mcp/tools/`,
 which are what the model actually reads.
 
@@ -85,6 +85,9 @@ earlier result has the other.
 | `list_projects` | Projects (boards) |
 | `get_project_bom` | One project's BOM lines |
 | `bom_shortages` | What you are short of to build N boards |
+| `get_part_policy` | Which fields this workspace requires on a part, and where to find them |
+| `validate_part` | Dry-run `create_part`: what the part policy would refuse, nothing written |
+| `part_policy_status` | What an existing part still lacks under the part policy |
 
 ### Write
 
@@ -116,6 +119,31 @@ answer — and a tool error would be indistinguishable, to a model, from a
 malformed call. Read `found_existing` before telling the user you added
 something. The MPN is stripped first, so `"  LM358DR "` finds the same part
 `"LM358DR"` does.
+
+### Part policy
+
+The workspace's part policy ([part-policy](part-policy.md)) says which fields
+a part must have. `create_part` enforces its `when="create"` rules with the same
+evaluator as `POST /api/parts`, but a refusal is a **result, not a tool
+error** — the agent has to act on the list field by field, and one line of
+error text cannot carry it:
+
+```json
+{ "found_existing": false, "created": false, "error": "part.policy_violation",
+  "message": "part is missing 1 field(s) required by the workspace part policy",
+  "missing": [ { "field": "manufacturer", "rule_id": "mfr", "when": "create",
+                 "message": "Manufacturer is required", "hint": "as printed on the datasheet" } ] }
+```
+
+Nothing is written. Read `created` alongside `found_existing`: a success is
+`created: true` plus `part` and `incomplete` — the `complete` rules still unmet,
+the same items `part_policy_status` returns. `validate_part` takes
+`create_part`'s arguments and returns `{ok, missing, existing_part}` exactly as
+`POST /api/parts/validate` does. The loop: `get_part_policy` once,
+`validate_part` until `ok`, `create_part`, then attach and check
+`part_policy_status` until `complete`.
+
+### Specs
 
 **`set_part_specs` never overwrites provider-supplied values.** Rows a parts
 provider owns come back under `skipped_provider_owned` and are left as they
@@ -267,8 +295,11 @@ not repeated per row.
 | `list_projects` | — | — | — |
 | `get_project_bom` | `project_id` | — | `project.not_found` |
 | `bom_shortages` | `project_id` | `build_qty` | `project.not_found` |
+| `get_part_policy` | — | — | — |
+| `validate_part` | — | same as `create_part` | `category.not_found`; `category.archived`; `part.invalid_field`. An unmet rule is `ok: false`, not a refusal |
+| `part_policy_status` | `part_id_or_mpn` | — | `part.not_found` |
 | `sourcing_offers` | `part_id` | `qty` | `part.not_found` only. Every other failure is **degradation, not a refusal**: a part with no MPN, unconfigured sourcing, an exhausted budget and a provider error all return `status` (`no_mpn` / `not_configured` / `budget_blocked` / `provider_error`) with an empty `offers` list. Read that as "unknown", not "unavailable" |
-| `create_part` | one of `name` / `mpn` | `manufacturer`, `description`, `category_id`, `part_type`, `internal_part_number` | `part.name_or_mpn_required`; `category.not_found`; `category.archived`; `part.invalid_field` (over-long value). **Not** `part.mpn_conflict` — see below |
+| `create_part` | one of `name` / `mpn` | `manufacturer`, `description`, `category_id`, `part_type`, `internal_part_number`, `footprint`, `notes_markdown` | `part.name_or_mpn_required`; `category.not_found`; `category.archived`; `part.invalid_field` (over-long value). **Not** `part.mpn_conflict` and **not** `part.policy_violation` — both are results, see above |
 | `set_part_category` | `part_id_or_mpn`, `category_id_or_name` | — | `part.not_found`; `category.not_found` (lists up to 10 existing names); `category.name_conflict` when two differ only in case |
 | `set_part_specs` | `part_id_or_mpn`, `specs` | `replace_missing` | `custom_field.reserved_key`; `custom_field.key_whitespace`; `custom_field.too_many` (> 50 keys); `custom_field.too_long` (key > 256, value > 1024) |
 | `create_category` | `name` | `description` | `category.name_conflict`, `category.slug_conflict` |
