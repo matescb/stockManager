@@ -128,6 +128,8 @@ def shortage_analysis(
             select(ProjectEntry)
             .where(ProjectEntry.workspace_id == workspace_id)
             .where(ProjectEntry.project_id == project.id)
+            # A line a BOM sync retired (SM-011) is no longer demand.
+            .where(ProjectEntry.archived_at.is_(None))
             .order_by(ProjectEntry.order_index)
         ).scalars()
     )
@@ -214,6 +216,8 @@ def _consumable_entries(
             select(ProjectEntry)
             .where(ProjectEntry.workspace_id == workspace_id)
             .where(ProjectEntry.project_id == project.id)
+            # A line a BOM sync retired (SM-011) is no longer demand.
+            .where(ProjectEntry.archived_at.is_(None))
             .order_by(ProjectEntry.order_index)
         ).scalars()
     )
@@ -520,6 +524,13 @@ def lock_for_consume(
 def project_entries_by_id(
     db: Session, *, workspace_id: UUID, project: Project
 ) -> dict[UUID, ProjectEntry]:
+    """Every line of the project, INCLUDING ones a BOM sync archived.
+
+    Deliberately unfiltered: this resolves ids that build stage lines
+    already hold, and a stage planned against a line that has since left
+    the BOM must still resolve it. Callers that compute demand skip
+    archived lines themselves (`stages.py::stage_allocations`).
+    """
     return {
         e.id: e
         for e in db.query(ProjectEntry)

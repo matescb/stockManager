@@ -478,6 +478,7 @@ def get_project_bom(caller: Caller, project_id: str) -> dict[str, Any]:
         select(ProjectEntry)
         .where(ProjectEntry.workspace_id == caller.ws.id)
         .where(ProjectEntry.project_id == project.id)
+        .where(ProjectEntry.archived_at.is_(None))
         .order_by(ProjectEntry.order_index, ProjectEntry.id)
     ).scalars()
     return {

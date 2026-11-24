@@ -107,6 +107,7 @@ earlier result has the other.
 | `create_part` | Create a part, or report the one that already holds the MPN |
 | `set_part_category` | File a part under a category |
 | `set_part_specs` | Write a part's own specifications |
+| `sync_project_bom` | Update a project's BOM in place from a KiCad export (`dry_run` first) |
 
 ### Catalogue lookup
 
@@ -455,6 +456,7 @@ not repeated per row.
 | `upload_eda_asset` | `kind`, `filename`, `content_base64` | `part_id`, `category_slug` | `eda.unsupported_kind`, `eda.invalid_file`, `eda.empty_file`, `eda.file_too_large`, `eda.multiple_symbols`, `eda.legacy_format` |
 | `import_vendor_zip` | `part_id`, `content_base64` | `overwrite` | `eda.invalid_archive`, `eda.archive_too_large`, `eda.no_entries` |
 | `fetch_lcsc` | `part_id`, `lcsc_id` | `overwrite` | `eda.lcsc_not_found`, `eda.lcsc_unavailable` |
+| `sync_project_bom` | `project_id`, `rows` | `dry_run` | `project.not_found`; `bom.sync_invalid_row`; `bom.sync_duplicate_line`; `bom.sync_unkeyed_row`. Same diff as `POST /api/projects/{id}/bom/sync` — see [projects.md](./projects.md#post-apiprojectsproject_idbomsync) |
 
 Three spellings of the same argument survive on this surface — `id_or_mpn`
 (`get_part`), `part_id` (everything in `read.py`, `write.py`,

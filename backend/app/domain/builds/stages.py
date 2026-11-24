@@ -153,6 +153,8 @@ def stage_allocations(
             continue
         if entry.dnp or entry.entry_type not in ("part", "meta_part"):
             continue
+        if entry.archived_at is not None:
+            continue  # retired by a BOM sync (SM-011): no longer demand
         part = db.get(Part, entry.part_id)
         if part is None:
             continue
@@ -304,7 +306,7 @@ def create_stage(
     seen: set[UUID] = set()
     for line in payload.lines:
         entry = entries.get(line.project_entry_id)
-        if entry is None:
+        if entry is None or entry.archived_at is not None:
             raise BuildError(f"project entry {line.project_entry_id} not in this project")
         if entry.entry_type not in ("part", "meta_part") or entry.part_id is None:
             raise BuildError(f"project entry {entry.id} has no part to consume")

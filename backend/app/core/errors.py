@@ -220,6 +220,10 @@ class ErrorCodes:
     BOM_TOO_MANY_ROWS = "bom.too_many_rows"
     # DB-005 / migration 0032 — fractional BOM quantity rejected.
     BOM_FRACTIONAL_QUANTITY = "bom.fractional_quantity"
+    # BOM sync (domain/projects/bom_sync.py, SM-011).
+    BOM_SYNC_UNKEYED_ROW = "bom.sync_unkeyed_row"
+    BOM_SYNC_DUPLICATE_LINE = "bom.sync_duplicate_line"
+    BOM_SYNC_INVALID_ROW = "bom.sync_invalid_row"
 
     # Lots router.
     LOT_NOT_FOUND = "lot.not_found"

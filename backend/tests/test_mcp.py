@@ -435,6 +435,7 @@ _EXPECTED_WRITE_TOOLS = {
     "create_part",
     "set_part_category",
     "set_part_specs",
+    "sync_project_bom",
 }
 
 
