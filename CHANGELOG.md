@@ -15,6 +15,20 @@ the canonical record.
 
 ## Unreleased
 
+- **Catalogue search for agents (SM-002).** New MCP tool `catalog_search`
+  searches DigiKey (KeywordSearch with category, manufacturer, status and
+  parametric filters, in-stock / RoHS / datasheet options, sort, limit and
+  offset) and Mouser (keyword search with in-stock / RoHS) and returns
+  compact candidates per provider — `source`, the provider's own
+  `product_url`, `retrieved_at` — plus `total`, DigiKey's `facets`
+  (categories, manufacturers, status, parametric filters with ids, names and
+  counts) to narrow with, and `applied_filters`. A DigiKey-only filter sent
+  to Mouser is refused with `provider.unsupported_filter`. Declared a write
+  (quota follows cost), held to the SM-005 quota and pacing; nothing is
+  persisted (DigiKey answers kept in-process for 10 minutes per workspace,
+  Mouser not at all). Optional `list_categories` returns DigiKey's category
+  tree. Contract in `docs/api/mcp.md` ("Catalogue search").
+
 - **Part image lightbox and local datasheet link.** Clicking the part
   thumbnail in the header now opens the full image in an in-page popup
   (`ImageLightbox`: Esc / backdrop / close button, focus returns to the

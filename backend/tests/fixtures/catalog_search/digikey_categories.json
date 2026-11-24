@@ -1,0 +1,57 @@
+{
+ "ProductCount": 13000000,
+ "Categories": [
+  {
+   "CategoryId": 3,
+   "ParentId": 0,
+   "Name": "Capacitors",
+   "ProductCount": 1200000,
+   "NewProductCount": 100,
+   "ImageUrl": "",
+   "SeoDescription": "",
+   "ChildCategories": [
+    {
+     "CategoryId": 60,
+     "ParentId": 3,
+     "Name": "Ceramic Capacitors",
+     "ProductCount": 800000,
+     "NewProductCount": 10,
+     "ImageUrl": "",
+     "SeoDescription": "",
+     "ChildCategories": []
+    },
+    {
+     "CategoryId": 58,
+     "ParentId": 3,
+     "Name": "Aluminum Electrolytic Capacitors",
+     "ProductCount": 120000,
+     "NewProductCount": 4,
+     "ImageUrl": "",
+     "SeoDescription": "",
+     "ChildCategories": []
+    }
+   ]
+  },
+  {
+   "CategoryId": 2,
+   "ParentId": 0,
+   "Name": "Resistors",
+   "ProductCount": 1500000,
+   "NewProductCount": 50,
+   "ImageUrl": "",
+   "SeoDescription": "",
+   "ChildCategories": [
+    {
+     "CategoryId": 52,
+     "ParentId": 2,
+     "Name": "Chip Resistor - Surface Mount",
+     "ProductCount": 1100000,
+     "NewProductCount": 30,
+     "ImageUrl": "",
+     "SeoDescription": "",
+     "ChildCategories": []
+    }
+   ]
+  }
+ ]
+}

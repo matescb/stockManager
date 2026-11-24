@@ -1,0 +1,112 @@
+{
+ "Errors": [],
+ "SearchResults": {
+  "NumberOfResult": 2204,
+  "Parts": [
+   {
+    "Availability": "61000 In Stock",
+    "DataSheetUrl": "https://www.mouser.com/datasheet/2/GRM1885C1H104JA01D.pdf",
+    "Description": "Multilayer Ceramic Capacitors MLCC - SMD/SMT 0603 0.1uF 50volts C0G 5%",
+    "FactoryStock": "0",
+    "ImagePath": "https://www.mouser.com/images/GRM1885C1H104JA01D.jpg",
+    "Category": "Multilayer Ceramic Capacitors MLCC - SMD/SMT",
+    "LeadTime": "16 Weeks",
+    "LifecycleStatus": null,
+    "Manufacturer": "Murata Electronics",
+    "ManufacturerPartNumber": "GRM1885C1H104JA01D",
+    "Min": "1",
+    "Mult": "1",
+    "MouserPartNumber": "81-GRM1885C1H104JA01D",
+    "ProductAttributes": [
+     {
+      "AttributeName": "Packaging",
+      "AttributeValue": "Cut Tape"
+     },
+     {
+      "AttributeName": "Packaging",
+      "AttributeValue": "Reel"
+     }
+    ],
+    "PriceBreaks": [
+     {
+      "Quantity": 1,
+      "Price": "0,38 €",
+      "Currency": "EUR"
+     },
+     {
+      "Quantity": 10,
+      "Price": "0,071 €",
+      "Currency": "EUR"
+     }
+    ],
+    "AlternatePackagings": null,
+    "ProductDetailUrl": "https://www.mouser.cz/ProductDetail/GRM1885C1H104JA01D?qs=abc",
+    "Reeling": true,
+    "ROHSStatus": "RoHS Compliant",
+    "SuggestedReplacement": "",
+    "MultiSimBlue": 0,
+    "AvailabilityInStock": "61000",
+    "AvailabilityOnOrder": [],
+    "InfoMessages": [],
+    "ProductCompliance": [
+     {
+      "ComplianceName": "USHTS",
+      "ComplianceValue": "8532240020"
+     }
+    ]
+   },
+   {
+    "Availability": "4000 In Stock",
+    "DataSheetUrl": "https://www.mouser.com/datasheet/2/CL10C104JB8NNNC.pdf",
+    "Description": "Multilayer Ceramic Capacitors MLCC - SMD/SMT 0603 0.1uF 50V C0G 5%",
+    "FactoryStock": "0",
+    "ImagePath": "https://www.mouser.com/images/CL10C104JB8NNNC.jpg",
+    "Category": "Multilayer Ceramic Capacitors MLCC - SMD/SMT",
+    "LeadTime": "16 Weeks",
+    "LifecycleStatus": "New Product",
+    "Manufacturer": "Samsung Electro-Mechanics",
+    "ManufacturerPartNumber": "CL10C104JB8NNNC",
+    "Min": "1",
+    "Mult": "1",
+    "MouserPartNumber": "81-CL10C104JB8NNNC",
+    "ProductAttributes": [
+     {
+      "AttributeName": "Packaging",
+      "AttributeValue": "Cut Tape"
+     },
+     {
+      "AttributeName": "Packaging",
+      "AttributeValue": "Reel"
+     }
+    ],
+    "PriceBreaks": [
+     {
+      "Quantity": 1,
+      "Price": "0,21 €",
+      "Currency": "EUR"
+     },
+     {
+      "Quantity": 10,
+      "Price": "0,071 €",
+      "Currency": "EUR"
+     }
+    ],
+    "AlternatePackagings": null,
+    "ProductDetailUrl": "https://www.mouser.cz/ProductDetail/CL10C104JB8NNNC?qs=abc",
+    "Reeling": true,
+    "ROHSStatus": "RoHS Compliant",
+    "SuggestedReplacement": "",
+    "MultiSimBlue": 0,
+    "AvailabilityInStock": "4000",
+    "AvailabilityOnOrder": [],
+    "InfoMessages": [],
+    "ProductCompliance": [
+     {
+      "ComplianceName": "USHTS",
+      "ComplianceValue": "8532240020"
+     }
+    ]
+   }
+  ]
+ }
+}
