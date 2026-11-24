@@ -45,3 +45,4 @@ New ADRs follow the template in [STYLE.md](../STYLE.md#adr-pages-docsadrnnnn-slu
 | 0033 | [Datasheet fetches drop the host allow-list and pin the resolved IP instead](0033-datasheet-fetch-drops-host-allow-list.md) |
 | 0034 | [Per-category canonical spec schema for provider specs](0034-spec-schema.md) |
 | 0035 | [The workspace, not the client, defines which fields a part must have](0035-workspace-part-policy.md) |
+| 0036 | [Part documents extend the datasheet fetch policy to a cron-only `document` kind](0036-part-documents-cron-only-any-host.md) |

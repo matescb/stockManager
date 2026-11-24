@@ -905,3 +905,233 @@ def test_connect_and_read_timeouts_are_separate(monkeypatch):
     assert timeout.read == assets._READ_TIMEOUT_SEC
     assert timeout.read > timeout.connect
     assert assets._MAX_WALL_CLOCK_SEC > timeout.read
+
+
+# ---------------------------------------------------------------------------
+# The `document` kind (ADR-0036): application notes, PCNs, agent-queued PDFs.
+#
+# Same relaxation as `datasheet`, same two conditions, same controls — and
+# the same rule that only the cron backfill may ask for it.
+# ---------------------------------------------------------------------------
+
+_DOCUMENT_URL = "https://www.st.com/resource/en/application_note/an2867.pdf"
+
+
+def test_document_kind_is_fetched_without_allow_list_with_the_opt_in(monkeypatch):
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver(_PUBLIC_IP))
+    monkeypatch.setattr(assets, "_http_get", lambda _t: _pdf_response())
+
+    result = _fetch(_DOCUMENT_URL, kind="document")
+
+    assert result.failure_code is None
+    assert result.stored is not None and result.stored.ext == "pdf"
+
+
+def test_document_kind_without_the_opt_in_still_requires_the_allow_list(monkeypatch):
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver(_PUBLIC_IP))
+    called = {"hit": False}
+
+    def _spy(_target):  # pragma: no cover - must never run
+        called["hit"] = True
+        return _pdf_response()
+
+    monkeypatch.setattr(assets, "_http_get", _spy)
+
+    result = assets.fetch_asset(_DOCUMENT_URL, _ws(), "document")
+
+    assert result.failure_code == "host_not_allowed"
+    assert called["hit"] is False
+
+
+def test_request_path_helper_keeps_the_allow_list_for_documents(monkeypatch):
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver(_PUBLIC_IP))
+    monkeypatch.setattr(assets, "_http_get", lambda _t: _pdf_response())
+
+    assert assets.fetch_provider_asset(_DOCUMENT_URL, _ws(), "document") is None
+
+
+def test_document_kind_is_pdf_only(monkeypatch):
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver(_PUBLIC_IP))
+    monkeypatch.setattr(
+        assets,
+        "_http_get",
+        lambda _t: _pdf_response(body=b"<html></html>", content_type="text/html"),
+    )
+
+    # No `.pdf` in the path, so the type comes from the response alone.
+    result = _fetch("https://www.ti.com/lit/an/slva123", kind="document")
+
+    assert result.stored is None
+    assert result.failure_code == "unexpected_type"
+
+
+def test_document_kind_keeps_https_only_and_private_address_refusal(monkeypatch):
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver("10.0.0.7"))
+    monkeypatch.setattr(assets, "_http_get", lambda _t: _pdf_response())
+
+    assert _fetch(_DOCUMENT_URL, kind="document").failure_code == "ip_not_public"
+    assert (
+        _fetch(_DOCUMENT_URL.replace("https:", "http:"), kind="document").failure_code
+        is not None
+    )
+
+
+def test_document_opt_in_path_is_throttled(monkeypatch):
+    monkeypatch.setattr(assets.socket, "getaddrinfo", _resolver(_PUBLIC_IP))
+    monkeypatch.setattr(assets, "_http_get", lambda _t: _pdf_response())
+    slept = _record_sleeps(monkeypatch)
+
+    ws = _ws()
+    for _ in range(2):
+        assets.fetch_asset(_DOCUMENT_URL, ws, "document", allow_any_host=True)
+
+    assert slept == [5.0]
+
+
+def test_only_the_cron_backfill_modules_opt_in_to_any_host():
+    """`allow_any_host=True` appears in exactly the two backfill modules,
+    and nothing a request reaches imports their fetching entry points.
+
+    A source scan, deliberately: the guarantee is "no request handler or
+    MCP tool can reach an arbitrary host", which is a property of who
+    calls what, and a new caller is exactly what this has to catch.
+    """
+    from pathlib import Path
+
+    app_root = Path(assets.__file__).resolve().parents[3]
+    opted_in = sorted(
+        str(path.relative_to(app_root))
+        for path in app_root.rglob("*.py")
+        # `assets.py` defines the flag and documents it in prose.
+        if path.name != "assets.py"
+        and "allow_any_host=True" in path.read_text(encoding="utf-8")
+    )
+    assert opted_in == [
+        "domain/parts/services/datasheets.py",
+        "domain/parts/services/documents.py",
+    ]
+
+    fetching_entry_points = (
+        "fetch_document",
+        "backfill_documents",
+        "fetch_datasheet_for_part",
+        "backfill_missing_datasheets",
+        "fetch_asset(",
+    )
+    for surface in ("api", "mcp"):
+        for path in (app_root / surface).rglob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            for name in fetching_entry_points:
+                assert name not in text, (
+                    f"{path.relative_to(app_root)} references {name}: request "
+                    "handlers and MCP tools must not fetch documents (ADR-0036)"
+                )
+
+
+# ---------------------------------------------------------------------------
+# Wall-clock budget against a REAL socket.
+#
+# The mocked test above hands back one byte per `iter_bytes` call, which is
+# not what httpx does: with `chunk_size=64 KB` it buffers until 64 KB arrive,
+# so a server sending a byte every few seconds never gave the per-chunk check
+# a turn — and nothing at all was checked while headers were dribbled. These
+# drive the real `httpx.Client` against a local server and must come back
+# within the budget, not after the server gives up.
+# ---------------------------------------------------------------------------
+
+import socketserver  # noqa: E402
+import threading  # noqa: E402
+import time as _time  # noqa: E402
+
+_DRIBBLE_FOR_SEC = 8.0
+
+
+def _dribbling_server(prefix: bytes, dribble: bytes):
+    """Send `prefix`, then `dribble` one byte every 0.1s for up to 8s."""
+
+    class _Handler(socketserver.BaseRequestHandler):
+        def handle(self):
+            self.request.recv(65536)
+            try:
+                self.request.sendall(prefix)
+                if not dribble:
+                    return
+                stop = _time.monotonic() + _DRIBBLE_FOR_SEC
+                i = 0
+                while _time.monotonic() < stop:
+                    self.request.sendall(dribble[i % len(dribble): i % len(dribble) + 1])
+                    i += 1
+                    _time.sleep(0.1)
+            except OSError:
+                return
+
+    server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _Handler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def _local_target(port: int) -> assets._FetchTarget:
+    return assets._FetchTarget(
+        request_url=f"http://127.0.0.1:{port}/doc.pdf",
+        host_header="127.0.0.1",
+        sni_hostname="localhost",
+        ip="127.0.0.1",
+        redacted_ref=f"http://127.0.0.1:{port}/doc.pdf",
+    )
+
+
+@pytest.mark.parametrize(
+    ("prefix", "dribble"),
+    [
+        pytest.param(b"HTTP/1.1 200 OK\r\n", b"X-Slow: aaaaaaaa\r\n", id="slow-headers"),
+        pytest.param(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/pdf\r\n"
+            b"Content-Length: 1000000\r\n\r\n%PDF-1.7\n",
+            b"x",
+            id="slow-body",
+        ),
+        # Close-delimited: no Content-Length, not chunked. The watchdog's
+        # shutdown reads as a clean end-of-body here, so without the
+        # post-loop check this returned 200 with a truncated `%PDF` body.
+        pytest.param(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/pdf\r\n"
+            b"Connection: close\r\n\r\n%PDF-1.7\n",
+            b"%PDF line\n",
+            id="slow-close-delimited-body",
+        ),
+    ],
+)
+def test_wall_clock_budget_holds_against_a_real_dribbling_socket(
+    monkeypatch, prefix, dribble
+):
+    monkeypatch.setattr(assets, "_MAX_WALL_CLOCK_SEC", 1.0)
+    server = _dribbling_server(prefix, dribble)
+    try:
+        started = _time.monotonic()
+        with pytest.raises(assets._WallClockExceeded):
+            assets._http_get(_local_target(server.server_address[1]))
+        elapsed = _time.monotonic() - started
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert elapsed < 3.0, f"fetch ran {elapsed:.1f}s against a 1s budget"
+
+
+def test_the_watchdog_does_not_fire_on_a_fast_real_response(monkeypatch):
+    body = b"%PDF-1.7\nfast"
+    monkeypatch.setattr(assets, "_MAX_WALL_CLOCK_SEC", 1.0)
+    server = _dribbling_server(
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/pdf\r\n"
+        + f"Content-Length: {len(body)}\r\n\r\n".encode()
+        + body,
+        b"",
+    )
+    try:
+        resp = assets._http_get(_local_target(server.server_address[1]))
+        _time.sleep(1.3)  # past the deadline: a stale timer must be harmless
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert resp.status_code == 200
+    assert resp.body == body

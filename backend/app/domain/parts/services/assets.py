@@ -13,13 +13,16 @@ original SEC2-006 behaviour: the hostname must be on `_ALLOWED_HOSTS`, the
 narrow Mouser/DigiKey list.
 
 The **unrestricted** one drops that list. It applies only when BOTH hold:
-`kind` is in `_UNRESTRICTED_KINDS` (today: `"datasheet"`) AND the caller
-passes `allow_any_host=True`. Datasheets live on 40+ manufacturer domains
-(vishay, ti, we-online, analog, panasonic, yageo, murata, …) and the
-allow-list meant essentially nothing localised.
+`kind` is in `_UNRESTRICTED_KINDS` (`"datasheet"`, and since ADR-0036
+`"document"` — application notes, technical notes, PCNs and the like) AND
+the caller passes `allow_any_host=True`. Datasheets live on 40+
+manufacturer domains (vishay, ti, we-online, analog, panasonic, yageo,
+murata, …) and the allow-list meant essentially nothing localised; the
+other documents live on the same domains.
 
-The opt-in is what keeps the surface small: the ONLY caller that passes it
-is the `datasheet-backfill` cron job (`services/datasheets.py`). Request-path
+The opt-in is what keeps the surface small: the ONLY callers that pass it
+are the two halves of the `datasheet-backfill` cron job
+(`services/datasheets.py` and `services/documents.py`). Request-path
 callers — provider import and provider refresh — keep the allow-list, so a
 user-triggered request can never reach a host outside it, and can never be
 made to block the single uvicorn worker (ADR-0012) on an arbitrary vendor.
@@ -62,7 +65,11 @@ exception, the per-host throttle, called out at the end):
   outright rather than silently forwarded to an arbitrary host.
 - **Wall-clock budget.** httpx's `timeout` is per operation, so a host
   that dribbles a byte every 9s never trips it. `_MAX_WALL_CLOCK_SEC`
-  bounds the whole fetch.
+  bounds the whole fetch, and it is enforced at the SOCKET: `_Watchdog`
+  shuts the connection down when the budget runs out, which also covers a
+  dribbled TLS handshake or header block and a body read that never
+  returns (checking the clock between `iter_bytes` chunks alone did not —
+  httpx buffers a sized chunk until it is full). ADR-0036.
 - **A real User-Agent.** httpx's default (`python-httpx/<version>`) is
   403'd outright by Akamai-fronted vendor origins — that is what stalled
   the first production backfill, not the pinned request shape (measured:
@@ -120,15 +127,90 @@ _READ_TIMEOUT_SEC = 20.0
 # `timeout 600`.
 _MAX_WALL_CLOCK_SEC = 45.0
 _MAX_BYTES = 10 * 1024 * 1024  # 10 MB ceiling — datasheet PDFs are usually 1-3 MB
-_CHUNK_SIZE = 64 * 1024  # 64 KB — streaming read granularity for the size-cap guard
 
-# Asset kinds exempt from the host allow-list (ADR-0033). Keep this set as
-# small as the product actually needs: every kind added here loses the
-# allow-list and keeps only the pinned-IP / HTTPS / redirect / size /
-# magic-byte controls.
-_UNRESTRICTED_KINDS: frozenset[str] = frozenset({"datasheet"})
+# Asset kinds exempt from the host allow-list (ADR-0033; `document` added by
+# ADR-0036). Keep this set as small as the product actually needs: every kind
+# added here loses the allow-list and keeps only the pinned-IP / HTTPS /
+# redirect / size / magic-byte / PDF-only controls. Both kinds are PDF-only on
+# the unrestricted path, and both are reached only from the cron backfill.
+_UNRESTRICTED_KINDS: frozenset[str] = frozenset({"datasheet", "document"})
 
 _DEFAULT_PORT_BY_SCHEME: dict[str, int] = {"http": 80, "https": 443}
+
+
+class _Watchdog:
+    """Hard wall-clock deadline for one fetch, enforced at the socket.
+
+    httpx's timeouts are per operation, and checking the clock between body
+    chunks only helps when chunks arrive: `iter_bytes(chunk_size=…)` buffers
+    until the chunk is full, and nothing at all is checked while the TLS
+    handshake or the response headers are being dribbled. So the deadline is
+    enforced from outside the reading thread instead: a timer that, when it
+    fires, `shutdown()`s the connection's socket, which makes the blocked
+    `recv` return and httpx raise. `_http_get` then reports
+    `_WallClockExceeded`.
+
+    The socket is reached through httpcore's `trace` extension
+    (`connection.connect_tcp.complete` carries the network stream). We keep
+    an `os.dup` of its descriptor rather than the descriptor number: the dup
+    is ours until `disarm()` closes it, so the timer can never shut down a
+    descriptor number the process has since reused for another connection,
+    and the dup survives `wrap_socket` detaching the plain socket object at
+    the start of TLS.
+    """
+
+    def __init__(self, seconds: float) -> None:
+        self._lock = threading.Lock()
+        self._dup: socket.socket | None = None
+        self._armed = True
+        self.fired = False
+        self._timer = threading.Timer(seconds, self._fire)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def trace(self, event_name: str, info: dict) -> None:
+        if not event_name.endswith(".connect_tcp.complete"):
+            return
+        stream = info.get("return_value")
+        sock = stream.get_extra_info("socket") if stream is not None else None
+        if sock is None:
+            return
+        try:
+            dup = socket.socket(fileno=os.dup(sock.fileno()))
+        except OSError:
+            return
+        with self._lock:
+            if not self._armed:
+                dup.close()
+                return
+            if self._dup is not None:
+                self._dup.close()
+            self._dup = dup
+            if self.fired:
+                self._shutdown_locked()
+
+    def _fire(self) -> None:
+        with self._lock:
+            if not self._armed:
+                return
+            self.fired = True
+            self._shutdown_locked()
+
+    def _shutdown_locked(self) -> None:
+        if self._dup is None:
+            return
+        try:
+            self._dup.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    def disarm(self) -> None:
+        self._timer.cancel()
+        with self._lock:
+            self._armed = False
+            if self._dup is not None:
+                self._dup.close()
+                self._dup = None
 
 
 class _WallClockExceeded(Exception):
@@ -543,6 +625,24 @@ def _http_get(target: _FetchTarget) -> _AssetResponse:
     other refusal.
     """
     ref = target.redacted_ref
+    watchdog = _Watchdog(_MAX_WALL_CLOCK_SEC)
+    try:
+        return _stream_capped(target, watchdog)
+    except _WallClockExceeded:
+        raise
+    except Exception:
+        # The watchdog shut the socket down: whatever httpx made of that
+        # (ReadError, RemoteProtocolError, an SSL error) is the budget.
+        if watchdog.fired:
+            raise _WallClockExceeded(ref) from None
+        raise
+    finally:
+        watchdog.disarm()
+
+
+def _stream_capped(target: _FetchTarget, watchdog: _Watchdog) -> _AssetResponse:
+    """The request itself; `_http_get` owns the deadline around it."""
+    ref = target.redacted_ref
     started_at = time.monotonic()
     timeout = httpx.Timeout(
         connect=_CONNECT_TIMEOUT_SEC,
@@ -564,7 +664,7 @@ def _http_get(target: _FetchTarget) -> _AssetResponse:
                 # with one.
                 "User-Agent": settings().ASSET_FETCH_USER_AGENT,
             },
-            extensions={"sni_hostname": target.sni_hostname},
+            extensions={"sni_hostname": target.sni_hostname, "trace": watchdog.trace},
         ) as resp:
             headers = dict(resp.headers)
             status = resp.status_code
@@ -589,11 +689,12 @@ def _http_get(target: _FetchTarget) -> _AssetResponse:
 
             chunks: list[bytes] = []
             total = 0
-            for chunk in resp.iter_bytes(chunk_size=_CHUNK_SIZE):
-                # Wall-clock budget. Checked per chunk because that is the
-                # only place a slow-dribble server gives us control back —
-                # its per-read timer is reset by every byte it sends.
-                if (time.monotonic() - started_at) > _MAX_WALL_CLOCK_SEC:
+            # No `chunk_size`: with one, httpx buffers until the chunk is
+            # full, so a 1-byte-per-15s server never hands control back. Each
+            # chunk here is whatever one read produced. The watchdog is what
+            # bounds a read that never returns; this check just stops early.
+            for chunk in resp.iter_bytes():
+                if watchdog.fired or (time.monotonic() - started_at) > _MAX_WALL_CLOCK_SEC:
                     raise _WallClockExceeded(ref)
                 total += len(chunk)
                 if total > _MAX_BYTES:
@@ -605,6 +706,14 @@ def _http_get(target: _FetchTarget) -> _AssetResponse:
                     return _AssetResponse(status, headers, None)
                 chunks.append(chunk)
 
+            # Checked AFTER the loop too. When the watchdog shuts a
+            # close-delimited body down (no Content-Length, not chunked), the
+            # read sees EOF, h11 takes the close as end-of-body (and TLS
+            # tolerates the ragged EOF), so the loop ends "normally" with a
+            # TRUNCATED body — a `%PDF` prefix would pass the magic check and
+            # be stored for good.
+            if watchdog.fired or (time.monotonic() - started_at) > _MAX_WALL_CLOCK_SEC:
+                raise _WallClockExceeded(ref)
             return _AssetResponse(status, headers, b"".join(chunks))
 
 
@@ -645,8 +754,9 @@ def fetch_asset(
     `allow_any_host=True`. Everything else keeps the host allow-list.
 
     The opt-in is deliberate. Only the `datasheet-backfill` cron job passes
-    it. The request-path callers (provider import, provider refresh) do NOT,
-    so a user-triggered request can never make the backend open a connection
+    it (its datasheet half and, since ADR-0036, its document half). The
+    request-path callers (provider import, provider refresh) do NOT, so a
+    user-triggered request can never make the backend open a connection
     to a host outside the allow-list — and can never be made to block the
     single uvicorn worker (ADR-0012) for a 10s timeout plus a per-host
     throttle against an arbitrary vendor. Those parts get their datasheet
@@ -699,14 +809,15 @@ def fetch_asset(
 
     ext = _ext_from_response(resp.headers, url)
 
-    # A datasheet is a PDF. Without the host allow-list a vendor URL that
+    # A datasheet (or document) is a PDF. Without the host allow-list a vendor URL that
     # 200s with an HTML landing page (or anything else) would otherwise land
     # on disk as an opaque `.bin` for every part. Refuse instead: the caller
     # keeps the upstream URL, and the backfill records `unexpected_type`
     # rather than filling the store with junk.
     if unrestricted and ext != "pdf":
         log.warning(
-            "remote asset rejected: datasheet is not a PDF (ext=%s) from %s",
+            "remote asset rejected: %s is not a PDF (ext=%s) from %s",
+            kind,
             ext,
             target.redacted_ref,
         )

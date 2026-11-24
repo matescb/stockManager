@@ -415,7 +415,14 @@ Five cron sidecars run allow-listed backend CLI jobs:
   (`DATASHEET_BACKFILL_INTERVAL_SECONDS`; `0` disables it and parks the loop
   on `sleep infinity`, which still reports healthy). It is the **only** cron
   sidecar that mounts the `uploads` volume — it writes fetched datasheet PDFs
-  into the content-addressed asset store. See ADR-0033.
+  into the content-addressed asset store. See ADR-0033. After the datasheets
+  the same run downloads up to `DOCUMENT_BACKFILL_BATCH_SIZE` (default 10;
+  `0` turns just this half off) queued part documents — DigiKey application
+  notes / PCNs / manuals and agent-requested PDFs (ADR-0036). Neither half
+  starts a fetch after 500 s, so a run stays inside `timeout 600`. What is
+  waiting and why it failed:
+  `SELECT origin, kind, status, failure_code, count(*) FROM part_datasheets
+  GROUP BY 1,2,3,4;`
 
 Each sidecar invokes `python -m app.cli.run_job <job-name>` and sleeps after
 completed runs, so a slow job delays that job's next start instead of

@@ -247,6 +247,15 @@ class ErrorCodes:
     ATTACHMENT_UNSUPPORTED_TYPE = "attachment.unsupported_type"
     ATTACHMENT_CONTENT_TYPE_MISMATCH = "attachment.content_type_mismatch"
 
+    # Part documents (SM-016, ADR-0036): the `request_part_document` and
+    # `list_part_documents` MCP tools. Queuing never fetches; the cron does.
+    DOCUMENT_INVALID_URL = "document.invalid_url"
+    DOCUMENT_INVALID_KIND = "document.invalid_kind"
+    DOCUMENT_INVALID_TITLE = "document.invalid_title"
+    # The workspace already has DOCUMENT_REQUEST_PENDING_CAP agent-queued
+    # documents waiting for the hourly sweep.
+    DOCUMENT_QUEUE_FULL = "document.queue_full"
+
     # Parts shared helpers.
     PART_NOT_FOUND = "part.not_found"
     PART_HAS_RESERVED_STOCK = "part.has_reserved_stock"

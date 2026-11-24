@@ -39,6 +39,7 @@ from app.domain.parts.provider_fields import (
 from app.domain.parts.provider_links import upsert_link
 from app.domain.parts.providers import PartsProvider, make_provider
 from app.domain.parts.services.assets import fetch_provider_asset
+from app.domain.parts.services.documents import queue_media_links
 from app.domain.parts.services.provider_cache import lookup_fresh
 from app.domain.parts.services.spec_reconcile import (
     CategoryOutcome,
@@ -322,6 +323,17 @@ def refresh_part(
         extra_fields=extra_fields,
         request_id=request_id,
         category_assigned=category.assigned,
+    )
+    # Document links (DigiKey MediaLinks: app notes, PCNs, manuals) become
+    # PENDING `part_datasheets` rows for the cron to download — a DB write
+    # only, no fetch, so this stays safe on the request path (ADR-0036).
+    # Either tier: documents are the part's, not a provider's namespace.
+    queue_media_links(
+        db,
+        workspace_id=ws.id,
+        part=part,
+        links=result.get("media_links"),
+        user_id=user_id,
     )
 
     link, created = upsert_link(

@@ -163,11 +163,16 @@ them, that's the bug.
   content hash, two parts with the same file share it: the attachment
   delete route only unlinks when no other attachment in the workspace
   references the same `storage_key`.
-- **The datasheet backfill fetches without a host allow-list; the resolved
-  IP is pinned instead.** `domain/parts/services/assets.py` drops
+- **The datasheet / document backfill fetches without a host allow-list;
+  the resolved IP is pinned instead.** `domain/parts/services/assets.py` drops
   `_ALLOWED_HOSTS` only when BOTH `kind` is in `_UNRESTRICTED_KINDS`
-  (`"datasheet"`) AND the caller passes `allow_any_host=True`. The only
-  caller that opts in is the `datasheet-backfill` cron job; request-path
+  (`"datasheet"`, `"document"`) AND the caller passes `allow_any_host=True`.
+  The only callers that opt in are the two halves of the `datasheet-backfill`
+  cron job (`services/datasheets.py`, `services/documents.py` — ADR-0036:
+  app notes, PCNs, manuals, agent-queued PDFs, under one lock and one 500s
+  run budget). Queuing a document (`queue_media_links` on create / refresh,
+  the `request_part_document` MCP tool) is a DB write and never fetches;
+  request-path
   callers (`fetch_provider_asset`, used by provider import/refresh) keep
   the allow-list, so no HTTP request can reach an arbitrary host or block
   the single worker on a vendor timeout. Why at all: 249 of 257 prod
@@ -177,15 +182,21 @@ them, that's the bug.
   request goes to that **IP literal** with `Host:` and the `sni_hostname`
   extension preserving the real name — so httpx never re-resolves and
   check/connect cannot disagree. Plus HTTPS-only, `follow_redirects=False`,
-  no `user:pass@` URLs, the 10 MB streaming cap, a 30s wall-clock budget
-  (httpx's timeout is per-operation, so a slow-dribble host never trips it),
+  no `user:pass@` URLs, the 10 MB streaming cap, a 45s wall-clock budget
+  enforced at the socket by `assets._Watchdog` (httpx's timeout is
+  per-operation, so a slow-dribble host — body, headers or TLS handshake —
+  never trips it; don't go back to a between-chunks clock check), the
+  attempt committed BEFORE each fetch so a killed run cannot leave a hanging
+  URL first in line,
   magic-byte validation and PDF-only. The per-host throttle is gated on the
   same opt-in and must stay that way: it is a blocking sleep, and
   bulk-import-from-scan fetches up to 50 images from one CDN host inside a
   single 60s request. Don't add a kind to `_UNRESTRICTED_KINDS`, don't pass
-  `allow_any_host` from a route, don't throttle the request path, don't
-  connect by hostname, don't follow redirects. ADR-0033;
-  `tests/test_datasheet_fetch_policy.py` pins all of it.
+  `allow_any_host` from a route or an MCP tool, don't fetch when queuing a
+  document, don't throttle the request path, don't connect by hostname,
+  don't follow redirects. ADR-0033 + ADR-0036;
+  `tests/test_datasheet_fetch_policy.py` pins all of it (including a source
+  scan for who opts in).
 - **Outbound asset fetches must send a User-Agent.** httpx's default
   (`python-httpx/…`) is 403'd by Akamai-fronted vendor origins — that, not
   the pinned IP-literal request shape, is why the first production backfill
@@ -338,7 +349,8 @@ them, that's the bug.
   parallel subshell loops, `backend-cron-printing` handles label
   printing (`print-dispatch` every 60s, `print-job-reconcile` every 300s),
   also in parallel subshell loops, and `backend-cron-datasheets` handles
-  the local datasheet backfill (`datasheet-backfill`, hourly by default).
+  the local datasheet backfill (`datasheet-backfill`, hourly by default;
+  the same run then downloads queued part documents — ADR-0036).
   They share the same `run_job` registry per ADR-0021; adding another
   cadence means another sidecar, not a parallel scheduler.
 - **Operator-run jobs never get a sidecar.** `spec-normalize`,

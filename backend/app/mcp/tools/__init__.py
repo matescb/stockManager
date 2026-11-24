@@ -16,6 +16,7 @@ def load_tools() -> list[ToolSpec]:
     from app.mcp.tools import (  # noqa: F401  (imported for side effect)
         catalog,
         catalog_search,
+        documents,
         export,
         part_policy,
         read,

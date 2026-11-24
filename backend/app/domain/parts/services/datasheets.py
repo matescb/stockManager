@@ -36,6 +36,7 @@ import hashlib
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from urllib.parse import urlparse
@@ -62,6 +63,25 @@ LOCAL_ASSET_PREFIX = "/api/parts/assets/"
 
 STATUS_STORED = "stored"
 STATUS_FAILED = "failed"
+# Queued, never attempted: a document row written by a provider record's
+# media links or by `request_part_document` (ADR-0036). The datasheet half
+# never writes one — it creates its row at the moment it fetches.
+STATUS_PENDING = "pending"
+
+# Why a `part_datasheets` row exists (migration 0086). The datasheet half of
+# the backfill selects from the `datasheet_url` custom field and owns
+# `datasheet_field` rows; the document half (`services/documents.py`) owns
+# the other two.
+ORIGIN_DATASHEET_FIELD = "datasheet_field"
+ORIGIN_MEDIA_LINK = "media_link"
+ORIGIN_AGENT = "agent"
+
+# No fetch STARTS after this many seconds into a run. The sidecar kills a run
+# at `timeout 600`; the worst single fetch is the 45s wall-clock budget plus
+# resolution and the 2s host throttle, so 500 + ~50 stays inside it with both
+# halves (datasheets, then documents) sharing the one budget. Per-candidate
+# commits make a kill survivable anyway — this keeps it from being routine.
+RUN_BUDGET_SECONDS = 500.0
 
 # Failure codes that say something about the HOST rather than the URL.
 # A 404 means this one document moved; a 403 or a timeout means the vendor is
@@ -175,8 +195,9 @@ def _find_or_create_attachment(
     mime_type: str | None,
     size_bytes: int,
     user_id: UUID | None,
+    file_type: str = DATASHEET_FILE_TYPE,
 ) -> Attachment:
-    """Return the datasheet attachment for this (part, storage_key) pair.
+    """Return the `file_type` attachment for this (part, storage_key) pair.
 
     Re-uses an existing row rather than adding a duplicate: content is
     addressed by hash, so re-running the backfill after an attachment row
@@ -188,7 +209,7 @@ def _find_or_create_attachment(
         .where(Attachment.object_type == "part")
         .where(Attachment.object_id == part.id)
         .where(Attachment.storage_key == storage_key)
-        .where(Attachment.file_type == DATASHEET_FILE_TYPE)
+        .where(Attachment.file_type == file_type)
         .limit(1)
     ).scalar_one_or_none()
     if existing is not None:
@@ -199,7 +220,7 @@ def _find_or_create_attachment(
         object_type="part",
         object_id=part.id,
         file_name=file_name,
-        file_type=DATASHEET_FILE_TYPE,
+        file_type=file_type,
         mime_type=mime_type,
         size_bytes=size_bytes,
         storage_key=storage_key,
@@ -220,7 +241,17 @@ def _upsert_record(
     source_url: str,
     url_sha: str,
     user_id: UUID | None,
+    kind: str = "datasheet",
+    origin: str = ORIGIN_DATASHEET_FIELD,
+    title: str | None = None,
+    status: str = STATUS_FAILED,
 ) -> PartDatasheet:
+    """Find the row for (workspace, part, URL), or create it.
+
+    `kind` / `origin` / `title` / `status` apply only when the row is NEW:
+    an existing row keeps what it was created as, so an agent re-queuing a
+    part's own datasheet URL cannot relabel the datasheet row.
+    """
     row = _existing_record(
         db, workspace_id=workspace_id, part_id=part_id, url_sha=url_sha
     )
@@ -230,7 +261,10 @@ def _upsert_record(
             part_id=part_id,
             source_url=source_url,
             source_url_sha256=url_sha,
-            status=STATUS_FAILED,
+            kind=kind,
+            origin=origin,
+            title=title,
+            status=status,
             attempts=0,
             derived_status="none",
             derived={},
@@ -265,14 +299,39 @@ def _mark_stored(
     row.updated_by = user_id
 
 
-def _mark_failed(row: PartDatasheet, *, failure_code: str, user_id: UUID | None) -> None:
+def begin_attempt(db: Session, row: PartDatasheet, *, user_id: UUID | None) -> None:
+    """Count the attempt and COMMIT it before any network call.
+
+    A fetch that hangs past the sidecar's `timeout 600` is killed, and a
+    kill rolls back whatever is uncommitted. If the attempt were only
+    recorded after `fetch_asset` returned, the hanging row would be left
+    "never attempted", the oldest-first candidate order would hand it back
+    first on the next run, and that one URL would stall the job forever.
+    Committed here, a killed run leaves the row inside its retry cooldown
+    with one attempt spent, and five of those retire it.
+    """
+    row.attempts = (row.attempts or 0) + 1
+    row.last_attempt_at = utcnow()
+    row.updated_by = user_id
+    db.flush()
+    db.commit()
+
+
+def _mark_failed(
+    row: PartDatasheet,
+    *,
+    failure_code: str,
+    user_id: UUID | None,
+    attempt_recorded: bool = False,
+) -> None:
+    """`attempt_recorded`: `begin_attempt` already counted this one."""
     row.status = STATUS_FAILED
     if failure_code in _TERMINAL_FAILURES:
         # Spend the whole budget at once. `_candidate_rows` already treats
         # `attempts >= max` as settled, so this retires the row without
         # needing a separate "terminal" column to carry the same fact.
         row.attempts = settings().DATASHEET_BACKFILL_MAX_ATTEMPTS
-    else:
+    elif not attempt_recorded:
         row.attempts = (row.attempts or 0) + 1
     row.last_attempt_at = utcnow()
     row.failure_code = failure_code
@@ -431,15 +490,19 @@ def fetch_datasheet_for_part(
         # Idempotent: already downloaded under this exact URL.
         return row
 
-    # `allow_any_host=True` is the ADR-0033 opt-in. This module is the ONLY
-    # caller that passes it, and it is only reached from the cron backfill —
-    # never from a request handler.
+    begin_attempt(db, row, user_id=user_id)
+    # `allow_any_host=True` is the ADR-0033 opt-in. Only this module and
+    # `documents.py` pass it, and both are reached only from the cron
+    # backfill — never from a request handler.
     result = assets.fetch_asset(
         source_url, str(ws.id), "datasheet", allow_any_host=True
     )
     if result.stored is None:
         _mark_failed(
-            row, failure_code=result.failure_code or "unknown", user_id=user_id
+            row,
+            failure_code=result.failure_code or "unknown",
+            user_id=user_id,
+            attempt_recorded=True,
         )
         db.flush()
         _log_audit(
@@ -589,6 +652,49 @@ def _log_host_block_audit(
     )
 
 
+class HostBreaker:
+    """Per-run, per-host CONSECUTIVE failure counter, shared by both halves.
+
+    A vendor that is refusing us should cost a couple of attempts, not one
+    attempt on every part that happens to cite it — with 28 vishay parts and
+    a 5-attempt ceiling, a host-wide 403 would otherwise retire the whole
+    vendor in five runs, and bury the one fact worth knowing under 28
+    identical part-level rows. One instance spans a whole run, so a host the
+    datasheet half found blocked is skipped by the document half too.
+    """
+
+    def __init__(self) -> None:
+        self._failures: dict[str, int] = {}
+        self.blocked: set[str] = set()
+
+    def is_blocked(self, host: str) -> bool:
+        return bool(host) and host in self.blocked
+
+    def record(
+        self, db: Session, *, ws: Workspace, host: str, failure_code: str | None
+    ) -> None:
+        """Count one outcome for `host` (None = success)."""
+        if not host:
+            return
+        if failure_code in _HOST_LEVEL_FAILURES:
+            self._failures[host] = self._failures.get(host, 0) + 1
+            if self._failures[host] >= _HOST_FAILURE_TRIP and host not in self.blocked:
+                self.blocked.add(host)
+                logger.warning(
+                    "datasheet-backfill host looks blocked host=%s reason=%s "
+                    "after=%d consecutive failures; skipping its remaining "
+                    "candidates this run",
+                    host,
+                    failure_code,
+                    self._failures[host],
+                )
+                _log_host_block_audit(db, ws=ws, host=host, reason=failure_code)
+        else:
+            # Any non-host-level outcome (including success) clears the
+            # counter — the trip is for CONSECUTIVE failures.
+            self._failures.pop(host, None)
+
+
 _BACKFILL_LOCK_KEY = "datasheet-backfill"
 
 
@@ -658,12 +764,31 @@ def backfill_missing_datasheets(db: Session, *, limit: int | None = None) -> int
         return 0
 
     try:
-        return _run_backfill(db, limit=limit)
+        # Imported here: `documents` imports this module for the shared
+        # record / attachment machinery.
+        from app.domain.parts.services import documents
+
+        deadline = time.monotonic() + RUN_BUDGET_SECONDS
+        breaker = HostBreaker()
+        processed = _run_backfill(db, limit=limit, breaker=breaker, deadline=deadline)
+        # The document half (ADR-0036) runs under the SAME lock, breaker and
+        # run budget, after the datasheets: a datasheet is the document a
+        # part is least useful without.
+        processed += documents.backfill_documents(
+            db, breaker=breaker, deadline=deadline
+        )
+        return processed
     finally:
         _release_backfill_lock(db)
 
 
-def _run_backfill(db: Session, *, limit: int | None) -> int:
+def _run_backfill(
+    db: Session,
+    *,
+    limit: int | None,
+    breaker: HostBreaker | None = None,
+    deadline: float | None = None,
+) -> int:
     config = settings()
     batch = limit if limit is not None else config.DATASHEET_BACKFILL_BATCH_SIZE
     candidates = _candidate_rows(db, limit=batch)
@@ -672,16 +797,13 @@ def _run_backfill(db: Session, *, limit: int | None) -> int:
 
     workspace_cache: dict[UUID, Workspace | None] = {}
     part_cache: dict[tuple[UUID, UUID], Part | None] = {}
-    # Per-run, per-host failure counters. A vendor that is refusing us should
-    # cost a couple of attempts, not one attempt on every part that happens to
-    # cite it — with 28 vishay parts and a 5-attempt ceiling, a host-wide 403
-    # would otherwise retire the whole vendor in five runs, and bury the one
-    # fact worth knowing under 28 identical part-level rows.
-    host_failures: dict[str, int] = {}
-    blocked_hosts: set[str] = set()
+    breaker = breaker if breaker is not None else HostBreaker()
     outcome = BackfillOutcome()
 
     for workspace_id, part_id, source_url in candidates:
+        if deadline is not None and time.monotonic() >= deadline:
+            logger.info("datasheet-backfill run budget spent; resuming next run")
+            break
         if workspace_id not in workspace_cache:
             workspace_cache[workspace_id] = db.get(Workspace, workspace_id)
         ws = workspace_cache[workspace_id]
@@ -709,7 +831,7 @@ def _run_backfill(db: Session, *, limit: int | None) -> int:
         is_local = _is_local_asset_url(source_url)
         host = "" if is_local else _source_host(source_url)
 
-        if host and host in blocked_hosts:
+        if breaker.is_blocked(host):
             # Leave the row completely untouched — no attempt burned, no
             # status change. It stays a candidate for the next run, by which
             # time the vendor may have stopped refusing us.
@@ -725,23 +847,7 @@ def _run_backfill(db: Session, *, limit: int | None) -> int:
             failure_code = None if row is not None else _last_failure_code(
                 db, workspace_id=workspace_id, part_id=part_id, source_url=source_url
             )
-            if failure_code in _HOST_LEVEL_FAILURES:
-                host_failures[host] = host_failures.get(host, 0) + 1
-                if host_failures[host] >= _HOST_FAILURE_TRIP:
-                    blocked_hosts.add(host)
-                    logger.warning(
-                        "datasheet-backfill host looks blocked host=%s reason=%s "
-                        "after=%d consecutive failures; skipping its remaining "
-                        "candidates this run",
-                        host,
-                        failure_code,
-                        host_failures[host],
-                    )
-                    _log_host_block_audit(db, ws=ws, host=host, reason=failure_code)
-            else:
-                # Any non-host-level outcome (including success) clears the
-                # counter — the trip is for CONSECUTIVE failures.
-                host_failures.pop(host, None)
+            breaker.record(db, ws=ws, host=host, failure_code=failure_code)
 
         # Commit this candidate before starting the next fetch. See the
         # public docstring: the sidecar's `timeout 600` must never be able to
@@ -767,6 +873,6 @@ def _run_backfill(db: Session, *, limit: int | None) -> int:
         outcome.adopted,
         outcome.failed,
         outcome.skipped,
-        ",".join(sorted(blocked_hosts)) or "-",
+        ",".join(sorted(breaker.blocked)) or "-",
     )
     return outcome.processed

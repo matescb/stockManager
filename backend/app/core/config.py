@@ -214,6 +214,17 @@ class Settings(BaseSettings):
     # Cooldown before a failed (part, url) pair is retried. A vendor 404
     # today is very likely a 404 in an hour; a day is the honest cadence.
     DATASHEET_BACKFILL_RETRY_AFTER_SECONDS: int = Field(default=86400, ge=0)
+    # Part documents (application notes, PCNs, agent-queued PDFs — ADR-0036)
+    # fetched per run, AFTER the datasheet half and inside the same run
+    # budget (`documents.RUN_BUDGET_SECONDS`), so the two halves together
+    # still finish inside the sidecar's `timeout 600`. 0 turns the document
+    # half off and leaves datasheets on. Attempts and cooldown are shared
+    # with the datasheet settings above.
+    DOCUMENT_BACKFILL_BATCH_SIZE: int = Field(default=10, ge=0, le=200)
+    # Agent-queued documents still waiting (queued or retrying) per
+    # workspace. `request_part_document` refuses past it, so a runaway agent
+    # cannot fill the queue faster than the hourly sweep drains it.
+    DOCUMENT_REQUEST_PENDING_CAP: int = Field(default=200, ge=1)
 
     @field_validator("SENTRY_TRACES_SAMPLE_RATE", mode="before")
     @classmethod

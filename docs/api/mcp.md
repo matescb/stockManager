@@ -63,7 +63,7 @@ pins it.
 
 ## Tools
 
-29 tools — 14 read, 15 write. Names and arguments are the agent-facing contract;
+31 tools — 15 read, 16 write. Names and arguments are the agent-facing contract;
 the authoritative descriptions are the docstrings in `backend/app/mcp/tools/`,
 which are what the model actually reads.
 
@@ -89,6 +89,7 @@ earlier result has the other.
 | `validate_part` | Dry-run `create_part`: what the part policy would refuse, nothing written |
 | `part_policy_status` | What an existing part still lacks under the part policy |
 | `export_parts` | Every part, cursor-paged, with EDA hashes and on-hand / reserved / available — for audits |
+| `list_part_documents` | A part's local PDFs (datasheet, app notes, PCNs, manuals, uploads) with a Bearer-downloadable `download_url`, plus what is still queued (see [Part documents](#part-documents)) |
 
 ### Write
 
@@ -109,6 +110,7 @@ earlier result has the other.
 | `set_part_category` | File a part under a category |
 | `set_part_specs` | Write a part's own specifications |
 | `sync_project_bom` | Update a project's BOM in place from a KiCad export (`dry_run` first) |
+| `request_part_document` | Queue an https PDF for the hourly download onto a part — never fetched in the call (see [Part documents](#part-documents)) |
 
 ### Catalogue lookup
 
@@ -491,6 +493,51 @@ the same helper as `find_parts_missing_eda`, so the two never disagree.
 `page_size` echoes the value used. Each page costs a fixed handful of queries
 regardless of size. Works with a read-only token.
 
+### Part documents
+
+A part's paperwork lives as local PDFs: the datasheet, and — since SM-016 —
+application notes, technical notes, PCB design notes, programming / reference
+manuals and PCNs ([ADR-0036](../adr/0036-part-documents-cron-only-any-host.md)).
+They arrive three ways: DigiKey's product `MediaLinks` (filtered to those
+document types) are queued whenever a part is created from or refreshed against
+DigiKey; an agent queues one with `request_part_document`; a user uploads one.
+Queuing never downloads anything — the hourly `datasheet-backfill` job does,
+under the datasheet policy (HTTPS, pinned public IP, no redirects, 10 MB,
+PDF only).
+
+1. `list_part_documents(part_id_or_mpn="STM32G031K8T6")` — optionally
+   `kinds=["application_note", "pcn"]`.
+2. For each entry in `documents`, GET its `download_url` with the **same**
+   header: `Authorization: Bearer <token>`. It is the ordinary attachment
+   download route (`GET /api/attachments/{id}/download`), workspace-scoped,
+   always `Content-Disposition: attachment`; a GET, so a **read-only** token is
+   enough.
+3. Anything in `pending` is not downloaded yet: `status` `queued` (never
+   tried), `retrying` (failed with `failure_code`, retried after a day) or
+   `failed` (gave up — e.g. `http_404`, `unexpected_type` for a page that is
+   not a PDF).
+
+```json
+{"part_id": "…",
+ "documents": [{"id": "…", "kind": "application_note", "title": "AN2867 …",
+                "file_name": "STM32G031K8T6-AN2867_….pdf", "size_bytes": 812345,
+                "sha256": "…", "mime": "application/pdf",
+                "source_url": "https://www.st.com/…/an2867.pdf",
+                "retrieved_at": "2026-11-24T10:00:00+00:00",
+                "download_url": "https://parts.example.com/api/attachments/…/download"}],
+ "pending": [{"source_url": "https://…/pcn123.pdf", "kind": "pcn",
+              "title": "…", "status": "queued"}]}
+```
+
+`request_part_document(part_id_or_mpn, url, kind, title?)` validates the URL's
+shape only — https, a public domain name (no IP address, no `localhost` or
+internal suffix), no credentials, the default port, ≤ 2048 characters — and
+records it. A URL the part already has (its datasheet, a media link, an earlier
+request) answers `queued: false` with the existing entry. At most
+`DOCUMENT_REQUEST_PENDING_CAP` (200) requests may wait per workspace. Link the
+PDF itself, not the HTML page around it: a page fails with `unexpected_type`.
+Nothing extracts text yet.
+
 ## Required arguments and refusals
 
 Every tool can additionally return
@@ -514,6 +561,8 @@ not repeated per row.
 | `validate_part` | — | same as `create_part` | `category.not_found`; `category.archived`; `part.invalid_field`. An unmet rule is `ok: false`, not a refusal |
 | `part_policy_status` | `part_id_or_mpn` | — | `part.not_found` |
 | `export_parts` | — | `cursor`, `page_size`, `include_archived` | `mcp.invalid_cursor` (a cursor this tool did not mint — start over without one) |
+| `list_part_documents` | `part_id_or_mpn` | `kinds` | `part.not_found`; `document.invalid_kind` |
+| `request_part_document` | `part_id_or_mpn`, `url`, `kind` | `title` | `part.not_found`; `document.invalid_url`; `document.invalid_kind`; `document.invalid_title` (> 300 characters); `document.queue_full` (200 requests already waiting in this workspace — wait for the hourly job) |
 | `catalog_lookup` | `mpn` | `manufacturer`, `provider` | `part.provider_not_configured`; `part.provider_missing_mpn`; when NO provider answered, the first provider's `provider.quota_reserve_reached` / `provider.suspended` / `provider.pacing` / `rate_limited` / `provider.upstream_error`. A provider that refuses while another answers is listed under `errors`, not refused |
 | `catalog_search` | `keywords` (unless `list_categories`) | `category_id`, `manufacturer_ids`, `parameter_filters`, `status`, `in_stock`, `rohs`, `has_datasheet`, `sort`, `limit`, `offset`, `provider`, `list_categories` | `provider.invalid_filter`; `provider.unsupported_filter`; `part.provider_not_configured`; and, when no provider answered, the same provider codes as `catalog_lookup` |
 | `sourcing_offers` | `part_id` | `qty` | `part.not_found` only. Every other failure is **degradation, not a refusal**: a part with no MPN, unconfigured sourcing, an exhausted budget and a provider error all return `status` (`no_mpn` / `not_configured` / `budget_blocked` / `provider_error`) with an empty `offers` list. Read that as "unknown", not "unavailable" |
@@ -644,6 +693,7 @@ Codes specific to the provider tools:
 | `provider.unsupported_filter` | `catalog_search`: a filter the provider cannot apply (Mouser: anything but keywords / in_stock / rohs) | No — drop it or use DigiKey |
 | `provider.invalid_filter` | `catalog_search`: no keywords, or parametric filters without `category_id` | No — fix the call |
 | `eda.lcsc_disabled` | `fetch_lcsc` is parked for agents ([Disabling](#disabling)) | No |
+| `document.queue_full` | This workspace already has 200 requested documents waiting for the hourly download | After the job has drained some |
 
 The code leads because it is the half that does not get reworded. A stack trace
 is never returned; an unexpected exception becomes a generic

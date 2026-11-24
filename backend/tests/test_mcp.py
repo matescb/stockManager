@@ -425,6 +425,7 @@ _EXPECTED_WRITE_TOOLS = {
     "sourcing_offers",
     "catalog_lookup",
     "catalog_search",
+    "request_part_document",
     "set_part_eda",
     "upload_eda_asset",
     "import_vendor_zip",
@@ -571,6 +572,7 @@ def _read_tool_arguments(client: TestClient) -> dict[str, dict]:
         "validate_part": {"mpn": "CLEAN-2", "category_id": slug},
         "part_policy_status": {"part_id_or_mpn": part_id},
         "export_parts": {"page_size": 1},
+        "list_part_documents": {"part_id_or_mpn": part_id},
     }
 
 

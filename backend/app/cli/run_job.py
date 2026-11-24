@@ -248,8 +248,11 @@ JOBS: dict[str, JobSpec] = {
             "Processes at most DATASHEET_BACKFILL_BATCH_SIZE parts whose "
             "datasheet_url has no stored part_datasheets row. A stored row is "
             "never re-downloaded; a failure increments attempts and starts a "
-            "retry cooldown, so re-running resumes rather than repeating. A "
-            "no-op returning 0 when DATASHEET_BACKFILL_INTERVAL_SECONDS is 0."
+            "retry cooldown, so re-running resumes rather than repeating. "
+            "Then downloads at most DOCUMENT_BACKFILL_BATCH_SIZE queued part "
+            "documents (ADR-0036) under the same rules; no fetch starts after "
+            "the 500s run budget. A no-op returning 0 when "
+            "DATASHEET_BACKFILL_INTERVAL_SECONDS is 0."
         ),
         run=_run_datasheet_backfill,
         interval_setting="DATASHEET_BACKFILL_INTERVAL_SECONDS",

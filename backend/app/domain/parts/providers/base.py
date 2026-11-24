@@ -53,6 +53,9 @@ class MpnLookupResult(TypedDict, total=False):
 #     "image_url":      str | None,
 #     "source_url":     str,
 #     "specs":          [{ "key": str, "value": str }, ...],
+#     "media_links":    [{ "kind", "title", "url", "media_type" }, ...],
+#                       (optional; DigiKey only — document links queued for
+#                       the cron download, `services/documents.py`)
 #   }
 #
 # `specs` is an ordered list of free-form key/value pairs; the names
