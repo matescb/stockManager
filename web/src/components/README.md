@@ -12,6 +12,7 @@ Reusable presentational + behavioural components shared across pages. Page-speci
 | `DataTable.tsx` | The shared table — search, sort, hidden columns, CSV export, multi-select |
 | `DataTable.test.tsx` | Co-located unit test for DataTable |
 | `Modal.tsx` | Shared accessible dialog shell with focus trap, ESC close, backdrop dismiss, and focus restoration |
+| `ImageLightbox.tsx` | Full-size in-page image viewer on top of `Modal` (body scroll lock, "Open original" link, load-error fallback) |
 | `EntityHeader.tsx` | Standard entity-page header (title / breadcrumbs / actions) |
 | `SubNav.tsx` | Tabbed sub-navigation used on entity pages; supports grouped (disclosure) entries |
 | `PartsTopNav.tsx` | Parts-area top nav |
@@ -41,6 +42,7 @@ Every component is its default / named export. The most commonly reused:
 | `CategoryTree` | Browsing or filtering by part category |
 | `DataTable` | Any table — before rolling your own |
 | `Modal` | Dialogs that need `role="dialog"`, `aria-modal`, focus trapping, ESC close, backdrop dismiss, and trigger focus restoration |
+| `ImageLightbox` | Showing an image full-size — instead of linking it into a new tab |
 | `EntityHeader` + `SubNav` | Entity pages (Part, Order, Build, …) |
 | `AttachmentsPanel` | Any entity that supports attachments |
 | `ConfirmDialog` | Any destructive action |

@@ -1,24 +1,16 @@
-import { useRef, useState, useMemo } from "react";
+import { useCallback, useRef, useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Trash2, Download, UploadCloud, Paperclip } from "lucide-react";
+import { Trash2, Download, UploadCloud, Paperclip, Eye } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { useWsKey } from "@/lib/queryKeys";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { InlineQueryError } from "@/components/QueryStateBoundary";
+import ImageLightbox from "@/components/ImageLightbox";
 import { formatDateTime } from "@/lib/format";
 import { isSafeSameOriginPath } from "@/lib/url";
+import type { Attachment } from "@/types";
 
-type Attachment = {
-  id: string;
-  object_type: string;
-  object_id: string;
-  file_name: string;
-  file_type: string;
-  mime_type: string | null;
-  size_bytes: number;
-  created_at: string;
-};
 
 type FileType = "other" | "datasheet" | "invoice" | "image" | "cad" | "bom";
 
@@ -121,6 +113,18 @@ export function validateFile(file: File, fileType: FileType): string | null {
   return null;
 }
 
+/**
+ * Image MIMEs the backend accepts on upload (`_ALLOWED_MIMES` in
+ * `backend/app/api/routes/attachments.py`) and serves with their real
+ * type, so an `<img>` can render them even though the download route
+ * sends `Content-Disposition: attachment`.
+ */
+const PREVIEWABLE_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+export function isPreviewableImage(a: Pick<Attachment, "mime_type">): boolean {
+  return a.mime_type != null && PREVIEWABLE_IMAGE_MIMES.has(a.mime_type);
+}
+
 export default function AttachmentsPanel({ objectType, objectId, canWrite }: Props) {
   const confirm = useConfirm();
   const qc = useQueryClient();
@@ -131,6 +135,8 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
       api.get<Attachment[]>(`/attachments/by-object/${objectType}/${objectId}`, { signal }),
   });
   const { data, isLoading, isError } = attachmentsQuery;
+  const [preview, setPreview] = useState<{ src: string; title: string } | null>(null);
+  const closePreview = useCallback(() => setPreview(null), []);
 
   const [file, setFile] = useState<File | null>(null);
   const [fileType, setFileType] = useState<FileType>("other");
@@ -297,6 +303,17 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
                     {humanSize(a.size_bytes)} · {formatDateTime(a.created_at)}
                   </div>
                 </div>
+                {safeDownloadUrl && isPreviewableImage(a) && (
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    aria-haspopup="dialog"
+                    onClick={() => setPreview({ src: safeDownloadUrl, title: a.file_name })}
+                  >
+                    <Eye className="inline w-3 h-3 mr-1" />
+                    Preview
+                  </button>
+                )}
                 {safeDownloadUrl && (
                   <a
                     className="btn btn-sm"
@@ -318,6 +335,16 @@ export default function AttachmentsPanel({ objectType, objectId, canWrite }: Pro
           })}
         </ul>
       )}
+      <ImageLightbox
+        open={preview !== null}
+        onClose={closePreview}
+        src={preview?.src}
+        title={preview?.title ?? "Attachment"}
+        // The download route forces `Content-Disposition: attachment`, so an
+        // "open original" tab would only download the file — the panel's own
+        // Download button already does that.
+        originalHref={null}
+      />
     </div>
   );
 }

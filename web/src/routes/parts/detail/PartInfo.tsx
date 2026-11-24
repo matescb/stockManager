@@ -2,34 +2,17 @@ import { useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ExternalLink, FileText, Loader2, RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { useWsKey, wsKeyOf } from "@/lib/queryKeys";
 import { useAuth } from "@/lib/auth";
 import { InlineQueryError } from "@/components/QueryStateBoundary";
-import { isSafeHttpOrSameOriginUrl } from "@/lib/url";
 import { formatQuantity } from "@/lib/format";
 import type { CustomFieldRow, Part } from "@/types";
 import { providerLabel } from "@/lib/providers";
+import PartDatasheetLink from "./PartDatasheetLink";
 
 const STALE_DAYS = 30;
-
-/**
- * Append `?name=<safe>` to an asset URL so the backend serves it with
- * `Content-Disposition: inline; filename="<safe>.<ext>"`. The browser
- * still previews PDFs / images inline; the user's Save As dialog
- * shows the readable filename instead of the content-hash.
- *
- * Only applies to our own asset paths; remote URLs (still possible
- * when a download fell back to the upstream link) get returned as-is.
- */
-function withDownloadName(url: string, name: string | null | undefined): string {
-  if (!url || !url.startsWith("/api/parts/assets/")) return url;
-  const safe = (name || "datasheet").replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 80);
-  if (!safe) return url;
-  const sep = url.includes("?") ? "&" : "?";
-  return `${url}${sep}name=${encodeURIComponent(safe)}`;
-}
 
 function relativeTime(iso: string | null): string {
   if (!iso) return "never";
@@ -61,9 +44,8 @@ export default function PartInfo() {
   const lookupBy = (k: string) => cf?.find(r => r.key === k)?.value || null;
   // Image now lives in the layout header (passed in via Part.image_url);
   // the only Media-card affordance that still belongs on this page is the
-  // datasheet link.
+  // datasheet link, which prefers the stored local copy (PartDatasheetLink).
   const datasheetUrl = lookupBy("datasheet_url");
-  const safeDatasheetUrl = isSafeHttpOrSameOriginUrl(datasheetUrl) ? datasheetUrl : null;
 
   const [refreshing, setRefreshing] = useState(false);
   async function refresh() {
@@ -86,6 +68,7 @@ export default function PartInfo() {
       }
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", part.id) });
       qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "part", part.id, "custom-fields") });
+      qc.invalidateQueries({ queryKey: wsKeyOf(workspaceId, "attachments", "part", part.id) });
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : "Refresh failed");
     } finally {
@@ -157,18 +140,7 @@ export default function PartInfo() {
         <Field label="Low-stock threshold" value={part.low_stock_report_quantity != null ? formatQuantity(part.low_stock_report_quantity) : null} />
         <Field label="Attrition" value={`${part.attrition_percentage}% (min ${formatQuantity(part.attrition_min_quantity)})`} />
       </div>
-      {safeDatasheetUrl && (
-        <div className="card p-4 col-span-2">
-          <a
-            href={withDownloadName(safeDatasheetUrl, part.mpn || part.name)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-accent hover:underline text-sm"
-          >
-            <FileText size={14} /> Datasheet <ExternalLink size={12} />
-          </a>
-        </div>
-      )}
+      <PartDatasheetLink part={part} datasheetUrl={datasheetUrl} />
       <div className="card p-4 col-span-2">
         <div className="flex items-center mb-2">
           <h3 className="section-title">Description</h3>

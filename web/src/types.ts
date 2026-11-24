@@ -109,3 +109,15 @@ export type MpnLookupResult = {
   /** Which provider produced this response (or "none" when unconfigured). */
   provider: PartsProviderName;
 };
+
+/** Row from `GET /api/attachments/by-object/{object_type}/{object_id}`. */
+export type Attachment = {
+  id: string;
+  object_type: string;
+  object_id: string;
+  file_name: string;
+  file_type: string;
+  mime_type: string | null;
+  size_bytes: number;
+  created_at: string;
+};
