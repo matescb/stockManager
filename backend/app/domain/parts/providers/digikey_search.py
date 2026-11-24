@@ -15,9 +15,20 @@ ParameterFilterRequest, SearchOptions}`, `SortOptions.{Field, SortOrder}`,
 `ProductsCount` and `FilterOptions.{TopCategories, Manufacturers, Status,
 ParametricFilters}`. Nothing here is persisted; `catalog_search` decides
 what may be cached.
+
+Facets are sparse, and that is DigiKey, not this parser (SM-002 follow-up).
+The field names above match the published v4 schema AND every live
+KeywordResponse we could find; in those, `Manufacturers` is always filled
+but `TopCategories`, `Status`, `Packaging`, `Series` and `ParametricFilters`
+are `null` unless DigiKey judges the result set narrow (in practice: one
+leaf category). So when `TopCategories` is missing the categories facet is
+built from the candidates' own `Category` (real ids, page-local counts,
+`categories_from: "candidates"`), and `hints` tells the agent to narrow by
+category to unlock the parametric filters. Sources: the fixture README.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -49,6 +60,34 @@ MAX_FACET_MANUFACTURERS = 20
 MAX_FACET_CATEGORIES = 10
 MAX_PARAMETRIC_FILTERS = 20
 MAX_FILTER_VALUES = 12
+
+#: A capacitance / inductance written with an SI prefix ("100nF", "4.7 uH").
+#: DigiKey lists values as "0.1µF" / "100pF", so its keyword matcher finds
+#: nothing for "100nF"; we hint rather than rewrite the query.
+_PREFIXED_VALUE = re.compile(r"(?<![\w.])\d+(?:[.,]\d+)?\s*[pnuµμ][FH]\b")
+
+HINT_NARROW_FOR_PARAMETRICS = (
+    "DigiKey returns parametric_filters and status only once a search is narrow "
+    "(in practice one leaf category): re-query with category_id from "
+    "facets.categories (or list_categories), then take parameter ids from that answer."
+)
+HINT_LEAF_CATEGORY = (
+    "No parametric_filters came back for this category_id; if it is a parent "
+    "category, use one of its leaf children (list_categories)."
+)
+HINT_PARENT_CATEGORY = (
+    "DigiKey refuses parametric filters on a parent category (and when the keywords "
+    "match nothing inside the category): use a leaf category_id from facets.categories "
+    "or list_categories, or retry with fewer keywords."
+)
+MAX_PROVIDER_MESSAGE = 300
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_URL = re.compile(r"https?://\S+", re.IGNORECASE)
+HINT_VALUE_KEYWORDS = (
+    "No match. DigiKey's keyword search matches values as its listings write them "
+    "(0.1µF, 100pF, 10µH), so a value like 100nF in keywords finds nothing: drop the "
+    "value, search by type/package, then narrow with category_id and parameter_filters."
+)
 
 #: Our sort names -> DigiKey `SortOptions.Field`.
 SORT_FIELDS: dict[str, str] = {
@@ -152,14 +191,30 @@ def search(provider: DigiKeyProvider, q: SearchQuery) -> dict[str, Any]:
     if status != 200:
         return _not_ok(status, body)
     body = body if isinstance(body, dict) else {}
-    products = [p for p in body.get("Products") or [] if isinstance(p, dict)]
-    return {
+    products = [p for p in body.get("Products") or [] if isinstance(p, dict)][: q.limit]
+    total = _int(body.get("ProductsCount"), default=len(products))
+    options = body.get("FilterOptions")
+    facets = _facets(options if isinstance(options, dict) else {}, products)
+    out: dict[str, Any] = {
         "found": True,
-        "total": _int(body.get("ProductsCount"), default=len(products)),
-        "candidates": [_candidate(p) for p in products[: q.limit]],
-        "facets": _facets(body.get("FilterOptions") or {}),
+        "total": total,
+        "candidates": [_candidate(p) for p in products],
+        "facets": facets,
         "applied_filters": payload,
     }
+    hints = _hints(q, total, facets)
+    if hints:
+        out["hints"] = hints
+    return out
+
+
+def _hints(q: SearchQuery, total: int | None, facets: dict[str, Any]) -> list[str]:
+    hints: list[str] = []
+    if not total and _PREFIXED_VALUE.search(q.keywords or ""):
+        hints.append(HINT_VALUE_KEYWORDS)
+    if total and not facets["parametric_filters"]:
+        hints.append(HINT_LEAF_CATEGORY if q.category_id else HINT_NARROW_FOR_PARAMETRICS)
+    return hints
 
 
 def categories(provider: DigiKeyProvider) -> dict[str, Any]:
@@ -199,7 +254,49 @@ def _not_ok(status: int, body: Any) -> dict[str, Any]:
     refused = _refusal(status, body)
     if refused is not None:
         return dict(refused)
-    return {"found": False, "result": None, "message": f"DigiKey returned HTTP {status}"}
+    out: dict[str, Any] = {"found": False, "result": None,
+                           "message": f"DigiKey returned HTTP {status}"}
+    if 400 <= status < 500 and status not in (401, 403, 429):
+        detail = _provider_message(body)
+        if detail:
+            out["provider_message"] = detail
+            if "parametric filtering" in detail.lower():
+                out["hint"] = HINT_PARENT_CATEGORY
+    return out
+
+
+def _provider_message(body: Any) -> str | None:
+    """DigiKey's own text from a 4xx body, safe to hand an agent.
+
+    v4 answers errors with `DKProblemDetails` {type, title, status, detail,
+    instance, correlationId, errors: {field: [message]}}; older gateway
+    answers use `ErrorMessage` / `ErrorDetails`. Only message fields are
+    read (never `type`/`instance`, which are URLs/paths); control
+    characters are dropped, any URL is redacted, and the text is capped."""
+    if not isinstance(body, dict):
+        return None
+    texts: list[str] = []
+    for key in ("detail", "ErrorMessage", "ErrorDetails", "message"):
+        value = body.get(key)
+        if isinstance(value, str):
+            texts.append(value)
+    errors = body.get("errors")
+    if isinstance(errors, dict):
+        for value in errors.values():
+            items = value if isinstance(value, list) else [value]
+            texts.extend(v for v in items if isinstance(v, str))
+    if not any(t.strip() for t in texts) and isinstance(body.get("title"), str):
+        texts.append(body["title"])  # generic ("Bad Request"): only when nothing better
+    cleaned: list[str] = []
+    for text in texts:
+        text = _URL.sub("[url]", _CONTROL.sub(" ", text))
+        text = " ".join(text.split())
+        if text and text not in cleaned:
+            cleaned.append(text)
+    joined = "; ".join(cleaned)
+    if len(joined) > MAX_PROVIDER_MESSAGE:
+        joined = joined[: MAX_PROVIDER_MESSAGE - 1].rstrip() + "…"
+    return joined or None
 
 
 # ---------------------------------------------------------------------------
@@ -246,20 +343,55 @@ def _money(value: Any) -> str | None:
     return f"{number:.4f} {_LOCALE_CURR}" if number > 0 else None
 
 
-def _facets(options: dict[str, Any]) -> dict[str, Any]:
+def _facets(options: dict[str, Any], products: list[dict[str, Any]]) -> dict[str, Any]:
+    categories = _top_categories(options.get("TopCategories"))
+    source = "top_categories"
+    if not categories:
+        categories, source = _candidate_categories(products), "candidates"
     return {
-        "categories": _top_categories(options.get("TopCategories")),
+        "categories": categories,
+        "categories_from": source,
         "manufacturers": _base_filters(options.get("Manufacturers"), MAX_FACET_MANUFACTURERS),
         "status": _base_filters(options.get("Status"), None),
         "parametric_filters": _parametric(options.get("ParametricFilters")),
     }
 
 
+def _candidate_categories(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Leaf categories of the candidates on this page, most frequent first.
+
+    The fallback for a response without `TopCategories` (most broad
+    searches): ids are DigiKey's own, `count` is candidates on this page."""
+    found: dict[str, dict[str, Any]] = {}
+    for p in products:
+        leaf, root = _leaf_category(p.get("Category"))
+        if leaf is None:
+            continue
+        entry = found.setdefault(leaf["id"], {**leaf, "count": 0, "root": root})
+        entry["count"] += 1
+    ordered = sorted(found.values(), key=lambda r: -r["count"])
+    return ordered[:MAX_FACET_CATEGORIES]
+
+
+def _leaf_category(cat: Any) -> tuple[dict[str, Any] | None, str | None]:
+    """(deepest {id, name}, root name) of a product's nested `Category`."""
+    root = cat.get("Name") if isinstance(cat, dict) else None
+    leaf = None
+    while isinstance(cat, dict):
+        if cat.get("CategoryId") is not None:
+            leaf = {"id": str(cat["CategoryId"]), "name": cat.get("Name")}
+        children = [c for c in cat.get("ChildCategories") or [] if isinstance(c, dict)]
+        cat = children[0] if children else None
+    return leaf, root
+
+
 def _top_categories(rows: Any) -> list[dict[str, Any]]:
     out = []
     for row in rows or []:
-        cat = (row or {}).get("Category") or {}
-        if cat.get("Id") is None:
+        if not isinstance(row, dict):
+            continue
+        cat = row.get("Category") or {}
+        if not isinstance(cat, dict) or cat.get("Id") is None:
             continue
         root = (row.get("RootCategory") or {}).get("Name")
         out.append({"id": str(cat["Id"]), "name": cat.get("Name"),

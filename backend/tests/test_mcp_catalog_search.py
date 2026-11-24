@@ -89,7 +89,8 @@ async def test_sm002_1_keyword_search_candidates_total_facets_applied(token, dig
     assert facets["source"] == "digikey"
     assert facets["categories"][0]["id"] == "60"
     assert facets["manufacturers"][0]["count"] == 312
-    assert facets["parametric_filters"][0]["values"][0]["id"] == "64"
+    assert facets["parametric_filters"] == [], "DigiKey leaves them null on a broad search"
+    assert out["hints"] == [digikey_search.HINT_NARROW_FOR_PARAMETRICS]
     assert out["applied_filters"]["digikey"] == {"Keywords": "100nF 0603 C0G", "Limit": 2,
                                                  "Offset": 0}
     assert out["quota"][0]["spent"] == 1
@@ -107,7 +108,10 @@ async def test_sm002_2_requery_with_facet_ids_narrows(token, digikey, clock):
     async with mcp_session(token) as s:
         broad = await call(s, "catalog_search", keywords="100nF 0603 C0G")
         cat = broad["facets"]["categories"][0]["id"]
-        volt = next(f for f in broad["facets"]["parametric_filters"]
+        clock.now += 2
+        by_category = await call(s, "catalog_search", keywords="100nF 0603 C0G",
+                                 category_id=cat)
+        volt = next(f for f in by_category["facets"]["parametric_filters"]
                     if f["name"] == "Voltage - Rated")
         clock.now += 2
         narrow = await call(
@@ -249,3 +253,29 @@ async def test_a_suspended_digikey_is_reported_not_empty(token, digikey, monkeyp
     async with mcp_session(token) as s:
         message = await call_error(s, "catalog_search", keywords="a")
     assert "provider.suspended" in message
+
+
+async def test_digikey_400_detail_and_hint_reach_the_agent(token, digikey, monkeypatch, clock):
+    body = fixture("digikey_keyword_400_parent_category.json")
+    monkeypatch.setattr(digikey_search, "_post_search", lambda t, c, p: (400, body))
+    async with mcp_session(token) as s:
+        message = await call_error(
+            s, "catalog_search", keywords="capacitor", category_id="3", provider="digikey",
+            parameter_filters=[{"parameter_id": 14, "value_ids": ["64"]}])
+    assert "provider.upstream_error" in message
+    assert "Parametric Filtering Not Support at Parent Category Level" in message
+    assert digikey_search.HINT_PARENT_CATEGORY in message
+    assert "developer.digikey.com" not in message and "/products/v4" not in message
+
+
+async def test_digikey_400_detail_is_on_its_errors_entry_beside_mouser(
+        token, digikey, mouser, monkeypatch, clock):
+    body = fixture("digikey_keyword_400_parent_category.json")
+    monkeypatch.setattr(digikey_search, "_post_search", lambda t, c, p: (400, body))
+    async with mcp_session(token) as s:
+        out = await call(s, "catalog_search", keywords="capacitor")
+    error = next(e for e in out["errors"] if e["provider"] == "digikey")
+    assert error["provider_message"].startswith(
+        "Parametric Filtering Not Support at Parent Category Level")
+    assert error["hint"] == digikey_search.HINT_PARENT_CATEGORY
+    assert out["candidates"] and all(c["source"] == "mouser" for c in out["candidates"])

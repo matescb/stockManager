@@ -53,10 +53,20 @@ def catalog_search(
     written. Narrow in steps: search by keywords, then re-query with ids
     taken from the returned `facets` — never invent ids.
 
+    DigiKey fills facets sparsely: a broad search returns manufacturers
+    and categories but usually NO status or parametric_filters. Those
+    come back once the search is narrow — re-query with a leaf
+    category_id from `facets.categories`, then take parameter ids and
+    value ids from THAT answer. Put the part type and package in
+    keywords ("ceramic capacitor 0603 C0G"), not the value: DigiKey
+    writes capacitance as 0.1µF / 100pF, so "100nF" matches nothing;
+    select the value with parameter_filters instead. `hints` says when
+    either applies.
+
     Args:
         keywords: Free text, e.g. "100nF 0603 C0G".
-        category_id: A DigiKey category id from `facets.categories` (or
-            from `categories` when list_categories is true).
+        category_id: A DigiKey leaf category id from `facets.categories`
+            (or from `categories` when list_categories is true).
         manufacturer_ids: DigiKey manufacturer ids from `facets.manufacturers`.
         parameter_filters: [{parameter_id, value_ids}] from
             `facets.parametric_filters`; needs category_id. DigiKey only.
@@ -80,10 +90,15 @@ def catalog_search(
     `status`, `key_parameters`, `stock`, `unit_price_qty1`,
     `datasheet_url`) — per provider, never merged — plus `total` per
     provider, DigiKey's `facets` (categories, manufacturers, status,
-    parametric_filters with ids, names and counts), `applied_filters`,
+    parametric_filters with ids, names and counts; `categories_from` is
+    "candidates" when DigiKey sent no category facet and the list was
+    built from this page's candidates), `hints`, `applied_filters`,
     `cache`, and `quota` as in catalog_lookup. Same refusals as
     catalog_lookup (provider.quota_reserve_reached, provider.suspended,
     provider.pacing with retry_after_ms), plus provider.invalid_filter.
+    A DigiKey 4xx carries DigiKey's own text as `provider_message` (and a
+    `hint`); "Parametric Filtering Not Support at Parent Category Level"
+    means use a leaf category_id.
     """
     try:
         return service.catalog_search(

@@ -47,11 +47,21 @@
    "Ncnr": false,
    "Category": {
     "CategoryId": 3,
+    "ParentId": 0,
     "Name": "Capacitors",
+    "ProductCount": 0,
+    "NewProductCount": 0,
+    "ImageUrl": "",
+    "SeoDescription": "",
     "ChildCategories": [
      {
       "CategoryId": 60,
+      "ParentId": 3,
       "Name": "Ceramic Capacitors",
+      "ProductCount": 0,
+      "NewProductCount": 0,
+      "ImageUrl": "",
+      "SeoDescription": "",
       "ChildCategories": []
      }
     ]
@@ -151,44 +161,75 @@
    {
     "Id": 2,
     "Value": "Cut Tape (CT)",
-    "ProductCount": 1100
+    "ProductCount": 12
+   },
+   {
+    "Id": 1,
+    "Value": "Tape & Reel (TR)",
+    "ProductCount": 12
    }
   ],
   "Status": [
    {
     "Id": 0,
     "Value": "Active",
-    "ProductCount": 12
+    "ProductCount": 11
    },
    {
     "Id": 7,
-    "Value": "Obsolete",
-    "ProductCount": 0
+    "Value": "Not For New Designs",
+    "ProductCount": 1
    }
   ],
-  "Series": [],
+  "Series": [
+   {
+    "Id": 1061,
+    "Value": "GRM",
+    "ProductCount": 12
+   }
+  ],
   "ParametricFilters": [
    {
     "Category": {
      "Id": 60,
-     "Name": "Ceramic Capacitors"
+     "Value": "Ceramic Capacitors"
     },
-    "ParameterType": "String",
-    "ParameterId": 14,
-    "ParameterName": "Voltage - Rated",
+    "ParameterType": "UnitOfMeasure",
+    "ParameterId": 2049,
+    "ParameterName": "Capacitance",
     "FilterValues": [
      {
       "ProductCount": 12,
-      "ValueId": "64",
-      "ValueName": "50V",
-      "RangeFilterType": "Min"
+      "ValueId": "0.1 µF",
+      "ValueName": "0.1 µF"
      }
     ]
    },
    {
     "Category": {
      "Id": 60,
-     "Name": "Ceramic Capacitors"
+     "Value": "Ceramic Capacitors"
+    },
+    "ParameterType": "String",
+    "ParameterId": 14,
+    "ParameterName": "Voltage - Rated",
+    "FilterValues": [
+     {
+      "ProductCount": 9,
+      "ValueId": "64",
+      "ValueName": "50V"
+     },
+     {
+      "ProductCount": 3,
+      "ValueId": "81",
+      "ValueName": "100V"
+     }
+    ]
+   },
+   {
+    "Category": {
+     "Id": 60,
+     "Value": "Ceramic Capacitors"
     },
     "ParameterType": "String",
     "ParameterId": 17,
@@ -197,28 +238,12 @@
      {
       "ProductCount": 12,
       "ValueId": "39",
-      "ValueName": "C0G, NP0",
-      "RangeFilterType": null
+      "ValueName": "C0G, NP0"
      }
     ]
    }
   ],
-  "TopCategories": [
-   {
-    "RootCategory": {
-     "Id": 3,
-     "Name": "Capacitors",
-     "ProductCount": 1342
-    },
-    "Category": {
-     "Id": 60,
-     "Name": "Ceramic Capacitors",
-     "ProductCount": 12
-    },
-    "Score": 1.0,
-    "ImageUrl": "https://mm.digikey.com/category/ceramic.jpg"
-   }
-  ],
+  "TopCategories": null,
   "MarketPlaceFilters": [
    "NoFilter",
    "ExcludeMarketPlace",

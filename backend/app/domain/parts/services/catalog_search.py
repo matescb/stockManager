@@ -274,6 +274,9 @@ def _classify_refusal(answer: _Answer, result: dict[str, Any]) -> _Answer:
     else:
         code = ErrorCodes.PROVIDER_UPSTREAM_ERROR
     answer.error = {"provider": answer.provider, "code": code, "message": message}
+    for key in ("provider_message", "hint"):
+        if result.get(key):
+            answer.error[key] = result[key]
     if result.get("retry_after_ms") is not None:
         answer.error["retry_after_ms"] = result["retry_after_ms"]
     return answer
@@ -282,12 +285,21 @@ def _classify_refusal(answer: _Answer, result: dict[str, Any]) -> _Answer:
 # ---------------------------------------------------------------------------
 # the answer
 # ---------------------------------------------------------------------------
+def _error_text(error: dict[str, Any]) -> str:
+    text = f"{error['provider']}: {error['message']}"
+    if error.get("provider_message"):
+        text += f" — {error['provider_message']}"
+    if error.get("hint"):
+        text += f" ({error['hint']})"
+    return text
+
+
 def _response(q: SearchQuery, answers: list[_Answer]) -> dict[str, Any]:
     answered = [a for a in answers if a.result is not None]
     errors = [a.error for a in answers if a.error]
     if not answered:
         first = errors[0]
-        detail = "; ".join(f"{e['provider']}: {e['message']}" for e in errors)
+        detail = "; ".join(_error_text(e) for e in errors)
         raise CatalogLookupRefused(first["code"], detail)
 
     candidates: list[dict[str, Any]] = []
@@ -310,6 +322,9 @@ def _response(q: SearchQuery, answers: list[_Answer]) -> dict[str, Any]:
     cats = next((a.categories for a in answered if a.categories is not None), None)
     if cats is not None:
         out["categories"] = cats
+    hints = [h for a in answered for h in a.result.get("hints") or []]
+    if hints:
+        out["hints"] = hints
     if errors:
         out["errors"] = errors
     return out

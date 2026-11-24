@@ -209,14 +209,13 @@ transport retries.
   ],
   "facets": {
     "source": "digikey",
-    "categories": [{"id": "60", "name": "Ceramic Capacitors", "count": 1342, "root": "Capacitors"}],
+    "categories": [{"id": "60", "name": "Ceramic Capacitors", "count": 2, "root": "Capacitors"}],
+    "categories_from": "candidates",
     "manufacturers": [{"id": "490", "name": "Murata Electronics", "count": 312}],
-    "status": [{"id": "0", "name": "Active", "count": 1290}],
-    "parametric_filters": [
-      {"parameter_id": 14, "name": "Voltage - Rated",
-       "values": [{"id": "64", "name": "50V", "count": 640}]}
-    ]
+    "status": [],
+    "parametric_filters": []
   },
+  "hints": ["DigiKey returns parametric_filters and status only once a search is narrow …"],
   "applied_filters": {"digikey": {"Keywords": "100nF 0603 C0G", "Limit": 2, "Offset": 0}},
   "cache": "miss",
   "quota": [{"provider": "digikey", "spent": 1, "remaining_day": 640,
@@ -230,6 +229,31 @@ transport retries.
   `category_id` (DigiKey scopes parameter ids per category), else
   `provider.invalid_filter`. `applied_filters` echoes the request body that
   was actually sent, per provider.
+- **Facets are sparse on a broad search, and that is DigiKey.** In live
+  KeywordResponses `Manufacturers` is always filled, but `TopCategories`,
+  `Status` and `ParametricFilters` are `null` unless the result set is
+  narrow (in practice one leaf category). So narrow in two steps: take a
+  leaf `category_id` from `facets.categories`, re-query, and take
+  `parameter_filters` ids from that answer. When DigiKey sends no
+  `TopCategories`, `facets.categories` is built from the page's candidates
+  (`categories_from: "candidates"`, `count` = candidates on the page). A
+  `ParameterFilterRequest` on a parent category is a DigiKey 400.
+- **Values go in `parameter_filters`, not `keywords`.** DigiKey's keyword
+  matcher sees values as its listings write them (`0.1µF`, `100pF`), so
+  `"100nF 0603 C0G 50V"` returns 0 while `"ceramic capacitor 0603 C0G"`
+  returns thousands. We do not rewrite the query. A parametric
+  `UnitOfMeasure` value id is its text (`"0.1 µF"`).
+- **DigiKey's own 4xx text.** A DigiKey 4xx other than 401 / 403 / 429
+  carries `provider_message`: the message fields of its `DKProblemDetails`
+  body (`detail`, `errors`; `title` only as a fallback), with control
+  characters dropped, URLs redacted and the text capped at 300 characters.
+  It never includes `type`, `instance`, the request URL or headers. It
+  appears on that provider's `errors` entry, or in the refusal text when no
+  provider answered. "Parametric Filtering Not Support at Parent Category
+  Level" also adds a `hint`: use a leaf `category_id`, or fewer keywords.
+- **`hints`** (when present) gives the agent the next step: narrow by
+  category to get parametric filters, or drop an SI-prefixed value
+  (`100nF`, `4.7uH`) from keywords after a zero-result search.
 - **Mouser does keyword search only** — `keywords`, `in_stock`, `rohs`
   (mapped to `searchOptions` None / Rohs / InStock / RohsAndInStock), `limit`,
   `offset`. Any DigiKey-only argument (`category_id`, `manufacturer_ids`,

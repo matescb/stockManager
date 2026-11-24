@@ -15,6 +15,19 @@ the canonical record.
 
 ## Unreleased
 
+- **`catalog_search` facets on broad DigiKey searches (SM-002 fix).** Production
+  returned empty `categories`, `status` and `parametric_filters` for a
+  44,740-result search. The parser's field names were right (they match the
+  v4 OpenAPI definition and the live recordings we found). DigiKey leaves
+  those facets `null` until a search is narrow. `facets.categories` now falls
+  back to the candidates' own leaf categories (`categories_from:
+  "candidates"`), and a new `hints` list tells the agent to narrow by category
+  for parametric filters, and to keep SI-prefixed values such as `100nF` out
+  of keywords: DigiKey lists `0.1µF`, so that query returns 0. A DigiKey
+  4xx (not 401/403/429) now passes DigiKey's own error text to the agent as
+  `provider_message`: sanitised, URL-free and capped at 300 characters. The
+  parent-category refusal also gets a hint to use a leaf category. Test
+  fixtures now follow the live shape, with sources in their README.
 - **BOM sync keys stored designator ranges.** A line the CSV importer
   saved with an unexpanded range (`["C3", "C4", "C6-C8"]`) now matches an
   export's `C3,C4,C6,C7,C8` instead of being archived and re-added; the
