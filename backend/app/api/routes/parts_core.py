@@ -51,6 +51,7 @@ from app.domain.categories import tree as category_tree
 from app.domain.categories.models import PartCategory
 from app.domain.categories.service import category_index as _category_index
 from app.domain.custom_fields.models import CustomField
+from app.domain.parts import lifecycle_compliance
 from app.domain.parts.models import Part
 from app.domain.parts.part_type import sync_part_type_and_log
 from app.domain.parts.provider_links import (
@@ -126,6 +127,11 @@ def list_parts(
     without it. Validation, the batched value fetch and the JOINed sort
     live in ``domain/parts/services/spec_columns.py``.
 
+    Every row carries ``lifecycle`` and ``compliance`` in the MCP
+    ``get_part`` shape (SM-004), loaded for the whole page in two batched
+    statements by ``lifecycle_compliance.for_parts`` — no flag, so an
+    MPN lookup (``?mpn=``) answers lifecycle without a second request.
+
     Every query is scoped to the current workspace (CLAUDE.md invariant).
     """
     use_paged = paged or cursor is not None
@@ -200,7 +206,7 @@ def list_parts(
     # One batched query per extra, for the whole page — see
     # `_parts_shared.serialize_part_rows`.
     items = _serialize_rows(
-        db, ws_id=ws.id, parts=parts, spec_keys=spec.columns, index=index
+        db, ws_id=ws.id, parts=parts, spec_keys=spec.columns, index=index, ws=ws
     )
     if use_paged:
         return ok({"items": items, "next_cursor": next_cursor})
@@ -255,6 +261,9 @@ def get_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
             image_url=image_url,
             provider_links=_provider_links_for(db, ws.id, p.id),
             missing_specs=_missing_specs_for_parts(db, ws.id, [p]).get(p.id, []),
+            # Same helper, same dict as MCP `get_part` (SM-004): netsch
+            # reads parts over REST and must see what an agent sees.
+            lifecycle=lifecycle_compliance.for_parts(db, ws, [p.id])[p.id],
         )
     )
 
