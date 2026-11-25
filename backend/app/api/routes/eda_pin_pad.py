@@ -15,8 +15,10 @@ Mounted under `/api/parts` beside `eda.parts_router`:
 Accepting is a person's judgement that a finding is fine, so it takes a
 workspace `owner` or `admin` signed in with a browser SESSION. Every
 API token — however privileged its owner — and every lesser role is
-refused with `eda.review_requires_owner`, the code and rule SM-010's
-file review uses (PR #962). MCP reads acceptances and never writes them.
+refused with `eda.review_requires_owner` — the same dependency
+(`eda_asset_review.require_review_session`) and code SM-010's file
+review uses, so there is one definition of "owner at a browser". MCP
+reads acceptances and never writes them.
 
 The rules (what can be accepted, notes, staleness) live in
 `domain/eda/pin_pad_acceptance.py`.
@@ -31,7 +33,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.routes._eda_shared import audit as _audit
 from app.api.routes._parts_shared import get_part as _get_part
-from app.core.deps import CurrentUser, CurrentWorkspace, DbSession, membership_role
+from app.api.routes.eda_asset_review import _may_review as _may_accept
+from app.api.routes.eda_asset_review import require_review_session
+from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import Envelope, ok
@@ -41,7 +45,6 @@ from app.domain.eda.pin_pad_service import check_parts
 parts_router = APIRouter()
 
 _ACCEPT_RATE = "60/minute"
-_ACCEPT_ROLES = frozenset({"owner", "admin"})
 
 FindingKind = Literal["pad_without_pin", "pin_without_pad", "duplicate_pin"]
 
@@ -52,30 +55,6 @@ class PinPadAcceptIn(BaseModel):
     finding_kind: FindingKind
     number: str = Field(min_length=1, max_length=100)
     note: str | None = Field(default=None, max_length=pin_pad_acceptance.NOTE_MAX)
-
-
-def _may_accept(request: Request, db, user, ws) -> bool:
-    if getattr(request.state, "api_token", None) is not None:
-        return False
-    return membership_role(db, user, ws) in _ACCEPT_ROLES
-
-
-def require_owner_session(
-    request: Request, user: CurrentUser, ws: CurrentWorkspace, db: DbSession
-) -> None:
-    """Dependency: an owner/admin browser session, never an API token.
-
-    Takes `user` so token authentication has run (and set
-    `request.state.api_token`) before this reads it — the ordering
-    reason `deps.forbid_api_token` gives.
-    """
-    if not _may_accept(request, db, user, ws):
-        raise_http(
-            status.HTTP_403_FORBIDDEN,
-            ErrorCodes.EDA_REVIEW_REQUIRES_OWNER,
-            "a pin/pad finding is accepted by a workspace owner or admin signed "
-            "in to the app; API tokens and other roles cannot",
-        )
 
 
 def _check(db, ws, part) -> dict:
@@ -96,7 +75,7 @@ def get_part_pin_pad(
 
 @parts_router.post(
     "/{part_id}/eda/pin-pad/accept",
-    dependencies=[Depends(require_owner_session)],
+    dependencies=[Depends(require_review_session)],
 )
 @limiter.limit(_ACCEPT_RATE, key_func=workspace_key)
 def accept_part_pin_pad_finding(
@@ -138,7 +117,7 @@ def accept_part_pin_pad_finding(
 
 @parts_router.delete(
     "/{part_id}/eda/pin-pad/accept",
-    dependencies=[Depends(require_owner_session)],
+    dependencies=[Depends(require_review_session)],
 )
 @limiter.limit(_ACCEPT_RATE, key_func=workspace_key)
 def revoke_part_pin_pad_finding(

@@ -27,9 +27,8 @@ SQLSTATE ``WS001``.
 Hard delete: CASCADE from ``parts`` and ``workspaces``; an acceptance
 means nothing without its part. ``accepted_by`` is SET NULL.
 
-**Revision chain.** Developed on top of ``0086``. SM-009 (0087), SM-010
-(0088) and SM-012 (0089) are in flight; once they merge, ``down_revision``
-becomes ``"0089"`` before this one merges.
+**Revision chain.** Follows 0089 (SM-012); developed alongside SM-009
+(0087), SM-010 (0088) and SM-012 and rebased onto them.
 
 Locks: a new, empty table — nothing to scan.
 """
@@ -41,7 +40,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0090"
-down_revision = "0086"
+down_revision = "0089"
 branch_labels = None
 depends_on = None
 
