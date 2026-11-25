@@ -26,6 +26,13 @@ the canonical record.
   session — every API token gets `eda.review_requires_owner`. The CAD tab
   shows the state per file with Mark reviewed / Reject for owners. `source`
   is unchanged and no existing row is rewritten.
+- **SPICE binding: polarity and unexported models (SM-009 follow-up).**
+  ngSPICE export headers' `Polarity:` line is read; a polarised part on a
+  symmetric model, or one whose polarity is not established, reports
+  `polarity_needs_person` until `set_spice_binding(positive_pin=…)` names
+  the + terminal. A library model with no loadable export is recorded as
+  `none` with `subckt` and `export_reason`; `native_reason` is stored. No
+  migration.
 - **Structured SPICE pin binding (SM-009).** `part_eda.sim_pins` (KiCad
   `Sim.Pins`) was free text nothing checked. Migration 0087 adds
   `part_spice_bindings`: the model's `.subckt` (or `.model`) name and ordered

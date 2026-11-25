@@ -358,6 +358,9 @@ def bind(
     source: str | None = None,
     fallback_token: str | None = None,
     native: Mapping[str, Any] | None = None,
+    positive_pin: str | None = None,
+    export_reason: str | None = None,
+    native_reason: str | None = None,
 ) -> BindResult:
     """Record how a part simulates; validate and store it.
 
@@ -380,156 +383,21 @@ def bind(
             db, ws=ws, part=part, user_id=user_id, pin_map=pin_map or {},
             subckt=subckt, symbol_pins=symbol_pins,
             unconnected_ports=unconnected_ports, source=source,
+            positive_pin=positive_pin,
         )
-    native_record = _native_record(native, model_kind)
-    if native_record is not None:
-        device_type = device_type or native_record["letter"]
-        params = params or _native_params(native_record)
-    _check_fallback_token(fallback_token)
-    config = _config(db, ws=ws, part_id=part.id)
-    if config is not None and config.spice_datafile_id is not None:
+    if positive_pin is not None:
         _unprocessable(
-            ErrorCodes.EDA_SPICE_KIND_CONFLICT,
-            f"the part has a SPICE file attached; model_kind {model_kind!r} records a "
-            "part WITHOUT one — bind the file with model_kind 'file', or detach it first",
+            ErrorCodes.EDA_SPICE_NOT_APPLICABLE,
+            "positive_pin is for a file-backed model (model_kind 'file')",
         )
-    if model_kind == "native_primitive":
-        ports, pairs, pins_source = _native_ports_and_pairs(
-            db, ws=ws, config=config, device_type=device_type, pin_map=pin_map,
-            symbol_pins=symbol_pins,
-        )
-    else:
-        if pin_map or device_type or params or native:
-            _unprocessable(
-                ErrorCodes.EDA_SPICE_NOT_APPLICABLE,
-                "model_kind 'none' takes no pin_map, device_type, params or native — "
-                "only fallback, fallback_token and source",
-            )
-        ports, pairs, pins_source = (), None, None
-    binding = _upsert_binding(db, ws=ws, part=part, user_id=user_id)
-    binding.model_kind = model_kind
-    binding.subckt = None
-    binding.device_type = device_type.upper() if device_type else None
-    binding.ports = list(ports)
-    binding.params = params or None
-    binding.fallback = fallback or None
-    binding.fallback_token = fallback_token or None
-    binding.native = native_record
-    binding.model_source = source or None
-    binding.spice_datafile_id = binding.model_sha256 = None
-    binding.build_requirement = binding.grade = binding.header_pins = None
-    binding.export_metadata = None
-    binding.unconnected_ports = None
-    binding.symbol_pins_source = pins_source
-    if pairs is None:
-        binding.pin_map = binding.sim_pins_derived = None
-        binding.validated, binding.validated_at = False, None
-    else:
-        connected = dict(pairs)
-        binding.pin_map = {pin: connected.get(pin) for pin in pin_map or {}}
-        binding.sim_pins_derived = spice_model.format_sim_pins(pairs)
-        binding.validated, binding.validated_at = True, utcnow()
-    binding.updated_by = user_id
-    db.flush()
-    warnings = []
-    if native_record and native_record["loses_behaviour"]:
-        warnings.append(
-            "native_loses_behaviour: "
-            + (native_record["loses_behaviour_reason"] or "the primitive is a simplification")
-        )
-    return BindResult(binding=binding, config=config, datafile=None, warnings=warnings)
+    from app.domain.eda import spice_binding_fileless
 
-
-def _native_ports_and_pairs(
-    db: Session, *, ws: Any, config: PartEda | None, device_type: str | None,
-    pin_map: Mapping[str, str | None] | None, symbol_pins: Sequence[str] | None,
-):
-    ports = spice_model.NATIVE_PORTS.get((device_type or "").upper())
-    if ports is None:
-        _unprocessable(
-            ErrorCodes.EDA_SPICE_NOT_CHECKABLE,
-            f"device_type {str(device_type)[:20]!r} is not a known native primitive; "
-            f"use one of {', '.join(spice_model.NATIVE_PORTS)}",
-        )
-    if not pin_map:
-        # Recorded, not confirmed: the kind and parameters are still worth
-        # having when nobody has checked which pin is which.
-        return ports, None, None
-    pins, pins_source = _symbol_pins(db, ws=ws, config=config, declared=symbol_pins)
-    return ports, check_pin_map(pin_map, symbol_pins=pins, ports=ports), pins_source
-
-
-_FALLBACK_TOKENS = ("vendor_model_wanted", "native", "attended_ltspice")
-_EXTERNAL_PREFIX = "external_model:"
-
-
-def _check_fallback_token(token: str | None) -> None:
-    """The ngspice-export/1 fallback vocabulary, or a refusal."""
-    if token is None or token in _FALLBACK_TOKENS:
-        return
-    if token.startswith(_EXTERNAL_PREFIX) and 0 < len(token) - len(_EXTERNAL_PREFIX) <= 200:
-        return
-    _unprocessable(
-        ErrorCodes.EDA_SPICE_FALLBACK_TOKEN_UNKNOWN,
-        f"fallback_token {token[:60]!r} is not one of {', '.join(_FALLBACK_TOKENS)} "
-        f"or {_EXTERNAL_PREFIX}<name>",
+    return spice_binding_fileless.bind_fileless(
+        db, ws=ws, part=part, user_id=user_id, model_kind=model_kind, pin_map=pin_map,
+        subckt=subckt, symbol_pins=symbol_pins, device_type=device_type, params=params,
+        fallback=fallback, source=source, fallback_token=fallback_token, native=native,
+        export_reason=export_reason, native_reason=native_reason,
     )
-
-
-def _native_record(native: Mapping[str, Any] | None, model_kind: str) -> dict | None:
-    """The manifest's `native` object, checked and normalised for storage."""
-    if native is None:
-        return None
-    if model_kind != "native_primitive":
-        _unprocessable(
-            ErrorCodes.EDA_SPICE_NOT_APPLICABLE, "native is for model_kind native_primitive"
-        )
-    letter = str(native.get("letter") or "").upper()
-    if letter not in spice_model.NATIVE_PORTS:
-        _unprocessable(
-            ErrorCodes.EDA_SPICE_NATIVE_INVALID,
-            f"native.letter {letter[:5]!r} is not one of {', '.join(spice_model.NATIVE_PORTS)}",
-        )
-    parameters = native.get("parameters")
-    if parameters is not None:
-        value = parameters.get("value") if isinstance(parameters, Mapping) else None
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            _unprocessable(
-                ErrorCodes.EDA_SPICE_NATIVE_INVALID,
-                "native.parameters needs a numeric value (with unit and source)",
-            )
-        parameters = {
-            "value": value,
-            "unit": _short(parameters.get("unit"), 10),
-            "source": _short(parameters.get("source"), 500),
-        }
-    return {
-        "letter": letter,
-        "parameters": parameters,
-        "parameters_reason": _short(native.get("parameters_reason"), 500),
-        "loses_behaviour": bool(native.get("loses_behaviour")),
-        "loses_behaviour_reason": _short(native.get("loses_behaviour_reason"), 500),
-    }
-
-
-def _short(value: Any, limit: int) -> str | None:
-    if value is None:
-        return None
-    text = str(value)
-    if len(text) > limit:
-        _unprocessable(
-            ErrorCodes.EDA_SPICE_FIELD_TOO_LONG,
-            f"a native field is {len(text)} characters; the limit is {limit}",
-        )
-    return text
-
-
-def _native_params(native: Mapping[str, Any]) -> str | None:
-    """KiCad `Sim.Params` text for an R / C / L value, e.g. "c=1e-10"."""
-    parameters = native.get("parameters")
-    if not parameters or native["letter"] == "D":
-        return None
-    return f"{native['letter'].lower()}={parameters['value']:g}"
 
 
 def _header_unconnected(header, model, warnings: list[str]) -> list[str]:
@@ -557,6 +425,18 @@ def _function_aliases(header, model) -> dict[str, str]:
         if info.function and info.port.lower() in ports:
             seen.setdefault(info.function.lower(), []).append(ports[info.port.lower()])
     return {fn: found[0] for fn, found in seen.items() if len(found) == 1}
+
+
+def _check_positive_pin(positive_pin: str | None, pairs: list[tuple[str, str]]) -> None:
+    """The + terminal must be a symbol pin the binding connects."""
+    if positive_pin is None:
+        return
+    if str(positive_pin) not in dict(pairs):
+        _unprocessable(
+            ErrorCodes.EDA_SPICE_PIN_UNKNOWN,
+            f"positive_pin {str(positive_pin)[:20]!r} is not a symbol pin this pin_map "
+            f"connects ({', '.join(pin for pin, _ in pairs[:20])})",
+        )
 
 
 def _header_warnings(header, model) -> list[str]:
@@ -607,6 +487,7 @@ def _bind_file(
     symbol_pins: Sequence[str] | None,
     unconnected_ports: Sequence[str] | None,
     source: str | None,
+    positive_pin: str | None,
 ) -> BindResult:
     """A file-backed binding: the part's attached `.subckt` / `.model`.
 
@@ -646,6 +527,7 @@ def _bind_file(
         pin_map, symbol_pins=pins, ports=model.ports, unconnected=unconnected_ports,
         aliases=_function_aliases(header, model),
     )
+    _check_positive_pin(positive_pin, pairs)
     derived = spice_model.format_sim_pins(pairs)
     if len(derived) > _SIM_PINS_MAX:
         _unprocessable(
@@ -656,6 +538,11 @@ def _bind_file(
     binding = _upsert_binding(db, ws=ws, part=part, user_id=user_id)
     _set_model(binding, model, datafile)
     _apply_header(binding, text)
+    if positive_pin is not None:
+        binding.export_metadata = {
+            **(binding.export_metadata or {}),
+            "polarity_confirmation": {"positive_pin": str(positive_pin)},
+        }
     if header is None and source:
         binding.model_source = source
     binding.unconnected_ports = _ports_in_order(model.ports, unconnected_ports)
@@ -670,6 +557,12 @@ def _bind_file(
     config.updated_by = user_id
     db.flush()
     warnings += _header_warnings(header, model)
+    if positive_pin is None and header is not None and (header.polarity or {}).get("needs_person"):
+        warnings.append(
+            "polarity_needs_person: the export header cannot say which terminal is + ("
+            + (header.polarity.get("basis") or "not established")
+            + "); the binding stays unvalidated until positive_pin names the symbol pin"
+        )
     return BindResult(binding=binding, config=config, datafile=datafile, warnings=warnings)
 
 

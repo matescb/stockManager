@@ -46,7 +46,18 @@ def binding_issues(
         issues.append("model_changed")
     if binding.validated and (config is None or config.sim_pins != binding.sim_pins_derived):
         issues.append("sim_pins_edited")
+    if _polarity_open(binding.export_metadata):
+        issues.append("polarity_needs_person")
     return issues
+
+
+def _polarity_open(meta: dict | None) -> bool:
+    """The export header says a person must name the + terminal, and
+    nobody has (`set_spice_binding(positive_pin=…)`)."""
+    meta = meta or {}
+    if not (meta.get("polarity") or {}).get("needs_person"):
+        return False
+    return not (meta.get("polarity_confirmation") or {}).get("positive_pin")
 
 
 def _fileless_issues(binding: PartSpiceBinding, config: PartEda | None) -> list[str]:
@@ -115,6 +126,10 @@ def _export_fields(meta: dict | None) -> dict[str, Any]:
         "channels": meta.get("channels"),
         "match": meta.get("match"),
         "corrections": meta.get("corrections"),
+        "polarity": meta.get("polarity"),
+        "positive_pin": (meta.get("polarity_confirmation") or {}).get("positive_pin"),
+        "export_reason": meta.get("export_reason"),
+        "native_reason": meta.get("native_reason"),
     }
 
 
@@ -198,6 +213,14 @@ def list_issues(
                         ),
                         EdaDatafile.sha256.is_distinct_from(PartSpiceBinding.model_sha256),
                         PartEda.sim_pins.is_distinct_from(PartSpiceBinding.sim_pins_derived),
+                        and_(
+                            PartSpiceBinding.export_metadata[
+                                ("polarity", "needs_person")
+                            ].astext == "true",
+                            PartSpiceBinding.export_metadata[
+                                ("polarity_confirmation", "positive_pin")
+                            ].astext.is_(None),
+                        ),
                     ),
                 ),
             )

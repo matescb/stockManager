@@ -1,0 +1,21 @@
+* CAPX - single-file export of the converted LTspice model (ngSPICE model library, NG-010)
+* Export-Schema: ngspice-export/1
+* Kind: subckt
+* Catalogue entry: name=CAPX kind=cap output=cmp/cap/00000.lib
+* Build: needs stock; ngbehavior=ltpsa required: False
+* Build-Token: stock
+* Grade (NG-006): valid_for=['dc'] builds=['ngspice-42']
+* Valid-For-Basis: dc=conversion
+* Pins (in order): p n
+* Port: p function=- on_symbol=- internally_unconnected=no source=SPICE subcircuit port order
+* Port: n function=- on_symbol=- internally_unconnected=no source=SPICE subcircuit port order
+* Polarity: - model_symmetric=True basis=model body is linear R/L/C only: no polarity in the model; the part is polarized and its + terminal is not in the data (LTspice database row)
+* Channels: package=- model=-
+* Licence: Vendor model, copyright held by its owner; redistribution terms not established.
+* Exported by tools/export_model.py (ngSPICE model library)
+
+* SYNTHETIC body (SM-009 test fixture).
+.subckt CAPX p n
+C1 p x 100u
+R1 x n 10m
+.ends CAPX
