@@ -218,6 +218,34 @@ write:
 - **`unknown`** means no source supplied the value (and `source: "unknown"`
   when none supplied any). A provider's missing `Discontinued` / `End of
   life` flag reads `false`; a manual source asserts no flags (`unknown`).
+- **`reason`** says why, whenever `lifecycle.status` is `unknown` (and on
+  `compliance` when no source supplied any of its fields). It never turns
+  `unknown` into a guess — read it, don't infer `active` from it:
+
+  | `reason` | When | Also |
+  |---|---|---|
+  | `never_fetched` | No provider link: no provider was ever asked about this part | `source: "unknown"`, `refreshed_at: null` |
+  | `provider_silent` | A provider is linked and was refreshed, but sent no value | `source` / `refreshed_at` name that provider and its last refresh (`part_provider_links.last_refresh_at`); `note` |
+  | `unrecognised` | The provider sent a status string the table below does not map | `raw` keeps it |
+
+  **Mouser silence is normal.** Mouser fills `LifecycleStatus` only for parts
+  outside normal production (new product, NRND, end of life, obsolete) and
+  leaves it empty otherwise; the adapter stores nothing for an empty value.
+  A Mouser-only part in plain production therefore reads:
+
+  ```json
+  "lifecycle": {"status": "unknown", "discontinued": "unknown",
+                "end_of_life": "unknown", "source": "mouser",
+                "refreshed_at": "2026-11-21T09:00:00+00:00",
+                "reason": "provider_silent",
+                "note": "Mouser states lifecycle only for parts that are not in normal production"}
+  ```
+
+  The status stays `unknown` on purpose: an empty field is also all an agent
+  would see for a part Mouser has no lifecycle data on. Link DigiKey as well
+  (DigiKey states a `ProductStatus` on its products) when the status matters.
+  `catalog_lookup` uses the same reasons for its live record, where the
+  record itself is the fetch (`provider_silent` or `unrecognised`).
 - **`refreshed_at`** is the later of the rows' `updated_at` and the
   provider link's `last_refresh_at`.
 - **ECCN, HTS and MSL** are on ADR-0034's junk list: the refresh retires

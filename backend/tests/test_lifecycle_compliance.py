@@ -14,7 +14,10 @@ Three layers, each against what the code really sees:
 """
 from __future__ import annotations
 
+import json
 import uuid
+from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -22,6 +25,7 @@ from sqlalchemy import func, select
 
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts import lifecycle_compliance as lc
+from app.domain.parts.models import PartProviderLink
 from app.domain.parts.providers.digikey import _record_from_product
 from app.domain.parts.providers.mouser import MouserProvider
 from app.domain.parts.spec_schema import PROVIDER_PRECEDENCE
@@ -147,12 +151,52 @@ def test_mouser_compliance_entries_fill_eccn_and_hts(monkeypatch):
     assert out["lifecycle"]["discontinued"] is True
 
 
-def test_an_empty_record_is_unknown_throughout():
+def test_an_empty_record_is_unknown_and_says_the_provider_was_silent():
     out = lc.from_record({"Resistance": "10k"}, source="digikey", retrieved_at=None)
     assert out["lifecycle"] == {"status": "unknown", "discontinued": "unknown",
-                                "end_of_life": "unknown", "source": "unknown",
-                                "refreshed_at": None}
-    assert set(out["compliance"].values()) == {"unknown", None}
+                                "end_of_life": "unknown", "source": "digikey",
+                                "refreshed_at": None, "reason": "provider_silent",
+                                "note": lc.SILENT_NOTE_DEFAULT}
+    comp = out["compliance"]
+    assert comp["reason"] == "provider_silent" and comp["source"] == "digikey"
+    assert {comp[k] for k in lc.COMPLIANCE_KEYS} == {"unknown"}
+
+
+def test_an_unmapped_status_is_unrecognised_and_keeps_raw():
+    stamp = datetime(2026, 11, 25, 8, 0, tzinfo=UTC)
+    out = lc.from_record({"Lifecycle": "Factory Special Order"}, source="digikey",
+                         retrieved_at=stamp)
+    life = out["lifecycle"]
+    assert life["status"] == "unknown" and life["raw"] == "Factory Special Order"
+    assert life["reason"] == "unrecognised" and "note" not in life
+    assert life["source"] == "digikey" and life["refreshed_at"] == stamp.isoformat()
+
+
+def test_a_live_mouser_record_with_no_lifecycle_status_is_provider_silent(monkeypatch):
+    """Mouser sends `LifecycleStatus: null` for parts in normal production
+    (`fixtures/catalog_search/mouser_keyword.json`, the in-stock Murata
+    MLCC); the adapter drops it, so the record has no Lifecycle at all."""
+    payload = _stub_full_response()
+    payload["SearchResults"]["Parts"][0]["LifecycleStatus"] = None
+    monkeypatch.setattr("app.domain.parts.providers.mouser._post_mouser",
+                        lambda url, body: payload)
+    result = MouserProvider("k").lookup_mpn("RC0402JR-070R")["result"]
+    assert "Lifecycle" not in _specs(result), "an empty LifecycleStatus is not stored"
+    stamp = datetime(2026, 11, 25, 8, 0, tzinfo=UTC)
+    out = lc.from_record(_specs(result), source="mouser", retrieved_at=stamp)
+    life = out["lifecycle"]
+    assert life["status"] == "unknown", "silence is never inferred as active"
+    assert life["reason"] == "provider_silent"
+    assert life["note"] == lc.SILENT_NOTES[("lifecycle", "mouser")]
+    assert life["source"] == "mouser" and life["refreshed_at"] == stamp.isoformat()
+    assert "reason" not in out["compliance"], "RoHS answered, so compliance is known"
+
+
+def test_the_fixture_shows_mouser_leaving_lifecycle_empty_for_a_stocked_part():
+    parts = json.loads((Path(__file__).parent / "fixtures" / "catalog_search"
+                        / "mouser_keyword.json").read_text())["SearchResults"]["Parts"]
+    stocked = [p for p in parts if "In Stock" in (p.get("Availability") or "")]
+    assert any(p.get("LifecycleStatus") is None for p in stocked)
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +266,7 @@ async def test_get_part_precedence_digikey_answers_and_mouser_is_an_alternate(
     assert life["source"] == "digikey"
     assert life["discontinued"] is False and life["end_of_life"] is False
     assert life["refreshed_at"]
+    assert "reason" not in life and "note" not in life, "a known status needs no reason"
     [alt] = life["alternates"]
     assert alt["source"] == "mouser" and alt["status"] == "obsolete"
     assert alt["raw"] == "Obsolete" and alt["discontinued"] is True
@@ -273,15 +318,100 @@ async def test_a_manual_value_is_marked_manual_and_outranks_providers(authed, mo
     assert alt["source"] == "digikey" and alt["rohs"] == "ROHS3 Compliant"
 
 
-async def test_a_part_no_provider_touched_is_unknown(authed):
+async def test_a_part_no_provider_touched_is_never_fetched(authed):
     part_id = _create_part(authed, name="Bare", mpn=None)
     out = await _get_part(authed, part_id)
     assert out["lifecycle"] == {"status": "unknown", "discontinued": "unknown",
                                 "end_of_life": "unknown", "source": "unknown",
-                                "refreshed_at": None}
+                                "refreshed_at": None, "reason": "never_fetched"}
     assert out["compliance"] == {"rohs": "unknown", "reach": "unknown", "eccn": "unknown",
                                  "hts": "unknown", "msl": "unknown", "source": "unknown",
-                                 "refreshed_at": None}
+                                 "refreshed_at": None, "reason": "never_fetched"}
+
+
+# A Mouser part in normal production: Mouser sends no LifecycleStatus.
+_MOUSER_SILENT = {**_MOUSER, "LifecycleStatus": None, "IsDiscontinued": "False"}
+
+
+def _mouser_only_part(c: TestClient, monkeypatch, part: dict) -> str:
+    """Linked to Mouser (a secondary) and nothing else — no primary link."""
+    _configure_mouser_secondary(c)
+    _stub_mouser(monkeypatch, part)
+    part_id = _create_part(c, name="Mouser only", mpn=MPN)
+    r = c.post(f"/api/parts/{part_id}/refresh-from-provider?provider=mouser")
+    assert r.status_code == 200, r.text
+    return part_id
+
+
+def _link_stamp(db, part_id: str, provider: str) -> str:
+    link = db.execute(select(PartProviderLink).where(
+        PartProviderLink.part_id == uuid.UUID(part_id),
+        PartProviderLink.provider == provider,
+    )).scalar_one()
+    return link.last_refresh_at.isoformat()
+
+
+async def test_a_mouser_only_part_with_no_lifecycle_is_provider_silent(
+    authed, monkeypatch, db
+):
+    part_id = _mouser_only_part(authed, monkeypatch, _MOUSER_SILENT)
+    out = await _get_part(authed, part_id)
+
+    life = out["lifecycle"]
+    assert life["status"] == "unknown", "Mouser silence is not inferred as active"
+    assert life["reason"] == "provider_silent"
+    assert life["source"] == "mouser"
+    assert life["refreshed_at"] == _link_stamp(db, part_id, "mouser")
+    assert life["note"] == ("Mouser states lifecycle only for parts that are not "
+                            "in normal production")
+    assert "raw" not in life
+    # Mouser did send RoHS — compliance is answered and needs no reason.
+    comp = out["compliance"]
+    assert comp["source"] == "mouser" and comp["rohs"] == "RoHS Compliant"
+    assert "reason" not in comp
+
+
+async def test_a_stored_unmapped_status_is_unrecognised(authed, monkeypatch):
+    part_id = _mouser_only_part(
+        authed, monkeypatch,
+        {**_MOUSER_SILENT, "LifecycleStatus": "Factory Special Order"},
+    )
+    life = (await _get_part(authed, part_id))["lifecycle"]
+    assert life["status"] == "unknown" and life["raw"] == "Factory Special Order"
+    assert life["reason"] == "unrecognised" and life["source"] == "mouser"
+    assert "note" not in life
+
+
+async def test_export_parts_carries_the_reasons_without_per_part_queries(
+    authed, monkeypatch, db
+):
+    silent = _mouser_only_part(authed, monkeypatch, _MOUSER_SILENT)
+    bare = _create_part(authed, name="Bare", mpn=None)
+    singles = {pid: await _get_part(authed, pid) for pid in (silent, bare)}
+    async with mcp_session(_mint(authed, read_only=True)["token"]) as s:
+        page = await call(s, "export_parts")
+    items = {i["id"]: i for i in page["items"]}
+    for pid, single in singles.items():
+        assert items[pid]["lifecycle"] == single["lifecycle"]
+        assert items[pid]["compliance"] == single["compliance"]
+    assert items[silent]["lifecycle"]["reason"] == "provider_silent"
+    assert items[bare]["lifecycle"]["reason"] == "never_fetched"
+
+
+def test_for_parts_runs_two_queries_whatever_the_part_count(authed, monkeypatch, db):
+    from app.domain.workspaces.models import Workspace
+
+    ids = [uuid.UUID(_mouser_only_part(authed, monkeypatch, _MOUSER_SILENT))]
+    ids += [uuid.UUID(_create_part(authed, name=f"Bare {n}", mpn=None)) for n in range(3)]
+    ws = db.get(Workspace, uuid.UUID(
+        authed.get("/api/auth/me").json()["data"]["workspaces"][0]["id"]))
+    calls = []
+    real = db.execute
+    monkeypatch.setattr(db, "execute", lambda *a, **kw: calls.append(a) or real(*a, **kw))
+    out = lc.for_parts(db, ws, ids)
+    assert len(calls) == 2
+    assert [out[i]["lifecycle"]["reason"] for i in ids] == [
+        "provider_silent", "never_fetched", "never_fetched", "never_fetched"]
 
 
 async def test_export_parts_carries_the_same_blocks(authed, monkeypatch):
