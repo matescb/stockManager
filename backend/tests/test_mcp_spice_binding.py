@@ -832,3 +832,66 @@ async def test_attached_file_without_binding_is_listed_unbound(authed_client, fu
     assert item["models"] == ["PMOSX", "DB"]
     assert "unbound" not in by_part[free_text]["issues"]
     assert by_part[free_text]["source"] == "free-text"
+
+
+async def test_whitespace_sim_pins_and_dangling_file_do_not_break_the_listing(
+    authed_client, full_token, db
+):
+    """Security review on #966: one bad row must not 500 the whole audit.
+
+    A whitespace-only `sim_pins` used to be selected as free text by the
+    SQL and handled as unbound by Python, which then read `.name` off a
+    missing data file. A `spice_datafile_id` that resolves to nothing in
+    this workspace (a foreign id written past the service) is the other
+    half of that path.
+    """
+    blank_with_file = create_part(authed_client, "Blank pins, file attached")
+    blank_dangling = create_part(authed_client, "Blank pins, dangling file")
+    for part_id in (blank_with_file, blank_dangling):
+        r = authed_client.put(f"/api/parts/{part_id}/eda", json={"sim_pins": " \t "})
+        assert r.status_code == 200, r.text
+    other = TestClient(app)
+    signup_user(other)
+    async with mcp_session(_mint(other)["token"]) as s:
+        foreign = await call(
+            s, "upload_eda_asset", kind="spice", filename="foreign.lib",
+            content_base64=_b64(b".subckt FOREIGN a b\n.ends\n"),
+        )
+    async with mcp_session(full_token) as s:
+        uploaded = await call(
+            s, "upload_eda_asset", kind="spice", filename="mine.lib",
+            content_base64=_b64(b".subckt MINE a b\n.ends\n"),
+        )
+        db.query(PartEda).filter_by(part_id=uuid.UUID(blank_with_file)).update(
+            {"spice_datafile_id": uuid.UUID(uploaded["id"])}
+        )
+        db.query(PartEda).filter_by(part_id=uuid.UUID(blank_dangling)).update(
+            {"spice_datafile_id": uuid.UUID(foreign["id"])}
+        )
+        db.commit()
+        listed = await call(s, "list_spice_binding_issues")
+        with_file = await call(s, "get_part_eda", part_id=blank_with_file)
+        dangling = await call(s, "get_part_eda", part_id=blank_dangling)
+
+    by_part = {i["part_id"]: i for i in listed["items"]}
+    # Whitespace-only reads as empty everywhere: unbound, not free text.
+    assert by_part[blank_with_file]["issues"] == ["unbound"]
+    assert by_part[blank_with_file]["subckt"] == "MINE"
+    # A foreign id resolves to nothing here: not listed (no file in this
+    # workspace) and reported as no_model — and the foreign name never leaks.
+    assert blank_dangling not in by_part
+    assert with_file["spice_binding"]["state"] == "unbound"
+    assert dangling["spice_binding"] == {
+        "source": "none", "state": "no_model", "validated": False,
+    }
+    assert "FOREIGN" not in str(listed) and "foreign" not in str(dangling)
+
+
+def test_unbound_item_tolerates_a_missing_datafile():
+    from app.domain.eda.spice_binding_read import _unbound_item, sim_pins_blank
+
+    item = _unbound_item({"part_id": "x"}, None, {})
+    assert item["issues"] == ["no_model_attached"]
+    assert "spice_name" not in item
+    assert sim_pins_blank(None) and sim_pins_blank(" \t\r\n") and sim_pins_blank("")
+    assert not sim_pins_blank(" 1=+ ")

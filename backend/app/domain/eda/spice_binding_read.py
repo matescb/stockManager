@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.domain.eda import spice_model
@@ -26,6 +26,18 @@ from app.domain.eda.spice_binding import (
 from app.domain.parts.models import Part
 
 _UNREADABLE = "model_unreadable"
+# ONE definition of "sim_pins is empty", used by the SQL that selects a
+# row and by the Python that classifies it, so no value can be selected
+# by one branch and handled by another (whitespace-only sim_pins did).
+_BLANK_CHARS = " \t\r\n"
+
+
+def sim_pins_blank(value: str | None) -> bool:
+    return not (value or "").strip(_BLANK_CHARS)
+
+
+def _sql_sim_pins_blank():
+    return func.coalesce(func.btrim(PartEda.sim_pins, _BLANK_CHARS), "") == ""
 
 
 def binding_issues(
@@ -120,7 +132,7 @@ def binding_payload(db: Session, *, ws: Any, config: PartEda | None, part_id: UU
 
 
 def _unbound_payload(config: PartEda | None, datafile: EdaDatafile | None) -> dict:
-    if config is not None and config.sim_pins and config.sim_pins.strip():
+    if config is not None and not sim_pins_blank(config.sim_pins):
         return {
             "source": "free-text",
             "state": "free_text",
@@ -221,16 +233,12 @@ def list_issues(
         .where(Part.archived_at.is_(None))
         .where(
             or_(
-                and_(
-                    PartSpiceBinding.id.is_(None),
-                    PartEda.sim_pins.is_not(None),
-                    PartEda.sim_pins != "",
-                ),
+                and_(PartSpiceBinding.id.is_(None), ~_sql_sim_pins_blank()),
                 # The commonest real case: a file attached, nothing bound.
                 and_(
                     PartSpiceBinding.id.is_(None),
                     EdaDatafile.id.is_not(None),
-                    or_(PartEda.sim_pins.is_(None), PartEda.sim_pins == ""),
+                    _sql_sim_pins_blank(),
                 ),
                 and_(
                     PartSpiceBinding.model_kind.in_(FILELESS_KINDS),
@@ -284,7 +292,7 @@ def _issue_item(part, config, binding, datafile, texts: dict[str, str | None]) -
         item["subckt"] = binding.subckt
         item["ports"] = list(binding.ports or [])
         return item
-    if not (config.sim_pins or "").strip():
+    if sim_pins_blank(config.sim_pins):
         return _unbound_item(item, datafile, texts)
     item["source"] = "free-text"
     if datafile is None:
@@ -298,9 +306,18 @@ def _issue_item(part, config, binding, datafile, texts: dict[str, str | None]) -
     return item
 
 
-def _unbound_item(item: dict, datafile: EdaDatafile, texts: dict[str, str | None]) -> dict:
-    """A SPICE file attached and nothing bound: what the file offers."""
+def _unbound_item(
+    item: dict, datafile: EdaDatafile | None, texts: dict[str, str | None]
+) -> dict:
+    """A SPICE file attached and nothing bound: what the file offers.
+
+    `datafile` is None when `spice_datafile_id` resolves to no row in
+    this workspace; one such part must not fail the whole listing.
+    """
     item["source"] = "none"
+    if datafile is None:
+        item["issues"] = ["no_model_attached"]
+        return item
     item["issues"] = ["unbound"]
     item["spice_name"] = datafile.name
     if datafile.sha256 not in texts:
