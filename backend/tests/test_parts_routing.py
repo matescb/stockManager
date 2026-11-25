@@ -59,6 +59,10 @@ EXPECTED_PARTS_ROUTES: set[tuple[str, str]] = {
     ("DELETE", "/api/parts/{part_id}/eda"),
     ("GET", "/api/parts/{part_id}/eda/assets"),
     ("PUT", "/api/parts/{part_id}/eda/{kind}/review"),
+    # Pin/pad check + finding acceptance (eda_pin_pad router, SM-008b).
+    ("GET", "/api/parts/{part_id}/eda/pin-pad"),
+    ("POST", "/api/parts/{part_id}/eda/pin-pad/accept"),
+    ("DELETE", "/api/parts/{part_id}/eda/pin-pad/accept"),
     # Vendor imports (eda_import router, third mount under /api/parts).
     ("POST", "/api/parts/{part_id}/eda/import"),
     ("POST", "/api/parts/{part_id}/eda/fetch-lcsc"),

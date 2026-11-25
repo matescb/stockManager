@@ -33,6 +33,7 @@ import { SymbolPreview } from "@/components/eda/SymbolPreview";
 import { FootprintPreview } from "@/components/eda/FootprintPreview";
 import { ModelPreview } from "@/components/eda/ModelPreview";
 import { PartCadAssetReview } from "./PartCadAssetReview";
+import { PartCadPinPad } from "./PartCadPinPad";
 import type {
   EdaDatafile,
   EdaFootprint,
@@ -378,6 +379,7 @@ export default function PartCad() {
       </button>
 
       <PartCadAssetReview partId={partId ?? ""} />
+      <PartCadPinPad partId={partId ?? ""} />
     </div>
   );
 }

@@ -212,3 +212,29 @@ async def test_listing_filters_pages_and_isolates(authed_client):
     assert "mcp.invalid_cursor" in bad_cursor
     assert "mcp.invalid_cursor" in borrowed
     assert clamped["page_size"] == 100
+
+
+async def test_warnings_verdict_is_listed_and_classified(authed_client):
+    """SM-008b: a part with only non-electrical findings is
+    `pass_with_warnings`, listed under `warnings` and `all`, never `fail`;
+    the payload carries the classified findings and the counts."""
+    warn = create_part(authed_client, "FT232-like", mpn="PP-WARN")
+    fail = create_part(authed_client, "Pad 9")
+    async with mcp_session(_mint(authed_client)["token"]) as s:
+        await _attach(s, warn, "qfn32_usb_uart.kicad_sym", "qfn32_ep33.kicad_mod")
+        await _attach(s, fail, "soic8.kicad_sym", "soic8_pad9.kicad_mod")
+        checked = await call(s, "check_pin_pad", part_id_or_mpn="PP-WARN")
+        warnings = await _walk(s, verdict="warnings")
+        fails = await _walk(s, verdict="fail")
+        everything = await _walk(s)
+        eda = await call(s, "get_part_eda", part_id=warn)
+
+    assert checked["verdict"] == "pass_with_warnings"
+    assert (checked["warnings_count"], checked["electrical_count"]) == (7, 0)
+    assert checked["accepted_count"] == 0 and checked["stale_acceptances"] == []
+    classes = {f["number"]: f["class"] for f in checked["findings"]["classified"]}
+    assert classes["33"] == "exposed_pad" and classes["5"] == "nc_pin"
+    assert [i["part_id"] for i in warnings] == [warn]
+    assert [i["part_id"] for i in fails] == [fail]
+    assert {i["part_id"] for i in everything} == {warn, fail}
+    assert eda["pin_pad_check"]["verdict"] == "pass_with_warnings"

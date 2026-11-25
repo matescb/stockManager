@@ -288,6 +288,52 @@ it is the MCP `set_asset_metadata` tool.
 
 Rate limit `60/minute` per workspace.
 
+## Pin/pad check and accepted findings
+
+The symbol-pin / footprint-pad comparison that MCP exposes as
+`check_pin_pad` ([MCP § Pin/pad check](mcp.md#pinpad-check)), on the CAD tab,
+plus a per-part record of findings a person has looked at and accepted
+(SM-008b, migration 0090, table `pin_pad_acceptances`).
+
+### `GET /api/parts/{part_id}/eda/pin-pad`
+
+The `check_pin_pad` object (verdict, `findings.classified`, counts,
+`stale_acceptances`, hashes) plus `can_accept` — whether THIS caller may
+accept findings (owner/admin session). Readable by any member and by API
+tokens. Archived parts are readable.
+
+### `POST /api/parts/{part_id}/eda/pin-pad/accept`
+
+```json
+{"finding_kind": "pad_without_pin", "number": "33", "note": "EP, grounded by the copper pour"}
+```
+
+Accepts one finding of the check as computed **now** on the part's current
+files. The acceptance stores both files' sha256s: replace the symbol or the
+footprint and it no longer applies — it moves to `stale_acceptances` and the
+finding counts again. Accepting the same finding on the same files again
+updates the note, who and when. Responds with the recomputed check.
+
+| Status | Code | Condition |
+|---|---|---|
+| 403 | `eda.review_requires_owner` | Not an owner/admin browser session. **Every API token is refused**, the owner's own full-access token included. |
+| 404 | `eda.pin_pad_finding_not_found` | The current files have no such finding. Carries `finding_kind`, `number`. |
+| 409 | `eda.pin_pad_not_checkable` | The part is `not-checkable` (carries `reason`); there is nothing to accept. |
+| 422 | `eda.pin_pad_note_required` | The finding is `electrical` and `note` is empty. |
+| 404 | `part.not_found` | Unknown, foreign or archived part. |
+
+Audit: `eda_pin_pad.accepted`, target `part_eda`, target id the part's id,
+comment `kind=…,class=…,symbol_sha256=…,footprint_sha256=…` (never the note).
+
+### `DELETE /api/parts/{part_id}/eda/pin-pad/accept?finding_kind=…&number=…`
+
+Revokes every acceptance of that finding on the part, stale ones included.
+Same 403 as above; `404 eda.pin_pad_acceptance_not_found` when there is none.
+Audit: `eda_pin_pad.revoked`, comment `kind=…,removed=<n>`.
+
+Source: `backend/app/api/routes/eda_pin_pad.py`,
+`backend/app/domain/eda/pin_pad_acceptance.py`.
+
 ## Importers
 
 Three entry points, one plan. `vendor_zip.py` and `lcsc.py` decide what an archive or an LCSC part offers, touching no database and no filesystem; `importer.py` is the only thing that writes it down. See [domain/eda § import pipeline](../domain/eda.md#the-import-pipeline).

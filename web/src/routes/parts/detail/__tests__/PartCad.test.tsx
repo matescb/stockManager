@@ -111,6 +111,20 @@ function mockReads(config: unknown = emptyConfig) {
     if (bare === `/parts/${PART_ID}/eda`) return Promise.resolve(config);
     if (bare === `/parts/${PART_ID}/eda/assets`)
       return Promise.resolve({ assets: {}, can_review: false });
+    if (bare === `/parts/${PART_ID}/eda/pin-pad`)
+      return Promise.resolve({
+        verdict: "not-checkable",
+        reason: "symbol_missing",
+        detail: "the part has no symbol",
+        symbol_sha256: null,
+        footprint_sha256: null,
+        findings: { classified: [] },
+        electrical_count: 0,
+        warnings_count: 0,
+        accepted_count: 0,
+        stale_acceptances: [],
+        can_accept: false,
+      });
     if (bare === "/eda/symbols") return Promise.resolve(symbols);
     if (bare === "/eda/footprints") return Promise.resolve(footprints);
     if (bare === "/eda/datafiles") return Promise.resolve(datafiles);

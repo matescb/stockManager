@@ -48,14 +48,34 @@ Pads (footprint side) — only ELECTRICAL pads take part:
   or an EP numbered like a ground pin) are one pad number and legal.
 
 * A copper pad named like a connector's mounting / shield pad (`MP`,
-  `MH`, `SH` with an optional number, or `SHIELD`, any case) that no
-  pin claims goes under `mounting_pads_without_pin` as information: a
-  connector symbol commonly leaves its retention tabs off. A symbol
-  that DOES have such a pin matches it like any other number.
+  `MH`, `SH` with an optional number, exactly `M`, or `SHIELD` /
+  `SHELL`, any case) that no pin claims is ALSO listed under
+  `mounting_pads_without_pin` (the pre-SM-008b list, kept for callers
+  that read it). A symbol that DOES have such a pin matches it like any
+  other number.
 
-Verdict: `fail` when any pin (other than `no_connect`) has no pad, any
-electrical pad has no pin, or a duplicate pin number stands; else
-`pass`.
+Classified findings (SM-008b)
+-----------------------------
+
+Every finding — a pad without a pin, a pin without a pad, a duplicate
+pin number — is also reported once in `classified` as
+`{kind, number, class, reason}`. `kind` is `pad_without_pin`,
+`pin_without_pad` or `duplicate_pin`; `class` is `electrical`,
+`exposed_pad`, `nc_pin`, `shell` or `mechanical`. Only a pad without a
+pin can be anything but `electrical`; how its class is decided is in
+`pin_pad_classify.py`. `no_connect` pins without a pad stay
+information (their own list) and are not in `classified`.
+
+The legacy lists keep their old meaning — `pads_without_pin` still
+names every unclaimed electrical pad that is not a mounting name — so
+read `classified` for the class.
+
+Verdict: `fail` when any `electrical` finding stands; else
+`pass_with_warnings` when any other finding stands; else `pass`. The
+service layer drops findings a human has accepted on these exact files
+before deciding (`pin_pad_service.py`), so `verdict_for` takes the
+accepted keys. `not-checkable` is NOT a pass: it says nothing about the
+part.
 """
 from __future__ import annotations
 
@@ -65,11 +85,19 @@ from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from app.domain.eda import sexpr
+from app.domain.eda import pin_pad_classify, sexpr
 
 PASS = "pass"
+PASS_WITH_WARNINGS = "pass_with_warnings"
 FAIL = "fail"
 NOT_CHECKABLE = "not-checkable"
+
+# Finding kinds. Stable strings: acceptances are stored against them.
+KIND_PAD_WITHOUT_PIN = "pad_without_pin"
+KIND_PIN_WITHOUT_PAD = "pin_without_pad"
+KIND_DUPLICATE_PIN = "duplicate_pin"
+FINDING_KINDS = (KIND_PAD_WITHOUT_PIN, KIND_PIN_WITHOUT_PAD, KIND_DUPLICATE_PIN)
+ELECTRICAL = pin_pad_classify.ELECTRICAL
 
 # `not-checkable` reasons. Stable strings: agents branch on them.
 REASON_SYMBOL_MISSING = "symbol_missing"
@@ -91,7 +119,7 @@ _UNIT_SUFFIX = re.compile(r"_(\d+)_(\d+)$")
 # (`MP`, `MP1`, `MH2`, `SH`, `SHIELD`), case-insensitive. Deliberately
 # NOT the single letters `S` / `G` or `GND_TAB`: `G`, `D`, `S` are a
 # FET's real pad names, and a symbol missing its gate must still fail.
-_MOUNTING_PAD = re.compile(r"(?:MP|MH|SH)\d*|SHIELD", re.IGNORECASE)
+_MOUNTING_PAD = re.compile(r"(?:MP|MH|SH)\d*|SHIELD|SHELL|M", re.IGNORECASE)
 _CACHE_SIZE = 1024
 # Complexity caps, far above any real part (the largest stock KiCad
 # symbols are ~2,000-ball FPGAs in a dozen units). A symbol past them
@@ -129,6 +157,37 @@ class Pin:
 
 
 @dataclass(frozen=True)
+class Finding:
+    kind: str
+    number: str
+    cls: str
+    reason: str
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return (self.kind, self.number)
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "kind": self.kind,
+            "number": self.number,
+            "class": self.cls,
+            "reason": self.reason,
+        }
+
+
+def verdict_for(
+    classified: tuple[Finding, ...], accepted: set[tuple[str, str]] | frozenset = frozenset()
+) -> str:
+    """`fail` / `pass_with_warnings` / `pass` once `accepted` keys are
+    set aside. An accepted finding — of any class — no longer counts."""
+    standing = [f for f in classified if f.key not in accepted]
+    if any(f.cls == ELECTRICAL for f in standing):
+        return FAIL
+    return PASS_WITH_WARNINGS if standing else PASS
+
+
+@dataclass(frozen=True)
 class PinPadResult:
     verdict: str
     pins_without_pad: tuple[str, ...] = ()
@@ -139,9 +198,11 @@ class PinPadResult:
     reason: str | None = None
     detail: str | None = None
     counts: dict[str, int] = field(default_factory=dict)
+    classified: tuple[Finding, ...] = ()
 
-    def findings(self) -> dict[str, list[str]]:
+    def findings(self) -> dict[str, list]:
         return {
+            "classified": [f.as_dict() for f in self.classified],
             "pins_without_pad": list(self.pins_without_pad),
             "pads_without_pin": list(self.pads_without_pin),
             "duplicate_pin_numbers": list(self.duplicate_pin_numbers),
@@ -361,8 +422,17 @@ def _parse_footprint(raw: bytes) -> list:
     return node
 
 
-def compare(pins: list[Pin], pads: set[str]) -> PinPadResult:
-    """The verdict for parsed pins and electrical pad numbers."""
+def compare(
+    pins: list[Pin],
+    pads: set[str],
+    geometry: pin_pad_classify.Footprint | None = None,
+    connector: bool = False,
+) -> PinPadResult:
+    """The verdict for parsed pins and electrical pad numbers.
+
+    `geometry` (the same footprint, with pad bounds) and `connector`
+    (the part is filed as a connector) feed the classification only.
+    """
     primary = _in_style(pins, 1)
     alternate = [p for p in pins if p.style == 2]
     if alternate and {p.number for p in primary} != {
@@ -380,9 +450,12 @@ def compare(pins: list[Pin], pads: set[str]) -> PinPadResult:
     mounting = {n for n in pads - numbers if _MOUNTING_PAD.fullmatch(n)}
     unused = pads - numbers - mounting
     dupes = _duplicates(pins)
-    failing = (missing - no_connect) or unused or dupes
+    classified = _classify(
+        pads - numbers, missing - no_connect, dupes, numbers, geometry, connector
+    )
     return PinPadResult(
-        verdict=FAIL if failing else PASS,
+        verdict=verdict_for(classified),
+        classified=classified,
         pins_without_pad=_sorted(missing - no_connect),
         pads_without_pin=_sorted(unused),
         duplicate_pin_numbers=_sorted(dupes),
@@ -392,8 +465,35 @@ def compare(pins: list[Pin], pads: set[str]) -> PinPadResult:
     )
 
 
-def check_bytes(symbol: bytes, footprint: bytes) -> PinPadResult:
-    """Check one symbol file against one footprint file."""
+def _classify(
+    unclaimed: set[str],
+    pinless: set[str],
+    dupes: set[str],
+    numbers: set[str],
+    geometry: pin_pad_classify.Footprint | None,
+    connector: bool,
+) -> tuple[Finding, ...]:
+    classes = pin_pad_classify.classify_pads(geometry, unclaimed, numbers, connector)
+    found = [
+        Finding(KIND_PAD_WITHOUT_PIN, n, *classes[n]) for n in _sorted(unclaimed)
+    ]
+    found += [
+        Finding(KIND_PIN_WITHOUT_PAD, n, ELECTRICAL, "symbol pin has no footprint pad")
+        for n in _sorted(pinless)
+    ]
+    found += [
+        Finding(KIND_DUPLICATE_PIN, n, ELECTRICAL, "pin number repeated within one unit")
+        for n in _sorted(dupes)
+    ]
+    return tuple(found)
+
+
+def check_bytes(symbol: bytes, footprint: bytes, connector: bool = False) -> PinPadResult:
+    """Check one symbol file against one footprint file.
+
+    `connector`: the part is filed under a connector category — one input
+    to the `shell` class (`pin_pad_classify.py`).
+    """
     try:
         pins = symbol_pins(_parse_symbol(symbol))
     except NotCheckable as exc:
@@ -401,10 +501,12 @@ def check_bytes(symbol: bytes, footprint: bytes) -> PinPadResult:
     except Unreadable as exc:
         return _unreadable(REASON_SYMBOL_UNREADABLE, exc)
     try:
-        pads = electrical_pads(_parse_footprint(footprint))
+        node = _parse_footprint(footprint)
     except Unreadable as exc:
         return _unreadable(REASON_FOOTPRINT_UNREADABLE, exc)
-    return compare(pins, pads)
+    return compare(
+        pins, electrical_pads(node), pin_pad_classify.footprint_geometry(node), connector
+    )
 
 
 def _unreadable(reason: str, exc: Exception) -> PinPadResult:
@@ -414,23 +516,26 @@ def _unreadable(reason: str, exc: Exception) -> PinPadResult:
 # Keyed on the two content hashes: the files are content-addressed, so
 # the same pair of hashes is the same pair of files and the same answer.
 # Insertion-ordered dict as a bounded FIFO — a miss costs one parse.
-_CACHE: dict[tuple[str, str], PinPadResult] = {}
+_CACHE: dict[tuple[str, str, bool], PinPadResult] = {}
 _CACHE_LOCK = threading.Lock()
 
 
 def check_cached(
-    symbol_sha: str, footprint_sha: str, load: Callable[[], tuple[bytes, bytes]]
+    symbol_sha: str,
+    footprint_sha: str,
+    load: Callable[[], tuple[bytes, bytes]],
+    connector: bool = False,
 ) -> PinPadResult:
     """`check_bytes` through the hash-keyed cache; `load` runs on a miss.
 
     `load` may raise (a file gone from disk); nothing is cached then.
     """
-    key = (symbol_sha, footprint_sha)
+    key = (symbol_sha, footprint_sha, connector)
     with _CACHE_LOCK:
         hit = _CACHE.get(key)
     if hit is not None:
         return hit
-    result = check_bytes(*load())
+    result = check_bytes(*load(), connector=connector)
     with _CACHE_LOCK:
         if len(_CACHE) >= _CACHE_SIZE:
             _CACHE.pop(next(iter(_CACHE)))

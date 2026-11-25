@@ -49,6 +49,8 @@ Owns the workspace's KiCad library — schematic symbols, PCB footprints, 3D mod
 | Render a 2D preview (cached) | `render.py::get_or_build_svg` |
 | Build a STEP's 3D preview (cached) | `preview3d.py::get_or_build_glb` |
 | Check pins against pads | `pin_pad.py::check_bytes`, `pin_pad_service.py::check_parts` |
+| Classify a pin/pad finding | `pin_pad_classify.py::classify_pads` |
+| Accept / revoke a finding | `pin_pad_acceptance.py::accept`, `::revoke` (REST `routes/eda_pin_pad.py`) |
 
 REST surface: `backend/app/api/routes/eda.py` (library CRUD + per-part config) and
 `backend/app/api/routes/eda_import.py` (the three import endpoints), both mounted

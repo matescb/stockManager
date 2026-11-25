@@ -11,11 +11,13 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 
+from app.core.time import utcnow
 from app.domain._mixins import WorkspaceOwned
 from app.infra.db import Base
 
@@ -441,3 +443,69 @@ class EdaAssetMetadata(WorkspaceOwned, Base):
     )
     reviewed_at = Column(DateTime(timezone=True), nullable=True)
     review_against = Column(String(500), nullable=True)
+
+
+PIN_PAD_FINDING_KINDS = ("pad_without_pin", "pin_without_pad", "duplicate_pin")
+PIN_PAD_FINDING_CLASSES = ("exposed_pad", "nc_pin", "shell", "mechanical", "electrical")
+
+
+class PinPadAcceptance(Base):
+    """A human's "this pin/pad finding is fine" for one part (SM-008b).
+
+    Tied to BOTH file hashes the finding was seen on: replace the symbol
+    or the footprint and the acceptance no longer applies — the check
+    lists it under `stale_acceptances` instead of quietly excusing a
+    finding on files nobody looked at. Accepting the same finding on the
+    same files again updates the row (note, who, when); accepting it on
+    new files is a new row.
+
+    `finding_class` is the class the finding had when it was accepted,
+    kept for the record (the column is not `class`, a reserved word).
+    Written only by `POST /api/parts/{id}/eda/pin-pad/accept` from an
+    owner/admin browser session; MCP reads it and never writes it.
+    """
+
+    __tablename__ = "pin_pad_acceptances"
+    __table_args__ = (
+        CheckConstraint(
+            "finding_kind IN ('pad_without_pin', 'pin_without_pad', 'duplicate_pin')",
+            name="ck_pin_pad_acceptances_kind",
+        ),
+        CheckConstraint(
+            "finding_class IN ('exposed_pad', 'nc_pin', 'shell', 'mechanical', 'electrical')",
+            name="ck_pin_pad_acceptances_class",
+        ),
+        Index(
+            "uq_pin_pad_acceptances_finding",
+            "workspace_id",
+            "part_id",
+            "symbol_sha256",
+            "footprint_sha256",
+            "finding_kind",
+            "number",
+            unique=True,
+        ),
+        Index("ix_pin_pad_acceptances_ws_part", "workspace_id", "part_id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    part_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("parts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    symbol_sha256 = Column(String(64), nullable=False)
+    footprint_sha256 = Column(String(64), nullable=False)
+    finding_kind = Column(String(20), nullable=False)
+    number = Column(String(100), nullable=False)
+    finding_class = Column(String(20), nullable=False)
+    accepted_by = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    accepted_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    note = Column(Text, nullable=True)

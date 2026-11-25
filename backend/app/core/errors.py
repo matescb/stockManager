@@ -395,6 +395,11 @@ class ErrorCodes:
     # Review fields are written only from an admin/owner browser session;
     # every API token (MCP or REST) and every lesser role gets this.
     EDA_REVIEW_REQUIRES_OWNER = "eda.review_requires_owner"
+    # Pin/pad finding acceptance (SM-008b).
+    EDA_PIN_PAD_NOT_CHECKABLE = "eda.pin_pad_not_checkable"
+    EDA_PIN_PAD_FINDING_NOT_FOUND = "eda.pin_pad_finding_not_found"
+    EDA_PIN_PAD_NOTE_REQUIRED = "eda.pin_pad_note_required"
+    EDA_PIN_PAD_ACCEPTANCE_NOT_FOUND = "eda.pin_pad_acceptance_not_found"
 
     # Reports router.
     REPORT_PROJECT_NOT_FOUND = "report.project_not_found"

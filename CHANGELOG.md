@@ -15,6 +15,25 @@ the canonical record.
 
 ## Unreleased
 
+- **Pin/pad findings are classified, and can be accepted per part (SM-008b).**
+  The first real pin/pad run (276 parts) failed 12, all on pads without a pin
+  that a human would wave through: exposed / thermal pads, NC package pins the
+  symbol leaves out, `~` and `M` mechanical pads, connector shell tabs. Each
+  finding now carries a `class` — `electrical`, `exposed_pad`, `nc_pin`,
+  `shell`, `mechanical` — decided from footprint geometry and pad type first
+  (`domain/eda/pin_pad_classify.py`), conservatively: when unsure it is
+  `electrical`. Only electrical findings fail; a part with only the others is
+  the new verdict `pass_with_warnings`. `findings.classified` and
+  `electrical_count` / `warnings_count` / `accepted_count` /
+  `stale_acceptances` are added; the old finding lists keep their meaning.
+  `list_pin_pad_issues` gains `verdict="warnings"` and `all` now includes it.
+  Migration 0090 adds `pin_pad_acceptances`: an owner/admin browser session
+  accepts a finding on the CAD tab (`POST|DELETE
+  /api/parts/{id}/eda/pin-pad/accept`; every API token gets
+  `eda.review_requires_owner`; electrical findings need a note). An acceptance
+  is tied to both file hashes, so a changed file shows it as stale instead of
+  applying it. MCP shows acceptances and never writes them. `not-checkable` is
+  documented, in the tool and the server instructions, as NOT a pass.
 - **Lifecycle / compliance on the parts REST API (SM-004 parity).**
   `GET /api/parts/{id}` and every `GET /api/parts` row now carry
   `lifecycle` and `compliance`, the same objects MCP `get_part` returns
