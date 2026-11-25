@@ -31,8 +31,11 @@ the canonical record.
   symmetric model, or one whose polarity is not established, reports
   `polarity_needs_person` until `set_spice_binding(positive_pin=…)` names
   the + terminal. A library model with no loadable export is recorded as
-  `none` with `subckt` and `export_reason`; `native_reason` is stored. No
-  migration.
+  `none` with `subckt` and `export_reason`; `native_reason` is stored.
+  `get_part_eda` now always returns `spice_binding` with a `state`
+  (`bound`, `native_primitive`, `none`, `free_text`, `unbound`,
+  `no_model`), and `list_spice_binding_issues` lists a part with a SPICE file
+  attached and nothing bound as `unbound`. No migration.
 - **Structured SPICE pin binding (SM-009).** `part_eda.sim_pins` (KiCad
   `Sim.Pins`) was free text nothing checked. Migration 0087 adds
   `part_spice_bindings`: the model's `.subckt` (or `.model`) name and ordered

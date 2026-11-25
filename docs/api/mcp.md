@@ -632,15 +632,22 @@ silently wrong (SM-009). The emitted field names `Sim.Device`, `Sim.Pins`,
    issues, subckt, model_kind, device_type, ports, pin_map, sim_pins,
    model_sha256, model_source, build_requirement, grade, header_pins, …}`, or
    `{source: "free-text", validated: false, sim_pins}` for a hand-written
-   value with no binding. `validated` is computed at read time — a different
+   value with no binding. The key is **always present**, with a `state`:
+   `bound`, `native_primitive` or `none` for a stored binding; `free_text`;
+   `unbound` — `{source: "none", state: "unbound", validated: false,
+   spice_datafile_id, spice_name}`, a SPICE file attached and nothing bound;
+   or `no_model` — `{source: "none", state: "no_model", validated: false}`.
+   A missing key means a server without SM-009. `validated` is computed at read time — a different
    file, different bytes or an edited `sim_pins` make it false, whichever
    path made the change. `issues` says why: `not_confirmed`,
    `awaiting_reconfirmation`, `model_changed`, `model_detached`,
    `sim_pins_edited`, `polarity_needs_person`; for the file-less kinds `no_model` (always, for
    `none`) and `model_file_attached`.
 4. `list_spice_binding_issues(cursor?, page_size≤100)` lists every part
-   that is not validated, with, for free text, what comparing it with the
-   attached file found (`port_count_mismatch`, `port_unknown`,
+   that is not validated — including a part with a SPICE file attached and
+   nothing bound (`source: "none"`, issue `unbound`, with the file's
+   `spice_name`, `models` and, for a one-model file, `subckt` and `ports`) —
+   with, for free text, what comparing it with the attached file found (`port_count_mismatch`, `port_unknown`,
    `sim_pins_unparseable`, `model_ambiguous`, `no_model_in_file`,
    `model_unreadable`, `no_model_attached`). File-less records are listed
    only when a file has since been attached. It reads only.

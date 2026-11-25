@@ -196,7 +196,8 @@ async def test_multi_subckt_file_needs_an_explicit_choice(authed_client, full_to
 
     assert uploaded["spice_binding_updated"] is False
     assert [m["name"] for m in uploaded["spice_models"]] == ["OPA_A", "OPA_B"]
-    assert "spice_binding" not in before
+    assert before["spice_binding"]["state"] == "unbound"
+    assert before["spice_binding"]["spice_name"] == "two"
     assert "eda.spice_subckt_ambiguous:" in ambiguous
     assert "OPA_A" in ambiguous and "OPA_B" in ambiguous
     assert "eda.spice_subckt_unknown:" in unknown
@@ -355,6 +356,7 @@ async def test_free_text_sim_pins_is_reported_unvalidated_and_left_alone(
     assert eda["sim_pins"] == "1=IN+ 2=IN- 3=OUT 4=GND"
     assert eda["spice_binding"] == {
         "source": "free-text",
+        "state": "free_text",
         "validated": False,
         "sim_pins": "1=IN+ 2=IN- 3=OUT 4=GND",
     }
@@ -762,3 +764,71 @@ async def test_library_model_without_loadable_export_is_recorded(authed_client, 
     assert n["native"]["letter"] == "R" and n["device_type"] is None and n["ports"] == []
     assert "eda.spice_not_applicable:" in positive_on_none
     assert "eda.spice_not_applicable:" in subckt_on_native
+
+
+# ---------------------------------------------------------------------
+# The key is always present; a file with nothing bound is an issue
+# (production case: a part with a VDMOS model attached and no binding)
+# ---------------------------------------------------------------------
+
+
+async def test_spice_binding_key_is_always_present(authed_client, full_token):
+    no_config = create_part(authed_client, "Never configured")
+    footprint_only = create_part(authed_client, "Footprint only")
+    r = authed_client.put(
+        f"/api/parts/{footprint_only}/eda", json={"footprint_ref_external": "R:R_0402"}
+    )
+    assert r.status_code == 200, r.text
+    unbound = create_part(authed_client, "P-MOSFET with model", mpn="SUD50P06-TEST")
+    async with mcp_session(full_token) as s:
+        uploaded = await call(
+            s, "upload_eda_asset", kind="spice", filename="pmos_vdmos.lib",
+            content_base64=_b64(b".model PMOSX VDMOS(pchan Vto=-2 Kp=5)\n.model DB D\n"),
+            part_id=unbound,
+        )
+        a = await call(s, "get_part_eda", part_id=no_config)
+        b = await call(s, "get_part_eda", part_id=footprint_only)
+        c = await call(s, "get_part_eda", part_id="SUD50P06-TEST")
+        bound = await _opa_part(s, authed_client)
+        await _upload_opa_model(s, bound)
+        await call(s, "set_spice_binding", part_id_or_mpn=bound, pin_map=OPA_PIN_MAP)
+        d = await call(s, "get_part_eda", part_id=bound)
+
+    no_model = {"source": "none", "state": "no_model", "validated": False}
+    assert a["configured"] is False and a["spice_binding"] == no_model
+    assert b["spice_binding"] == no_model
+    # Two models in the file, so the upload recorded nothing: unbound.
+    assert c["spice_binding"] == {
+        "source": "none",
+        "state": "unbound",
+        "validated": False,
+        "spice_datafile_id": uploaded["id"],
+        "spice_name": "pmos_vdmos",
+    }
+    assert d["spice_binding"]["state"] == "bound"
+
+
+async def test_attached_file_without_binding_is_listed_unbound(authed_client, full_token):
+    part_id = create_part(authed_client, "P-MOSFET with model")
+    free_text = create_part(authed_client, "Hand-written pins")
+    async with mcp_session(full_token) as s:
+        uploaded = await call(
+            s, "upload_eda_asset", kind="spice", filename="pmos_vdmos.lib",
+            content_base64=_b64(b".model PMOSX VDMOS(pchan Vto=-2 Kp=5)\n.model DB D\n"),
+            part_id=part_id,
+        )
+        r = authed_client.put(
+            f"/api/parts/{free_text}/eda",
+            json={"spice_datafile_id": uploaded["id"], "sim_pins": "1=D 2=G 3=S"},
+        )
+        assert r.status_code == 200, r.text
+        listed = await call(s, "list_spice_binding_issues")
+
+    by_part = {i["part_id"]: i for i in listed["items"]}
+    item = by_part[part_id]
+    assert item["source"] == "none"
+    assert item["issues"] == ["unbound"]
+    assert item["spice_name"] == "pmos_vdmos"
+    assert item["models"] == ["PMOSX", "DB"]
+    assert "unbound" not in by_part[free_text]["issues"]
+    assert by_part[free_text]["source"] == "free-text"

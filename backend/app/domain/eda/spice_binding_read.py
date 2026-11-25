@@ -74,17 +74,26 @@ def _iso(value) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def binding_payload(db: Session, *, ws: Any, config: PartEda | None, part_id: UUID) -> dict | None:
-    """The `spice_binding` object `get_part_eda` reports, or None."""
+_STATE_BY_KIND = {"subckt": "bound", "model": "bound"}
+
+
+def binding_payload(db: Session, *, ws: Any, config: PartEda | None, part_id: UUID) -> dict:
+    """The `spice_binding` object `get_part_eda` reports — ALWAYS a dict.
+
+    Never None, so the key is never dropped by `compact()`: a reader must
+    be able to tell "nothing bound" from "a server without SM-009".
+    `state` is one of `bound`, `native_primitive`, `none` (a stored
+    binding), `free_text` (hand-written `sim_pins`, no binding),
+    `unbound` (a SPICE file attached, nothing bound) or `no_model`.
+    """
     binding = binding_for_part(db, ws=ws, part_id=part_id)
-    if binding is None:
-        if config is not None and config.sim_pins and config.sim_pins.strip():
-            return {"source": "free-text", "validated": False, "sim_pins": config.sim_pins}
-        return None
     datafile = datafile_in_ws(db, ws=ws, datafile_id=config.spice_datafile_id if config else None)
+    if binding is None:
+        return _unbound_payload(config, datafile)
     issues = binding_issues(binding, config, datafile.sha256 if datafile else None)
     return {
         "source": "binding",
+        "state": _STATE_BY_KIND.get(binding.model_kind, binding.model_kind),
         "validated": not issues,
         "issues": issues,
         "subckt": binding.subckt,
@@ -108,6 +117,25 @@ def binding_payload(db: Session, *, ws: Any, config: PartEda | None, part_id: UU
         **_export_fields(binding.export_metadata),
         "validated_at": _iso(binding.validated_at),
     }
+
+
+def _unbound_payload(config: PartEda | None, datafile: EdaDatafile | None) -> dict:
+    if config is not None and config.sim_pins and config.sim_pins.strip():
+        return {
+            "source": "free-text",
+            "state": "free_text",
+            "validated": False,
+            "sim_pins": config.sim_pins,
+        }
+    if datafile is not None:
+        return {
+            "source": "none",
+            "state": "unbound",
+            "validated": False,
+            "spice_datafile_id": str(datafile.id),
+            "spice_name": datafile.name,
+        }
+    return {"source": "none", "state": "no_model", "validated": False}
 
 
 def _export_fields(meta: dict | None) -> dict[str, Any]:
@@ -198,6 +226,12 @@ def list_issues(
                     PartEda.sim_pins.is_not(None),
                     PartEda.sim_pins != "",
                 ),
+                # The commonest real case: a file attached, nothing bound.
+                and_(
+                    PartSpiceBinding.id.is_(None),
+                    EdaDatafile.id.is_not(None),
+                    or_(PartEda.sim_pins.is_(None), PartEda.sim_pins == ""),
+                ),
                 and_(
                     PartSpiceBinding.model_kind.in_(FILELESS_KINDS),
                     PartEda.spice_datafile_id.is_not(None),
@@ -250,6 +284,8 @@ def _issue_item(part, config, binding, datafile, texts: dict[str, str | None]) -
         item["subckt"] = binding.subckt
         item["ports"] = list(binding.ports or [])
         return item
+    if not (config.sim_pins or "").strip():
+        return _unbound_item(item, datafile, texts)
     item["source"] = "free-text"
     if datafile is None:
         item["issues"] = ["free_text_unvalidated", "no_model_attached"]
@@ -259,4 +295,22 @@ def _issue_item(part, config, binding, datafile, texts: dict[str, str | None]) -
     issues, detail = _free_text_checks(config.sim_pins, texts[datafile.sha256])
     item["issues"] = issues
     item.update(detail)
+    return item
+
+
+def _unbound_item(item: dict, datafile: EdaDatafile, texts: dict[str, str | None]) -> dict:
+    """A SPICE file attached and nothing bound: what the file offers."""
+    item["source"] = "none"
+    item["issues"] = ["unbound"]
+    item["spice_name"] = datafile.name
+    if datafile.sha256 not in texts:
+        texts[datafile.sha256] = read_model_text(datafile)
+    text = texts[datafile.sha256]
+    if text is None:
+        item["issues"].append(_UNREADABLE)
+        return item
+    models = spice_model.parse_models(text)
+    item["models"] = [m.name for m in models[:20]]
+    if len(models) == 1:
+        item["subckt"], item["ports"] = models[0].name, list(models[0].ports)
     return item
