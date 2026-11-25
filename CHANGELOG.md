@@ -35,7 +35,8 @@ the canonical record.
   `get_part_eda` now always returns `spice_binding` with a `state`
   (`bound`, `native_primitive`, `none`, `free_text`, `unbound`,
   `no_model`), and `list_spice_binding_issues` lists a part with a SPICE file
-  attached and nothing bound as `unbound`. No migration.
+  attached and nothing bound as `unbound`. REST `GET`/`PUT
+  /api/parts/{id}/eda` carry the same `spice_binding` object. No migration.
 - **Structured SPICE pin binding (SM-009).** `part_eda.sim_pins` (KiCad
   `Sim.Pins`) was free text nothing checked. Migration 0087 adds
   `part_spice_bindings`: the model's `.subckt` (or `.model`) name and ordered

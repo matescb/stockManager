@@ -189,9 +189,22 @@ The part's EDA configuration, or `data: null` if it has none. Works on archived 
             "spice_datafile_id": null, "value": "10k", "keywords": null,
             "footprint_filters": ["R_*"], "exclude_from_bom": false,
             "exclude_from_board": false, "exclude_from_sim": true,
-            "sim_device": null, "sim_pins": null, "sim_params": null },
+            "sim_device": null, "sim_pins": null, "sim_params": null,
+            "spice_binding": { "source": "none", "state": "no_model",
+                               "validated": false } },
   "status": { … } }
 ```
+
+`spice_binding` (SM-009, additive) is the structured SPICE binding — the same
+object MCP `get_part_eda` reports, built by
+`domain/eda/spice_binding_read.py::binding_payload`. It is always present on a
+configured part, with a `state`: `bound` / `native_primitive` / `none` (a
+stored binding, with `validated`, `issues`, `ports`, `pin_map`, …),
+`free_text` (hand-written `sim_pins`, unchecked), `unbound` (a SPICE file
+attached and nothing bound; carries `spice_datafile_id` and `spice_name`) or
+`no_model`. A part with no configuration still answers `data: null`. The
+field is read-only: `PUT` neither takes nor needs it, and bindings are written
+by the MCP tool `set_spice_binding` ([mcp.md](./mcp.md#spice-pin-binding)).
 
 ### `PUT /api/parts/{part_id}/eda`
 
@@ -233,6 +246,7 @@ Each slot is named **either** by a hosted id or by an external ref, never both. 
 
 - Source: `backend/app/api/routes/eda.py:923-955`
 - Audit: `part_eda.updated`, target `part_eda`, target id the **part's** id, comment `fields=<sorted set>`.
+- The response is the same shape as `GET`, `spice_binding` included.
 
 ### `DELETE /api/parts/{part_id}/eda`
 
