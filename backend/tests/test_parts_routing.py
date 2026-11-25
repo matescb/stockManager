@@ -36,6 +36,7 @@ EXPECTED_PARTS_ROUTES: set[tuple[str, str]] = {
     ("POST", "/api/parts/{part_id}/substitutes"),
     ("GET", "/api/parts/{part_id}/substitutes"),
     ("DELETE", "/api/parts/{part_id}/substitutes/{substitute_id}"),
+    ("PATCH", "/api/parts/{part_id}/substitutes/{substitute_id}"),
     # Meta members (note path uses {meta_id} for clarity, same router)
     ("GET", "/api/parts/{meta_id}/members"),
     ("POST", "/api/parts/{meta_id}/members"),

@@ -543,8 +543,19 @@ def bom_shortages(caller: Caller, project_id: str, build_qty: int = 1) -> dict[s
 
     Returns one row per BOM line that cannot be fully covered from
     available stock, with `required`, `available` and `short_by`.
-    Substitutes and meta-part members count towards availability, so a
-    line backed by an approved alternative is not reported short.
+    Substitutes and meta-part members count towards `short_by` and
+    `substitute_available` WHATEVER their evaluation state, so a line
+    backed by any registered alternative is not reported short.
+
+    Each row also carries `substitute_available_by_evaluation`
+    ({evaluated_ok, not_evaluated, rejected}, summing to
+    `substitute_available`) and `short_by_evaluated_only` — the shortfall
+    counting the part itself plus only evaluated-ok substitutes (meta-part
+    members count as evaluated-ok). `covered_by_unevaluated_substitutes`
+    lists, in the same row shape, the lines that are NOT short only
+    because a not-evaluated or rejected substitute is counted — treat
+    those as short until the substitute is evaluated
+    (set_substitute_evaluation; list_substitutes shows the links).
     Do-not-populate lines and lines not linked to a part are skipped.
     An empty `shortages` list means the build is fully covered.
     """
@@ -557,23 +568,37 @@ def bom_shortages(caller: Caller, project_id: str, build_qty: int = 1) -> dict[s
         build_quantity=build_qty,
     )
     short = [row for row in rows if row.get("short_by", 0) > 0]
+    at_risk = [
+        row
+        for row in rows
+        if row.get("short_by", 0) <= 0 and row.get("short_by_evaluated_only", 0) > 0
+    ]
     return {
         "project_id": sid(project.id),
         "project_name": project.name,
         "build_qty": build_qty,
-        "shortages": [
-            compact(
-                {
-                    "part_id": row["part_id"],
-                    "part_name": row["part_name"],
-                    "part_url": part_url(row["part_id"]),
-                    "required": quantity_out(row["required"]),
-                    "available": quantity_out(row["available"]),
-                    "short_by": quantity_out(row["short_by"]),
-                    "substitute_available": quantity_out(row.get("substitute_available")),
-                }
-            )
-            for row in short
-        ],
+        "shortages": [_shortage_row(row) for row in short],
+        "covered_by_unevaluated_substitutes": [_shortage_row(row) for row in at_risk],
         "lines_checked": len(rows),
     }
+
+
+def _shortage_row(row: dict[str, Any]) -> dict[str, Any]:
+    by_eval = row.get("substitute_available_by_evaluation") or {}
+    return compact(
+        {
+            "part_id": row["part_id"],
+            "part_name": row["part_name"],
+            "part_url": part_url(row["part_id"]),
+            "required": quantity_out(row["required"]),
+            "available": quantity_out(row["available"]),
+            "short_by": quantity_out(row["short_by"]),
+            "substitute_available": quantity_out(row.get("substitute_available")),
+            # Not compacted away when all zero: the split is the answer.
+            "substitute_available_by_evaluation": {
+                key: quantity_out(value) for key, value in by_eval.items()
+            }
+            or None,
+            "short_by_evaluated_only": quantity_out(row.get("short_by_evaluated_only")),
+        }
+    )

@@ -63,7 +63,7 @@ pins it.
 
 ## Tools
 
-36 tools — 18 read, 18 write. Names and arguments are the agent-facing contract;
+38 tools — 19 read, 19 write. Names and arguments are the agent-facing contract;
 the authoritative descriptions are the docstrings in `backend/app/mcp/tools/`,
 which are what the model actually reads.
 
@@ -84,7 +84,8 @@ earlier result has the other.
 | `list_categories` | Categories and their slugs |
 | `list_projects` | Projects (boards) |
 | `get_project_bom` | One project's BOM lines |
-| `bom_shortages` | What you are short of to build N boards |
+| `bom_shortages` | What you are short of to build N boards, with substitute stock split by evaluation state (see [Substitute evaluation](#substitute-evaluation)) |
+| `list_substitutes` | A part's substitute links with `relation`, `evaluation`, `evidence`, `evaluated_by` / `evaluated_at` |
 | `get_part_policy` | Which fields this workspace requires on a part, and where to find them |
 | `validate_part` | Dry-run `create_part`: what the part policy would refuse, nothing written |
 | `part_policy_status` | What an existing part still lacks under the part policy |
@@ -105,6 +106,7 @@ earlier result has the other.
 | `upload_eda_asset` | Add a symbol / footprint / 3D model / SPICE file (base64); a SPICE file's `.subckt` / `.model` ports come back as `spice_models` |
 | `set_spice_binding` | Map a part's symbol pins to its SPICE model's ports, checked, and derive `sim_pins` (see [SPICE pin binding](#spice-pin-binding)) |
 | `set_asset_metadata` | Record a CAD file's origin, SPICE `model_kind`, simulators and validity; never its review (see [Asset metadata and review](#asset-metadata-and-review)) |
+| `set_substitute_evaluation` | Record a substitute link's relation, evaluation verdict and evidence (see [Substitute evaluation](#substitute-evaluation)) |
 | `import_vendor_zip` | Import a SnapEDA / SamacSys / UltraLibrarian archive (base64) |
 | `fetch_lcsc` | Fetch and convert CAD data from LCSC / EasyEDA — **disabled by default**, see [Disabling](#disabling) |
 | `add_stock` | Add stock |
@@ -727,6 +729,39 @@ records a review in the app (CAD tab → File review), which calls
 `PUT /api/parts/{id}/eda/{kind}/review` from a browser session — see
 [eda.md](./eda.md#put-apipartspart_idedakindreview).
 
+### Substitute evaluation
+
+A substitute link (SM-012) carries `relation` (`pin-compatible` |
+`footprint-compatible` | `functional`, absent when not stated), `evaluation`
+(`not-evaluated` | `evaluated-ok` | `rejected`; every link that predates
+migration 0089 reads `not-evaluated`), `evidence` (a free reference such as a
+simulation id, `SIM-012`, max 500 characters), and `evaluated_by` /
+`evaluated_at` — who last changed any of the three, and when.
+
+`list_substitutes(part_id_or_mpn)` lists every link usable in place of the
+part — its own links plus bidirectional links registered from the other side,
+the same set `bom_shortages` counts. `set_substitute_evaluation(part_id_or_mpn,
+substitute_id_or_mpn, relation?, evaluation?, evidence?)` merges: only the
+arguments passed change, `""` clears `relation` or `evidence`. It never
+creates or removes a link (that is done in the app). Member tokens may call
+it; a read-only token gets `auth.token_read_only`.
+
+`bom_shortages` keeps its existing numbers: `short_by` and
+`substitute_available` count every registered substitute whatever its
+evaluation, exactly as before. Added alongside, per row:
+
+| Key | Meaning |
+|---|---|
+| `substitute_available_by_evaluation` | `{evaluated_ok, not_evaluated, rejected}` — `substitute_available` split by the link's state; the three sum to it. Meta-part members count as `evaluated_ok` (membership is the owner's statement that they are the part) |
+| `short_by_evaluated_only` | `max(0, required − (available + evaluated_ok))` |
+
+and a top-level `covered_by_unevaluated_substitutes` list (same row shape):
+lines with `short_by` 0 but `short_by_evaluated_only` > 0 — covered only
+because a not-evaluated or rejected substitute is counted. Treat them as
+short until the substitute is evaluated. The REST shortage rows
+(`GET /api/builds/{id}`, stage shortage, `GET /api/reports/bom-shortage`)
+carry the same two keys.
+
 
 1. `list_projects()` — projects, newest first, with their ids.
 2. `bom_shortages(project_id=…, build_qty=N)`. One row per line that cannot be
@@ -734,7 +769,9 @@ records a review in the app (CAD tab → File review), which calls
    meta-part members count towards availability; do-not-populate lines and
    lines with no linked part are skipped. An empty `shortages` list means the
    build is covered, and `lines_checked` says how many lines that verdict
-   rests on.
+   rests on. Read `covered_by_unevaluated_substitutes` too: those lines are
+   covered only by substitutes nobody has evaluated (see [Substitute
+   evaluation](#substitute-evaluation)).
 3. `get_project_bom(project_id=…)` only if you need the lines themselves —
    `designators`, per-board `quantity`, `dnp`. The shortage answer does not
    require it.
@@ -896,6 +933,7 @@ not repeated per row.
 | `list_projects` | — | — | — |
 | `get_project_bom` | `project_id` | — | `project.not_found` |
 | `bom_shortages` | `project_id` | `build_qty` | `project.not_found` |
+| `list_substitutes` | `part_id_or_mpn` | — | `part.not_found` |
 | `get_part_policy` | — | — | — |
 | `validate_part` | — | same as `create_part` | `category.not_found`; `category.archived`; `part.invalid_field`. An unmet rule is `ok: false`, not a refusal |
 | `part_policy_status` | `part_id_or_mpn` | — | `part.not_found` |
@@ -919,6 +957,7 @@ not repeated per row.
 | `upload_eda_asset` | `kind`, `filename`, `content_base64` | `part_id`, `category_slug` | `eda.spice_export_schema_unsupported` (a SPICE file whose ngSPICE export header names an unknown schema), `eda.unsupported_kind`, `eda.invalid_file`, `eda.empty_file`, `eda.file_too_large`, `eda.multiple_symbols`, `eda.legacy_format` |
 | `set_spice_binding` | `part_id_or_mpn` | `pin_map` (required for `file`), `model_kind`, `subckt`, `symbol_pins`, `unconnected_ports`, `device_type`, `params`, `fallback`, `fallback_token`, `native`, `positive_pin`, `export_reason`, `native_reason`, `source` | `part.not_found`; `eda.spice_model_missing`; `eda.file_not_found`; `eda.spice_no_model`; `eda.spice_subckt_ambiguous` / `eda.spice_subckt_unknown` (both list `available`); `eda.spice_model_not_checkable`; `eda.spice_symbol_pins_unknown`; `eda.spice_symbol_pins_conflict`; `eda.spice_pin_unknown`; `eda.spice_pin_unmapped`; `eda.spice_port_unknown`; `eda.spice_port_duplicate`; `eda.spice_port_count_mismatch`; `eda.spice_sim_pins_too_long`; `eda.spice_kind_conflict`; `eda.spice_not_applicable`; `eda.spice_field_too_long`; `eda.spice_export_schema_unsupported`; `eda.spice_fallback_token_unknown`; `eda.spice_native_invalid` |
 | `set_asset_metadata` | `part_id_or_mpn`, `kind` | `origin`, `model_kind`, `simulators`, `valid_for`, `not_valid_for`, `note` | `part.not_found`; `eda.asset_not_attached` (slot empty or external); `eda.asset_metadata_invalid`; `eda.review_requires_owner` for `review_state` / `review_against` |
+| `set_substitute_evaluation` | `part_id_or_mpn`, `substitute_id_or_mpn` | `relation`, `evaluation`, `evidence` (at least one) | `part.not_found`; `part.substitute_not_found` (no link between the two in this workspace; a one-way link only matches part → substitute); `part.substitute_invalid` (bad value, evidence > 500 characters, nothing to set) |
 | `import_vendor_zip` | `part_id`, `content_base64` | `overwrite` | `eda.invalid_archive`, `eda.archive_too_large`, `eda.no_entries` |
 | `fetch_lcsc` | `part_id`, `lcsc_id` | `overwrite` | `eda.lcsc_not_found`, `eda.lcsc_unavailable` |
 | `sync_project_bom` | `project_id`, `rows` | `dry_run` | `project.not_found`; `bom.sync_invalid_row`; `bom.sync_duplicate_line`; `bom.sync_unkeyed_row`. Same diff as `POST /api/projects/{id}/bom/sync` — see [projects.md](./projects.md#post-apiprojectsproject_idbomsync) |
@@ -1088,6 +1127,12 @@ unvalidates a binding adds `part_spice_binding.model_recorded`
 `set_asset_metadata` has no REST twin; it records `eda_asset_metadata.set`
 (`kind=…,sha256=…,fields=…` — field names, never values). A review from the
 app records `eda_asset_review.set` (`kind=…,sha256=…,state=…`).
+
+`set_substitute_evaluation` records `part.substitute_evaluated` with both
+ends of the link as targets, the REST twin `PATCH
+/api/parts/{id}/substitutes/{sub}` the same; the comment is
+`fields=…;relation=…;evaluation=…` — field names and the new enumerated
+state, never the `evidence` text. A call that changed nothing writes none.
 
 `set_part_specs` has no REST twin — one call writes many rows — so it records
 one `part.specs_updated` row naming the keys that moved and never their values.

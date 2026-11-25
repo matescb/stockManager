@@ -331,7 +331,12 @@ Add a substitute binding.
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `substitute_part_id` | UUID | yes | |
-| `direction` | string | yes | TODO(verify): exact set of allowed values. |
+| `direction` | string | no | `one_way` or `bidirectional` (default). |
+| `relation` | string | no | SM-012: `pin-compatible`, `footprint-compatible` or `functional`. |
+| `evaluation` | string | no | SM-012: `not-evaluated` (default), `evaluated-ok` or `rejected`. |
+| `evidence` | string | no | SM-012: free reference (e.g. `SIM-012`), max 500 characters. |
+
+Setting any of the SM-012 fields stamps `evaluated_by` / `evaluated_at`.
 
 **Errors** — `404 part.not_found` if either side is archived or absent (`parts_core.py:537-538`).
 
@@ -341,7 +346,26 @@ Add a substitute binding.
 
 ### `GET /api/parts/{part_id}/substitutes`
 
-List substitutes (allowed on archived parts).
+List substitutes (allowed on archived parts). Each item: `part_id` (the
+substitute), `direction`, `relation` (or `null`), `evaluation`, `evidence`,
+`evaluated_by`, `evaluated_at` (UTC ISO-8601).
+
+### `PATCH /api/parts/{part_id}/substitutes/{substitute_id}`
+
+Set the evaluation record on one link (SM-012) — `SubstitutePatch`:
+`relation`, `evaluation`, `evidence`, all optional with merge semantics (an
+omitted field is untouched; `relation: null` / `evidence: null` clears;
+`evaluation` cannot be null). Any change stamps `evaluated_by` /
+`evaluated_at` and writes one `part.substitute_evaluated` audit row (field
+names + new state, never the evidence text); a no-op writes nothing. Returns
+the link in the GET shape.
+
+**Errors** — `404 part.not_found`; `404 part.substitute_not_found` (no link
+`part_id → substitute_id` in this workspace); `422` for a value outside the
+vocabularies.
+
+- Source: `backend/app/api/routes/parts_relations.py`,
+  `backend/app/domain/parts/services/substitutes.py`.
 
 **Notes**
 
@@ -684,7 +708,6 @@ Consume from a previously-imported bag from the scan-import re-scan UI.
 
 ## TODOs
 
-- TODO(verify): `SubstituteIn.direction` allowed values — not enumerated in the route handler.
 - TODO(verify): `_DEFAULT_LIMIT` / `_MAX_LIMIT` exact values for the activity endpoint (defined in `_activity.py`).
 - TODO(verify): exhaustive `ScanImportRow` field list and per-field optionality (defined in `domain/parts/schemas.py`).
 - TODO(verify): `QuickRemoveBagIn` field optionality (defined in `domain/parts/schemas.py`).

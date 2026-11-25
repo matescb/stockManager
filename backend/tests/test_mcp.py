@@ -429,6 +429,7 @@ _EXPECTED_WRITE_TOOLS = {
     "set_part_eda",
     "set_asset_metadata",
     "set_spice_binding",
+    "set_substitute_evaluation",
     "upload_eda_asset",
     "import_vendor_zip",
     "fetch_lcsc",
@@ -558,6 +559,12 @@ def _read_tool_arguments(client: TestClient) -> dict[str, dict]:
         json={"entry_type": "part", "part_id": part_id, "quantity": 2},
     )
     assert entry.status_code in (200, 201), entry.text
+    # A substitute so list_substitutes / bom_shortages reach the link code.
+    sub_id = create_part(client, "Cleanliness alt", mpn="CLEAN-ALT")
+    linked = client.post(
+        f"/api/parts/{part_id}/substitutes", json={"substitute_part_id": sub_id}
+    )
+    assert linked.status_code == 200, linked.text
 
     return {
         "search_parts": {"query": "Cleanliness"},
@@ -578,6 +585,7 @@ def _read_tool_arguments(client: TestClient) -> dict[str, dict]:
         "check_pin_pad": {"part_id_or_mpn": part_id},
         "list_pin_pad_issues": {},
         "list_spice_binding_issues": {},
+        "list_substitutes": {"part_id_or_mpn": part_id},
     }
 
 

@@ -94,6 +94,7 @@ def audit(
     target_type: str,
     target_id: UUID,
     comment: str | None = None,
+    target_ids: list[UUID] | None = None,
 ) -> None:
     """Write the audit row for one MCP mutation.
 
@@ -112,7 +113,9 @@ def audit(
         user=caller.user,
         action=action,
         target_type=target_type,
-        target_ids=[target_id],
+        # `target_ids` overrides for a mutation on a link between two rows
+        # (the REST twin logs both ends, e.g. part_substitute).
+        target_ids=target_ids or [target_id],
         comment=comment,
         request_id=caller.principal.request_id,
     )
