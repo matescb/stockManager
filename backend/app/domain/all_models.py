@@ -31,6 +31,7 @@ from app.domain.categories.models import PartCategory  # noqa: F401
 from app.domain.codes.models import ObjectCode  # noqa: F401
 from app.domain.custom_fields.models import CustomField  # noqa: F401
 from app.domain.eda.models import (  # noqa: F401
+    EdaAssetMetadata,
     EdaDatafile,
     EdaFootprint,
     EdaFootprintModel,

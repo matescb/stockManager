@@ -219,6 +219,7 @@ from app.api.routes import (
     codes,
     custom_fields,
     eda,
+    eda_asset_review,
     eda_import,
     eda_preview3d,
     invitations,
@@ -652,6 +653,12 @@ app.include_router(
 )
 app.include_router(
     eda_import.parts_router,
+    prefix="/api/parts",
+    tags=["eda"],
+    dependencies=_member_gate,
+)
+app.include_router(
+    eda_asset_review.parts_router,
     prefix="/api/parts",
     tags=["eda"],
     dependencies=_member_gate,

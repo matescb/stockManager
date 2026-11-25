@@ -16,6 +16,7 @@ Created by `backend/alembic/versions/0068_eda_domain.py` — the only migration 
 | `EdaFootprintModel` | `eda_footprint_models` | `backend/app/domain/eda/models.py:131` |
 | `PartEda` | `part_eda` | `backend/app/domain/eda/models.py:170` |
 | `PartSpiceBinding` | `part_spice_bindings` | `backend/app/domain/eda/models.py` (migration 0087, SM-009) |
+| `EdaAssetMetadata` | `eda_asset_metadata` | `backend/app/domain/eda/models.py` (migration 0088, SM-010) |
 
 All but `eda_footprint_models` are `WorkspaceOwned` (`backend/app/domain/_mixins.py:11-20`), which supplies `id`, `workspace_id`, `created_at`, `updated_at`, `created_by`, `updated_by`, `archived_at`.
 
@@ -84,6 +85,10 @@ Columns: `part_id` → `parts.id` CASCADE; `spice_datafile_id` → `eda_datafile
 `part_eda.sim_pins` stays the carrier the KiCad HTTP library emits as `Sim.Pins`; a confirmed binding **derives** it (`spice_binding.py::bind`, KiCad's `symbolPin=modelPin` form in natural pin order, not-connected pins left out). Whether a binding still holds is decided at **read** time (`spice_binding.py::binding_issues`) against the live `part_eda` row — another file, other bytes, or a `sim_pins` that no longer equals the derived value make it unvalidated, whichever path made the change. `validated` is the write-time verdict, cleared (never deleted) when `upload_eda_asset` puts new bytes on a bound part.
 
 The parser is `spice_model.py`: top-level `.subckt` / `.model` only, `+` continuations, `*` `;` `$` comments, `PARAMS:` or the first `k=v` token ends the port list. `.model` cards get KiCad's built-in pin names (`D` → `A K`; BJT → `C B E`; JFET/MOSFET/VDMOS → `D G S`); other card types are not checkable. Two file-less kinds keep a part without a model file from being blank: `native_primitive` (KiCad's built-in R / C / L with ports `+ -`, D with `A K`, plus `params`) and `none` (`fallback` text). They never write `part_eda`, refuse a part that has a file attached, and become an unconfirmed file binding when a file is uploaded onto the part. `spice_header.py` reads the header the ngSPICE model library's `bin/export-model` writes — legacy NG-010 and `ngspice-export/1` — and `storage.validated_datafile` refuses a SPICE upload whose `Export-Schema` names an unknown major version (`eda.spice_export_schema_unsupported`). The read side (`binding_payload`, `list_issues`) is `spice_binding_read.py`. No backfill: existing free-text `sim_pins` are reported (`source: "free-text"`, `validated: false`) and listed by `list_spice_binding_issues`, never rewritten. No BEFORE trigger, for the reason 0068 gives. Agent surface: [MCP — SPICE pin binding](../api/mcp.md#spice-pin-binding).
+
+### `eda_asset_metadata`
+
+What is known about ONE version of one hosted file (SM-010, migration 0088): `origin`, SPICE `model_kind` (`vendor` | `converted` | `fitted`), `simulators`, `valid_for`, `not_valid_for`, `note`, and `review_state` (`unreviewed` | `reviewed` | `rejected`) with `reviewed_by`, `reviewed_at`, `review_against`. Exactly one of `symbol_id` / `footprint_id` / `datafile_id` is set (CHECK `num_nonnulls(...) = 1`), each a real FK with `ON DELETE CASCADE`, and the row is unique per asset **and `sha256`** (three partial unique indexes). New bytes on the same row — `_rewrite_stored_entry_name` re-stores a renamed symbol or footprint — miss the lookup and so read as `unreviewed` with no metadata; the old version's row stays as history. The asset's own `source` column is not touched. Only `asset_metadata.py` writes it: `set_metadata` (MCP `set_asset_metadata`, merge) and `set_review` (REST, owner/admin session only). No backfill, no BEFORE trigger. Agent surface: [MCP — Asset metadata and review](../api/mcp.md#asset-metadata-and-review).
 
 ## Storage lanes
 

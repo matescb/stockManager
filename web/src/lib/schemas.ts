@@ -348,6 +348,40 @@ export const PartEdaSchema = z.object({
 export type PartEda = z.infer<typeof PartEdaSchema>;
 
 /**
+ * SM-010: what is known about the CURRENT version of each hosted CAD file
+ * on a part (`GET /parts/{id}/eda/assets`). A new file version reads as
+ * `unreviewed` with no metadata. `can_review` is true only for an
+ * owner/admin browser session — the server enforces it regardless.
+ */
+export const EdaAssetReviewStateSchema = z.enum(["unreviewed", "reviewed", "rejected"]);
+export const EdaAssetEntrySchema = z.object({
+  id: uuid,
+  name: z.string(),
+  sha256: z.string(),
+  source: z.string(),
+  origin: nullableString,
+  origin_from: nullableString,
+  model_kind: nullableString,
+  simulators: z.array(z.string()),
+  valid_for: z.array(z.string()),
+  not_valid_for: z.array(z.string()),
+  note: nullableString,
+  review: z.object({
+    state: EdaAssetReviewStateSchema,
+    by: nullableString,
+    by_name: nullableString,
+    at: nullableString,
+    against: nullableString,
+  }),
+});
+export type EdaAssetEntry = z.infer<typeof EdaAssetEntrySchema>;
+export const PartEdaAssetsSchema = z.object({
+  assets: z.record(z.string(), EdaAssetEntrySchema),
+  can_review: z.boolean(),
+});
+export type PartEdaAssets = z.infer<typeof PartEdaAssetsSchema>;
+
+/**
  * The PUT body. A full replacement, not a merge — the server writes every
  * column from this payload, so an omitted field resets to its default.
  */

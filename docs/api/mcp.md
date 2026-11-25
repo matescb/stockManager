@@ -63,7 +63,7 @@ pins it.
 
 ## Tools
 
-35 tools — 18 read, 17 write. Names and arguments are the agent-facing contract;
+36 tools — 18 read, 18 write. Names and arguments are the agent-facing contract;
 the authoritative descriptions are the docstrings in `backend/app/mcp/tools/`,
 which are what the model actually reads.
 
@@ -77,7 +77,7 @@ earlier result has the other.
 |---|---|
 | `search_parts` | Free-text search over name, MPN, manufacturer, IPN, description |
 | `get_part` | One part: specs, catalog metadata, stock by location, CAD status, [lifecycle and compliance](#lifecycle-and-compliance) |
-| `get_part_eda` | A part's KiCad configuration, with resolved `PCM_SM_…` refs, its `pin_pad_check` and its `spice_binding` (see [SPICE pin binding](#spice-pin-binding)) |
+| `get_part_eda` | A part's KiCad configuration, with resolved `PCM_SM_…` refs, its `pin_pad_check`, its `spice_binding` (see [SPICE pin binding](#spice-pin-binding)) and per-file `assets` metadata and review (see [Asset metadata and review](#asset-metadata-and-review)) |
 | `find_parts_missing_eda` | "What still needs a footprint?" — by `symbol`/`footprint`/`model3d`/`spice` |
 | `stock_levels` | On-hand / reserved / available, one part or the whole inventory |
 | `list_storage_locations` | Bins and their constraints |
@@ -104,6 +104,7 @@ earlier result has the other.
 | `set_part_eda` | Replace a part's KiCad configuration |
 | `upload_eda_asset` | Add a symbol / footprint / 3D model / SPICE file (base64); a SPICE file's `.subckt` / `.model` ports come back as `spice_models` |
 | `set_spice_binding` | Map a part's symbol pins to its SPICE model's ports, checked, and derive `sim_pins` (see [SPICE pin binding](#spice-pin-binding)) |
+| `set_asset_metadata` | Record a CAD file's origin, SPICE `model_kind`, simulators and validity; never its review (see [Asset metadata and review](#asset-metadata-and-review)) |
 | `import_vendor_zip` | Import a SnapEDA / SamacSys / UltraLibrarian archive (base64) |
 | `fetch_lcsc` | Fetch and convert CAD data from LCSC / EasyEDA — **disabled by default**, see [Disabling](#disabling) |
 | `add_stock` | Add stock |
@@ -663,7 +664,49 @@ skipped. The port list ends at `PARAMS:` or the first `k=v` token. A
 other card type is refused as `eda.spice_model_not_checkable`. A file with
 several models needs `subckt`.
 
-### Check a BOM against stock
+### Asset metadata and review
+
+SM-010. Each hosted CAD file in a part's slots — `symbol`, `footprint`,
+`model3d` (the footprint's first 3D model by position, the one KiCad places)
+and `spice` — carries metadata for **its current bytes**. `get_part_eda`
+returns it under `assets`:
+
+```json
+"assets": {
+  "spice": {
+    "id": "…", "name": "OPA192.lib", "sha256": "…", "source": "manual",
+    "origin": "https://…/sbom123.zip", "origin_from": "metadata",
+    "model_kind": "vendor", "simulators": ["ngspice-43"],
+    "valid_for": ["dc", "ac", "transient"], "not_valid_for": ["noise"],
+    "note": null,
+    "review": {"state": "unreviewed", "by": null, "by_name": null,
+               "at": null, "against": null}
+  }
+}
+```
+
+- A slot that is empty or names a local KiCad library (`*_ref_external`) has
+  no entry. `source` is the existing server-set import channel, unchanged.
+- The metadata is keyed by the file row **and its sha256**. New bytes — a
+  re-emitted rename, or a different file in the slot — read as `unreviewed`
+  with no metadata; the old version's record is kept.
+- `origin_from: "spice_header"` means no `origin` was recorded and the value
+  is the NG-010 header's `model_source` from the [SPICE pin
+  binding](#spice-pin-binding) for the same bytes.
+
+`set_asset_metadata(part_id_or_mpn, kind, origin?, model_kind?, simulators?,
+valid_for?, not_valid_for?, note?)` merges: only the arguments passed change,
+and `""` / `[]` clears one. `model_kind` (`vendor` | `converted` | `fitted`)
+applies to `spice` only. Lists hold up to 20 entries and are de-duplicated.
+Member tokens may call it; a read-only token gets `auth.token_read_only`.
+
+**Review is not writable from any token.** `review_state` /
+`review_against` are accepted only to refuse them with
+`eda.review_requires_owner`, writing nothing. A workspace owner or admin
+records a review in the app (CAD tab → File review), which calls
+`PUT /api/parts/{id}/eda/{kind}/review` from a browser session — see
+[eda.md](./eda.md#put-apipartspart_idedakindreview).
+
 
 1. `list_projects()` — projects, newest first, with their ids.
 2. `bom_shortages(project_id=…, build_qty=N)`. One row per line that cannot be
@@ -855,6 +898,7 @@ not repeated per row.
 | `set_part_eda` | `part_id` | the other eleven | `eda_symbol.not_found`, `eda_footprint.not_found`, `eda_datafile.not_found`; `eda.ref_conflict` when both `<slot>_id` and `<slot>_ref_external` are set; `eda.archived` for a retired entry |
 | `upload_eda_asset` | `kind`, `filename`, `content_base64` | `part_id`, `category_slug` | `eda.spice_export_schema_unsupported` (a SPICE file whose ngSPICE export header names an unknown schema), `eda.unsupported_kind`, `eda.invalid_file`, `eda.empty_file`, `eda.file_too_large`, `eda.multiple_symbols`, `eda.legacy_format` |
 | `set_spice_binding` | `part_id_or_mpn` | `pin_map` (required for `file`), `model_kind`, `subckt`, `symbol_pins`, `unconnected_ports`, `device_type`, `params`, `fallback`, `fallback_token`, `native`, `source` | `part.not_found`; `eda.spice_model_missing`; `eda.file_not_found`; `eda.spice_no_model`; `eda.spice_subckt_ambiguous` / `eda.spice_subckt_unknown` (both list `available`); `eda.spice_model_not_checkable`; `eda.spice_symbol_pins_unknown`; `eda.spice_symbol_pins_conflict`; `eda.spice_pin_unknown`; `eda.spice_pin_unmapped`; `eda.spice_port_unknown`; `eda.spice_port_duplicate`; `eda.spice_port_count_mismatch`; `eda.spice_sim_pins_too_long`; `eda.spice_kind_conflict`; `eda.spice_not_applicable`; `eda.spice_field_too_long`; `eda.spice_export_schema_unsupported`; `eda.spice_fallback_token_unknown`; `eda.spice_native_invalid` |
+| `set_asset_metadata` | `part_id_or_mpn`, `kind` | `origin`, `model_kind`, `simulators`, `valid_for`, `not_valid_for`, `note` | `part.not_found`; `eda.asset_not_attached` (slot empty or external); `eda.asset_metadata_invalid`; `eda.review_requires_owner` for `review_state` / `review_against` |
 | `import_vendor_zip` | `part_id`, `content_base64` | `overwrite` | `eda.invalid_archive`, `eda.archive_too_large`, `eda.no_entries` |
 | `fetch_lcsc` | `part_id`, `lcsc_id` | `overwrite` | `eda.lcsc_not_found`, `eda.lcsc_unavailable` |
 | `sync_project_bom` | `project_id`, `rows` | `dry_run` | `project.not_found`; `bom.sync_invalid_row`; `bom.sync_duplicate_line`; `bom.sync_unkeyed_row`. Same diff as `POST /api/projects/{id}/bom/sync` — see [projects.md](./projects.md#post-apiprojectsproject_idbomsync) |
@@ -1020,6 +1064,10 @@ because the `stock_entries` ledger row *is* the record and carries its own
 (`subckt=…,ports=N,sha256=…`). An `upload_eda_asset` that records or
 unvalidates a binding adds `part_spice_binding.model_recorded`
 (`sha256=…,validated=false`).
+
+`set_asset_metadata` has no REST twin; it records `eda_asset_metadata.set`
+(`kind=…,sha256=…,fields=…` — field names, never values). A review from the
+app records `eda_asset_review.set` (`kind=…,sha256=…,state=…`).
 
 `set_part_specs` has no REST twin — one call writes many rows — so it records
 one `part.specs_updated` row naming the keys that moved and never their values.
