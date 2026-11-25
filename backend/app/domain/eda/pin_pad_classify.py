@@ -52,17 +52,18 @@ miss rather than to excuse: a real open must not read as a warning.
     the SM-008 acceptance case and it stays `electrical`.
 
 ``nc_pin``
-    A numeric pad number inside the symbol's own numbering — between 1
-    and the symbol's highest numeric pin, AND no higher than the count
-    of signal-sized numbered pads the footprint has — whose largest pad
-    is signal-sized (≤ 2× the median). That is a gap in the symbol's
-    numbering: `SOT-23-5` with pins 1, 2, 3, 5 and pad 4. A pad whose
-    `pinfunction` names a signal (anything but `NC` / `DNC`) is not an NC
-    pin. CAUTION: by geometry alone a symbol that forgot a real signal
-    pin (an SOIC-8 without its GND pin 4) looks exactly like this — the
-    class is a hint, which is why it is a warning to look at and not a
-    pass, and why it is never applied silently (only an acceptance on
-    these exact files sets it aside).
+    FAIL-SAFE: only with POSITIVE evidence in the footprint that the pad
+    is unconnected — every pad of the number has a `pinfunction` of
+    `NC`, `N.C.`, `NC` plus a number (`NC1`, `NC_3`) or `DNC` (any
+    case; NOT `nCS`, an active-low signal), or a
+    `pintype` containing `no_connect`. Geometry is never evidence: a
+    symbol that forgot a real signal pin (an SOIC-8 without its GND pin
+    4) looks exactly like one that left out an NC pin, so a signal-sized
+    numbered pad the symbol lacks, with no such marking, is `electrical`
+    and FAILS. That is intended for FT232RQ / ISO1042 / TPS7A05-style
+    parts whose symbols omit NC pins: they fail until the footprint marks
+    the pads NC or an owner accepts each finding with a note. Checked
+    right after the name rules, before the geometric ones.
 
 The "median pad" is the median area of the largest pad of each number
 the symbol DOES claim (all numbers when it claims none), so one large
@@ -104,7 +105,6 @@ CLASSES = (EXPOSED_PAD, NC_PIN, SHELL, MECHANICAL, ELECTRICAL)
 # Thresholds, as ratios of the median pad (area) or of the body (span).
 EP_AREA_FACTOR = 4.0
 EP_BEYOND_PIN_AREA_FACTOR = 2.0
-SIGNAL_AREA_FACTOR = 2.0
 SHELL_AREA_FACTOR = 2.0
 CENTRAL_FRACTION = 0.25  # |offset| ≤ 25 % of the span = the middle half
 EDGE_FRACTION = 0.15  # within 15 % of the span from the courtyard edge
@@ -114,7 +114,11 @@ _EPS = 1e-6
 # geometry is not used at all, or E3 is skipped.
 MAX_GEOMETRY_PADS = 5_000
 MAX_EXPOSED_PADS = 16
-_NC_FUNCTION = re.compile(r"N\.?C\.?|DNC|~?", re.IGNORECASE)
+# `pinfunction` values that say "not connected": NC, N.C., NC1, NC_3,
+# NC-12, DNC. Deliberately NOT a bare `NC` prefix: `nCS` / `nCE` (an
+# active-low chip select) are real signals.
+_NC_FUNCTION = re.compile(r"N\.?C\.?(?:[_\- ]?\d+)?|DNC", re.IGNORECASE)
+_NO_CONNECT_TYPE = "no_connect"
 
 _UNNAMED = "~"
 _MECHANICAL_NAME = re.compile(r"(?:MP|MH)\d*|M", re.IGNORECASE)
@@ -180,6 +184,15 @@ class Pad:
     number: str
     box: Box  # axis-aligned bounds of the (possibly rotated) pad
     function: str | None = None  # `(pinfunction …)`, when the file has one
+    pintype: str | None = None  # `(pintype …)`, when the file has one
+
+    @property
+    def marked_nc(self) -> bool:
+        if self.pintype is not None and _NO_CONNECT_TYPE in self.pintype.lower():
+            return True
+        return self.function is not None and bool(
+            _NC_FUNCTION.fullmatch(self.function.strip())
+        )
 
 
 @dataclass(frozen=True)
@@ -259,6 +272,11 @@ def _graphic_points(node: list) -> list[tuple[float, float]]:
     return points
 
 
+def _text_of(node: list, name: str) -> str | None:
+    found = _child(node, name)
+    return str(found[1]) if found is not None and len(found) > 1 else None
+
+
 def _layer_of(node: list) -> str:
     layer = _child(node, "layer")
     return str(layer[1]) if layer is not None and len(layer) > 1 else ""
@@ -280,9 +298,8 @@ def footprint_geometry(node: list) -> Footprint:
             if box is not None and _is_electrical(child, number):
                 if len(pads) >= MAX_GEOMETRY_PADS:
                     return Footprint((), None, "", oversized=True)
-                function = _child(child, "pinfunction")
                 pads.append(
-                    Pad(number, box, str(function[1]) if function and len(function) > 1 else None)
+                    Pad(number, box, _text_of(child, "pinfunction"), _text_of(child, "pintype"))
                 )
         elif head in _GRAPHICS:
             layer = _layer_of(child)
@@ -319,7 +336,6 @@ class _Context:
     eps: tuple[Box, ...]  # E1-shaped pads, any number
     matched_box: Box | None
     max_pin: int | None
-    signal_count: int
     connector: bool
 
 
@@ -389,7 +405,6 @@ def _context(
         eps=(),
         matched_box=Box.around([(p.box.cx, p.box.cy) for p in matched]),
         max_pin=max(numeric_pins) if numeric_pins else None,
-        signal_count=0,
         connector=connector or is_connector_text(footprint.text),
     )
     eps = tuple(
@@ -398,10 +413,7 @@ def _context(
     )
     if len(eps) > MAX_EXPOSED_PADS:  # no real package; skip E3
         eps = ()
-    signal = sum(
-        1 for n, p in main.items() if n.isdigit() and _ratio(ctx, p) <= SIGNAL_AREA_FACTOR
-    )
-    return replace(ctx, eps=eps, signal_count=signal)
+    return replace(ctx, eps=eps)
 
 
 def _outside_row(ctx: _Context, box: Box) -> bool:
@@ -454,17 +466,14 @@ def _exposed(ctx: _Context, number: str, pad: Pad) -> str | None:
     return None
 
 
-def _nc(ctx: _Context, number: str, pad: Pad) -> str | None:
-    if not number.isdigit() or ctx.max_pin is None:
-        return None
-    value = int(number)
-    if not (1 <= value <= ctx.max_pin and value <= ctx.signal_count):
-        return None
-    if _ratio(ctx, pad) > SIGNAL_AREA_FACTOR:
-        return None
-    if pad.function is not None and not _NC_FUNCTION.fullmatch(pad.function.strip()):
-        return None
-    return "signal-sized pad inside the symbol's pin numbering; likely an NC package pin"
+def _nc_numbers(footprint: Footprint | None) -> set[str]:
+    """Numbers whose every pad is marked not-connected (one pass)."""
+    if footprint is None:
+        return set()
+    marked: dict[str, bool] = {}
+    for pad in footprint.pads:
+        marked[pad.number] = marked.get(pad.number, True) and pad.marked_nc
+    return {n for n, ok in marked.items() if ok}
 
 
 def classify_pads(
@@ -479,6 +488,7 @@ def classify_pads(
     """
     out: dict[str, tuple[str, str]] = {}
     ctx = _context(footprint, pin_numbers, connector) if footprint is not None else None
+    nc_numbers = _nc_numbers(footprint)
     for number in unmatched:
         reason = _mechanical(number)
         if reason is not None:
@@ -486,6 +496,9 @@ def classify_pads(
             continue
         if _SHELL_NAME.fullmatch(number):
             out[number] = (SHELL, "pad is named as a shield / shell")
+            continue
+        if number in nc_numbers:
+            out[number] = (NC_PIN, "footprint marks the pad not-connected")
             continue
         pad = ctx.main.get(number) if ctx is not None else None
         if ctx is None or pad is None or not (0 < pad.box.area < math.inf):
@@ -496,7 +509,7 @@ def classify_pads(
 
 
 def _classify_geometric(ctx: _Context, number: str, pad: Pad) -> tuple[str, str]:
-    for cls, rule in ((SHELL, _shell), (EXPOSED_PAD, _exposed), (NC_PIN, _nc)):
+    for cls, rule in ((SHELL, _shell), (EXPOSED_PAD, _exposed)):
         reason = rule(ctx, number, pad)
         if reason is not None:
             return cls, reason

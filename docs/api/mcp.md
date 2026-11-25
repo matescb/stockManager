@@ -826,7 +826,7 @@ on. `get_part_eda` returns the same object under `pin_pad_check`.
  "findings": {
    "classified": [
      {"kind": "pad_without_pin", "number": "5", "class": "nc_pin",
-      "reason": "signal-sized pad inside the symbol's pin numbering; likely an NC package pin"},
+      "reason": "footprint marks the pad not-connected"},
      {"kind": "pad_without_pin", "number": "33", "class": "exposed_pad",
       "reason": "pad is 41x the median pad and in the body's centre",
       "accepted": {"by": "…", "by_name": "Ann", "at": "2026-11-25T09:00:00+00:00",
@@ -869,12 +869,15 @@ answer is `electrical`):
   courtyard and clear of its outer 15 %; or numbered above the symbol's highest
   pin, ≥ 2× the median and placed the same way; or every pad of the number lies
   inside such a pad (thermal vias numbered on their own).
-- `nc_pin` — a numeric, signal-sized (≤ 2× median) pad whose number lies within
-  the symbol's own numbering (≤ its highest pin and ≤ the footprint's count of
-  signal pads), unless the pad's `pinfunction` names a signal: a gap such as
-  pad 4 of a SOT-23-5 whose symbol has 1, 2, 3, 5. By geometry alone this also
-  matches a symbol that forgot a real signal pin (an SOIC-8 without GND pin
-  4) — that is why it is a warning to look at, not a pass.
+- `nc_pin` — **fail-safe: only with positive evidence in the footprint.** Every
+  pad of the number has `pinfunction` `NC`, `N.C.`, `NC` plus a number (`NC1`,
+  `NC_3`) or `DNC` (any case; `nCS` is a signal, not NC), or a `pintype`
+  containing `no_connect`. Geometry is never evidence: a symbol that leaves out
+  an NC pin looks exactly like one that forgot GND. So an unmarked
+  signal-sized pad the symbol lacks is `electrical` and **fails** —
+  FT232RQ / ISO1042 / TPS7A05-style symbols that omit their NC pins fail until
+  the footprint marks those pads NC or an owner accepts each finding (with a
+  note, as for any electrical finding). That is intended.
 - `electrical` — everything else, and always every pin without a pad and every
   duplicate pin.
 

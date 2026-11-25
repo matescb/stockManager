@@ -22,7 +22,10 @@ the canonical record.
   finding now carries a `class` — `electrical`, `exposed_pad`, `nc_pin`,
   `shell`, `mechanical` — decided from footprint geometry and pad type first
   (`domain/eda/pin_pad_classify.py`), conservatively: when unsure it is
-  `electrical`. Only electrical findings fail; a part with only the others is
+  `electrical`. `nc_pin` is fail-safe: only pads the footprint marks NC
+  (`pinfunction` NC / DNC, `pintype` no_connect) — an NC pin the symbol omits
+  on an unmarked footprint (FT232RQ, ISO1042, TPS7A05) still fails until an
+  owner accepts it with a note. Only electrical findings fail; a part with only the others is
   the new verdict `pass_with_warnings`. `findings.classified` and
   `electrical_count` / `warnings_count` / `accepted_count` /
   `stale_acceptances` are added; the old finding lists keep their meaning.

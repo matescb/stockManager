@@ -6,6 +6,7 @@ is in `test_mcp_pin_pad.py`.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -335,12 +336,36 @@ def test_exposed_pad_and_its_separately_numbered_thermal_vias_are_exposed_pad():
     assert result.pads_without_pin == tuple(str(n) for n in range(17, 23))
 
 
-def test_ep_numbered_beyond_the_pins_and_nc_package_pins():
-    """FT232RQ: QFN-32 EP 33; symbol leaves out NC pins 5/12/13/23/25/29."""
+_FT232_NC = ("5", "12", "13", "23", "25", "29")
+
+
+def _mark_pads(footprint: str, numbers, marking: str) -> bytes:
+    """Add `marking` (a `(pinfunction …)` / `(pintype …)`) to those pads."""
+    for n in numbers:
+        footprint = re.sub(
+            rf'(\(pad "{n}" [^\n]*?\(layers [^)]*\))', rf"\1 {marking}", footprint
+        )
+    return footprint.encode()
+
+
+def test_unmarked_nc_package_pins_fail_but_the_ep_is_a_warning():
+    """FT232RQ: QFN-32 EP 33; symbol leaves out NC pins 5/12/13/23/25/29.
+    Fail-safe: geometry is no evidence of NC, so the unmarked gaps are
+    electrical and the part fails until marked or accepted."""
     result = _check("qfn32_usb_uart.kicad_sym", "qfn32_ep33.kicad_mod")
-    assert result.verdict == pin_pad.PASS_WITH_WARNINGS
-    expected = {n: "nc_pin" for n in ("5", "12", "13", "23", "25", "29")}
+    assert result.verdict == pin_pad.FAIL
+    expected = {n: "electrical" for n in _FT232_NC}
     assert _classes(result) == {**expected, "33": "exposed_pad"}
+
+
+def test_pads_the_footprint_marks_nc_are_nc_pin():
+    symbol = (FIXTURES / "qfn32_usb_uart.kicad_sym").read_bytes()
+    footprint = _mark_pads(
+        (FIXTURES / "qfn32_ep33.kicad_mod").read_text(), _FT232_NC, '(pinfunction "NC")'
+    )
+    result = pin_pad.check_bytes(symbol, footprint)
+    assert result.verdict == pin_pad.PASS_WITH_WARNINGS
+    assert _classes(result) == {**{n: "nc_pin" for n in _FT232_NC}, "33": "exposed_pad"}
 
 
 @pytest.mark.parametrize(
@@ -350,11 +375,17 @@ def test_ep_numbered_beyond_the_pins_and_nc_package_pins():
         ("soic16_isolator.kicad_sym", "soic16w.kicad_mod", ("4", "6", "7", "14")),  # ISO1042
     ],
 )
-def test_gap_in_the_symbols_numbering_is_nc_pin(symbol, footprint, numbers):
-    result = _check(symbol, footprint)
-    assert result.verdict == pin_pad.PASS_WITH_WARNINGS
-    assert _classes(result) == {n: "nc_pin" for n in numbers}
-    assert all("NC package pin" in f.reason for f in result.classified)
+def test_unmarked_gap_in_the_symbols_numbering_fails(symbol, footprint, numbers):
+    """Indistinguishable from a symbol that forgot GND: electrical."""
+    unmarked = _check(symbol, footprint)
+    assert unmarked.verdict == pin_pad.FAIL
+    assert _classes(unmarked) == {n: "electrical" for n in numbers}
+    marked = pin_pad.check_bytes(
+        (FIXTURES / symbol).read_bytes(),
+        _mark_pads((FIXTURES / footprint).read_text(), numbers, '(pintype "no_connect")'),
+    )
+    assert marked.verdict == pin_pad.PASS_WITH_WARNINGS
+    assert _classes(marked) == {n: "nc_pin" for n in numbers}
 
 
 def test_tilde_pads_are_mechanical():
@@ -548,15 +579,38 @@ def test_zero_size_or_non_finite_pads_are_electrical():
 
 
 @pytest.mark.parametrize(
-    ("function", "cls"), [("GND", "electrical"), ("NC", "nc_pin"), ("DNC", "nc_pin")]
+    ("marking", "cls"),
+    [
+        ('(pinfunction "GND")', "electrical"),
+        ('(pinfunction "NC")', "nc_pin"),
+        ('(pinfunction "n.c.")', "nc_pin"),
+        ('(pinfunction "NC_3")', "nc_pin"),
+        ('(pinfunction "DNC")', "nc_pin"),
+        ('(pinfunction "nCS")', "electrical"),
+        ('(pinfunction "NCLK")', "electrical"),
+        ('(pintype "no_connect")', "nc_pin"),
+        ('(pintype "passive+no_connect")', "nc_pin"),
+        ('(pintype "passive")', "electrical"),
+        ("", "electrical"),
+    ],
 )
-def test_pad_pinfunction_overrides_the_nc_guess(function, cls):
+def test_only_positive_nc_evidence_makes_nc_pin(marking, cls):
     symbol = (FIXTURES / "sot23_5_ldo.kicad_sym").read_bytes()
     footprint = (FIXTURES / "sot23_5.kicad_mod").read_text().replace(
         '(pad "4" smd roundrect (at 1.1 0.95) (size 1.06 0.65)',
-        f'(pad "4" smd roundrect (at 1.1 0.95) (size 1.06 0.65) (pinfunction "{function}")',
+        f'(pad "4" smd roundrect (at 1.1 0.95) (size 1.06 0.65) {marking}',
     )
     assert _classes(pin_pad.check_bytes(symbol, footprint.encode())) == {"4": cls}
+
+
+def test_a_number_is_nc_only_if_every_pad_of_it_is_marked():
+    symbol = (FIXTURES / "sot23_5_ldo.kicad_sym").read_bytes()
+    footprint = (FIXTURES / "sot23_5.kicad_mod").read_text().replace(
+        '(pad "4" smd roundrect (at 1.1 0.95) (size 1.06 0.65)',
+        '(pad "4" smd rect (at 1.1 1.5) (size 0.3 0.3) (layers "F.Cu"))'
+        ' (pad "4" smd roundrect (at 1.1 0.95) (size 1.06 0.65) (pinfunction "NC")',
+    )
+    assert _classes(pin_pad.check_bytes(symbol, footprint.encode())) == {"4": "electrical"}
 
 
 def test_signal_sized_pads_off_the_row_of_a_connector_stay_electrical():

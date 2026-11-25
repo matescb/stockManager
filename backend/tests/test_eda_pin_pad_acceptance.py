@@ -93,24 +93,31 @@ def _classified(check: dict) -> dict[str, dict]:
     return {f["number"]: f for f in check["findings"]["classified"]}
 
 
-async def test_accepting_warnings_moves_the_verdict_to_pass(authed_client, full_token, db):
+async def test_accepting_findings_moves_the_verdict_to_pass(authed_client, full_token, db):
+    """FT232RQ shape: EP 33 is a warning; the six NC pins the symbol omits
+    are unmarked in the footprint, so they are electrical (fail-safe) and
+    the owner accepts each with a note."""
     part = await _part(
         authed_client, full_token, "qfn32_usb_uart.kicad_sym", "qfn32_ep33.kicad_mod"
     )
     before = _get(authed_client, part)
-    assert before["verdict"] == "pass_with_warnings"
+    assert before["verdict"] == "fail"
     assert before["can_accept"] is True
-    assert (before["warnings_count"], before["electrical_count"]) == (7, 0)
+    assert (before["warnings_count"], before["electrical_count"]) == (1, 6)
 
     r = _accept(authed_client, part, "pad_without_pin", "33")
     assert r.status_code == 200, r.text
     after_one = r.json()["data"]
-    assert after_one["warnings_count"] == 6 and after_one["accepted_count"] == 1
+    assert after_one["warnings_count"] == 0 and after_one["accepted_count"] == 1
+    assert after_one["verdict"] == "fail"
     accepted = _classified(after_one)["33"]["accepted"]
     assert accepted["note"] is None and accepted["by_name"] and accepted["at"]
 
+    no_note = _accept(authed_client, part, "pad_without_pin", "5")
+    assert no_note.status_code == 422
     for number in ("5", "12", "13", "23", "25", "29"):
-        assert _accept(authed_client, part, "pad_without_pin", number).status_code == 200
+        r = _accept(authed_client, part, "pad_without_pin", number, note="NC per datasheet")
+        assert r.status_code == 200
     final = _get(authed_client, part)
     assert final["verdict"] == "pass"
     assert final["accepted_count"] == 7 and final["warnings_count"] == 0
@@ -243,7 +250,7 @@ async def test_lesser_roles_cannot_accept(authed_client, full_token, role):
 async def test_admin_session_can_accept(authed_client, full_token):
     part = await _part(authed_client, full_token, "sot23_5_ldo.kicad_sym", "sot23_5.kicad_mod")
     admin = _join_workspace(authed_client, "admin")
-    r = _accept(admin, part, "pad_without_pin", "4")
+    r = _accept(admin, part, "pad_without_pin", "4", note="NC on this package")
     assert r.status_code == 200, r.text
     assert r.json()["data"]["verdict"] == "pass"
 
