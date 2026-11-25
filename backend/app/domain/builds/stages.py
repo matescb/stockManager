@@ -36,12 +36,10 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.core.time import utcnow
-from app.domain._quantity import QUANTITY_ZERO
 from app.domain.builds.models import Build, BuildStage, BuildStageLine
 from app.domain.builds.schemas import BuildStageCreateIn, StageConsumeIn
 from app.domain.builds.service import (
     BuildError,
-    _candidate_part_ids,
     _required,
     apply_consume_lines,
     complete_build,
@@ -51,6 +49,7 @@ from app.domain.builds.service import (
     release_reservation_amounts,
     release_reservations,
     shortage_rows_out,
+    substitute_availability,
 )
 from app.domain.parts.models import Part
 from app.domain.projects.models import Project, ProjectEntry
@@ -200,11 +199,6 @@ def stage_shortage(
         if part is None:
             continue
         available = current_quantity(db, workspace_id=workspace_id, part_id=part.id)
-        sub_ids = _candidate_part_ids(db, part=part)
-        sub_avail = sum(
-            (current_quantity(db, workspace_id=workspace_id, part_id=sid) for sid in sub_ids),
-            QUANTITY_ZERO,
-        )
         out.append(
             {
                 "project_entry_id": str(entry.id),
@@ -214,9 +208,13 @@ def stage_shortage(
                 "portion_pct": float(portion_by_entry.get(entry_id, Decimal(0))),
                 "required": required,
                 "available": available,
-                "substitute_ids": [str(s) for s in sub_ids],
-                "substitute_available": sub_avail,
-                "short_by": max(QUANTITY_ZERO, required - (available + sub_avail)),
+                **substitute_availability(
+                    db,
+                    workspace_id=workspace_id,
+                    part=part,
+                    required=required,
+                    available=available,
+                ),
             }
         )
     return shortage_rows_out(out)

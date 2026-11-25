@@ -154,6 +154,23 @@ def _setup_part_substitute_delete(client, _db) -> Operation:
     }
 
 
+def _setup_part_substitute_evaluate(client, _db) -> Operation:
+    part_id = _create_part(client, "SM-012 substitute evaluate primary")
+    substitute_id = _create_part(client, "SM-012 substitute evaluate alternate")
+    r = client.post(
+        f"/api/parts/{part_id}/substitutes",
+        json={"substitute_part_id": substitute_id},
+    )
+    assert r.status_code == 200, r.text
+    return {
+        "method": "patch",
+        "path": f"/api/parts/{part_id}/substitutes/{substitute_id}",
+        "json": {"evaluation": "evaluated-ok", "evidence": "credential-aud-124"},
+        "expected_status": 200,
+        "target_ids": [part_id, substitute_id],
+    }
+
+
 def _setup_part_member_add(client, _db) -> Operation:
     meta_id = _create_part(client, "AUD-124 meta add", "meta")
     member_id = _create_part(client, "AUD-124 member add")
@@ -658,6 +675,13 @@ def test_each_mutator_writes_audit_row(
             "parts_relations.del_substitute",
             _setup_part_substitute_delete,
             "part.substitute_removed",
+            "part_substitute",
+            _target_ids,
+        ),
+        (
+            "parts_relations.patch_substitute",
+            _setup_part_substitute_evaluate,
+            "part.substitute_evaluated",
             "part_substitute",
             _target_ids,
         ),

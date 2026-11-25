@@ -24,6 +24,7 @@ def load_tools() -> list[ToolSpec]:
         read,
         sourcing,
         spice,
+        substitutes,
         write,
         write_inventory,
         write_parts,

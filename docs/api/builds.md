@@ -89,10 +89,14 @@ Fetch the build plus a fresh shortage analysis.
 ```json
 { "project_entry_id": "…", "part_id": "…", "part_name": "…",
   "attrition_pct": 2.5, "required": 103, "available": 100,
-  "substitute_ids": ["…"], "substitute_available": 0, "short_by": 3 }
+  "substitute_ids": ["…"], "substitute_available": 0, "short_by": 3,
+  "substitute_available_by_evaluation": {"evaluated_ok": 0, "not_evaluated": 0, "rejected": 0},
+  "short_by_evaluated_only": 3 }
 ```
 
 `required` is the effective, attrition-adjusted, **ceil-rounded integer** demand (part-intrinsic attrition × per-BOM-line `attrition_pct`, then rounded up — see [`builds-and-bom.md`](../domain/builds-and-bom.md#required-quantity-formula)). `attrition_pct` is the line's waste rate, surfaced so the UI can show what inflated `required`.
+
+`substitute_available` and `short_by` count every registered substitute whatever its evaluation (unchanged by SM-012). `substitute_available_by_evaluation` splits that total by the link's evaluation state, and `short_by_evaluated_only` is the shortfall counting only evaluated-ok substitutes (meta-part members count as evaluated-ok) — see [mcp.md](./mcp.md#substitute-evaluation).
 
 `available`, `substitute_available` and `short_by` are exact `Decimal` ledger sums inside the service; the route serialises them through `builds/service.py::shortage_rows_out`, which emits JSON integers while every quantity is whole. Same for the per-stage rows below.
 

@@ -286,6 +286,9 @@ class ErrorCodes:
     # A create violated one or more `when=create` rules of the workspace
     # part policy. The 422 carries the structured `missing` list.
     PART_POLICY_VIOLATION = "part.policy_violation"
+    # Substitute links (SM-012, domain/parts/services/substitutes.py).
+    PART_SUBSTITUTE_NOT_FOUND = "part.substitute_not_found"
+    PART_SUBSTITUTE_INVALID = "part.substitute_invalid"
     # `PUT /api/part-policy` refused a rule the vocabulary allows but the
     # workspace cannot honour (asset field at create, foreign category).
     PART_POLICY_INVALID_RULE = "part_policy.invalid_rule"

@@ -78,10 +78,15 @@ def _required(entry: ProjectEntry, part: Part | None, build_qty: int) -> int:
     return int(target.to_integral_value(rounding=ROUND_CEILING))
 
 
-def _candidate_part_ids(db: Session, *, part: Part) -> list[UUID]:
-    """Parts that may be used in place of `part` for build consumption.
-    For a meta-part: its registered members. For a regular part:
-    registered substitutes (one-way main→sub or bidirectional)."""
+def _candidate_parts(db: Session, *, part: Part) -> list[tuple[UUID, str]]:
+    """`(part_id, evaluation)` for every part that may stand in for `part`.
+
+    For a meta-part: its registered members, reported as `evaluated-ok`
+    — membership is the owner's own statement that the members ARE the
+    meta-part, not a candidate awaiting evaluation (SM-012). For a regular
+    part: registered substitutes (one-way main→sub or bidirectional) with
+    the link's evaluation state.
+    """
     if part.part_type == "meta":
         rows = list(
             db.execute(
@@ -90,7 +95,7 @@ def _candidate_part_ids(db: Session, *, part: Part) -> list[UUID]:
                 .where(PartMetaMember.meta_part_id == part.id)
             ).scalars()
         )
-        return [r for r in rows if r != part.id]
+        return [(r, "evaluated-ok") for r in rows if r != part.id]
 
     sub_rows = list(
         db.execute(
@@ -105,12 +110,65 @@ def _candidate_part_ids(db: Session, *, part: Part) -> list[UUID]:
             )
         ).scalars()
     )
-    out: list[UUID] = []
+    out: list[tuple[UUID, str]] = []
     for s in sub_rows:
         sub_id = s.substitute_part_id if s.part_id == part.id else s.part_id
         if sub_id != part.id:
-            out.append(sub_id)
+            out.append((sub_id, s.evaluation or "not-evaluated"))
     return out
+
+
+def _candidate_part_ids(db: Session, *, part: Part) -> list[UUID]:
+    """Parts that may be used in place of `part` for build consumption.
+    For a meta-part: its registered members. For a regular part:
+    registered substitutes (one-way main→sub or bidirectional), whatever
+    their evaluation state."""
+    return [pid for pid, _ in _candidate_parts(db, part=part)]
+
+
+#: Keys of `substitute_available_by_evaluation`, one per
+#: `PartSubstitute.evaluation` value (hyphen → underscore).
+_EVALUATION_BUCKETS = {
+    "evaluated-ok": "evaluated_ok",
+    "not-evaluated": "not_evaluated",
+    "rejected": "rejected",
+}
+
+
+def substitute_availability(
+    db: Session, *, workspace_id: UUID, part: Part, required: int, available: Decimal
+) -> dict:
+    """The substitute half of a shortage row (SM-012).
+
+    `substitute_available` / `short_by` keep their pre-SM-012 meaning —
+    every registered substitute counts, whatever its evaluation — so no
+    number an existing consumer reads changes. Alongside them:
+
+    * `substitute_available_by_evaluation` — the same total split into
+      `evaluated_ok` / `not_evaluated` / `rejected` (the three sum to
+      `substitute_available`);
+    * `short_by_evaluated_only` — the shortfall counting the part itself
+      plus ONLY evaluated-ok substitutes (and meta members).
+    """
+    candidates = _candidate_parts(db, part=part)
+    buckets = {key: QUANTITY_ZERO for key in _EVALUATION_BUCKETS.values()}
+    for cand_id, evaluation in candidates:
+        key = _EVALUATION_BUCKETS.get(evaluation, "not_evaluated")
+        buckets[key] += current_quantity(db, workspace_id=workspace_id, part_id=cand_id)
+    # `start=QUANTITY_ZERO` so a part with no substitutes yields an exact
+    # Decimal zero rather than `sum()`'s int 0 — the rows are compared and
+    # subtracted downstream, and one int sneaking in is how a mixed-type
+    # comparison creeps back.
+    sub_avail = sum(buckets.values(), QUANTITY_ZERO)
+    return {
+        "substitute_ids": [str(pid) for pid, _ in candidates],
+        "substitute_available": sub_avail,
+        "substitute_available_by_evaluation": buckets,
+        "short_by": max(QUANTITY_ZERO, required - (available + sub_avail)),
+        "short_by_evaluated_only": max(
+            QUANTITY_ZERO, required - (available + buckets["evaluated_ok"])
+        ),
+    }
 
 
 def shortage_analysis(
@@ -150,16 +208,6 @@ def shortage_analysis(
         # own on-hand for completeness.
         available = current_quantity(db, workspace_id=workspace_id, part_id=part.id)
 
-        sub_ids = _candidate_part_ids(db, part=part)
-        # `start=QUANTITY_ZERO` so a part with no substitutes yields an
-        # exact Decimal zero rather than `sum()`'s int 0 — the rows below
-        # are compared and subtracted downstream, and one int sneaking in
-        # is how a mixed-type comparison creeps back.
-        sub_avail = sum(
-            (current_quantity(db, workspace_id=workspace_id, part_id=sid) for sid in sub_ids),
-            QUANTITY_ZERO,
-        )
-
         out.append(
             {
                 "project_entry_id": str(e.id),
@@ -171,9 +219,13 @@ def shortage_analysis(
                 "attrition_pct": float(e.attrition_pct or 0),
                 "required": required,
                 "available": available,
-                "substitute_ids": [str(s) for s in sub_ids],
-                "substitute_available": sub_avail,
-                "short_by": max(QUANTITY_ZERO, required - (available + sub_avail)),
+                **substitute_availability(
+                    db,
+                    workspace_id=workspace_id,
+                    part=part,
+                    required=required,
+                    available=available,
+                ),
             }
         )
     return out
@@ -182,7 +234,15 @@ def shortage_analysis(
 #: Quantity-bearing keys of a `shortage_analysis` row. `required` is an
 #: int by construction (`_required` ceils); the rest are ledger sums and
 #: are therefore exact `Decimal`s.
-_SHORTAGE_QUANTITY_KEYS = ("required", "available", "substitute_available", "short_by")
+_SHORTAGE_QUANTITY_KEYS = (
+    "required",
+    "available",
+    "substitute_available",
+    "short_by",
+    "short_by_evaluated_only",
+)
+#: Quantity-valued dicts in a row (bucket → Decimal).
+_SHORTAGE_QUANTITY_DICT_KEYS = ("substitute_available_by_evaluation",)
 
 
 def shortage_rows_out(rows: list[dict]) -> list[dict]:
@@ -198,13 +258,15 @@ def shortage_rows_out(rows: list[dict]) -> list[dict]:
     Converting at the boundary rather than inside `shortage_analysis`
     keeps the internal arithmetic exact.
     """
-    return [
-        {
-            key: (quantity_out(value) if key in _SHORTAGE_QUANTITY_KEYS else value)
-            for key, value in row.items()
-        }
-        for row in rows
-    ]
+    return [{key: _quantity_value_out(key, value) for key, value in row.items()} for row in rows]
+
+
+def _quantity_value_out(key: str, value):
+    if key in _SHORTAGE_QUANTITY_KEYS:
+        return quantity_out(value)
+    if key in _SHORTAGE_QUANTITY_DICT_KEYS and isinstance(value, dict):
+        return {k: quantity_out(v) for k, v in value.items()}
+    return value
 
 
 def _consumable_entries(

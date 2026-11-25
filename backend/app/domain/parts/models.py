@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
@@ -351,11 +352,26 @@ class PartMetaMember(Base):
     )
 
 
+#: SM-012 vocabularies for a substitute link. `relation` is nullable
+#: ("not stated"); `evaluation` defaults to `not-evaluated`.
+SUBSTITUTE_RELATIONS = ("pin-compatible", "footprint-compatible", "functional")
+SUBSTITUTE_EVALUATIONS = ("not-evaluated", "evaluated-ok", "rejected")
+
+
 class PartSubstitute(Base):
     __tablename__ = "part_substitutes"
     __table_args__ = (
         UniqueConstraint("part_id", "substitute_part_id", name="uq_part_sub"),
         Index("ix_part_substitutes_ws_part", "workspace_id", "part_id"),
+        CheckConstraint(
+            "relation IS NULL OR relation IN "
+            "('pin-compatible', 'footprint-compatible', 'functional')",
+            name="ck_part_substitutes_relation",
+        ),
+        CheckConstraint(
+            "evaluation IN ('not-evaluated', 'evaluated-ok', 'rejected')",
+            name="ck_part_substitutes_evaluation",
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -378,6 +394,22 @@ class PartSubstitute(Base):
         index=True,
     )
     direction = Column(String(20), nullable=False, default="bidirectional")
+    # SM-012 (migration 0089). `evaluated_by` / `evaluated_at` stamp the
+    # last change to relation, evaluation or evidence.
+    relation = Column(String(30), nullable=True)
+    evaluation = Column(
+        String(20),
+        nullable=False,
+        default="not-evaluated",
+        server_default="not-evaluated",
+    )
+    evidence = Column(Text, nullable=True)
+    evaluated_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL", name="fk_part_substitutes_evaluated_by"),
+        nullable=True,
+    )
+    evaluated_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class BulkImportIdempotency(Base):

@@ -117,6 +117,9 @@ available         = current_quantity(part_id)             # part itself
 substitute_ids    = _candidate_part_ids(part)
 substitute_avail  = sum(current_quantity for each sub)
 short_by          = max(0, required - (available + substitute_avail))
+# SM-012, alongside (existing keys unchanged):
+substitute_available_by_evaluation = substitute_avail split by link evaluation
+short_by_evaluated_only = max(0, required - (available + evaluated_ok_avail))
 ```
 
 Substitute availability is summed across registered substitutes/members but is *informational* — the consume step still requires per-line opt-in to use a substitute.

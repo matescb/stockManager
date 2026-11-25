@@ -26,6 +26,7 @@ this way. Don't restate either here.
 | `tools/write.py` | The 4 KiCad-library write tools |
 | `tools/write_inventory.py` | The 4 inventory write tools (stock, categories) |
 | `tools/write_parts.py` | The 3 part-authoring write tools (create, category, specs) |
+| `tools/substitutes.py` | `list_substitutes` and `set_substitute_evaluation` — substitute links' relation and evaluation (SM-012); rules in `domain/parts/services/substitutes.py` |
 | `tools/_spec_fields.py` | The spec-batch rules behind `set_part_specs`: caps, key validation, and who owns a `custom_fields` row |
 
 ## Public surface

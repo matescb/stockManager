@@ -11,7 +11,13 @@ from app.core.errors import ErrorCodes, raise_http
 from app.core.responses import ok
 from app.domain.audit.service import log as _audit_log
 from app.domain.parts.models import PartMetaMember, PartSubstitute
-from app.domain.parts.schemas import MetaMemberIn, ReplaceInProjectsIn, SubstituteIn
+from app.domain.parts.schemas import (
+    MetaMemberIn,
+    ReplaceInProjectsIn,
+    SubstituteIn,
+    SubstitutePatch,
+)
+from app.domain.parts.services import substitutes as _subs
 from app.domain.projects.replace_part import replace_part_in_projects
 
 router = APIRouter()
@@ -34,9 +40,24 @@ def add_substitute(
         part_id=p.id,
         substitute_part_id=sub.id,
         direction=payload.direction,
+        evaluation="not-evaluated",
+    )
+    # SM-012: optional evaluation fields at create, through the one writer
+    # so validation and the by/at stamp match PATCH and MCP.
+    changed = _subs.set_evaluation(
+        row,
+        user_id=user.id,
+        **{
+            field: getattr(payload, field)
+            for field in _subs.EVALUATION_FIELDS
+            if getattr(payload, field) is not None
+        },
     )
     db.add(row)
     db.flush()
+    comment = f"direction={payload.direction}"
+    if changed:
+        comment += ";" + _subs.audit_comment(row, changed)
     _audit_log(
         db,
         ws=ws,
@@ -44,7 +65,7 @@ def add_substitute(
         action="part.substitute_added",
         target_type="part_substitute",
         target_ids=[p.id, sub.id],
-        comment=f"direction={payload.direction}",
+        comment=comment,
         request_id=getattr(request.state, "request_id", None),
     )
     return ok(None)
@@ -53,10 +74,48 @@ def add_substitute(
 @router.get("/{part_id}/substitutes")
 def list_substitutes(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
     p = _get_part(db, ws.id, part_id, include_archived=True)
-    rows = db.query(PartSubstitute).filter_by(workspace_id=ws.id, part_id=p.id).all()
-    return ok(
-        [{"part_id": str(r.substitute_part_id), "direction": r.direction} for r in rows]
+    links = _subs.links_for_part(db, workspace_id=ws.id, part_id=p.id, include_reverse=False)
+    return ok([_subs.link_payload(row, other_part_id=other) for row, other in links])
+
+
+@router.patch("/{part_id}/substitutes/{substitute_id}")
+def patch_substitute(
+    request: Request,
+    part_id: UUID,
+    substitute_id: UUID,
+    payload: SubstitutePatch,
+    db: DbSession,
+    ws: CurrentWorkspace,
+    user: CurrentUser,
+):
+    """Set relation / evaluation / evidence on one link (SM-012).
+
+    Addresses the link as listed under `part_id` (the stored direction);
+    a foreign or absent link is `part.substitute_not_found`. Only fields
+    present in the body are applied. Returns the updated link.
+    """
+    p = _get_part(db, ws.id, part_id, include_archived=True)
+    row = _subs.find_link(
+        db, workspace_id=ws.id, part_id=p.id, substitute_part_id=substitute_id
     )
+    changed = _subs.set_evaluation(
+        row,
+        user_id=user.id,
+        **{field: getattr(payload, field) for field in payload.model_fields_set},
+    )
+    if changed:
+        db.flush()
+        _audit_log(
+            db,
+            ws=ws,
+            user=user,
+            action="part.substitute_evaluated",
+            target_type="part_substitute",
+            target_ids=[p.id, substitute_id],
+            comment=_subs.audit_comment(row, changed),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    return ok(_subs.link_payload(row, other_part_id=substitute_id))
 
 
 @router.delete("/{part_id}/substitutes/{substitute_id}")

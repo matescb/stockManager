@@ -56,6 +56,14 @@ export type BuildShortageRow = {
   substitute_ids: string[];
   substitute_available: number;
   short_by: number;
+  // SM-012: `substitute_available` split by the link's evaluation state,
+  // and the shortfall counting only evaluated-ok substitutes.
+  substitute_available_by_evaluation?: {
+    evaluated_ok: number;
+    not_evaluated: number;
+    rejected: number;
+  };
+  short_by_evaluated_only?: number;
 };
 
 // Multi-stage builds (Track B2). A build with no stages is a single-pass

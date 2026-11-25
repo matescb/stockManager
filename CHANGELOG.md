@@ -23,6 +23,18 @@ the canonical record.
   read every line as lifecycle unknown. Additive and read-only: no
   migration, no writes; the frontend `PartSchema` accepts both as
   optional.
+- **Substitute evaluation state (SM-012).** Migration 0089 adds `relation`
+  (pin-compatible | footprint-compatible | functional), `evaluation`
+  (not-evaluated | evaluated-ok | rejected, server default `not-evaluated`
+  so existing links read not-evaluated), `evidence`, `evaluated_by` and
+  `evaluated_at` to `part_substitutes`, with CHECK constraints. REST create
+  accepts the fields and `PATCH /api/parts/{id}/substitutes/{sub}` edits
+  them; MCP gains `list_substitutes` and `set_substitute_evaluation`
+  (member tokens). Shortage rows (MCP `bom_shortages`, builds, reports) keep
+  `short_by` / `substitute_available` unchanged and add
+  `substitute_available_by_evaluation` and `short_by_evaluated_only`;
+  `bom_shortages` adds `covered_by_unevaluated_substitutes`. The part's
+  Substitutes tab shows and edits relation, evaluation and evidence.
 - **EDA asset metadata and review (SM-010).** Migration 0088 adds
   `eda_asset_metadata`, keyed by a hosted symbol / footprint / 3D model /
   SPICE file AND its sha256, so a new file version reads as `unreviewed`.

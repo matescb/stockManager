@@ -26,6 +26,7 @@ __all__ = [
     "PartPatch",
     "BulkDeleteIn",
     "SubstituteIn",
+    "SubstitutePatch",
     "MetaMemberIn",
     "ReplaceInProjectsIn",
     "ScanImportRow",
@@ -109,11 +110,36 @@ class BulkDeleteIn(BaseModel):
     part_ids: list[UUID] = Field(min_length=1, max_length=100)
 
 
+SubstituteRelation = Literal["pin-compatible", "footprint-compatible", "functional"]
+SubstituteEvaluation = Literal["not-evaluated", "evaluated-ok", "rejected"]
+# Mirrors `services/substitutes.py::EVIDENCE_MAX_LENGTH`.
+_EVIDENCE_MAX = 500
+
+
 class SubstituteIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     substitute_part_id: UUID
     direction: Literal["one_way", "bidirectional"] = "bidirectional"
+    # SM-012. All optional: a link created without them reads
+    # `relation: null`, `evaluation: not-evaluated`.
+    relation: SubstituteRelation | None = None
+    evaluation: SubstituteEvaluation | None = None
+    evidence: str | None = Field(default=None, max_length=_EVIDENCE_MAX)
+
+
+class SubstitutePatch(BaseModel):
+    """PATCH body for one substitute link's evaluation record (SM-012).
+
+    Merge semantics: an omitted field is untouched; `relation: null` or
+    `evidence: null` clears it. `evaluation` cannot be null.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    relation: SubstituteRelation | None = None
+    evaluation: SubstituteEvaluation | None = None
+    evidence: str | None = Field(default=None, max_length=_EVIDENCE_MAX)
 
 
 class MetaMemberIn(BaseModel):
