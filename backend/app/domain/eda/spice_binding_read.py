@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.domain.eda import spice_model
@@ -26,6 +26,18 @@ from app.domain.eda.spice_binding import (
 from app.domain.parts.models import Part
 
 _UNREADABLE = "model_unreadable"
+# ONE definition of "sim_pins is empty", used by the SQL that selects a
+# row and by the Python that classifies it, so no value can be selected
+# by one branch and handled by another (whitespace-only sim_pins did).
+_BLANK_CHARS = " \t\r\n"
+
+
+def sim_pins_blank(value: str | None) -> bool:
+    return not (value or "").strip(_BLANK_CHARS)
+
+
+def _sql_sim_pins_blank():
+    return func.coalesce(func.btrim(PartEda.sim_pins, _BLANK_CHARS), "") == ""
 
 
 def binding_issues(
@@ -46,7 +58,18 @@ def binding_issues(
         issues.append("model_changed")
     if binding.validated and (config is None or config.sim_pins != binding.sim_pins_derived):
         issues.append("sim_pins_edited")
+    if _polarity_open(binding.export_metadata):
+        issues.append("polarity_needs_person")
     return issues
+
+
+def _polarity_open(meta: dict | None) -> bool:
+    """The export header says a person must name the + terminal, and
+    nobody has (`set_spice_binding(positive_pin=…)`)."""
+    meta = meta or {}
+    if not (meta.get("polarity") or {}).get("needs_person"):
+        return False
+    return not (meta.get("polarity_confirmation") or {}).get("positive_pin")
 
 
 def _fileless_issues(binding: PartSpiceBinding, config: PartEda | None) -> list[str]:
@@ -63,17 +86,26 @@ def _iso(value) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def binding_payload(db: Session, *, ws: Any, config: PartEda | None, part_id: UUID) -> dict | None:
-    """The `spice_binding` object `get_part_eda` reports, or None."""
+_STATE_BY_KIND = {"subckt": "bound", "model": "bound"}
+
+
+def binding_payload(db: Session, *, ws: Any, config: PartEda | None, part_id: UUID) -> dict:
+    """The `spice_binding` object `get_part_eda` reports — ALWAYS a dict.
+
+    Never None, so the key is never dropped by `compact()`: a reader must
+    be able to tell "nothing bound" from "a server without SM-009".
+    `state` is one of `bound`, `native_primitive`, `none` (a stored
+    binding), `free_text` (hand-written `sim_pins`, no binding),
+    `unbound` (a SPICE file attached, nothing bound) or `no_model`.
+    """
     binding = binding_for_part(db, ws=ws, part_id=part_id)
-    if binding is None:
-        if config is not None and config.sim_pins and config.sim_pins.strip():
-            return {"source": "free-text", "validated": False, "sim_pins": config.sim_pins}
-        return None
     datafile = datafile_in_ws(db, ws=ws, datafile_id=config.spice_datafile_id if config else None)
+    if binding is None:
+        return _unbound_payload(config, datafile)
     issues = binding_issues(binding, config, datafile.sha256 if datafile else None)
     return {
         "source": "binding",
+        "state": _STATE_BY_KIND.get(binding.model_kind, binding.model_kind),
         "validated": not issues,
         "issues": issues,
         "subckt": binding.subckt,
@@ -99,6 +131,25 @@ def binding_payload(db: Session, *, ws: Any, config: PartEda | None, part_id: UU
     }
 
 
+def _unbound_payload(config: PartEda | None, datafile: EdaDatafile | None) -> dict:
+    if config is not None and not sim_pins_blank(config.sim_pins):
+        return {
+            "source": "free-text",
+            "state": "free_text",
+            "validated": False,
+            "sim_pins": config.sim_pins,
+        }
+    if datafile is not None:
+        return {
+            "source": "none",
+            "state": "unbound",
+            "validated": False,
+            "spice_datafile_id": str(datafile.id),
+            "spice_name": datafile.name,
+        }
+    return {"source": "none", "state": "no_model", "validated": False}
+
+
 def _export_fields(meta: dict | None) -> dict[str, Any]:
     """The `ngspice-export/1` header fields, flattened for the agent."""
     if not meta:
@@ -115,6 +166,10 @@ def _export_fields(meta: dict | None) -> dict[str, Any]:
         "channels": meta.get("channels"),
         "match": meta.get("match"),
         "corrections": meta.get("corrections"),
+        "polarity": meta.get("polarity"),
+        "positive_pin": (meta.get("polarity_confirmation") or {}).get("positive_pin"),
+        "export_reason": meta.get("export_reason"),
+        "native_reason": meta.get("native_reason"),
     }
 
 
@@ -178,10 +233,12 @@ def list_issues(
         .where(Part.archived_at.is_(None))
         .where(
             or_(
+                and_(PartSpiceBinding.id.is_(None), ~_sql_sim_pins_blank()),
+                # The commonest real case: a file attached, nothing bound.
                 and_(
                     PartSpiceBinding.id.is_(None),
-                    PartEda.sim_pins.is_not(None),
-                    PartEda.sim_pins != "",
+                    EdaDatafile.id.is_not(None),
+                    _sql_sim_pins_blank(),
                 ),
                 and_(
                     PartSpiceBinding.model_kind.in_(FILELESS_KINDS),
@@ -198,6 +255,14 @@ def list_issues(
                         ),
                         EdaDatafile.sha256.is_distinct_from(PartSpiceBinding.model_sha256),
                         PartEda.sim_pins.is_distinct_from(PartSpiceBinding.sim_pins_derived),
+                        and_(
+                            PartSpiceBinding.export_metadata[
+                                ("polarity", "needs_person")
+                            ].astext == "true",
+                            PartSpiceBinding.export_metadata[
+                                ("polarity_confirmation", "positive_pin")
+                            ].astext.is_(None),
+                        ),
                     ),
                 ),
             )
@@ -227,6 +292,8 @@ def _issue_item(part, config, binding, datafile, texts: dict[str, str | None]) -
         item["subckt"] = binding.subckt
         item["ports"] = list(binding.ports or [])
         return item
+    if sim_pins_blank(config.sim_pins):
+        return _unbound_item(item, datafile, texts)
     item["source"] = "free-text"
     if datafile is None:
         item["issues"] = ["free_text_unvalidated", "no_model_attached"]
@@ -236,4 +303,31 @@ def _issue_item(part, config, binding, datafile, texts: dict[str, str | None]) -
     issues, detail = _free_text_checks(config.sim_pins, texts[datafile.sha256])
     item["issues"] = issues
     item.update(detail)
+    return item
+
+
+def _unbound_item(
+    item: dict, datafile: EdaDatafile | None, texts: dict[str, str | None]
+) -> dict:
+    """A SPICE file attached and nothing bound: what the file offers.
+
+    `datafile` is None when `spice_datafile_id` resolves to no row in
+    this workspace; one such part must not fail the whole listing.
+    """
+    item["source"] = "none"
+    if datafile is None:
+        item["issues"] = ["no_model_attached"]
+        return item
+    item["issues"] = ["unbound"]
+    item["spice_name"] = datafile.name
+    if datafile.sha256 not in texts:
+        texts[datafile.sha256] = read_model_text(datafile)
+    text = texts[datafile.sha256]
+    if text is None:
+        item["issues"].append(_UNREADABLE)
+        return item
+    models = spice_model.parse_models(text)
+    item["models"] = [m.name for m in models[:20]]
+    if len(models) == 1:
+        item["subckt"], item["ports"] = models[0].name, list(models[0].ports)
     return item

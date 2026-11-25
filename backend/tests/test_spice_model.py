@@ -264,3 +264,23 @@ def test_unknown_export_schema_major_is_refused_legacy_accepted():
     spice_header.require_supported_schema(_read("tlv431_ng010.lib"))
     spice_header.require_supported_schema("* Export-Schema: ngspice-export/1.3\n")
     assert spice_header.parse_ng010_header(_read("tlv431_ng010.lib")).export_schema is None
+
+
+def test_polarity_line_and_verdict():
+    header = spice_header.parse_ng010_header(_read("cap_polarised_schema1.lib"))
+    assert header.polarity["model_symmetric"] is True
+    assert header.polarity["part_polarized"] is True
+    assert header.polarity["needs_person"] is True
+    assert header.metadata()["polarity"] == header.polarity
+    diode = spice_header.parse_polarity(
+        "A=anode K=cathode model_symmetric=False basis=SPICE diode terminal order"
+    )
+    assert diode["ports"] == {"A": "anode", "K": "cathode"}
+    assert diode["needs_person"] is False
+    plain = spice_header.parse_polarity(
+        "- model_symmetric=True basis=model body is linear R/L/C only: no polarity"
+    )
+    assert plain["needs_person"] is False
+    unknown = spice_header.parse_polarity("- model_symmetric=None basis=not established")
+    assert unknown["needs_person"] is True
+    assert spice_header.parse_ng010_header(_read("ldo13_schema1.lib")).polarity is None

@@ -49,6 +49,9 @@ def set_spice_binding(
     source: str | None = None,
     fallback_token: str | None = None,
     native: dict[str, Any] | None = None,
+    positive_pin: str | None = None,
+    export_reason: str | None = None,
+    native_reason: str | None = None,
 ) -> dict[str, Any]:
     """Record how a part simulates; map symbol pins onto model ports, checked.
 
@@ -77,7 +80,8 @@ def set_spice_binding(
             "+" "-"; D "A" "K".
         model_kind: "file", "native_primitive" or "none".
         subckt: Which `.subckt` / `.model` in the file. Required when the
-            file defines more than one.
+            file defines more than one. For none: the library model that
+            exists but does not load.
         symbol_pins: The symbol's pin numbers. Needed only when the
             symbol is not hosted in this workspace (an external
             `LibNick:Entry` or none); a hosted symbol's pins are read
@@ -98,7 +102,19 @@ def set_spice_binding(
             {letter, parameters {value, unit, source} | null,
             parameters_reason, loses_behaviour, loses_behaviour_reason}.
             `letter` stands in for device_type, and an R/C/L value for
-            params ("c=1e-10") when those are omitted.
+            params ("c=1e-10") when those are omitted. Also accepted (and
+            only stored) for none, where the manifest gives a native
+            letter without a held value.
+        positive_pin: file only: the symbol pin that is the PART's +
+            terminal (anode / positive). Needed when the export header's
+            Polarity line says the + terminal is unknown or the part is
+            polarised on a symmetric model; until then the binding reports
+            issue `polarity_needs_person` and a warning says so.
+        export_reason: none only: why a library model exists but has no
+            loadable export (manifest `export_reason`); name the model in
+            `subckt`.
+        native_reason: none only: why no native element was given a value
+            (manifest `native_reason`).
         source: Where the record comes from (e.g. a model library
             manifest); for a file, an NG-010 header takes precedence.
 
@@ -137,6 +153,9 @@ def set_spice_binding(
         source=source,
         fallback_token=fallback_token,
         native=native,
+        positive_pin=positive_pin,
+        export_reason=export_reason,
+        native_reason=native_reason,
     )
     binding = result.binding
     audit(

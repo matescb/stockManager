@@ -9,7 +9,8 @@ Two shapes, both read here:
   lines kept, plus `Export-Schema:`, `Kind:`, `Build-Token:`,
   `Valid-For-Basis:`, one `Port:` line per port (function, whether it is
   on the LTspice symbol, whether it is internally unconnected, where the
-  function came from), `Channels:` and `Match:`.
+  function came from), `Channels:`, `Match:` and — for two-terminal
+  models, since ngSPICE 98edfea — `Polarity:`.
 
 The schema says a reader must refuse a schema it does not know, so a
 header naming another MAJOR version is refused
@@ -75,6 +76,10 @@ class Ng010Header:
     port_table: tuple[PortInfo, ...] = ()
     channels: dict[str, int | None] | None = None  # {package, model}
     match: dict[str, str] = field(default_factory=dict)
+    # {ports: {port: anode|cathode|positive|negative} | None,
+    #  model_symmetric: True | False | None, basis, part_polarized,
+    #  needs_person}; None when the header has no Polarity line.
+    polarity: dict[str, Any] | None = None
 
     @property
     def internally_unconnected(self) -> list[str]:
@@ -102,6 +107,7 @@ class Ng010Header:
             "channels": self.channels,
             "match": self.match or None,
             "corrections": list(self.corrections) or None,
+            "polarity": self.polarity,
         }
 
 
@@ -243,6 +249,49 @@ def _schema1_line(line: str, values: dict[str, Any]) -> None:
         }
     elif key == "Match":
         values["match"] = _match(value)
+    elif key == "Polarity":
+        values["polarity"] = parse_polarity(value)
+
+
+_SYMMETRIC = {"True": True, "False": False, "None": None}
+# The schema has no structured "the PART is polarised" field yet; ngSPICE
+# states it in the basis prose. Matched loosely, both spellings.
+_PART_POLARISED = re.compile(r"\bpart is polari[sz]ed\b", re.IGNORECASE)
+
+
+def polarity_needs_person(model_symmetric: bool | None, part_polarized: bool) -> bool:
+    """A person must name the + terminal: unknown, or polarised part on a
+    symmetric model (the model cannot say which way round it goes)."""
+    return model_symmetric is None or (model_symmetric is True and part_polarized)
+
+
+def parse_polarity(value: str) -> dict[str, Any]:
+    """`A=anode K=cathode model_symmetric=False basis=…` → a dict.
+
+    Also the manifest's `polarity` object reads the same way through
+    `polarity_from_manifest`, so both agree on `needs_person`.
+    """
+    head, _, basis = value.partition(" basis=")
+    tokens = head.split()
+    ports = {}
+    symmetric: bool | None = None
+    for tok in tokens:
+        key, sep, val = tok.partition("=")
+        if not sep:
+            continue
+        if key == "model_symmetric":
+            symmetric = _SYMMETRIC.get(val)
+        else:
+            ports[key] = val
+    basis = basis.strip() or None
+    polarised = bool(basis and _PART_POLARISED.search(basis))
+    return {
+        "ports": ports or None,
+        "model_symmetric": symmetric,
+        "basis": basis,
+        "part_polarized": polarised,
+        "needs_person": polarity_needs_person(symmetric, polarised),
+    }
 
 
 def parse_ng010_header(text: str) -> Ng010Header | None:
@@ -282,6 +331,7 @@ def parse_ng010_header(text: str) -> Ng010Header | None:
         port_table=tuple(values["ports"]),
         channels=values.get("channels"),
         match=values.get("match") or {},
+        polarity=values.get("polarity"),
     )
 
 

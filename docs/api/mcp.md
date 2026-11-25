@@ -617,6 +617,12 @@ silently wrong (SM-009). The emitted field names `Sim.Device`, `Sim.Pins`,
      `fallback_token` (`vendor_model_wanted`, `native`, `attended_ltspice`,
      `external_model:<name>`; anything else is
      `eda.spice_fallback_token_unknown`) plus `fallback` (the detail).
+   - A library model that exists but has **no loadable export** (the
+     manifest's `export_reason`, "does not load on any build: NG-012 …") is
+     `model_kind="none"` with `subckt` naming the model, `export_reason`, and
+     `fallback_token="attended_ltspice"`. A part the manifest gives a native
+     letter but no held value is `none` with `fallback_token="native"`,
+     `native` (stored only) and `native_reason`.
    - Both file-less kinds take an optional `source` (e.g. the ngSPICE
      inventory manifest), refuse a part with a SPICE file attached
      (`eda.spice_kind_conflict`) and never write `part_eda` — the HTTP
@@ -626,15 +632,22 @@ silently wrong (SM-009). The emitted field names `Sim.Device`, `Sim.Pins`,
    issues, subckt, model_kind, device_type, ports, pin_map, sim_pins,
    model_sha256, model_source, build_requirement, grade, header_pins, …}`, or
    `{source: "free-text", validated: false, sim_pins}` for a hand-written
-   value with no binding. `validated` is computed at read time — a different
+   value with no binding. The key is **always present**, with a `state`:
+   `bound`, `native_primitive` or `none` for a stored binding; `free_text`;
+   `unbound` — `{source: "none", state: "unbound", validated: false,
+   spice_datafile_id, spice_name}`, a SPICE file attached and nothing bound;
+   or `no_model` — `{source: "none", state: "no_model", validated: false}`.
+   A missing key means a server without SM-009. `validated` is computed at read time — a different
    file, different bytes or an edited `sim_pins` make it false, whichever
    path made the change. `issues` says why: `not_confirmed`,
    `awaiting_reconfirmation`, `model_changed`, `model_detached`,
-   `sim_pins_edited`; for the file-less kinds `no_model` (always, for
+   `sim_pins_edited`, `polarity_needs_person`; for the file-less kinds `no_model` (always, for
    `none`) and `model_file_attached`.
 4. `list_spice_binding_issues(cursor?, page_size≤100)` lists every part
-   that is not validated, with, for free text, what comparing it with the
-   attached file found (`port_count_mismatch`, `port_unknown`,
+   that is not validated — including a part with a SPICE file attached and
+   nothing bound (`source: "none"`, issue `unbound`, with the file's
+   `spice_name`, `models` and, for a one-model file, `subckt` and `ports`) —
+   with, for free text, what comparing it with the attached file found (`port_count_mismatch`, `port_unknown`,
    `sim_pins_unparseable`, `model_ambiguous`, `no_model_in_file`,
    `model_unreadable`, `no_model_attached`). File-less records are listed
    only when a file has since been attached. It reads only.
@@ -651,8 +664,15 @@ LTspice symbol, whether it is internally unconnected), `Channels:` and
 `unconnected_ports` defaults to the ports the header marks internally
 unconnected (pass `[]` to override; a warning says so); `pin_map` may name a
 port by its function (`"OUT"` for port `11`) when that function names exactly
-one port; and a model covering fewer channels than the package warns
-`partial_channels`. Any other `Export-Schema` major version is refused —
+one port; a model covering fewer channels than the package warns
+`partial_channels`; and when the header's `Polarity:` line says a person must
+name the + terminal — the part is polarised but the model is symmetric R/L/C,
+or polarity is not established — the binding carries issue
+`polarity_needs_person` (so `validated: false`, and
+`list_spice_binding_issues` lists it) until `positive_pin` names the symbol
+pin that is the part's + terminal. `spice_binding` reports `polarity`
+{`ports`, `model_symmetric`, `basis`, `part_polarized`, `needs_person`} and
+`positive_pin`. Any other `Export-Schema` major version is refused —
 at upload, before anything is stored, and at binding — with
 `eda.spice_export_schema_unsupported`.
 
@@ -897,7 +917,7 @@ not repeated per row.
 | `move_stock` | `part_id`, `qty`, `from_location_id`, `to_location_id` | — | `resource.not_found` for either end; `stock.operation_error` for a non-positive `qty` or too little stock at the source; `stock.constraint_violation` on the destination |
 | `set_part_eda` | `part_id` | the other eleven | `eda_symbol.not_found`, `eda_footprint.not_found`, `eda_datafile.not_found`; `eda.ref_conflict` when both `<slot>_id` and `<slot>_ref_external` are set; `eda.archived` for a retired entry |
 | `upload_eda_asset` | `kind`, `filename`, `content_base64` | `part_id`, `category_slug` | `eda.spice_export_schema_unsupported` (a SPICE file whose ngSPICE export header names an unknown schema), `eda.unsupported_kind`, `eda.invalid_file`, `eda.empty_file`, `eda.file_too_large`, `eda.multiple_symbols`, `eda.legacy_format` |
-| `set_spice_binding` | `part_id_or_mpn` | `pin_map` (required for `file`), `model_kind`, `subckt`, `symbol_pins`, `unconnected_ports`, `device_type`, `params`, `fallback`, `fallback_token`, `native`, `source` | `part.not_found`; `eda.spice_model_missing`; `eda.file_not_found`; `eda.spice_no_model`; `eda.spice_subckt_ambiguous` / `eda.spice_subckt_unknown` (both list `available`); `eda.spice_model_not_checkable`; `eda.spice_symbol_pins_unknown`; `eda.spice_symbol_pins_conflict`; `eda.spice_pin_unknown`; `eda.spice_pin_unmapped`; `eda.spice_port_unknown`; `eda.spice_port_duplicate`; `eda.spice_port_count_mismatch`; `eda.spice_sim_pins_too_long`; `eda.spice_kind_conflict`; `eda.spice_not_applicable`; `eda.spice_field_too_long`; `eda.spice_export_schema_unsupported`; `eda.spice_fallback_token_unknown`; `eda.spice_native_invalid` |
+| `set_spice_binding` | `part_id_or_mpn` | `pin_map` (required for `file`), `model_kind`, `subckt`, `symbol_pins`, `unconnected_ports`, `device_type`, `params`, `fallback`, `fallback_token`, `native`, `positive_pin`, `export_reason`, `native_reason`, `source` | `part.not_found`; `eda.spice_model_missing`; `eda.file_not_found`; `eda.spice_no_model`; `eda.spice_subckt_ambiguous` / `eda.spice_subckt_unknown` (both list `available`); `eda.spice_model_not_checkable`; `eda.spice_symbol_pins_unknown`; `eda.spice_symbol_pins_conflict`; `eda.spice_pin_unknown`; `eda.spice_pin_unmapped`; `eda.spice_port_unknown`; `eda.spice_port_duplicate`; `eda.spice_port_count_mismatch`; `eda.spice_sim_pins_too_long`; `eda.spice_kind_conflict`; `eda.spice_not_applicable`; `eda.spice_field_too_long`; `eda.spice_export_schema_unsupported`; `eda.spice_fallback_token_unknown`; `eda.spice_native_invalid` |
 | `set_asset_metadata` | `part_id_or_mpn`, `kind` | `origin`, `model_kind`, `simulators`, `valid_for`, `not_valid_for`, `note` | `part.not_found`; `eda.asset_not_attached` (slot empty or external); `eda.asset_metadata_invalid`; `eda.review_requires_owner` for `review_state` / `review_against` |
 | `import_vendor_zip` | `part_id`, `content_base64` | `overwrite` | `eda.invalid_archive`, `eda.archive_too_large`, `eda.no_entries` |
 | `fetch_lcsc` | `part_id`, `lcsc_id` | `overwrite` | `eda.lcsc_not_found`, `eda.lcsc_unavailable` |

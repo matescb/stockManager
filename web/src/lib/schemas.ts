@@ -344,6 +344,14 @@ export const PartEdaSchema = z.object({
   sim_device: nullableString,
   sim_pins: nullableString,
   sim_params: nullableString,
+  // SM-009, additive: the structured SPICE binding. Optional so an older
+  // server still parses; passthrough because its shape depends on `state`
+  // (bound / native_primitive / none / free_text / unbound / no_model).
+  spice_binding: z
+    .object({ source: z.string(), state: z.string(), validated: z.boolean() })
+    .passthrough()
+    .nullable()
+    .optional(),
 });
 export type PartEda = z.infer<typeof PartEdaSchema>;
 

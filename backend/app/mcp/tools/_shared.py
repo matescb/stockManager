@@ -475,7 +475,11 @@ def _entry_name(caller: Caller, model: type, entry_id: UUID | None) -> str | Non
     if entry_id is None:
         return None
     row = caller.db.get(model, entry_id)
-    return None if row is None else row.name
+    # Workspace-checked: part_eda's FKs have no workspace trigger (0068),
+    # so a foreign id that got past the service must not resolve here.
+    if row is None or row.workspace_id != caller.ws.id:
+        return None
+    return row.name
 
 
 def part_eda_payload(caller: Caller, part: Part, config: PartEda | None) -> dict[str, Any]:

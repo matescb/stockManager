@@ -196,7 +196,8 @@ async def test_multi_subckt_file_needs_an_explicit_choice(authed_client, full_to
 
     assert uploaded["spice_binding_updated"] is False
     assert [m["name"] for m in uploaded["spice_models"]] == ["OPA_A", "OPA_B"]
-    assert "spice_binding" not in before
+    assert before["spice_binding"]["state"] == "unbound"
+    assert before["spice_binding"]["spice_name"] == "two"
     assert "eda.spice_subckt_ambiguous:" in ambiguous
     assert "OPA_A" in ambiguous and "OPA_B" in ambiguous
     assert "eda.spice_subckt_unknown:" in unknown
@@ -355,6 +356,7 @@ async def test_free_text_sim_pins_is_reported_unvalidated_and_left_alone(
     assert eda["sim_pins"] == "1=IN+ 2=IN- 3=OUT 4=GND"
     assert eda["spice_binding"] == {
         "source": "free-text",
+        "state": "free_text",
         "validated": False,
         "sim_pins": "1=IN+ 2=IN- 3=OUT 4=GND",
     }
@@ -667,9 +669,9 @@ async def test_manifest_native_and_fallback_records(authed_client, full_token):
             s, "set_spice_binding", part_id_or_mpn=cap, model_kind="native_primitive",
             native={"letter": "Q"},
         )
-        native_on_none = await call_error(
+        params_on_none = await call_error(
             s, "set_spice_binding", part_id_or_mpn=pptc, model_kind="none",
-            native={"letter": "R"},
+            params="r=1",
         )
 
     cb = c["spice_binding"]
@@ -687,4 +689,209 @@ async def test_manifest_native_and_fallback_records(authed_client, full_token):
     assert n["spice_binding"]["issues"] == ["no_model"]
     assert "eda.spice_fallback_token_unknown:" in bad_token
     assert "eda.spice_native_invalid:" in bad_native
-    assert "eda.spice_not_applicable:" in native_on_none
+    assert "eda.spice_not_applicable:" in params_on_none
+
+
+# ---------------------------------------------------------------------
+# Polarity, unexported library models, native_reason (ngSPICE 98edfea)
+# ---------------------------------------------------------------------
+
+
+async def test_polarised_part_on_symmetric_model_needs_positive_pin(authed_client, full_token):
+    part_id = create_part(authed_client, "Electrolytic 100u")
+    args = {"part_id_or_mpn": part_id, "pin_map": {"1": "p", "2": "n"}, "symbol_pins": ["1", "2"]}
+    async with mcp_session(full_token) as s:
+        await call(
+            s, "upload_eda_asset", kind="spice", filename="capx.lib",
+            content_base64=_b64(_fixture("cap_polarised_schema1.lib")), part_id=part_id,
+        )
+        first = await call(s, "set_spice_binding", **args)
+        listed = await call(s, "list_spice_binding_issues")
+        wrong_pin = await call_error(s, "set_spice_binding", **args, positive_pin="3")
+        confirmed = await call(s, "set_spice_binding", **args, positive_pin="1")
+        after = await call(s, "list_spice_binding_issues")
+
+    binding = first["spice_binding"]
+    assert binding["issues"] == ["polarity_needs_person"]
+    assert binding["validated"] is False
+    assert binding["polarity"]["part_polarized"] is True
+    assert any(w.startswith("polarity_needs_person") for w in first["warnings"])
+    assert first["sim_pins"] == "1=p 2=n"  # the pin order itself is written
+    assert [(i["part_id"], i["issues"]) for i in listed["items"]] == [
+        (part_id, ["polarity_needs_person"])
+    ]
+    assert "eda.spice_pin_unknown:" in wrong_pin
+    assert confirmed["spice_binding"]["validated"] is True
+    assert confirmed["spice_binding"]["positive_pin"] == "1"
+    assert not any(w.startswith("polarity_needs_person") for w in confirmed["warnings"])
+    assert after["items"] == []
+
+
+async def test_library_model_without_loadable_export_is_recorded(authed_client, full_token):
+    ldo = create_part(authed_client, "LDO whose model does not load")
+    fuse = create_part(authed_client, "PPTC without a held value")
+    reason = "does not load on any build: NG-012 (synthetic cause)"
+    async with mcp_session(full_token) as s:
+        unexported = await call(
+            s, "set_spice_binding", part_id_or_mpn=ldo, model_kind="none", subckt="LDOX",
+            export_reason=reason, fallback_token="attended_ltspice",
+            fallback="model loads on no ngspice build",
+        )
+        no_value = await call(
+            s, "set_spice_binding", part_id_or_mpn=fuse, model_kind="none",
+            fallback_token="native", native_reason="no unambiguous value in the snapshot",
+            native={
+                "letter": "R", "parameters": None,
+                "parameters_reason": "no unambiguous value in the snapshot",
+                "loses_behaviour": True, "loses_behaviour_reason": "trip is thermal",
+            },
+        )
+        positive_on_none = await call_error(
+            s, "set_spice_binding", part_id_or_mpn=ldo, model_kind="none", positive_pin="1",
+        )
+        subckt_on_native = await call_error(
+            s, "set_spice_binding", part_id_or_mpn=fuse, model_kind="native_primitive",
+            device_type="R", params="r=1", subckt="X",
+        )
+        read = await call(s, "get_part_eda", part_id=ldo)
+
+    b = unexported["spice_binding"]
+    assert (b["model_kind"], b["subckt"], b["export_reason"]) == ("none", "LDOX", reason)
+    assert b["fallback_token"] == "attended_ltspice" and b["issues"] == ["no_model"]
+    assert read["spice_binding"]["export_reason"] == reason
+    n = no_value["spice_binding"]
+    assert n["native_reason"] == "no unambiguous value in the snapshot"
+    assert n["native"]["letter"] == "R" and n["device_type"] is None and n["ports"] == []
+    assert "eda.spice_not_applicable:" in positive_on_none
+    assert "eda.spice_not_applicable:" in subckt_on_native
+
+
+# ---------------------------------------------------------------------
+# The key is always present; a file with nothing bound is an issue
+# (production case: a part with a VDMOS model attached and no binding)
+# ---------------------------------------------------------------------
+
+
+async def test_spice_binding_key_is_always_present(authed_client, full_token):
+    no_config = create_part(authed_client, "Never configured")
+    footprint_only = create_part(authed_client, "Footprint only")
+    r = authed_client.put(
+        f"/api/parts/{footprint_only}/eda", json={"footprint_ref_external": "R:R_0402"}
+    )
+    assert r.status_code == 200, r.text
+    unbound = create_part(authed_client, "P-MOSFET with model", mpn="SUD50P06-TEST")
+    async with mcp_session(full_token) as s:
+        uploaded = await call(
+            s, "upload_eda_asset", kind="spice", filename="pmos_vdmos.lib",
+            content_base64=_b64(b".model PMOSX VDMOS(pchan Vto=-2 Kp=5)\n.model DB D\n"),
+            part_id=unbound,
+        )
+        a = await call(s, "get_part_eda", part_id=no_config)
+        b = await call(s, "get_part_eda", part_id=footprint_only)
+        c = await call(s, "get_part_eda", part_id="SUD50P06-TEST")
+        bound = await _opa_part(s, authed_client)
+        await _upload_opa_model(s, bound)
+        await call(s, "set_spice_binding", part_id_or_mpn=bound, pin_map=OPA_PIN_MAP)
+        d = await call(s, "get_part_eda", part_id=bound)
+
+    no_model = {"source": "none", "state": "no_model", "validated": False}
+    assert a["configured"] is False and a["spice_binding"] == no_model
+    assert b["spice_binding"] == no_model
+    # Two models in the file, so the upload recorded nothing: unbound.
+    assert c["spice_binding"] == {
+        "source": "none",
+        "state": "unbound",
+        "validated": False,
+        "spice_datafile_id": uploaded["id"],
+        "spice_name": "pmos_vdmos",
+    }
+    assert d["spice_binding"]["state"] == "bound"
+
+
+async def test_attached_file_without_binding_is_listed_unbound(authed_client, full_token):
+    part_id = create_part(authed_client, "P-MOSFET with model")
+    free_text = create_part(authed_client, "Hand-written pins")
+    async with mcp_session(full_token) as s:
+        uploaded = await call(
+            s, "upload_eda_asset", kind="spice", filename="pmos_vdmos.lib",
+            content_base64=_b64(b".model PMOSX VDMOS(pchan Vto=-2 Kp=5)\n.model DB D\n"),
+            part_id=part_id,
+        )
+        r = authed_client.put(
+            f"/api/parts/{free_text}/eda",
+            json={"spice_datafile_id": uploaded["id"], "sim_pins": "1=D 2=G 3=S"},
+        )
+        assert r.status_code == 200, r.text
+        listed = await call(s, "list_spice_binding_issues")
+
+    by_part = {i["part_id"]: i for i in listed["items"]}
+    item = by_part[part_id]
+    assert item["source"] == "none"
+    assert item["issues"] == ["unbound"]
+    assert item["spice_name"] == "pmos_vdmos"
+    assert item["models"] == ["PMOSX", "DB"]
+    assert "unbound" not in by_part[free_text]["issues"]
+    assert by_part[free_text]["source"] == "free-text"
+
+
+async def test_whitespace_sim_pins_and_dangling_file_do_not_break_the_listing(
+    authed_client, full_token, db
+):
+    """Security review on #966: one bad row must not 500 the whole audit.
+
+    A whitespace-only `sim_pins` used to be selected as free text by the
+    SQL and handled as unbound by Python, which then read `.name` off a
+    missing data file. A `spice_datafile_id` that resolves to nothing in
+    this workspace (a foreign id written past the service) is the other
+    half of that path.
+    """
+    blank_with_file = create_part(authed_client, "Blank pins, file attached")
+    blank_dangling = create_part(authed_client, "Blank pins, dangling file")
+    for part_id in (blank_with_file, blank_dangling):
+        r = authed_client.put(f"/api/parts/{part_id}/eda", json={"sim_pins": " \t "})
+        assert r.status_code == 200, r.text
+    other = TestClient(app)
+    signup_user(other)
+    async with mcp_session(_mint(other)["token"]) as s:
+        foreign = await call(
+            s, "upload_eda_asset", kind="spice", filename="foreign.lib",
+            content_base64=_b64(b".subckt FOREIGN a b\n.ends\n"),
+        )
+    async with mcp_session(full_token) as s:
+        uploaded = await call(
+            s, "upload_eda_asset", kind="spice", filename="mine.lib",
+            content_base64=_b64(b".subckt MINE a b\n.ends\n"),
+        )
+        db.query(PartEda).filter_by(part_id=uuid.UUID(blank_with_file)).update(
+            {"spice_datafile_id": uuid.UUID(uploaded["id"])}
+        )
+        db.query(PartEda).filter_by(part_id=uuid.UUID(blank_dangling)).update(
+            {"spice_datafile_id": uuid.UUID(foreign["id"])}
+        )
+        db.commit()
+        listed = await call(s, "list_spice_binding_issues")
+        with_file = await call(s, "get_part_eda", part_id=blank_with_file)
+        dangling = await call(s, "get_part_eda", part_id=blank_dangling)
+
+    by_part = {i["part_id"]: i for i in listed["items"]}
+    # Whitespace-only reads as empty everywhere: unbound, not free text.
+    assert by_part[blank_with_file]["issues"] == ["unbound"]
+    assert by_part[blank_with_file]["subckt"] == "MINE"
+    # A foreign id resolves to nothing here: not listed (no file in this
+    # workspace) and reported as no_model — and the foreign name never leaks.
+    assert blank_dangling not in by_part
+    assert with_file["spice_binding"]["state"] == "unbound"
+    assert dangling["spice_binding"] == {
+        "source": "none", "state": "no_model", "validated": False,
+    }
+    assert "FOREIGN" not in str(listed) and "foreign" not in str(dangling)
+
+
+def test_unbound_item_tolerates_a_missing_datafile():
+    from app.domain.eda.spice_binding_read import _unbound_item, sim_pins_blank
+
+    item = _unbound_item({"part_id": "x"}, None, {})
+    assert item["issues"] == ["no_model_attached"]
+    assert "spice_name" not in item
+    assert sim_pins_blank(None) and sim_pins_blank(" \t\r\n") and sim_pins_blank("")
+    assert not sim_pins_blank(" 1=+ ")

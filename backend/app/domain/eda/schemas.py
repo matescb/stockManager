@@ -13,7 +13,7 @@ here.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -253,3 +253,7 @@ class PartEdaOut(BaseModel):
     sim_device: str | None
     sim_pins: str | None
     sim_params: str | None
+    # SM-009, additive: the structured SPICE binding — the same object MCP
+    # `get_part_eda` reports (`spice_binding_read.binding_payload`), always
+    # present with a `state` on a configured part. Filled by the route.
+    spice_binding: dict[str, Any] | None = None

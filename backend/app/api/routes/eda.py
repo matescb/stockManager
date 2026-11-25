@@ -44,7 +44,7 @@ from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import Envelope, ok
-from app.domain.eda import kicad_library, kicad_refs, pcm, render, storage
+from app.domain.eda import kicad_library, kicad_refs, pcm, render, spice_binding_read, storage
 from app.domain.eda import service as eda_service
 from app.domain.eda.models import EdaDatafile, EdaFootprint, EdaSymbol
 from app.domain.eda.schemas import (
@@ -943,7 +943,16 @@ def get_part_eda(
     """
     part = _get_part(db, ws.id, part_id, include_archived=True)
     config = eda_service.get_part_eda(db, ws=ws, part=part)
-    return ok(PartEdaOut.model_validate(config) if config is not None else None)
+    return ok(_part_eda_out(db, ws, part, config) if config is not None else None)
+
+
+def _part_eda_out(db, ws, part, config) -> PartEdaOut:
+    """`PartEdaOut` plus the SM-009 `spice_binding`, as MCP reports it."""
+    out = PartEdaOut.model_validate(config)
+    out.spice_binding = spice_binding_read.binding_payload(
+        db, ws=ws, config=config, part_id=part.id
+    )
+    return out
 
 
 @parts_router.put("/{part_id}/eda")
@@ -978,7 +987,7 @@ def put_part_eda(
         target_id=part.id,
         comment=_patch_comment(payload),
     )
-    return ok(PartEdaOut.model_validate(config))
+    return ok(_part_eda_out(db, ws, part, config))
 
 
 @parts_router.delete("/{part_id}/eda")
