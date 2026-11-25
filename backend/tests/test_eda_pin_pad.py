@@ -464,7 +464,8 @@ def test_rotated_pad_bounds_and_fab_fallback_body():
     ("text", "expected"),
     [
         ("Molex_MCX_73415", True), ("USB_C_Receptacle", True), ("Conn_01x04", True),
-        ("Through hole straight pin header", True), ("SOIC-8", False),
+        ("Through hole straight pin header", True), ("Connectors", True),
+        ("RF Jacks", True), ("SOIC-8", False),
         ("QFN-32 exposed pad", False), ("Jackson", False), (None, False),
     ],
 )
@@ -472,3 +473,90 @@ def test_connector_words(text, expected):
     from app.domain.eda.pin_pad_classify import is_connector_text
 
     assert is_connector_text(text) is expected
+
+
+# ---------------------------------------------------------------------
+# SM-008b review: unsure geometry is electrical, and the work is bounded
+# ---------------------------------------------------------------------
+
+_ONE_PIN = b'(symbol "P" (symbol "P_1_1" (pin passive line (at 0 0 0) (number "1"))))'
+
+
+def _pads(*pads: str, name: str = "F") -> bytes:
+    return f'(footprint "{name}" {" ".join(pads)})'.encode()
+
+
+def _smd(number: str, x: float, y: float, w: float = 1, h: float = 1, extra: str = "") -> str:
+    return (
+        f'(pad "{number}" smd rect (at {x} {y}) (size {w} {h}) (layers "F.Cu"){extra})'
+    )
+
+
+def test_more_pads_than_the_geometry_cap_are_all_electrical_and_fast():
+    from app.domain.eda.pin_pad_classify import MAX_GEOMETRY_PADS
+
+    pads = [_smd(str(n), n % 100, n // 100) for n in range(1, MAX_GEOMETRY_PADS + 2)]
+    result, elapsed = _timed_pair(_ONE_PIN, _pads(*pads))
+    assert result.verdict == pin_pad.FAIL
+    assert {f.cls for f in result.classified} == {"electrical"}
+    assert elapsed < _TIME_LIMIT_S, f"{elapsed:.2f}s"
+
+
+def test_many_distinct_pads_under_the_cap_classify_in_bounded_time():
+    """The old per-number scan of every pad was O(pads²)."""
+    pads = [_smd(str(n), n % 70, n // 70, 0.5, 0.5) for n in range(1, 4_900)]
+    pads.append(_smd("EP", 35, 35, 10, 10))
+    result, elapsed = _timed_pair(_ONE_PIN, _pads(*pads))
+    assert result.verdict in (pin_pad.FAIL, pin_pad.PASS_WITH_WARNINGS)
+    assert elapsed < _TIME_LIMIT_S, f"{elapsed:.2f}s"
+
+
+def _timed_pair(symbol: bytes, footprint: bytes) -> tuple[pin_pad.PinPadResult, float]:
+    import time
+
+    start = time.perf_counter()
+    result = pin_pad.check_bytes(symbol, footprint)
+    return result, time.perf_counter() - start
+
+
+def test_zero_size_or_non_finite_pads_are_electrical():
+    symbol = (FIXTURES / "sot23_5_ldo.kicad_sym").read_bytes()
+    footprint = (FIXTURES / "sot23_5.kicad_mod").read_text()
+    zero = footprint.replace(
+        '(pad "4" smd roundrect (at 1.1 0.95) (size 1.06 0.65)',
+        '(pad "4" smd roundrect (at 1.1 0.95) (size 0 0)',
+    )
+    nan = footprint.replace("(size 1.06 0.65)", "(size nan 0.65)")
+    for text in (zero, nan):
+        result = pin_pad.check_bytes(symbol, text.encode())
+        assert _classes(result) == {"4": "electrical"}, text
+
+
+@pytest.mark.parametrize(
+    ("function", "cls"), [("GND", "electrical"), ("NC", "nc_pin"), ("DNC", "nc_pin")]
+)
+def test_pad_pinfunction_overrides_the_nc_guess(function, cls):
+    symbol = (FIXTURES / "sot23_5_ldo.kicad_sym").read_bytes()
+    footprint = (FIXTURES / "sot23_5.kicad_mod").read_text().replace(
+        '(pad "4" smd roundrect (at 1.1 0.95) (size 1.06 0.65)',
+        f'(pad "4" smd roundrect (at 1.1 0.95) (size 1.06 0.65) (pinfunction "{function}")',
+    )
+    assert _classes(pin_pad.check_bytes(symbol, footprint.encode())) == {"4": cls}
+
+
+def test_signal_sized_pads_off_the_row_of_a_connector_stay_electrical():
+    """A USB-C symbol that forgot the B row: those pads are off the A
+    row but signal-sized, so they are a real mismatch, not a shell."""
+    a_row = [_smd(f"A{i}", i * 0.5, -3) for i in range(1, 13)]
+    b_row = [_smd(f"B{i}", i * 0.5, -1.5) for i in range(1, 13)]
+    shells = [_smd("S1", -1.5, -2, 2, 2), _smd("S1", 8, -2, 2, 2)]
+    footprint = _pads(*a_row, *b_row, *shells, name="USB_C_Receptacle")
+    pins = " ".join(
+        f'(pin passive line (at 0 {i} 0) (number "A{i}"))' for i in range(1, 13)
+    )
+    symbol = f'(symbol "U" (symbol "U_1_1" {pins}))'.encode()
+    result = pin_pad.check_bytes(symbol, footprint)
+    classes = _classes(result)
+    assert {classes[f"B{i}"] for i in range(1, 13)} == {"electrical"}
+    assert classes["S1"] == "shell"
+    assert result.verdict == pin_pad.FAIL

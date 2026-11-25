@@ -11,7 +11,8 @@
  *
  * An acceptance is pinned to the two files it was made on. Replace
  * either and it shows under "Accepted on earlier files" and excuses
- * nothing until someone accepts again.
+ * nothing until someone accepts again; "Clear" there removes only that
+ * row (the DELETE carries its two hashes).
  */
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -49,6 +50,9 @@ const KIND_LABEL: Record<Kind, string> = {
 
 const keyOf = (kind: Kind, number: string) => `${kind}:${number}`;
 
+/** `files` narrows a revoke to the acceptance made on those two files. */
+type RevokeArgs = { kind: Kind; number: string; files?: [string, string] };
+
 export function PartCadPinPad({ partId }: { partId: string }) {
   const qc = useQueryClient();
   const { workspaceId } = useAuth();
@@ -81,13 +85,16 @@ export function PartCadPinPad({ partId }: { partId: string }) {
     },
     onError,
   });
-  const revoke = useApiMutation<unknown, { kind: Kind; number: string }>({
+  const revoke = useApiMutation<unknown, RevokeArgs>({
     mutationKey: ["part", partId, "eda", "pin-pad", "revoke"],
-    mutationFn: ({ kind, number }) =>
-      api.delete(
-        `/parts/${partId}/eda/pin-pad/accept?finding_kind=${encodeURIComponent(kind)}` +
-          `&number=${encodeURIComponent(number)}`,
-      ),
+    mutationFn: ({ kind, number, files }) => {
+      const params = new URLSearchParams({ finding_kind: kind, number });
+      if (files) {
+        params.set("symbol_sha256", files[0]);
+        params.set("footprint_sha256", files[1]);
+      }
+      return api.delete(`/parts/${partId}/eda/pin-pad/accept?${params.toString()}`);
+    },
     onSuccess: () => {
       setErr(null);
       refresh();
@@ -193,7 +200,13 @@ export function PartCadPinPad({ partId }: { partId: string }) {
                     type="button"
                     className="btn-ghost btn-sm"
                     disabled={busy}
-                    onClick={() => revoke.mutate({ kind: a.finding_kind, number: a.number })}
+                    onClick={() =>
+                      revoke.mutate({
+                        kind: a.finding_kind,
+                        number: a.number,
+                        files: [a.symbol_sha256, a.footprint_sha256],
+                      })
+                    }
                   >
                     Clear
                   </button>

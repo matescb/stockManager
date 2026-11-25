@@ -18,7 +18,8 @@ Rules:
 * Accepting the same finding on the same files again updates the note,
   who and when.
 * Revoking removes every acceptance of that kind and number for the
-  part, stale ones included, so a user can also clear stale rows.
+  part, stale ones included — or, given the two hashes, only the one
+  made on those files (how the CAD tab clears a single stale row).
 
 Who may call these is the route's business (owner/admin session only);
 this module trusts its caller.
@@ -27,10 +28,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import status
 from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.core.errors import ErrorCodes, raise_http
@@ -41,6 +43,14 @@ from app.domain.eda.pin_pad_service import check_parts
 from app.domain.parts.models import Part
 
 NOTE_MAX = 2000
+_UNIQUE_KEY = [
+    "workspace_id",
+    "part_id",
+    "symbol_sha256",
+    "footprint_sha256",
+    "finding_kind",
+    "number",
+]
 
 
 @dataclass(frozen=True)
@@ -90,42 +100,65 @@ def accept(
             ErrorCodes.EDA_PIN_PAD_NOTE_REQUIRED,
             "accepting an electrical finding needs a note saying why it is fine",
         )
-    row = db.execute(
-        select(PinPadAcceptance)
-        .where(PinPadAcceptance.workspace_id == ws_id)
-        .where(PinPadAcceptance.part_id == part.id)
-        .where(PinPadAcceptance.symbol_sha256 == check["symbol_sha256"])
-        .where(PinPadAcceptance.footprint_sha256 == check["footprint_sha256"])
-        .where(PinPadAcceptance.finding_kind == kind)
-        .where(PinPadAcceptance.number == number)
-    ).scalar_one_or_none()
-    if row is None:
-        row = PinPadAcceptance(
+    # One statement, so two simultaneous accepts of the same finding
+    # meet in the unique index rather than in a 500.
+    values = {
+        "finding_class": finding["class"],
+        "accepted_by": user_id,
+        "accepted_at": utcnow(),
+        "note": note,
+    }
+    row_id = db.execute(
+        pg_insert(PinPadAcceptance)
+        .values(
+            id=uuid4(),
             workspace_id=ws_id,
             part_id=part.id,
             symbol_sha256=check["symbol_sha256"],
             footprint_sha256=check["footprint_sha256"],
             finding_kind=kind,
             number=number,
+            **values,
         )
-        db.add(row)
-    row.finding_class = finding["class"]
-    row.accepted_by = user_id
-    row.accepted_at = utcnow()
-    row.note = note
-    db.flush()
+        .on_conflict_do_update(index_elements=_UNIQUE_KEY, set_=values)
+        .returning(PinPadAcceptance.id)
+    ).scalar_one()
+    row = db.execute(
+        select(PinPadAcceptance)
+        .where(PinPadAcceptance.workspace_id == ws_id)
+        .where(PinPadAcceptance.id == row_id)
+        .execution_options(populate_existing=True)
+    ).scalar_one()
     return Accepted(row=row, finding=finding)
 
 
-def revoke(db: Session, *, ws_id: UUID, part: Part, kind: str, number: str) -> int:
-    """Delete every acceptance of (kind, number) on the part; how many."""
-    removed = db.execute(
+def revoke(
+    db: Session,
+    *,
+    ws_id: UUID,
+    part: Part,
+    kind: str,
+    number: str,
+    files: tuple[str, str] | None = None,
+) -> int:
+    """Delete acceptances of (kind, number) on the part; how many.
+
+    `files` — a (symbol_sha256, footprint_sha256) pair — narrows it to
+    the acceptance made on those files (clearing one stale row without
+    touching the current one); without it every one goes.
+    """
+    stmt = (
         delete(PinPadAcceptance)
         .where(PinPadAcceptance.workspace_id == ws_id)
         .where(PinPadAcceptance.part_id == part.id)
         .where(PinPadAcceptance.finding_kind == kind)
         .where(PinPadAcceptance.number == number)
-    ).rowcount
+    )
+    if files is not None:
+        stmt = stmt.where(PinPadAcceptance.symbol_sha256 == files[0]).where(
+            PinPadAcceptance.footprint_sha256 == files[1]
+        )
+    removed = db.execute(stmt).rowcount
     if not removed:
         raise_http(
             status.HTTP_404_NOT_FOUND,

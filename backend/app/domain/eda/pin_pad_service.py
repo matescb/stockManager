@@ -23,7 +23,8 @@ SM-008b adds two inputs, both read here so the pure check stays pure:
 * `pin_pad_acceptances` — a human's acceptance of a finding on THESE two
   files. An acceptance whose hashes match the current files sets that
   finding aside (it is shown with `accepted`, and no longer counts
-  toward the verdict); one recorded on other files is listed under
+  toward the verdict); one recorded on other files — or recorded for a
+  non-electrical finding that now reads `electrical` — is listed under
   `stale_acceptances` and excuses nothing.
 """
 from __future__ import annotations
@@ -196,8 +197,7 @@ def _payload(
         )
     else:
         result = _check(ws_id, symbol.sha256 or "", footprint.sha256 or "", connector)
-    files = (symbol.sha256, footprint.sha256)
-    current = [a for a in acceptances if (a["symbol_sha256"], a["footprint_sha256"]) == files]
+    current = _applicable(result, symbol, footprint, acceptances)
     applied = _apply(result, current)
     standing = [f for f in applied if "accepted" not in f]
     accepted = {(f["kind"], f["number"]) for f in applied if "accepted" in f}
@@ -222,6 +222,32 @@ def _payload(
         payload["reason"] = result.reason
         payload["detail"] = result.detail
     return payload
+
+
+def _applicable(
+    result: pin_pad.PinPadResult,
+    symbol: _Slot,
+    footprint: _Slot,
+    acceptances: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Acceptances that still excuse their finding.
+
+    Both hashes must match the current files. And an acceptance given to
+    a NON-electrical finding never excuses it once it reads `electrical`
+    — the class can change on the same bytes (the part leaves a
+    connector category, or the rules change), and such an acceptance
+    was given without the note an electrical one requires.
+    """
+    files = (symbol.sha256, footprint.sha256)
+    classes = {f.key: f.cls for f in result.classified}
+    return [
+        a for a in acceptances
+        if (a["symbol_sha256"], a["footprint_sha256"]) == files
+        and not (
+            classes.get((a["finding_kind"], a["number"])) == pin_pad.ELECTRICAL
+            and a["class"] != pin_pad.ELECTRICAL
+        )
+    ]
 
 
 def _apply(

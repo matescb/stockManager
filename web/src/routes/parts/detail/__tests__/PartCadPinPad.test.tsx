@@ -127,6 +127,20 @@ describe("PartCadPinPad", () => {
     );
   });
 
+  it("clears one stale acceptance by its two hashes", async () => {
+    vi.spyOn(api.parsed, "get").mockResolvedValue(check());
+    const del = vi.spyOn(api, "delete").mockResolvedValue({});
+    renderIt();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Clear" }));
+    await waitFor(() =>
+      expect(del).toHaveBeenCalledWith(
+        `/parts/${PART_ID}/eda/pin-pad/accept?finding_kind=pad_without_pin&number=17` +
+          `&symbol_sha256=${"c".repeat(64)}&footprint_sha256=${"d".repeat(64)}`,
+      ),
+    );
+  });
+
   it("hides the controls from callers who may not accept", async () => {
     vi.spyOn(api.parsed, "get").mockResolvedValue(check({ can_accept: false }));
     renderIt();

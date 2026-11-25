@@ -23,12 +23,14 @@ miss rather than to excuse: a real open must not read as a warning.
     The pad is NAMED as a shield / shell: `SH` with an optional number,
     `SHIELD` or `SHELL`. Or the footprint is a CONNECTOR (the part's
     category says so, or the footprint's name / descr / tags carry a
-    connector word — `_CONNECTOR_WORDS`) and the pad either sits outside
-    the pin row — beyond the matched pads' bounding box, padded by one
-    median pad, along the row's narrow axis — or is large (≥ 2× the
-    median matched pad) and touches the courtyard edge. Geometry alone
-    never makes a shell outside a connector: a DPAK's drain tab is large
-    and at the edge, and a symbol missing it is a real open.
+    connector word — `_CONNECTOR_WORDS`) and the pad is large (≥ 2× the
+    median matched pad) AND either sits outside the pin row — beyond the
+    matched pads' bounding box, padded by one median pad, along the
+    row's narrow axis — or touches the courtyard edge. The size test is
+    what keeps a signal-sized pad of a row the symbol forgot (USB-C's B
+    row) `electrical`. Geometry alone never makes a shell outside a
+    connector: a DPAK's drain tab is large and at the edge, and a
+    symbol missing it is a real open.
 
 ``exposed_pad``
     Any of:
@@ -54,7 +56,13 @@ miss rather than to excuse: a real open must not read as a warning.
     and the symbol's highest numeric pin, AND no higher than the count
     of signal-sized numbered pads the footprint has — whose largest pad
     is signal-sized (≤ 2× the median). That is a gap in the symbol's
-    numbering: `SOT-23-5` with pins 1, 2, 3, 5 and pad 4.
+    numbering: `SOT-23-5` with pins 1, 2, 3, 5 and pad 4. A pad whose
+    `pinfunction` names a signal (anything but `NC` / `DNC`) is not an NC
+    pin. CAUTION: by geometry alone a symbol that forgot a real signal
+    pin (an SOIC-8 without its GND pin 4) looks exactly like this — the
+    class is a hint, which is why it is a warning to look at and not a
+    pass, and why it is never applied silently (only an acceptance on
+    these exact files sets it aside).
 
 The "median pad" is the median area of the largest pad of each number
 the symbol DOES claim (all numbers when it claims none), so one large
@@ -63,6 +71,13 @@ is the courtyard's bounding box, else the fab layer's, else the pads'.
 
 A symbol pin without a pad and a duplicate pin number are always
 `electrical`: there is no geometry on the symbol side to excuse them.
+
+When the geometry cannot be trusted the geometric rules are skipped and
+every pad that is not excused by NAME is `electrical`: a footprint with
+more than `MAX_GEOMETRY_PADS` electrical pads (bounded work on the
+single worker — the classification would otherwise be pads × pads), a
+zero or non-finite median pad, a pad with zero area, or a size / position
+that is not a finite number.
 
 Pure: parsed footprint in, classes out. No I/O.
 """
@@ -90,14 +105,20 @@ SHELL_AREA_FACTOR = 2.0
 CENTRAL_FRACTION = 0.25  # |offset| ≤ 25 % of the span = the middle half
 EDGE_FRACTION = 0.15  # within 15 % of the span from the courtyard edge
 _EPS = 1e-6
+# Work bounds. A real footprint has at most a few thousand pads (the
+# largest BGAs ~2,500) and a handful of exposed pads; past these the
+# geometry is not used at all, or E3 is skipped.
+MAX_GEOMETRY_PADS = 5_000
+MAX_EXPOSED_PADS = 16
+_NC_FUNCTION = re.compile(r"N\.?C\.?|DNC|~?", re.IGNORECASE)
 
 _UNNAMED = "~"
 _MECHANICAL_NAME = re.compile(r"(?:MP|MH)\d*|M", re.IGNORECASE)
 _SHELL_NAME = re.compile(r"SH\d*|SHIELD|SHELL", re.IGNORECASE)
 # Whole words, where `_` and digits also separate (`Molex_MCX_73415`).
 _CONNECTOR_WORDS = re.compile(
-    r"(?<![A-Za-z])(?:conn|connector|receptacle|jack|socket|header|plug|usb|"
-    r"hdmi|rj\d+|sma|smb|mcx|mmcx|u\.?fl|ipex|coax|coaxial|terminal)(?![A-Za-z])",
+    r"(?<![A-Za-z])(?:conn|connectors?|receptacles?|jacks?|sockets?|headers?|plugs?|"
+    r"usb|hdmi|rj\d+|sma|smb|mcx|mmcx|u\.?fl|ipex|coax|coaxial|terminals?)(?![A-Za-z])",
     re.IGNORECASE,
 )
 _COPPER_SUFFIX = ".Cu"
@@ -154,6 +175,7 @@ class Box:
 class Pad:
     number: str
     box: Box  # axis-aligned bounds of the (possibly rotated) pad
+    function: str | None = None  # `(pinfunction …)`, when the file has one
 
 
 @dataclass(frozen=True)
@@ -165,6 +187,8 @@ class Footprint:
     pads: tuple[Pad, ...]
     body: Box | None
     text: str
+    # More electrical pads than MAX_GEOMETRY_PADS: geometry not used.
+    oversized: bool = False
 
     @property
     def numbers(self) -> set[str]:
@@ -186,9 +210,10 @@ def _floats(node: list | None, count: int) -> tuple[float, ...] | None:
     if node is None or len(node) < count + 1:
         return None
     try:
-        return tuple(float(str(v)) for v in node[1 : count + 1])
+        values = tuple(float(str(v)) for v in node[1 : count + 1])
     except ValueError:
         return None
+    return values if all(math.isfinite(v) for v in values) else None
 
 
 def _pad_box(pad: list) -> Box | None:
@@ -197,12 +222,8 @@ def _pad_box(pad: list) -> Box | None:
     centre = _floats(at, 2)
     if centre is None or size is None:
         return None
-    angle = 0.0
-    if at is not None and len(at) >= 4:
-        try:
-            angle = math.radians(float(str(at[3])))
-        except ValueError:
-            angle = 0.0
+    rotation = _floats(at[2:] if at is not None and len(at) >= 4 else None, 1)
+    angle = math.radians(rotation[0]) if rotation else 0.0
     w, h = size
     c, s = abs(math.cos(angle)), abs(math.sin(angle))
     half_w, half_h = (w * c + h * s) / 2, (w * s + h * c) / 2
@@ -253,7 +274,12 @@ def footprint_geometry(node: list) -> Footprint:
             number = str(child[1]).strip()
             box = _pad_box(child)
             if box is not None and _is_electrical(child, number):
-                pads.append(Pad(number, box))
+                if len(pads) >= MAX_GEOMETRY_PADS:
+                    return Footprint((), None, "", oversized=True)
+                function = _child(child, "pinfunction")
+                pads.append(
+                    Pad(number, box, str(function[1]) if function and len(function) > 1 else None)
+                )
         elif head in _GRAPHICS:
             layer = _layer_of(child)
             if layer in _COURTYARD:
@@ -283,6 +309,7 @@ def is_connector_text(text: str | None) -> bool:
 class _Context:
     footprint: Footprint
     main: dict[str, Pad]  # largest pad per number
+    boxes: dict[str, tuple[Box, ...]]  # every pad box per number
     median: float
     body: Box | None
     eps: tuple[Box, ...]  # E1-shaped pads, any number
@@ -328,20 +355,31 @@ def _inside_body(ctx: _Context, box: Box) -> bool:
 
 
 def _ratio(ctx: _Context, pad: Pad) -> float:
-    return pad.box.area / ctx.median if ctx.median > 0 else 0.0
+    # `_context` refuses a non-positive median, so this is finite.
+    return pad.box.area / ctx.median
 
 
 def _context(
     footprint: Footprint, pin_numbers: set[str], connector: bool
-) -> _Context:
+) -> _Context | None:
+    """Everything the geometric rules need, or None when the geometry
+    cannot be trusted (see the module docstring)."""
+    if footprint.oversized:
+        return None
     main = _main_pads(footprint)
     matched = [p for n, p in main.items() if n in pin_numbers]
     sample = matched or list(main.values())
     median = statistics.median(p.box.area for p in sample) if sample else 0.0
+    if not (math.isfinite(median) and median > 0):
+        return None
+    boxes: dict[str, list[Box]] = {}
+    for pad in footprint.pads:
+        boxes.setdefault(pad.number, []).append(pad.box)
     numeric_pins = [int(n) for n in pin_numbers if n.isdigit()]
     ctx = _Context(
         footprint=footprint,
         main=main,
+        boxes={n: tuple(b) for n, b in boxes.items()},
         median=median,
         body=footprint.body,
         eps=(),
@@ -354,6 +392,8 @@ def _context(
         p.box for p in footprint.pads
         if _ratio(ctx, p) >= EP_AREA_FACTOR and _inside_body(ctx, p.box)
     )
+    if len(eps) > MAX_EXPOSED_PADS:  # no real package; skip E3
+        eps = ()
     signal = sum(
         1 for n, p in main.items() if n.isdigit() and _ratio(ctx, p) <= SIGNAL_AREA_FACTOR
     )
@@ -385,11 +425,11 @@ def _mechanical(number: str) -> str | None:
 def _shell(ctx: _Context, number: str, pad: Pad) -> str | None:
     if _SHELL_NAME.fullmatch(number):
         return "pad is named as a shield / shell"
-    if not ctx.connector:
+    if not ctx.connector or _ratio(ctx, pad) < SHELL_AREA_FACTOR:
         return None
     if _outside_row(ctx, pad.box):
-        return "connector pad outside the pin row"
-    if _ratio(ctx, pad) >= SHELL_AREA_FACTOR and _at_edge(ctx, pad.box):
+        return "large connector pad outside the pin row"
+    if _at_edge(ctx, pad.box):
         return "large connector pad at the courtyard edge"
     return None
 
@@ -402,7 +442,7 @@ def _exposed(ctx: _Context, number: str, pad: Pad) -> str | None:
     beyond = number.isdigit() and ctx.max_pin is not None and int(number) > ctx.max_pin
     if beyond and _ratio(ctx, pad) >= EP_BEYOND_PIN_AREA_FACTOR and _inside_body(ctx, pad.box):
         return "pad is numbered beyond the symbol's pins, large, and in the body's centre"
-    own = [p.box for p in ctx.footprint.pads if p.number == number]
+    own = ctx.boxes.get(number, ())
     if ctx.eps and own and all(
         any(ep.contains(b) and ep != b for ep in ctx.eps) for b in own
     ):
@@ -417,6 +457,8 @@ def _nc(ctx: _Context, number: str, pad: Pad) -> str | None:
     if not (1 <= value <= ctx.max_pin and value <= ctx.signal_count):
         return None
     if _ratio(ctx, pad) > SIGNAL_AREA_FACTOR:
+        return None
+    if pad.function is not None and not _NC_FUNCTION.fullmatch(pad.function.strip()):
         return None
     return "signal-sized pad inside the symbol's pin numbering; likely an NC package pin"
 
@@ -442,7 +484,7 @@ def classify_pads(
             out[number] = (SHELL, "pad is named as a shield / shell")
             continue
         pad = ctx.main.get(number) if ctx is not None else None
-        if ctx is None or pad is None:
+        if ctx is None or pad is None or not (0 < pad.box.area < math.inf):
             out[number] = (ELECTRICAL, "pad has copper and no symbol pin")
             continue
         out[number] = _classify_geometric(ctx, number, pad)

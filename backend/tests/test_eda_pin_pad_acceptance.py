@@ -287,3 +287,57 @@ def test_trigger_refuses_a_cross_workspace_row(db, authed_client):
             {"id": uuid.uuid4(), "ws": foreign_ws, "part": part},
         )
     assert "WS001" in str(caught.value) or "not in workspace" in str(caught.value)
+
+
+async def test_acceptance_of_a_warning_never_excuses_it_once_electrical(
+    authed_client, full_token
+):
+    """Same bytes, new class: the part leaves its connector category, so
+    the shell pads read `electrical` and a note-free acceptance given to
+    a `shell` must not keep excusing them."""
+    part = await _part(authed_client, full_token, "rf_coax_1.kicad_sym", "rf_5pad_plain.kicad_mod")
+    async with mcp_session(full_token) as s:
+        await call(s, "create_category", name="RF Connectors")
+        await call(s, "create_category", name="Misc")
+        await call(s, "set_part_category", part_id_or_mpn=part, category_id_or_name="RF Connectors")
+    filed = _get(authed_client, part)
+    assert filed["verdict"] == "pass_with_warnings"
+    assert _classified(filed)["2"]["class"] == "shell"
+    assert _accept(authed_client, part, "pad_without_pin", "2").status_code == 200
+
+    async with mcp_session(full_token) as s:
+        await call(s, "set_part_category", part_id_or_mpn=part, category_id_or_name="Misc")
+    moved = _get(authed_client, part)
+    assert moved["verdict"] == "fail"
+    assert _classified(moved)["2"]["class"] == "electrical"
+    assert "accepted" not in _classified(moved)["2"]
+    assert [a["number"] for a in moved["stale_acceptances"]] == ["2"]
+
+
+async def test_revoke_with_hashes_clears_only_that_stale_row(authed_client, full_token):
+    part = await _part(authed_client, full_token, "soic8.kicad_sym", "soic8_pad9.kicad_mod")
+    _accept(authed_client, part, "pad_without_pin", "9", note="old files")
+    original = (FIXTURES / "soic8_pad9.kicad_mod").read_bytes()
+    edited = original.replace(b'(footprint "SOIC8_PAD9"', b'(footprint "SOIC8_PAD9_C"')
+    await _repoint_footprint(full_token, part, edited, "soic8_pad9_c.kicad_mod")
+    _accept(authed_client, part, "pad_without_pin", "9", note="new files")
+    stale = _get(authed_client, part)["stale_acceptances"][0]
+
+    half = authed_client.delete(
+        f"/api/parts/{part}/eda/pin-pad/accept",
+        params={"finding_kind": "pad_without_pin", "number": "9",
+                "symbol_sha256": stale["symbol_sha256"]},
+    )
+    scoped = authed_client.delete(
+        f"/api/parts/{part}/eda/pin-pad/accept",
+        params={"finding_kind": "pad_without_pin", "number": "9",
+                "symbol_sha256": stale["symbol_sha256"],
+                "footprint_sha256": stale["footprint_sha256"]},
+    )
+
+    assert half.status_code == 422 and half.json()["code"] == "eda.pin_pad_hash_pair"
+    assert scoped.status_code == 200, scoped.text
+    after = scoped.json()["data"]
+    assert after["stale_acceptances"] == []
+    assert after["verdict"] == "pass"
+    assert _classified(after)["9"]["accepted"]["note"] == "new files"

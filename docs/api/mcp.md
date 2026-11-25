@@ -860,21 +860,31 @@ answer is `electrical`):
   `MH` (optional number) or exactly `M`.
 - `shell` — named `SH` (optional number), `SHIELD` or `SHELL`; or the part is a
   **connector** (its category's name, library slug or `J` reference prefix, or
-  the footprint's name / descr / tags, say so) and the pad sits off the
-  matched pads' pin row, or is ≥ 2× the median pad and touches the courtyard
-  edge. Outside a connector, geometry never makes a shell (a DPAK's drain tab
-  is a real open).
+  the footprint's name / descr / tags, say so) and the pad is ≥ 2× the median
+  pad AND either sits off the matched pads' pin row or touches the courtyard
+  edge. A signal-sized pad is never a shell (a USB-C symbol that forgot its B
+  row is a real mismatch), and outside a connector geometry never makes a
+  shell (a DPAK's drain tab is a real open).
 - `exposed_pad` — the pad is ≥ 4× the median pad, in the middle half of the
   courtyard and clear of its outer 15 %; or numbered above the symbol's highest
   pin, ≥ 2× the median and placed the same way; or every pad of the number lies
   inside such a pad (thermal vias numbered on their own).
 - `nc_pin` — a numeric, signal-sized (≤ 2× median) pad whose number lies within
   the symbol's own numbering (≤ its highest pin and ≤ the footprint's count of
-  signal pads): a gap such as pad 4 of a SOT-23-5 whose symbol has 1, 2, 3, 5.
+  signal pads), unless the pad's `pinfunction` names a signal: a gap such as
+  pad 4 of a SOT-23-5 whose symbol has 1, 2, 3, 5. By geometry alone this also
+  matches a symbol that forgot a real signal pin (an SOIC-8 without GND pin
+  4) — that is why it is a warning to look at, not a pass.
 - `electrical` — everything else, and always every pin without a pad and every
   duplicate pin.
 
-The "median pad" is the median area of the pads the symbol does claim.
+The "median pad" is the median area of the pads the symbol does claim. When the
+geometry cannot be trusted — more than 5,000 electrical pads (the work is
+bounded), a zero or non-finite median, a zero-area pad, a non-numeric size or
+position — only the name rules apply and everything else is `electrical`.
+An acceptance given to a non-electrical finding stops applying (shows as stale)
+if that finding later reads `electrical` on the same files, e.g. after the part
+leaves a connector category.
 
 **Acceptances.** A workspace owner or admin can accept a finding in the app
 (CAD tab → Pin/pad check; REST in [EDA § Pin/pad check](eda.md#pinpad-check-and-accepted-findings)).

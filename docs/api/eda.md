@@ -327,8 +327,11 @@ comment `kind=…,class=…,symbol_sha256=…,footprint_sha256=…` (never the n
 
 ### `DELETE /api/parts/{part_id}/eda/pin-pad/accept?finding_kind=…&number=…`
 
-Revokes every acceptance of that finding on the part, stale ones included.
-Same 403 as above; `404 eda.pin_pad_acceptance_not_found` when there is none.
+Revokes every acceptance of that finding on the part, stale ones included —
+or, with `&symbol_sha256=…&footprint_sha256=…`, only the one made on those
+files (how the CAD tab clears a single stale row; one hash without the other is
+`422 eda.pin_pad_hash_pair`). Same 403 as above;
+`404 eda.pin_pad_acceptance_not_found` when there is none.
 Audit: `eda_pin_pad.revoked`, comment `kind=…,removed=<n>`.
 
 Source: `backend/app/api/routes/eda_pin_pad.py`,

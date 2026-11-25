@@ -8,7 +8,9 @@ Mounted under `/api/parts` beside `eda.parts_router`:
 * `POST   /{part_id}/eda/pin-pad/accept` — `{finding_kind, number, note}`;
   accept one finding on the part's current files.
 * `DELETE /{part_id}/eda/pin-pad/accept?finding_kind=&number=` — revoke
-  it (every acceptance of that finding on the part, stale ones too).
+  it (every acceptance of that finding on the part, stale ones too; add
+  `symbol_sha256` + `footprint_sha256` to remove only the one made on
+  those files).
 
 Accepting is a person's judgement that a finding is fine, so it takes a
 workspace `owner` or `admin` signed in with a browser SESSION. Every
@@ -147,10 +149,19 @@ def revoke_part_pin_pad_finding(
     user: CurrentUser,
     finding_kind: FindingKind = Query(...),
     number: str = Query(..., min_length=1, max_length=100),
+    symbol_sha256: str | None = Query(None, min_length=64, max_length=64),
+    footprint_sha256: str | None = Query(None, min_length=64, max_length=64),
 ) -> Envelope[dict]:
+    if (symbol_sha256 is None) != (footprint_sha256 is None):
+        raise_http(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            ErrorCodes.EDA_PIN_PAD_HASH_PAIR,
+            "pass both symbol_sha256 and footprint_sha256, or neither",
+        )
     part = _get_part(db, ws.id, part_id)
+    files = (symbol_sha256, footprint_sha256) if symbol_sha256 and footprint_sha256 else None
     removed = pin_pad_acceptance.revoke(
-        db, ws_id=ws.id, part=part, kind=finding_kind, number=number
+        db, ws_id=ws.id, part=part, kind=finding_kind, number=number, files=files
     )
     _audit(
         request,
