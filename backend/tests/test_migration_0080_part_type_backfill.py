@@ -118,7 +118,9 @@ def test_0080_promotes_only_linked_parts_that_say_local(db, monkeypatch):
     assert _part_type(db, drifted) == "local"
     assert _part_type(db, meta) == "meta"
 
+    db.rollback()  # release the session's read locks on parts: 0087+ create/drop tables with an FK to parts
     command.downgrade(_alembic_cfg(), "0079")
+    db.rollback()  # release the session's read locks on parts: 0087+ create/drop tables with an FK to parts
     command.upgrade(_alembic_cfg(), "0080")
 
     # The bug: promoted.
@@ -135,6 +137,7 @@ def test_0080_promotes_only_linked_parts_that_say_local(db, monkeypatch):
     # Raw SQL above reads 0080's schema; the ORM below describes `head`.
     # Finish the chain before using the API, or a later migration's new
     # column breaks every ORM SELECT here.
+    db.rollback()  # release the session's read locks on parts: 0087+ create/drop tables with an FK to parts
     command.upgrade(_alembic_cfg(), "head")
     assert client.get(f"/api/parts/{drifted}").json()["data"]["part_type"] == "linked"
 
@@ -164,8 +167,10 @@ def test_0080_downgrade_is_a_no_op(db, monkeypatch):
     assert client.post(f"/api/parts/{part_id}/refresh-from-provider").status_code == 200
     db.commit()
 
+    db.rollback()  # release the session's read locks on parts: 0087+ create/drop tables with an FK to parts
     command.downgrade(_alembic_cfg(), "0079")
 
     assert _part_type(db, part_id) == "linked"
 
+    db.rollback()  # release the session's read locks on parts: 0087+ create/drop tables with an FK to parts
     command.upgrade(_alembic_cfg(), "head")

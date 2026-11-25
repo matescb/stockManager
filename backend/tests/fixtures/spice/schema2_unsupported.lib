@@ -1,0 +1,25 @@
+* SW4 - single-file export of the converted LTspice model (ngSPICE model library, NG-010)
+* Export-Schema: ngspice-export/2
+* Kind: subckt
+* Catalogue entry: name=SW4 kind=subcircuit output=sub/SW4.sub
+* Build: needs stock; ngbehavior=ltpsa required: False
+* Build-Token: stock
+* Grade (NG-006): valid_for=[] builds=[]
+* Valid-For-Basis: -
+* Pins (in order): IN S D Vss Vdd GND
+* Port: 1 function=IN on_symbol=yes internally_unconnected=no source=LTspice symbol sym/SW4.asy SpiceOrder 1 (binding state parse_only)
+* Port: 2 function=S on_symbol=yes internally_unconnected=no source=LTspice symbol sym/SW4.asy SpiceOrder 2 (binding state parse_only)
+* Port: 3 function=D on_symbol=yes internally_unconnected=no source=LTspice symbol sym/SW4.asy SpiceOrder 3 (binding state parse_only)
+* Port: 4 function=Vss on_symbol=yes internally_unconnected=no source=LTspice symbol sym/SW4.asy SpiceOrder 4 (binding state parse_only)
+* Port: 5 function=Vdd on_symbol=yes internally_unconnected=no source=LTspice symbol sym/SW4.asy SpiceOrder 5 (binding state parse_only)
+* Port: 6 function=GND on_symbol=yes internally_unconnected=no source=LTspice symbol sym/SW4.asy SpiceOrder 6 (binding state parse_only)
+* Channels: package=4 model=1
+* Licence: Vendor model, copyright held by its owner; redistribution terms not established.
+* Exported by tools/export_model.py (ngSPICE model library)
+
+* SYNTHETIC body (SM-009 test fixture).
+.subckt SW4 1 2 3 4 5 6
+R1 2 3 10
+R2 1 6 1meg
+R3 5 4 1meg
+.ends SW4

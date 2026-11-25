@@ -1,0 +1,20 @@
+* TLV431 - single-file export of the converted LTspice model (ngSPICE model library, NG-010)
+* Catalogue entry: name=TLV431 kind=subcircuit output=sub/TLV431.sub
+* Manufacturer: Analog Devices; base part number: TLV431
+* Source: lib/sub/TLV431.sub sha256 1111111111111111111111111111111111111111111111111111111111111111
+* Converted file: sub/TLV431.sub sha256 2222222222222222222222222222222222222222222222222222222222222222
+* Build: needs stock; ngbehavior=ltpsa required: True
+*   stock ngspice first error: none (loads on stock)
+*   identities: ngspice-42 sha256:3333333333333333333333333333333333333333333333333333333333333333
+* Grade (NG-006): valid_for=['dc'] builds=['ngspice-42']
+*   limit: synthetic limit line for the parser test
+* Pins (in order): K A R
+* Licence: Vendor model, copyright held by its owner; redistribution terms not established.
+* Exported by tools/export_model.py at ngSPICE commit 0000000
+
+* SYNTHETIC body (SM-009 test fixture): same header shape as an NG-010
+* export, no vendor model text.
+.subckt TLV431 1 2 3
+R1 1 2 1k
+R2 3 2 1meg
+.ends TLV431

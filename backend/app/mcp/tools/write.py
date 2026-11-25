@@ -26,7 +26,15 @@ from uuid import UUID
 
 from app.core.config import settings
 from app.core.errors import ErrorCodes
-from app.domain.eda import importer, lcsc, storage, vendor_zip
+from app.domain.eda import (
+    importer,
+    lcsc,
+    spice_binding,
+    spice_header,
+    spice_model,
+    storage,
+    vendor_zip,
+)
 from app.domain.eda import service as eda_service
 from app.domain.eda.models import EdaDatafile, EdaFootprint, EdaSymbol
 from app.domain.eda.schemas import PartEdaIn
@@ -251,6 +259,10 @@ def upload_eda_asset(
     if part_id:
         wired = _wire_single_entry(caller, part_id, kind=kind, row=row)
 
+    spice_info: dict[str, Any] = {}
+    if kind == "spice":
+        spice_info = _spice_upload_info(caller, data, row=row, part_id=part_id)
+
     return compact(
         {
             "id": sid(row.id),
@@ -260,8 +272,69 @@ def upload_eda_asset(
             "sha256": sha,
             "size_bytes": size,
             "part_eda_updated": wired,
+            **spice_info,
         }
     )
+
+
+def _spice_upload_info(caller: Caller, data: bytes, *, row, part_id: str | None) -> dict[str, Any]:
+    """SM-009: what the uploaded SPICE file defines, and the part's binding.
+
+    Additive output only. When the part now points at this file, the
+    parsed subckt and ports are recorded as an UNVALIDATED binding (or an
+    existing binding is marked unvalidated because the bytes changed);
+    `set_spice_binding` confirms a mapping.
+    """
+    text = data.decode("utf-8", errors="replace")
+    models = spice_model.parse_models(text)
+    info: dict[str, Any] = {
+        "spice_models": [
+            compact(
+                {
+                    "name": m.name,
+                    "kind": m.kind,
+                    "ports": list(m.ports),
+                    "device_type": m.device_type,
+                }
+            )
+            for m in models[:50]
+        ]
+    }
+    header = spice_header.parse_ng010_header(text)
+    if header is not None:
+        info["ng010_header"] = compact(
+            {
+                "catalogue_entry": header.catalogue_entry,
+                "source": header.source,
+                "source_sha256": header.source_sha256,
+                "build_requirement": header.build_requirement,
+                "build_needs": header.build_needs,
+                "corrections": list(header.corrections),
+                "export_schema": header.export_schema,
+                "kind": header.kind,
+                "internally_unconnected_ports": header.internally_unconnected,
+                "channels": header.channels,
+                "match": header.match,
+                "grade": header.grade,
+                "pins": list(header.pins),
+            }
+        )
+    if part_id:
+        part = resolve_part(caller, part_id)
+        changed = spice_binding.record_upload(
+            caller.db, ws=caller.ws, part=part, datafile=row, text=text,
+            user_id=caller.user.id,
+        )
+        if changed:
+            audit(
+                caller,
+                action="part_spice_binding.model_recorded",
+                target_type="part_spice_binding",
+                target_id=part.id,
+                comment=f"sha256={row.sha256},validated=false",
+            )
+        info["spice_binding_updated"] = changed
+    return info
 
 
 # `model3d` is one agent-facing word for two file formats, because the

@@ -1,0 +1,12 @@
+* SYNTHETIC 13-port LDO-style subcircuit (SM-009 test fixture): ports 3, 8,
+* 10 and 12 are internally unconnected, as LTspice "NC" pins often are.
+.subckt LDO13 1 2 3 4 5 6 7 8 9 10 11 12 13
+R1 2 11 1
+R2 11 13 1k
+R3 1 2 1
+R4 4 13 1meg
+R5 5 13 1meg
+R6 6 13 1meg
+R7 7 13 1meg
+R9 9 13 1meg
+.ends LDO13

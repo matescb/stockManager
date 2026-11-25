@@ -1,0 +1,15 @@
+(kicad_symbol_lib (version 20231120) (generator "sm009-test")
+  (symbol "OPA192" (in_bom yes) (on_board yes)
+    (property "Reference" "U" (at 0 0 0))
+    (property "Value" "OPA192" (at 0 0 0))
+    (symbol "OPA192_1_1"
+      (pin output line (at 7.62 0 180) (length 2.54) (name "~" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))
+      (pin input line (at -7.62 2.54 0) (length 2.54) (name "+" (effects (font (size 1.27 1.27)))) (number "3" (effects (font (size 1.27 1.27)))))
+      (pin input line (at -7.62 -2.54 0) (length 2.54) (name "-" (effects (font (size 1.27 1.27)))) (number "4" (effects (font (size 1.27 1.27)))))
+    )
+    (symbol "OPA192_2_1"
+      (pin power_in line (at 0 7.62 270) (length 2.54) (name "V+" (effects (font (size 1.27 1.27)))) (number "5" (effects (font (size 1.27 1.27)))))
+      (pin power_in line (at 0 -7.62 90) (length 2.54) (name "V-" (effects (font (size 1.27 1.27)))) (number "2" (effects (font (size 1.27 1.27)))))
+    )
+  )
+)

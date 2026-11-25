@@ -36,6 +36,7 @@ from app.domain.eda.models import (  # noqa: F401
     EdaFootprintModel,
     EdaSymbol,
     PartEda,
+    PartSpiceBinding,
 )
 from app.domain.fx.models import FxRateSnapshot  # noqa: F401
 from app.domain.lots.models import Lot  # noqa: F401

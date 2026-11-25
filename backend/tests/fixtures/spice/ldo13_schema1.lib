@@ -1,0 +1,44 @@
+* LDO13 - single-file export of the converted LTspice model (ngSPICE model library, NG-010)
+* Export-Schema: ngspice-export/1
+* Kind: subckt
+* Catalogue entry: name=LDO13 kind=subcircuit output=sub/LDO13.sub
+* Manufacturer: Example Semi; base part number: LDO13
+* Source: lib/sub/LDO13.sub sha256 9999999999999999999999999999999999999999999999999999999999999999
+* Converted file: sub/LDO13.sub sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+* Build: needs patched+runtime; ngbehavior=ltpsa required: True
+*   stock ngspice first error: synthetic first error
+*   identities: ngspice-47 sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb + runtime
+* Build-Token: patched+runtime
+* Grade (NG-006): valid_for=['dc'] builds=['ngspice-47']
+* Valid-For-Basis: dc=distributor_spec; ac-small-signal=conversion
+*   limit: synthetic limit
+* Pins (in order): INFILT IN NC _SHDN PwrGD Imax Ref/Byp NC ADJ NC OUT NC GND
+* Port: 1 function=INFILT on_symbol=yes internally_unconnected=no source=LTspice symbol sym/LDO13.asy SpiceOrder 1 (binding state parse_only)
+* Port: 2 function=IN on_symbol=yes internally_unconnected=no source=LTspice symbol sym/LDO13.asy SpiceOrder 2 (binding state parse_only)
+* Port: 3 function=- on_symbol=no internally_unconnected=yes source=LTspice symbol sym/LDO13.asy SpiceOrder 3 (binding state parse_only): pin not drawn
+* Port: 4 function=_SHDN on_symbol=yes internally_unconnected=no source=LTspice symbol sym/LDO13.asy SpiceOrder 4 (binding state parse_only)
+* Port: 5 function=PwrGD on_symbol=yes internally_unconnected=no source=LTspice symbol sym/LDO13.asy SpiceOrder 5 (binding state parse_only)
+* Port: 6 function=Imax on_symbol=yes internally_unconnected=no source=LTspice symbol sym/LDO13.asy SpiceOrder 6 (binding state parse_only)
+* Port: 7 function=Ref/Byp on_symbol=yes internally_unconnected=no source=LTspice symbol sym/LDO13.asy SpiceOrder 7 (binding state parse_only)
+* Port: 8 function=- on_symbol=no internally_unconnected=yes source=LTspice symbol sym/LDO13.asy SpiceOrder 8 (binding state parse_only): pin not drawn
+* Port: 9 function=ADJ on_symbol=yes internally_unconnected=no source=LTspice symbol sym/LDO13.asy SpiceOrder 9 (binding state parse_only)
+* Port: 10 function=- on_symbol=no internally_unconnected=yes source=LTspice symbol sym/LDO13.asy SpiceOrder 10 (binding state parse_only): pin not drawn
+* Port: 11 function=OUT on_symbol=yes internally_unconnected=no source=LTspice symbol sym/LDO13.asy SpiceOrder 11 (binding state parse_only)
+* Port: 12 function=- on_symbol=no internally_unconnected=yes source=LTspice symbol sym/LDO13.asy SpiceOrder 12 (binding state parse_only): pin not drawn
+* Port: 13 function=GND on_symbol=yes internally_unconnected=no source=LTspice symbol sym/LDO13.asy SpiceOrder 13 (binding state parse_only)
+* Channels: package=- model=-
+* Match: part=LDO13EMSE#PBF manufacturer=Example Semi Inc. model=LDO13 confidence=alias level=base key=LDO13 manufacturer_match=True
+* Licence: Vendor model, copyright held by its owner; redistribution terms not established.
+* Exported by tools/export_model.py (ngSPICE model library)
+
+* SYNTHETIC body (SM-009 test fixture), no vendor model text.
+.subckt LDO13 1 2 3 4 5 6 7 8 9 10 11 12 13
+R1 2 11 1
+R2 11 13 1k
+R3 1 2 1
+R4 4 13 1meg
+R5 5 13 1meg
+R6 6 13 1meg
+R7 7 13 1meg
+R9 9 13 1meg
+.ends LDO13

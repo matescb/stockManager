@@ -6,6 +6,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    DateTime,
     ForeignKey,
     Index,
     Integer,
@@ -258,3 +259,90 @@ class PartEda(WorkspaceOwned, Base):
     sim_device = Column(String(60), nullable=True)
     sim_pins = Column(String(300), nullable=True)
     sim_params = Column(String(500), nullable=True)
+
+
+class PartSpiceBinding(WorkspaceOwned, Base):
+    """How a part's symbol pins map onto its SPICE model's ports (SM-009).
+
+    At most one row per part, beside `PartEda` rather than inside it:
+    `set_part_eda` REPLACES the whole `part_eda` row from its arguments,
+    and a binding stored there would be wiped by every call that did not
+    know to pass it back. `part_eda.sim_pins` stays the carrier the KiCad
+    HTTP library emits as `Sim.Pins`; this row is the structured source a
+    validated value is DERIVED from (`spice_binding.py::bind`).
+
+    `model_sha256` + `spice_datafile_id` pin the exact file the ports were
+    read from. Whether the binding still holds is decided at READ time
+    (`spice_binding.binding_state`): a different file or different bytes
+    on the part, or a hand-edited `sim_pins`, make it unvalidated without
+    anything having to remember to flip a flag. `validated` is the
+    write-time verdict; it is set false (never deleted) when a new file
+    version is uploaded onto the part.
+
+    Migration 0087. No workspace BEFORE trigger, for the reason 0068
+    gives for the other EDA tables: both FKs are resolved through
+    workspace-scoped lookups in the only code that writes this row.
+    """
+
+    __tablename__ = "part_spice_bindings"
+    __table_args__ = (
+        UniqueConstraint("part_id", name="uq_part_spice_bindings_part"),
+        CheckConstraint(
+            "model_kind IN ('subckt', 'model', 'native_primitive', 'none')",
+            name="ck_part_spice_bindings_model_kind",
+        ),
+        CheckConstraint(
+            "model_kind NOT IN ('subckt', 'model') "
+            "OR (subckt IS NOT NULL AND model_sha256 IS NOT NULL)",
+            name="ck_part_spice_bindings_file_model",
+        ),
+        Index("ix_part_spice_bindings_ws_part", "workspace_id", "part_id"),
+    )
+
+    part_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("parts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    spice_datafile_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("eda_datafiles.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # `.subckt` name, or the `.model` name for a primitive device. NULL
+    # for the two file-less kinds: `native_primitive` (a built-in R / C /
+    # L / D with `params`, no file) and `none` (no model; see `fallback`).
+    subckt = Column(String(200), nullable=True)
+    model_kind = Column(
+        String(20), nullable=False, default="subckt", server_default=text("'subckt'")
+    )
+    device_type = Column(String(20), nullable=True)
+    ports = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    # {symbol_pin_number: port_name | null}; null = explicitly not connected.
+    # NULL column = parsed from an upload, no mapping confirmed yet.
+    pin_map = Column(JSONB(none_as_null=True), nullable=True)
+    symbol_pins_source = Column(String(20), nullable=True)
+    sim_pins_derived = Column(String(300), nullable=True)
+    model_sha256 = Column(String(64), nullable=True)
+    # Model ports deliberately driven by no symbol pin (LTspice NC nodes,
+    # the other channels of a multi-channel part).
+    unconnected_ports = Column(JSONB(none_as_null=True), nullable=True)
+    params = Column(String(500), nullable=True)
+    fallback = Column(String(500), nullable=True)
+    # ngspice-export/1 fallback token: vendor_model_wanted | native |
+    # attended_ltspice | external_model:<name>.
+    fallback_token = Column(String(220), nullable=True)
+    # The inventory manifest's `native` object for a native_primitive:
+    # {letter, parameters {value, unit, source} | null, parameters_reason,
+    # loses_behaviour, loses_behaviour_reason}.
+    native = Column(JSONB(none_as_null=True), nullable=True)
+    # The ngspice-export/1 header fields of the bound file: kind, build
+    # token, valid_for_basis, per-port function / on_symbol /
+    # internally_unconnected, channels, match, corrections.
+    export_metadata = Column(JSONB(none_as_null=True), nullable=True)
+    model_source = Column(String(500), nullable=True)
+    build_requirement = Column(String(500), nullable=True)
+    grade = Column(String(500), nullable=True)
+    header_pins = Column(JSONB(none_as_null=True), nullable=True)
+    validated = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    validated_at = Column(DateTime(timezone=True), nullable=True)
