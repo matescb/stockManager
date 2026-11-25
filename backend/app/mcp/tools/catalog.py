@@ -53,8 +53,9 @@ def catalog_lookup(
     `compliance`, `datasheet_url`, `stock`, `price_breaks` and `match`.
     `lifecycle` and `compliance` have the shape `get_part` returns
     (normalised `status` plus the provider's `raw` string; `unknown` where
-    this provider sent nothing), with `source` this provider and
-    `refreshed_at` the retrieval time.
+    this provider sent nothing, with `reason` `provider_silent` or
+    `unrecognised`), with `source` this provider and `refreshed_at` the
+    retrieval time.
     `match: "exact"` means the provider's MPN is the one you asked for;
     `"fuzzy"` means it found a DIFFERENT part number (shown in `mpn`) —
     check it before using it. `candidates` lists every manufacturer when

@@ -35,6 +35,16 @@ the canonical record.
   fallback tokens are accepted. Emitted `Sim.*` field names are unchanged and no
   existing row is rewritten: free-text values read as `source: "free-text",
   validated: false`.
+- **Why a lifecycle is `unknown` (SM-004 follow-up).** `get_part`,
+  `export_parts` and `catalog_lookup` add `reason` to a `lifecycle` block
+  whose status is `unknown`, and to a `compliance` block no source answered:
+  `never_fetched` (no provider link), `provider_silent` (linked and
+  refreshed — `source` and `refreshed_at` now name that provider and its last
+  refresh — but no value sent; with a `note`) or `unrecognised` (`raw` maps to
+  no status). Mouser fills `LifecycleStatus` only for parts outside normal
+  production, so Mouser-only parts read `provider_silent` with a note saying
+  so. Status stays `unknown` — silence is not inferred as `active`. Read-only:
+  no migration, no new writes, no provider calls, no extra query per part.
 - **Bag labels scanned without separators, or without an MPN.** A USB reader
   that drops the label's GS/RS separators ran every field together. A Mouser
   label made for an order with customer part numbers carries only P, no 1P.

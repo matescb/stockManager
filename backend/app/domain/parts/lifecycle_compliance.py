@@ -47,6 +47,13 @@ or no value
 With no status string, a `Discontinued` flag makes the status
 `discontinued` and an `End of life` flag makes it `last-time-buy`.
 
+Why `unknown` (`_why_unknown`): an unknown `lifecycle.status`, or a
+`compliance` block no source answered, carries `reason` — `never_fetched`
+(no provider link), `provider_silent` (a link exists, so the provider was
+asked; it sent nothing) or `unrecognised` (`raw` maps to no status). The
+links come from the same `part_provider_links` query as `refreshed_at`, so
+the reason costs no extra query. Silence is never read as `active`.
+
 ECCN, HTS and MSL are on ADR-0034's junk list, so the refresh retires
 them instead of storing them: for a stored part they are `unknown`
 unless entered by hand. `catalog_lookup` reads them from the live record.
@@ -67,6 +74,7 @@ from app.domain.parts.provider_fields import KNOWN_PROVIDER_NAMES
 
 __all__ = [
     "LIFECYCLE_STATUSES",
+    "REASONS",
     "UNKNOWN",
     "for_parts",
     "from_record",
@@ -78,6 +86,9 @@ MANUAL = "manual"
 LIFECYCLE_STATUSES: tuple[str, ...] = (
     "active", "nrnd", "last-time-buy", "obsolete", "discontinued", "preliminary", UNKNOWN,
 )
+
+# `reason` on a block whose answer is unknown (`_why_unknown`).
+REASONS: tuple[str, ...] = ("never_fetched", "provider_silent", "unrecognised")
 
 # Ranking of providers, best first. Mirrors `spec_schema.PROVIDER_PRECEDENCE`;
 # not imported from there because `spec_schema` pulls the whole schema
@@ -116,6 +127,17 @@ _KEY_FIELD: dict[str, tuple[str, str, int]] = {
     for rank, alias in enumerate(aliases)
 }
 _FALSE = {"no", "false", "0", "n"}
+
+# `note` on a `provider_silent` block. The Mouser adapter skips an empty
+# `LifecycleStatus` (`mouser.py::_DIRECT_FIELDS`), and Mouser fills that
+# field only off the normal-production path (New Product, NRND, End of
+# Life, Obsolete), so a Mouser-only part in plain production stores no
+# lifecycle row at all.
+SILENT_NOTE_DEFAULT = "The provider supplied no value for this field."
+SILENT_NOTES: dict[tuple[str, str], str] = {
+    ("lifecycle", "mouser"):
+        "Mouser states lifecycle only for parts that are not in normal production",
+}
 
 # One source's answer: block -> field -> (value, alias rank, updated_at).
 _Snapshot = dict[str, dict[str, tuple[str, int, datetime | None]]]
@@ -168,8 +190,9 @@ def for_parts(db, ws, part_ids: Sequence[UUID]) -> dict[UUID, dict[str, Any]]:
         .where(PartProviderLink.part_id.in_(ids))
         .where(PartProviderLink.archived_at.is_(None))
     ).all():
-        if stamp is not None:
-            links[part_id][provider] = stamp
+        # Every live link counts, stamped or not: a link is what says "a
+        # provider was asked about this part" (`_why_unknown`).
+        links[part_id][provider] = stamp
     return {pid: _view(snaps[pid], links[pid], missing_flag_is_false=False) for pid in ids}
 
 
@@ -218,7 +241,9 @@ def from_record(
     for key, value in specs.items():
         if key:
             _note(snap, source, str(key), value, retrieved_at)
-    out = _view(snap, {}, missing_flag_is_false=True)
+    # The record IS one fetch from *source*: "linked and refreshed" for
+    # `_why_unknown`, so a silent field reads `provider_silent`.
+    out = _view(snap, {source: retrieved_at}, missing_flag_is_false=True)
     life = out["lifecycle"]
     if specs.get("Suggested replacement"):
         life["suggested_replacement"] = specs["Suggested replacement"]
@@ -230,19 +255,50 @@ def from_record(
 # ---------------------------------------------------------------------------
 # shaping
 # ---------------------------------------------------------------------------
-def _view(snaps: dict[str, _Snapshot], links: Mapping[str, datetime], *,
+def _view(snaps: dict[str, _Snapshot], links: Mapping[str, datetime | None], *,
           missing_flag_is_false: bool) -> dict[str, Any]:
     ranked = sorted(snaps, key=_rank)
-    return {
-        "lifecycle": _block(
-            "lifecycle", ranked, snaps, links,
-            lambda src, f: _lifecycle_view(src, f, missing_flag_is_false or src != MANUAL),
-            _unknown_lifecycle,
-        ),
-        "compliance": _block(
-            "compliance", ranked, snaps, links, _compliance_view, _unknown_compliance,
-        ),
-    }
+    life = _block(
+        "lifecycle", ranked, snaps, links,
+        lambda src, f: _lifecycle_view(src, f, missing_flag_is_false or src != MANUAL),
+        _unknown_lifecycle,
+    )
+    comp = _block("compliance", ranked, snaps, links, _compliance_view, _unknown_compliance)
+    if life["status"] == UNKNOWN:
+        _why_unknown("lifecycle", life, links)
+    if comp["source"] == UNKNOWN:
+        _why_unknown("compliance", comp, links)
+    return {"lifecycle": life, "compliance": comp}
+
+
+def _why_unknown(block: str, view: dict[str, Any],
+                 links: Mapping[str, datetime | None]) -> None:
+    """Say why *view* is unknown, in `reason` (and `note`). Infers nothing.
+
+    * `unrecognised` — a raw status exists but maps to no status (lifecycle
+      only; a compliance value is passed through as-is, never mapped);
+    * `provider_silent` — a provider was asked (a live link; for a
+      `catalog_lookup` record, the record itself) and supplied no value.
+      An empty block takes `source` / `refreshed_at` from that provider —
+      the best-ranked linked one — so the agent sees whom and when;
+    * `never_fetched` — no provider link: nobody was asked.
+
+    Silence is not `active`: Mouser leaves `LifecycleStatus` empty for
+    parts in normal production, but the same empty field is all an agent
+    would see for a part Mouser simply has no lifecycle data on.
+    """
+    if view.get("raw"):
+        view["reason"] = "unrecognised"
+        return
+    if not links:
+        view["reason"] = "never_fetched"
+        return
+    silent = view["source"] if view["source"] in links else min(links, key=_rank)
+    view["reason"] = "provider_silent"
+    if view["source"] == UNKNOWN:
+        view["source"] = silent
+        view["refreshed_at"] = _iso(links[silent])
+    view["note"] = SILENT_NOTES.get((block, silent), SILENT_NOTE_DEFAULT)
 
 
 def _block(block, ranked, snaps, links, shape, empty) -> dict[str, Any]:

@@ -139,7 +139,14 @@ def get_part(caller: Caller, id_or_mpn: str) -> dict[str, Any]:
     `compliance` {`rohs`, `reach`, `eccn`, `hts`, `msl`, `source`,
     `refreshed_at`}, read from the rows the provider refresh stored.
     `unknown` means no source supplied a value; `source` is the provider
-    name, or `manual` for a value a user entered. When more than one
+    name, or `manual` for a value a user entered. An unknown
+    `lifecycle.status` (or an all-unknown `compliance`) carries `reason`:
+    `never_fetched` (no provider is linked — nobody was asked),
+    `provider_silent` (a linked provider was refreshed — `source` and
+    `refreshed_at` say which and when — but sent no value; with a `note`.
+    Mouser states lifecycle only for parts not in normal production, so a
+    Mouser-only part is usually this) or `unrecognised` (`raw` holds a
+    string no status maps to). Do not read `provider_silent` as active. When more than one
     source answered, the best one (manual, then DigiKey, then Mouser) is
     shown and the others are listed under `alternates` — read them before
     calling a part obsolete or active. `eccn`, `hts` and `msl` are not
