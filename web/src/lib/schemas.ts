@@ -69,6 +69,25 @@ export const SpecColumnValueSchema = z.object({
 });
 export type SpecColumnValue = z.infer<typeof SpecColumnValueSchema>;
 
+// SM-004 lifecycle / compliance blocks. Values are provider strings or
+// the literal "unknown"; `reason` says why an unknown is unknown
+// (never_fetched | provider_silent | unrecognised).
+export const PartLifecycleSchema = z.object({
+  status: z.string(),
+  source: z.string(),
+  refreshed_at: z.string().nullable(),
+  raw: z.string().optional(),
+  reason: z.string().optional(),
+}).passthrough();
+
+export const PartComplianceSchema = z.object({
+  rohs: z.string(),
+  reach: z.string(),
+  source: z.string(),
+  refreshed_at: z.string().nullable(),
+  reason: z.string().optional(),
+}).passthrough();
+
 export const PartSchema = z.object({
   id: uuid,
   part_type: z.enum(["linked", "local", "meta", "sub_assembly"]),
@@ -117,6 +136,12 @@ export const PartSchema = z.object({
   // Every requested key IS here even when the part has no value, which is
   // what lets a blank cell mean "no value" rather than "column dropped".
   specs: z.record(z.string(), SpecColumnValueSchema).optional(),
+  // Structured lifecycle / compliance (SM-004), the same objects MCP
+  // `get_part` returns. Sent by part detail and part lists; absent from
+  // responses that echo a part without loading them (create-part).
+  // Passthrough so `alternates`, `note`, `reason` and any later key parse.
+  lifecycle: PartLifecycleSchema.optional(),
+  compliance: PartComplianceSchema.optional(),
 });
 export type Part = z.infer<typeof PartSchema>;
 

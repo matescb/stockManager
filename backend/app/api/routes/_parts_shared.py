@@ -24,6 +24,7 @@ from app.core.errors import ErrorCodes, raise_http
 from app.domain._quantity import quantity_out
 from app.domain.categories.service import CategoryIndex, category_name_paths
 from app.domain.custom_fields.models import CustomField
+from app.domain.parts import lifecycle_compliance
 from app.domain.parts.models import Part, PartProviderLink
 from app.domain.parts.provider_links import serialize_link
 
@@ -129,6 +130,7 @@ def serialize_part(
     provider_links: list[dict] | None = None,
     missing_specs: list[str] | None = None,
     specs: dict[str, dict[str, str | None]] | None = None,
+    lifecycle: dict | None = None,
 ) -> dict:
     """Serialize a Part for API responses.
 
@@ -142,6 +144,10 @@ def serialize_part(
     part's rows (`provider_links_for`). Responses that echo a part without
     touching any of them — create-part, for one — still pass nothing and
     still omit the keys.
+
+    `lifecycle` is one entry of `lifecycle_compliance.for_parts`
+    (`{"lifecycle": …, "compliance": …}`) and emits both keys, in exactly
+    the shape MCP `get_part` returns (SM-004). Absent when not loaded.
     """
     if reserved is None:
         reserved = 0
@@ -203,6 +209,9 @@ def serialize_part(
         # stored so the two can never disagree.
         out["missing_specs"] = missing_specs
         out["spec_incomplete"] = bool(missing_specs)
+    if lifecycle is not None:
+        out["lifecycle"] = lifecycle["lifecycle"]
+        out["compliance"] = lifecycle["compliance"]
     return out
 
 
@@ -253,6 +262,7 @@ def serialize_part_rows(
     parts: list,
     spec_keys: Sequence[str] = (),
     index: CategoryIndex | None = None,
+    ws=None,
 ) -> list[dict]:
     """Serialize a page of parts for a LIST response.
 
@@ -283,6 +293,9 @@ def serialize_part_rows(
     links_map = provider_links_for_parts(db, ws_id, part_ids)
     missing_map = missing_specs_for_parts(db, ws_id, parts, index=index)
     specs_map = specs_for_parts(db, ws_id=ws_id, part_ids=part_ids, keys=spec_keys)
+    life_map = (
+        lifecycle_compliance.for_parts(db, ws, part_ids) if ws is not None else {}
+    )
     return [
         serialize_part(
             p,
@@ -292,6 +305,7 @@ def serialize_part_rows(
             provider_links=links_map.get(p.id, []),
             missing_specs=missing_map.get(p.id, []),
             specs=specs_map.get(p.id) if spec_keys else None,
+            lifecycle=life_map.get(p.id),
         )
         for p in parts
     ]

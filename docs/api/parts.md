@@ -47,7 +47,7 @@ List parts. Two response shapes selected by query (not by route):
 
 `PartOut` is built by `serialize_part` (`backend/app/api/routes/_parts_shared.py`); includes `id`, `part_type`, `name`, `manufacturer`, `mpn`, `internal_part_number`, `description`, `footprint`, `notes_markdown`, `low_stock_report_quantity`, `attrition_percentage`, `attrition_min_quantity`, `default_storage_location_id`, `default_storage_mandatory`, `serialized`, `published`, `linked_provider`, `linked_external_id`, `last_refresh_at`, `updated_at`, `description_locally_edited`, `archived_at`, `on_hand`, `reserved`, `available`, `image_url`.
 
-List rows additionally carry `provider_links`, `missing_specs`, `spec_incomplete` and — only when `spec_columns` asked for them — `specs`; see the notes below. `updated_at` is the mixin-maintained "last change" timestamp; it needs no column of its own and is what the parts table's *Last change* column sorts on.
+List rows additionally carry `provider_links`, `missing_specs`, `spec_incomplete`, `lifecycle`, `compliance` and — only when `spec_columns` asked for them — `specs`; see the notes below. `updated_at` is the mixin-maintained "last change" timestamp; it needs no column of its own and is what the parts table's *Last change* column sorts on.
 
 **Notes**
 
@@ -60,7 +60,8 @@ List rows additionally carry `provider_links`, `missing_specs`, `spec_incomplete
 - **`missing_specs` / `spec_incomplete` are on list rows and on detail, batched.** `missing_specs` lists the canonical spec keys this part's category says it must have and nobody supplied, in schema order; `spec_incomplete` is `missing_specs != []` and is derived rather than stored, so the two cannot disagree. The whole page costs two statements (`missing_specs_for_parts`): one for the workspace's categories, to turn `category_id` into the name path `spec_schema.category_slug_for` reads, and one for the parts' `custom_fields` narrowed to the canonical key set. Pinned by `backend/tests/test_spec_reconcile.py::test_the_list_flag_does_not_scale_with_row_count`. See [ADR-0034](../adr/0034-spec-schema.md).
 - **"Supplied" means a row exists, whoever wrote it.** A `manual` or `override` value counts — the flag answers "does this part have the data", not "did a provider send it". An archived row does not. A part with **no** category gets the common schema, whose only mandatory key is `package`, so an uncategorized part reads as incomplete until it is filed.
 - **`[]` and *absent* mean different things.** A list row that has no links carries `"provider_links": []` — "looked, found none". A response that never loaded them (create-part, for one) omits the key entirely; the same rule governs `missing_specs` / `spec_incomplete`, which only the list, the detail and the refresh responses carry. `PartSchema` on the frontend keeps these fields optional so both parse.
-- Every per-row extra is assembled by `serialize_part_rows` (`_parts_shared.py`): one query each for image URLs, on-hand, reserved, provider links, spec-column values, and two for spec completeness, for the whole page.
+- **`lifecycle` / `compliance` are on list rows and on detail, batched (SM-004).** Same objects, same helper as MCP `get_part` — `lifecycle_compliance.for_parts` — so REST and MCP cannot disagree: `lifecycle` {`status` (active \| nrnd \| last-time-buy \| obsolete \| discontinued \| preliminary \| unknown), `raw`, `discontinued`, `end_of_life`, `source`, `refreshed_at`, optional `alternates`} and `compliance` {`rohs`, `reach`, `eccn`, `hts`, `msl`, `source`, `refreshed_at`, optional `alternates`}. An unknown status (or an all-unknown compliance block) carries `reason`: `never_fetched`, `provider_silent` (with `note`) or `unrecognised`. Read-only: derived from the rows the provider refresh stored. The whole page costs two statements (custom-field rows + provider links), with no flag: netsch's MPN lookup (`?mpn=`) reads lifecycle off the hit without a second request, and the frontend `PartSchema` takes both keys as optional passthrough objects. Create-part does not load them and omits both keys. Pinned by `backend/tests/test_parts_rest_lifecycle.py` (REST == MCP for a DigiKey part, a Mouser-only `provider_silent` part and an unlinked `never_fetched` part). Field semantics: `backend/app/domain/parts/lifecycle_compliance.py`.
+- Every per-row extra is assembled by `serialize_part_rows` (`_parts_shared.py`): one query each for image URLs, on-hand, reserved, provider links, spec-column values, two for spec completeness and two for lifecycle / compliance, for the whole page.
 
 #### Per-category spec columns
 
@@ -186,7 +187,7 @@ Create a new part.
 
 Fetch a single part. Includes archived rows so the detail page can still render (`parts_core.py:212-218`).
 
-**Response** — `200 OK` — `PartOut` with on-hand / reserved roll-ups.
+**Response** — `200 OK` — `PartOut` with on-hand / reserved roll-ups, `provider_links`, `missing_specs` / `spec_incomplete`, and `lifecycle` / `compliance` identical to MCP `get_part`'s (see the list notes above).
 
 **Errors** — `404 part.not_found` (`_parts_shared.py:95-102`).
 

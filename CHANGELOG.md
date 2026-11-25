@@ -15,6 +15,14 @@ the canonical record.
 
 ## Unreleased
 
+- **Lifecycle / compliance on the parts REST API (SM-004 parity).**
+  `GET /api/parts/{id}` and every `GET /api/parts` row now carry
+  `lifecycle` and `compliance`, the same objects MCP `get_part` returns
+  (one helper, `lifecycle_compliance.for_parts`; two batched statements
+  per list page). REST clients such as netsch's `parts sync` no longer
+  read every line as lifecycle unknown. Additive and read-only: no
+  migration, no writes; the frontend `PartSchema` accepts both as
+  optional.
 - **EDA asset metadata and review (SM-010).** Migration 0088 adds
   `eda_asset_metadata`, keyed by a hosted symbol / footprint / 3D model /
   SPICE file AND its sha256, so a new file version reads as `unreviewed`.
