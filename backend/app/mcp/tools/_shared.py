@@ -492,11 +492,14 @@ def part_eda_payload(caller: Caller, part: Part, config: PartEda | None) -> dict
     `PCM_SM_<slug>:<Entry>` string the user's schematic will actually
     contain, because those are two different questions ("what do I edit"
     vs "what will KiCad show") and an agent maintaining a library needs
-    both. The refs are built by `domain/eda/kicad_refs.py`, which is the
-    same module the PCM package generation uses — so a ref reported here
-    is the ref that ships.
+    both. The refs come from `kicad_library.part_references` — the code
+    that emits `symbolIdStr` / `Footprint` to KiCad, slug from the
+    ENTRY's own active category — so a ref reported here is the ref that
+    ships, and equals `pin_pad_check`'s. `symbol_ref` / `footprint_ref`
+    are reported only when they name a hosted entry; an external one is
+    `*_ref_external`.
     """
-    from app.domain.eda import asset_metadata, kicad_refs, spice_binding_read
+    from app.domain.eda import asset_metadata, kicad_library, spice_binding_read
 
     # SM-009: the structured SPICE binding, or `{source: "free-text",
     # validated: false}` for a hand-written `sim_pins` with none.
@@ -513,12 +516,9 @@ def part_eda_payload(caller: Caller, part: Part, config: PartEda | None) -> dict
             }
         )
 
-    category = (
-        caller.db.get(PartCategory, part.category_id)
-        if part.category_id is not None
-        else None
-    )
-    slug = category.library_slug if category is not None else None
+    refs = kicad_library.part_references(
+        caller.db, workspace_id=caller.ws.id, part_ids=[part.id]
+    ).get(part.id)
 
     symbol_name = _entry_name(caller, EdaSymbol, config.symbol_id)
     footprint_name = _entry_name(caller, EdaFootprint, config.footprint_id)
@@ -531,14 +531,12 @@ def part_eda_payload(caller: Caller, part: Part, config: PartEda | None) -> dict
             "configured": True,
             "symbol_id": sid(config.symbol_id),
             "symbol_name": symbol_name,
-            "symbol_ref": (
-                kicad_refs.entry_ref(symbol_name, slug) if symbol_name else None
-            ),
+            "symbol_ref": refs.symbol_ref if refs and refs.symbol is not None else None,
             "symbol_ref_external": config.symbol_ref_external,
             "footprint_id": sid(config.footprint_id),
             "footprint_name": footprint_name,
             "footprint_ref": (
-                kicad_refs.entry_ref(footprint_name, slug) if footprint_name else None
+                refs.footprint_ref if refs and refs.footprint is not None else None
             ),
             "footprint_ref_external": config.footprint_ref_external,
             "spice_datafile_id": sid(config.spice_datafile_id),

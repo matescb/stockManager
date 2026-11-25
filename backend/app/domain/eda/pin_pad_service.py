@@ -6,12 +6,16 @@ construction: it selects and opens files, never writes, and stores no
 verdict — the answer is recomputed from the current files on every
 call, so it is never stale and carries the hashes it was computed on.
 
-A slot resolves the way KiCad will see it: a hosted entry
-(`symbol_id` / `footprint_id`), else the part's own external reference
-(`*_ref_external`), else the category default (`default_*_ref`, which
-is also an external `LibNick:Entry`), else nothing. Only two hosted
-files can be compared; an external one lives in the user's local KiCad
-library and its file is not here.
+A slot resolves EXACTLY the way KiCad is given it: the refs and the
+hosted rows behind them come from `kicad_library.part_references`, the
+same code that emits `symbolIdStr` / `Footprint` to the HTTP library —
+the part's own external ref, else the hosted ACTIVE entry under its OWN
+active category's library (not the part's category), else the part
+category's default, else nothing. `symbol_ref` / `footprint_ref` in the
+payload are therefore the refs KiCad shows. Only two hosted files can be
+compared; an external one lives in the user's local KiCad library and
+its file is not here. An archived hosted entry is not served, so it is
+not checked either: the slot falls through like KiCad's does.
 
 Every lookup filters on the workspace, including the joined entry rows
 — an FK alone does not prove the row is ours (CLAUDE.md).
@@ -39,8 +43,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.domain.categories.models import PartCategory
-from app.domain.eda import kicad_refs, pin_pad, pin_pad_classify, storage
-from app.domain.eda.models import EdaFootprint, EdaSymbol, PartEda, PinPadAcceptance
+from app.domain.eda import kicad_library, pin_pad, pin_pad_classify, storage
+from app.domain.eda.models import PinPadAcceptance
 from app.domain.parts.models import Part
 from app.domain.users.models import User
 
@@ -63,42 +67,21 @@ def check_parts(
     """The `pin_pad_check` payload for each part, in a fixed few queries."""
     if not parts:
         return {}
-    configs = {
-        row.part_id: row
-        for row in db.execute(
-            select(PartEda)
-            .where(PartEda.workspace_id == ws_id)
-            .where(PartEda.part_id.in_([p.id for p in parts]))
-        ).scalars()
-    }
-    symbols = _rows(db, ws_id, EdaSymbol, [c.symbol_id for c in configs.values()])
-    footprints = _rows(db, ws_id, EdaFootprint, [c.footprint_id for c in configs.values()])
-    categories = _rows(
-        db,
-        ws_id,
-        PartCategory,
-        [p.category_id for p in parts]
-        + [r.category_id for r in (*symbols.values(), *footprints.values())],
+    refs = kicad_library.part_references(
+        db, workspace_id=ws_id, part_ids=[p.id for p in parts]
     )
     acceptances = _acceptances(db, ws_id, [p.id for p in parts])
     out: dict[UUID, dict[str, Any]] = {}
     for part in parts:
-        config = configs.get(part.id)
-        category = categories.get(part.category_id)
-        symbol = _slot(
-            symbols.get(config.symbol_id) if config else None,
-            config.symbol_ref_external if config else None,
-            category.default_symbol_ref if category else None,
-            categories,
-        )
-        footprint = _slot(
-            footprints.get(config.footprint_id) if config else None,
-            config.footprint_ref_external if config else None,
-            category.default_footprint_ref if category else None,
-            categories,
-        )
+        ref = refs.get(part.id)
+        symbol = _slot(ref.symbol if ref else None, ref.symbol_ref if ref else None)
+        footprint = _slot(ref.footprint if ref else None, ref.footprint_ref if ref else None)
         out[part.id] = _payload(
-            ws_id, symbol, footprint, _is_connector(category), acceptances.get(part.id, [])
+            ws_id,
+            symbol,
+            footprint,
+            _is_connector(ref.category if ref else None),
+            acceptances.get(part.id, []),
         )
     return out
 
@@ -140,29 +123,12 @@ def _acceptances(
     return out
 
 
-def _rows(db: Session, ws_id: UUID, model: type, ids: list[UUID | None]) -> dict[UUID, Any]:
-    wanted = [i for i in ids if i is not None]
-    if not wanted:
-        return {}
-    return {
-        row.id: row
-        for row in db.execute(
-            select(model).where(model.workspace_id == ws_id).where(model.id.in_(wanted))
-        ).scalars()
-    }
-
-
-def _slot(
-    hosted: Any, own_external: str | None, default_external: str | None,
-    categories: dict[UUID, PartCategory],
-) -> _Slot:
+def _slot(hosted: Any, ref: str | None) -> _Slot:
+    """`ref` is the emitted ref; `hosted` the row it names, if hosted here."""
     if hosted is not None:
-        category = categories.get(hosted.category_id)
-        slug = category.library_slug if category is not None else None
-        return _Slot(ref=kicad_refs.entry_ref(hosted.name, slug), sha256=hosted.sha256)
-    external = own_external or default_external
-    if external:
-        return _Slot(ref=external, external=True)
+        return _Slot(ref=ref, sha256=hosted.sha256)
+    if ref:
+        return _Slot(ref=ref, external=True)
     return _MISSING
 
 

@@ -818,6 +818,11 @@ regardless of size. Works with a read-only token.
 footprint's pad numbers. It is computed on every call from the files the part
 uses now, so it is never stale; it carries the two `sha256`s it was computed
 on. `get_part_eda` returns the same object under `pin_pad_check`.
+`symbol_ref` / `footprint_ref` here, and the top-level ones of `get_part_eda`,
+are exactly what the KiCad HTTP library emits as `symbolIdStr` / `Footprint`
+(`kicad_library.part_references`): a hosted entry is named under its OWN
+category's library (`PCM_SM_<entry category slug>`, `uncategorized` when it has
+none), not the part's category.
 
 ```json
 {"part_id": "…", "part_url": "…", "verdict": "pass_with_warnings",

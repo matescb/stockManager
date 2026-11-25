@@ -37,6 +37,13 @@ the canonical record.
   is tied to both file hashes, so a changed file shows it as stale instead of
   applying it. MCP shows acceptances and never writes them. `not-checkable` is
   documented, in the tool and the server instructions, as NOT a pass.
+- **`get_part_eda.symbol_ref` / `footprint_ref` now name the library KiCad is
+  actually given.** They were built from the PART's category, while the KiCad
+  HTTP library and the PCM package name a hosted entry under its OWN
+  category's library — so a part filed under Transistors whose symbol entry is
+  uncategorized reported `PCM_SM_transistors:…` while KiCad got
+  `PCM_SM_uncategorized:…`. Both `get_part_eda` and `pin_pad_check` now read
+  the refs from `kicad_library.part_references`, the emitting code itself.
 - **Lifecycle / compliance on the parts REST API (SM-004 parity).**
   `GET /api/parts/{id}` and every `GET /api/parts` row now carry
   `lifecycle` and `compliance`, the same objects MCP `get_part` returns

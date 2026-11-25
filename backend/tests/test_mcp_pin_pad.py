@@ -238,3 +238,32 @@ async def test_warnings_verdict_is_listed_and_classified(authed_client):
     assert [i["part_id"] for i in fails] == [fail]
     assert {i["part_id"] for i in everything} == {warn, fail}
     assert eda["pin_pad_check"]["verdict"] == "pass_with_warnings"
+
+
+async def test_refs_are_the_ones_kicad_is_given_when_categories_differ(authed_client, db):
+    """Prod (SUD50P06-15L-E3): the symbol entry is filed under one
+    category (here none -> `uncategorized`) and the part under another.
+    KiCad gets the ENTRY's library; get_part_eda, pin_pad_check and the
+    HTTP library's `symbolIdStr` / `Footprint` field must all agree."""
+    from app.domain.eda import kicad_library
+
+    part = create_part(authed_client, "P-FET", mpn="PP-SUD50")
+    async with mcp_session(_mint(authed_client)["token"]) as s:
+        await _attach(s, part, "soic8.kicad_sym", "soic8_mech.kicad_mod")
+        await call(s, "create_category", name="Transistors")
+        await call(
+            s, "set_part_category", part_id_or_mpn=part, category_id_or_name="Transistors"
+        )
+        eda = await call(s, "get_part_eda", part_id=part)
+        checked = await call(s, "check_pin_pad", part_id_or_mpn=part)
+
+    ws_id = db.get(Part, uuid.UUID(part)).workspace_id
+    emitted = kicad_library.part_detail(db, workspace_id=ws_id, part_id=uuid.UUID(part))
+    assert emitted is not None
+    symbol_ref = emitted["symbolIdStr"]
+    footprint_ref = emitted["fields"]["footprint"]["value"]
+    assert symbol_ref == "PCM_SM_uncategorized:SOIC8_DEVICE"
+    assert footprint_ref == "PCM_SM_uncategorized:SOIC8_MECH"
+    assert eda["symbol_ref"] == checked["symbol_ref"] == symbol_ref
+    assert eda["footprint_ref"] == checked["footprint_ref"] == footprint_ref
+    assert eda["pin_pad_check"]["symbol_ref"] == symbol_ref

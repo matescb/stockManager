@@ -104,6 +104,8 @@ __all__ = [
     "category_exists",
     "list_parts",
     "part_detail",
+    "PartReferences",
+    "part_references",
 ]
 
 # Where `routes/kicad.py` is mounted. Lives here so the `root_url` this
@@ -200,7 +202,7 @@ def _bool_str(value: bool) -> str:
     return "True" if value else "False"
 
 
-def _rows_stmt(workspace_id: UUID) -> Select:
+def _rows_stmt(workspace_id: UUID, *, include_archived_parts: bool = False) -> Select:
     """Active parts joined to every row the resolution order may read.
 
     Each join carries its own `workspace_id` equality check alongside
@@ -211,8 +213,11 @@ def _rows_stmt(workspace_id: UUID) -> Select:
 
     Every category join also carries `archived_at IS NULL`, which is
     what makes an archived category behave as no category throughout.
+
+    `include_archived_parts` is for `part_references` only: KiCad never
+    sees an archived part, but the CAD tab and MCP still describe one.
     """
-    return (
+    stmt = (
         select(
             Part,
             PartEda,
@@ -270,8 +275,8 @@ def _rows_stmt(workspace_id: UUID) -> Select:
             ),
         )
         .where(Part.workspace_id == workspace_id)
-        .where(Part.archived_at.is_(None))
     )
+    return stmt if include_archived_parts else stmt.where(Part.archived_at.is_(None))
 
 
 def _iter_rows(db: Session, stmt: Select) -> Iterator[_PartRow]:
@@ -670,3 +675,52 @@ def part_detail(
         return None
     documents = _documents(db, workspace_id=workspace_id, rows=[row])
     return documents[0] if documents else None
+
+
+@dataclass(frozen=True)
+class PartReferences:
+    """What KiCad is given for one part, and the hosted rows behind it.
+
+    `symbol_ref` / `footprint_ref` are EXACTLY the `symbolIdStr` and
+    `Footprint` field this module emits (`_symbol_id_str`,
+    `_footprint_ref`): the part's own external ref, else the hosted
+    ACTIVE entry under its OWN active category's library, else the part
+    category's default. `symbol` / `footprint` are the hosted rows when
+    that is where the ref came from, else None (external or default —
+    the file lives in the user's local KiCad library).
+    """
+
+    symbol_ref: str | None
+    footprint_ref: str | None
+    symbol: EdaSymbol | None
+    footprint: EdaFootprint | None
+    category: PartCategory | None
+
+
+def part_references(
+    db: Session, *, workspace_id: UUID, part_ids: Sequence[UUID]
+) -> dict[UUID, PartReferences]:
+    """The emitted references for these parts, in one query.
+
+    The ONE derivation of "which ref does KiCad get" for anything that
+    reports one (the pin/pad check, `get_part_eda`); a second copy would
+    drift — e.g. building the slug from the part's category instead of
+    the entry's own. Archived parts are included (described, not served).
+    """
+    if not part_ids:
+        return {}
+    stmt = _rows_stmt(workspace_id, include_archived_parts=True).where(
+        Part.id.in_(list(part_ids))
+    )
+    out: dict[UUID, PartReferences] = {}
+    for row in _iter_rows(db, stmt):
+        external_symbol = row.config is not None and bool(row.config.symbol_ref_external)
+        external_fp = row.config is not None and bool(row.config.footprint_ref_external)
+        out[row.part.id] = PartReferences(
+            symbol_ref=_symbol_id_str(row),
+            footprint_ref=_footprint_ref(row),
+            symbol=None if external_symbol else row.symbol,
+            footprint=None if external_fp else row.footprint,
+            category=row.category,
+        )
+    return out
