@@ -3,7 +3,9 @@
 Both tools are read-only and compute the verdict on demand from the
 current files (`domain/eda/pin_pad_service.py`); nothing is stored. The
 rules — exposed pads, thermal vias, mechanical pads, no-connect pins,
-multi-unit symbols — are in `domain/eda/pin_pad.py`'s docstring.
+multi-unit symbols — are in `domain/eda/pin_pad.py`'s docstring, the
+finding classes in `pin_pad_classify.py`. Acceptances (SM-008b) are
+shown, never written: a human accepts a finding in the app.
 
 `list_pin_pad_issues` pages exactly as `export_parts` does — keyset on
 `Part.id`, a signed cursor whose scope names this tool — but filters
@@ -41,7 +43,8 @@ _CURSOR_SCOPE = "mcp.list_pin_pad_issues"
 _WANTED = {
     "fail": {pin_pad.FAIL},
     "not-checkable": {pin_pad.NOT_CHECKABLE},
-    "all": {pin_pad.FAIL, pin_pad.NOT_CHECKABLE},
+    "warnings": {pin_pad.PASS_WITH_WARNINGS},
+    "all": {pin_pad.FAIL, pin_pad.NOT_CHECKABLE, pin_pad.PASS_WITH_WARNINGS},
 }
 
 
@@ -56,21 +59,33 @@ def check_pin_pad(caller: Caller, part_id_or_mpn: str) -> dict[str, Any]:
     Args:
         part_id_or_mpn: The part's id or exact MPN.
 
-    Returns `verdict` — `pass`, `fail`, or `not-checkable` with a
-    `reason` (`symbol_missing`, `footprint_missing`, `symbol_external` /
+    Returns `verdict`: `pass`; `pass_with_warnings` (only non-electrical
+    findings stand — look at them, they do not fail); `fail` (an
+    electrical finding stands); or `not-checkable` with a `reason`
+    (`symbol_missing`, `footprint_missing`, `symbol_external` /
     `footprint_external` for an entry in the user's local KiCad library,
     `symbol_unreadable`, `footprint_unreadable`, `symbol_derived`,
-    `body_styles_differ`, `symbol_too_complex`) and `detail`; `symbol_sha256`,
-    `footprint_sha256`, `symbol_ref`, `footprint_ref`, `checked_at`; and
-    `findings` with `pins_without_pad`, `pads_without_pin`,
-    `duplicate_pin_numbers` (each fails the check),
-    `no_connect_pins_without_pad` and `mounting_pads_without_pin`
-    (connector MP / MH / SH / SHIELD pads no pin claims; information
-    only). Legal and never a
-    failure: unnumbered pads, NPTH / mechanical pads, paste- or
-    mask-only pads, and several pads sharing one number (exposed pad,
-    thermal vias). Multi-unit symbols are checked as the union of their
-    units' pins.
+    `body_styles_differ`, `symbol_too_complex`, `footprint_too_complex`)
+    and `detail`.
+    `not-checkable` is NOT a pass: nothing about the part was verified.
+
+    Also `symbol_sha256`, `footprint_sha256`, `symbol_ref`,
+    `footprint_ref`, `checked_at`, `electrical_count`, `warnings_count`,
+    `accepted_count`, `stale_acceptances` (acceptances recorded on
+    earlier files; they excuse nothing), and `findings`:
+    `classified` — one `{kind, number, class, reason, accepted?}` per
+    finding, `kind` `pad_without_pin` / `pin_without_pad` /
+    `duplicate_pin`, `class` `electrical` / `exposed_pad` / `nc_pin` /
+    `shell` / `mechanical`, `accepted` `{by, by_name, at, note}` when a
+    workspace owner accepted it on these exact files (then it no longer
+    counts) — plus the older unclassified lists `pins_without_pad`,
+    `pads_without_pin`, `duplicate_pin_numbers`,
+    `no_connect_pins_without_pad` and `mounting_pads_without_pin`.
+    Never a finding: unnumbered pads, NPTH pads, paste- or mask-only
+    pads, several pads sharing one number, and `no_connect` pins
+    without a pad. Multi-unit symbols are checked as the union of their
+    units' pins. Accepting a finding is done by a person in the app;
+    no tool writes it.
     """
     part = resolve_part(caller, part_id_or_mpn)
     return {
@@ -83,7 +98,7 @@ def check_pin_pad(caller: Caller, part_id_or_mpn: str) -> dict[str, Any]:
 @tool()
 def list_pin_pad_issues(
     caller: Caller,
-    verdict: Literal["fail", "not-checkable", "all"] = "all",
+    verdict: Literal["fail", "not-checkable", "warnings", "all"] = "all",
     cursor: str | None = None,
     page_size: int = DEFAULT_PAGE_SIZE,
 ) -> dict[str, Any]:
@@ -98,8 +113,9 @@ def list_pin_pad_issues(
 
     Args:
         verdict: `fail`, `not-checkable` (one side missing, in the
-            user's local library, or unreadable), or `all` (both;
-            default). Passing parts are never listed.
+            user's local library, or unreadable — NOT a pass),
+            `warnings` (`pass_with_warnings`), or `all` (all three;
+            default). Parts that plainly pass are never listed.
         cursor: The `next_cursor` from the previous page.
         page_size: Items per page, 1-100 (default 50); larger is reduced.
 

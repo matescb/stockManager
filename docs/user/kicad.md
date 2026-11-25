@@ -74,6 +74,19 @@ If the part has an LCSC part number, you don't need a download at all.
 
 Stock Manager asks EasyEDA for the symbol, footprint and 3D model and imports whatever it has. Parts often have no 3D model; you get the symbol and footprint anyway, and the missing piece is listed.
 
+## Check that the pins and pads match
+
+At the bottom of the **CAD** tab, **Pin/pad check** compares the symbol's pin numbers with the footprint's pad numbers. A symbol and a footprint from different places often disagree, and on the board that is an open or a short.
+
+- **Pins and pads match** — nothing to do.
+- **Mismatch** — at least one difference marked *electrical*: a pin with no pad, a pad with no pin, or the same pin number twice. Fix the files, or accept it with a note if you know it is fine.
+- **Pass with warnings** — only differences that are usually harmless: an *exposed pad* under a chip, an *NC pin* the footprint marks as not connected, a connector's *shell* tabs, or a *mechanical* pad. Glance at them.
+
+A pad the symbol leaves out because the pin is "not connected" counts as a **mismatch** unless the footprint itself marks it NC — Stock Manager cannot tell it from a symbol that forgot a real pin such as GND. Check the datasheet and accept it with a note like "pin 4 is NC".
+- **Not checkable** — the symbol or footprint is missing, lives only in your local KiCad library, or could not be read. This is not a pass: nothing was compared.
+
+Workspace owners and admins see **Accept** next to each difference. Accepting records your name and note, and the difference stops counting. If someone later replaces the symbol or the footprint, the acceptance no longer applies and shows under **Accepted on earlier files** — check the new files and accept again.
+
 ## What to do if it doesn't work
 
 **A part vanished from the symbol chooser.**

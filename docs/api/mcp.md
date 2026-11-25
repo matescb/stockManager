@@ -91,7 +91,7 @@ earlier result has the other.
 | `part_policy_status` | What an existing part still lacks under the part policy |
 | `export_parts` | Every part, cursor-paged, with EDA hashes, on-hand / reserved / available, lifecycle and compliance — for audits |
 | `check_pin_pad` | Do the symbol's pin numbers and the footprint's pad numbers match? (see [Pin/pad check](#pinpad-check)) |
-| `list_pin_pad_issues` | Every part whose pin/pad check fails or cannot run, cursor-paged |
+| `list_pin_pad_issues` | Every part whose pin/pad check fails, warns or cannot run, cursor-paged |
 | `list_spice_binding_issues` | Parts whose `sim_pins` (KiCad `Sim.Pins`) is unchecked free text or a binding that no longer holds — cursor-paged, read-only (see [SPICE pin binding](#spice-pin-binding)) |
 | `list_part_documents` | A part's local PDFs (datasheet, app notes, PCNs, manuals, uploads) with a Bearer-downloadable `download_url`, plus what is still queued (see [Part documents](#part-documents)) |
 
@@ -816,56 +816,127 @@ regardless of size. Works with a read-only token.
 
 `check_pin_pad(part_id_or_mpn)` compares the part's symbol pin numbers with its
 footprint's pad numbers. It is computed on every call from the files the part
-uses now and stores nothing, so it is never stale; it carries the two
-`sha256`s it was computed on. `get_part_eda` returns the same object under
-`pin_pad_check`.
+uses now, so it is never stale; it carries the two `sha256`s it was computed
+on. `get_part_eda` returns the same object under `pin_pad_check`.
+`symbol_ref` / `footprint_ref` here, and the top-level ones of `get_part_eda`,
+are exactly what the KiCad HTTP library emits as `symbolIdStr` / `Footprint`
+(`kicad_library.part_references`): a hosted entry is named under its OWN
+category's library (`PCM_SM_<entry category slug>`, `uncategorized` when it has
+none), not the part's category.
 
 ```json
-{"part_id": "…", "part_url": "…", "verdict": "fail",
+{"part_id": "…", "part_url": "…", "verdict": "pass_with_warnings",
  "symbol_sha256": "…", "footprint_sha256": "…",
- "symbol_ref": "PCM_SM_ics:SOIC8_DEVICE", "footprint_ref": "PCM_SM_ics:SOIC8_PAD9",
- "findings": {"pins_without_pad": [], "pads_without_pin": ["9"],
-              "duplicate_pin_numbers": [], "no_connect_pins_without_pad": [],
-              "mounting_pads_without_pin": []},
- "checked_at": "2026-11-24T12:00:00+00:00"}
+ "symbol_ref": "PCM_SM_ics:FT232RQ", "footprint_ref": "PCM_SM_ics:QFN-32_EP",
+ "findings": {
+   "classified": [
+     {"kind": "pad_without_pin", "number": "5", "class": "nc_pin",
+      "reason": "footprint marks the pad not-connected"},
+     {"kind": "pad_without_pin", "number": "33", "class": "exposed_pad",
+      "reason": "pad is 41x the median pad and in the body's centre",
+      "accepted": {"by": "…", "by_name": "Ann", "at": "2026-11-25T09:00:00+00:00",
+                   "note": "EP to GND pour"}}],
+   "pins_without_pad": [], "pads_without_pin": ["5", "33"],
+   "duplicate_pin_numbers": [], "no_connect_pins_without_pad": [],
+   "mounting_pads_without_pin": []},
+ "electrical_count": 0, "warnings_count": 1, "accepted_count": 1,
+ "stale_acceptances": [],
+ "checked_at": "2026-11-25T12:00:00+00:00"}
 ```
 
-The rules:
+**Verdicts.** `fail` — an `electrical` finding stands. `pass_with_warnings` —
+only non-electrical findings stand: look at them, they do not fail.
+`pass` — nothing stands. `not-checkable` (with `reason` and `detail`) —
+**`not-checkable` is NOT a pass**: nothing about the part was compared.
+
+**Findings.** `findings.classified` has one `{kind, number, class, reason}` per
+finding. `kind` is `pad_without_pin`, `pin_without_pad` or `duplicate_pin`.
+`class` is `electrical`, `exposed_pad`, `nc_pin`, `shell` or `mechanical`; only
+a pad without a pin can be anything but `electrical`. The older lists
+(`pins_without_pad`, `pads_without_pin`, `duplicate_pin_numbers`,
+`no_connect_pins_without_pad`, `mounting_pads_without_pin`) are kept unchanged
+for existing callers and carry no class — read `classified`.
+
+**Classes** (`backend/app/domain/eda/pin_pad_classify.py`; geometry and pad type
+first, names second; the first rule that matches wins, and when unsure the
+answer is `electrical`):
+
+- `mechanical` — the pad is numbered `~` (KiCad's "unnamed") or named `MP` /
+  `MH` (optional number) or exactly `M`.
+- `shell` — named `SH` (optional number), `SHIELD` or `SHELL`; or the part is a
+  **connector** (its category's name, library slug or `J` reference prefix, or
+  the footprint's name / descr / tags, say so) and the pad is ≥ 2× the median
+  pad AND either sits off the matched pads' pin row or touches the courtyard
+  edge. A signal-sized pad is never a shell (a USB-C symbol that forgot its B
+  row is a real mismatch), and outside a connector geometry never makes a
+  shell (a DPAK's drain tab is a real open).
+- `exposed_pad` — the pad is ≥ 4× the median pad, in the middle half of the
+  courtyard and clear of its outer 15 %; or numbered above the symbol's highest
+  pin, ≥ 2× the median and placed the same way; or every pad of the number lies
+  inside such a pad (thermal vias numbered on their own).
+- `nc_pin` — **fail-safe: only with positive evidence in the footprint.** Every
+  pad of the number has `pinfunction` `NC`, `N.C.`, `NC` plus a number (`NC1`,
+  `NC_3`) or `DNC` (any case; `nCS` is a signal, not NC), or a `pintype`
+  containing `no_connect`. Geometry is never evidence: a symbol that leaves out
+  an NC pin looks exactly like one that forgot GND. So an unmarked
+  signal-sized pad the symbol lacks is `electrical` and **fails** —
+  FT232RQ / ISO1042 / TPS7A05-style symbols that omit their NC pins fail until
+  the footprint marks those pads NC or an owner accepts each finding (with a
+  note, as for any electrical finding). That is intended.
+- `electrical` — everything else, and always every pin without a pad and every
+  duplicate pin.
+
+The "median pad" is the median area of the pads the symbol does claim. When the
+geometry cannot be trusted — a zero or non-finite median, a zero-area pad, a
+non-numeric size or position — only the name rules apply and everything else is
+`electrical`. An acceptance applies only while the finding still has the class
+it was accepted with; if the class changes on the same files (e.g. the part
+leaves a connector category) the acceptance shows as stale and the finding
+counts again.
+
+**Acceptances.** A workspace owner or admin can accept a finding in the app
+(CAD tab → Pin/pad check; REST in [EDA § Pin/pad check](eda.md#pinpad-check-and-accepted-findings)).
+No MCP tool writes one. An accepted finding shows `accepted: {by, by_name, at,
+note}` and no longer counts toward the verdict or the counts
+(`electrical_count` / `warnings_count` count standing findings,
+`accepted_count` the accepted ones). An acceptance is tied to both file
+hashes: once either file changes it appears under `stale_acceptances` and
+excuses nothing. `electrical` findings can be accepted only with a note.
+
+The base rules:
 
 - Numbers are compared as trimmed, case-sensitive strings (BGA `A1` is not
   `a1`). Pins with an empty number are ignored.
 - Only **electrical** pads count: a non-empty number, type `smd`, `thru_hole` or
   `connect`, and a copper layer. Unnumbered pads, `np_thru_hole` (NPTH /
-  mechanical) pads and paste- or mask-only pads never fail. Several pads with
-  one number (an exposed pad and its thermal vias, or an EP numbered like a
-  ground pin) are legal.
+  mechanical) pads and paste- or mask-only pads are never findings. Several
+  pads with one number (an exposed pad and its thermal vias, or an EP numbered
+  like a ground pin) are legal.
 - A multi-unit symbol is checked as the union of its units' pins. Body style 1
   is checked; a De Morgan style 2 with different pin numbers is
   `not-checkable` (`body_styles_differ`).
 - A `no_connect` pin with no pad goes under `no_connect_pins_without_pad` as
-  information and does not fail.
-- A copper pad named like a connector's mounting or shield pad — `MP`, `MH` or
-  `SH` with an optional number (`MP1`), or `SHIELD`, in any case — that no pin
-  claims goes under `mounting_pads_without_pin` as information and does not
-  fail. `S`, `G` and `GND_TAB` are not exempt: `G` / `D` / `S` are a FET's real
-  pads. A symbol that has an `MP` pin matches the `MP` pad as usual.
-- The same pin number twice in one unit is `duplicate_pin_numbers` and fails,
-  except stacked pins (same position) and duplicate power pins of which at most
-  one is visible.
-- `fail` when `pins_without_pad`, `pads_without_pin` or
-  `duplicate_pin_numbers` is non-empty, otherwise `pass`.
-- `not-checkable` carries `reason` and `detail`: `symbol_missing`,
-  `footprint_missing`, `symbol_external` / `footprint_external` (the entry is in
-  the user's local KiCad library, including a category default),
-  `symbol_unreadable` / `footprint_unreadable`, `symbol_derived` (the symbol
-  `extends` one that is not stored), `body_styles_differ`, `symbol_too_complex`
-  (over 10,000 pins, 256 units or 4 body styles: the check's work is bounded).
+  information; it is not a finding.
+- A copper pad named like a mounting or shield pad — `MP`, `MH` or `SH` with an
+  optional number, exactly `M`, `SHIELD` or `SHELL`, in any case — that no pin
+  claims is also listed under `mounting_pads_without_pin`. `S`, `G`, `M1` and
+  `GND_TAB` are not mounting names: `G` / `D` / `S` are a FET's real pads. A
+  symbol that has an `MP` pin matches the `MP` pad as usual.
+- The same pin number twice in one unit is `duplicate_pin`, except stacked pins
+  (same position) and duplicate power pins of which at most one is visible.
+- `not-checkable` reasons: `symbol_missing`, `footprint_missing`,
+  `symbol_external` / `footprint_external` (the entry is in the user's local
+  KiCad library, including a category default), `symbol_unreadable` /
+  `footprint_unreadable`, `symbol_derived` (the symbol `extends` one that is
+  not stored), `body_styles_differ`, `footprint_too_complex` (over 5,000 pads),
+  `symbol_too_complex` (over 10,000 pins,
+  256 units or 4 body styles: the check's work is bounded).
 
-`list_pin_pad_issues(verdict="all"|"fail"|"not-checkable", cursor, page_size)`
+`list_pin_pad_issues(verdict="all"|"fail"|"not-checkable"|"warnings", cursor, page_size)`
 walks every active part whose own EDA configuration names a symbol or a
 footprint, keyset-paged by part id like `export_parts`, and returns the ones
-with the asked verdict (`all` = `fail` and `not-checkable`; passing parts are
-never listed). Each call scans at most 500 parts, so a page can be short or
+with the asked verdict (`warnings` = `pass_with_warnings`; `all` = `fail`,
+`not-checkable` and `pass_with_warnings`; plain `pass` is never listed). Each call scans at most 500 parts, so a page can be short or
 empty while `next_cursor` is still set — continue until it is `null`. Works
 with a read-only token.
 

@@ -744,3 +744,48 @@ export const MeSchema = z.object({
   workspaces: z.array(MeWorkspaceSchema),
 });
 export type Me = z.infer<typeof MeSchema>;
+
+// ---------------------------------------------------------------------
+// Pin/pad check on the CAD tab (SM-008 / SM-008b)
+// `GET /api/parts/{id}/eda/pin-pad` — backend/app/api/routes/eda_pin_pad.py
+// ---------------------------------------------------------------------
+
+export const PinPadAcceptedSchema = z.object({
+  by: z.string().nullable(),
+  by_name: z.string().nullable(),
+  at: z.string(),
+  note: z.string().nullable(),
+});
+
+export const PinPadFindingSchema = z.object({
+  kind: z.enum(["pad_without_pin", "pin_without_pad", "duplicate_pin"]),
+  number: z.string(),
+  class: z.enum(["exposed_pad", "nc_pin", "shell", "mechanical", "electrical"]),
+  reason: z.string(),
+  accepted: PinPadAcceptedSchema.optional(),
+});
+export type PinPadFinding = z.infer<typeof PinPadFindingSchema>;
+
+export const PinPadStaleAcceptanceSchema = PinPadAcceptedSchema.extend({
+  finding_kind: PinPadFindingSchema.shape.kind,
+  number: z.string(),
+  class: PinPadFindingSchema.shape.class,
+  symbol_sha256: z.string(),
+  footprint_sha256: z.string(),
+});
+export type PinPadStaleAcceptance = z.infer<typeof PinPadStaleAcceptanceSchema>;
+
+export const PinPadCheckSchema = z.object({
+  verdict: z.enum(["pass", "pass_with_warnings", "fail", "not-checkable"]),
+  reason: z.string().optional(),
+  detail: z.string().nullable().optional(),
+  symbol_sha256: z.string().nullable(),
+  footprint_sha256: z.string().nullable(),
+  findings: z.object({ classified: z.array(PinPadFindingSchema) }).passthrough(),
+  electrical_count: z.number(),
+  warnings_count: z.number(),
+  accepted_count: z.number(),
+  stale_acceptances: z.array(PinPadStaleAcceptanceSchema),
+  can_accept: z.boolean(),
+});
+export type PinPadCheck = z.infer<typeof PinPadCheckSchema>;
