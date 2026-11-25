@@ -109,6 +109,7 @@ REASON_FOOTPRINT_UNREADABLE = "footprint_unreadable"
 REASON_SYMBOL_DERIVED = "symbol_derived"
 REASON_BODY_STYLES_DIFFER = "body_styles_differ"
 REASON_SYMBOL_TOO_COMPLEX = "symbol_too_complex"
+REASON_FOOTPRINT_TOO_COMPLEX = "footprint_too_complex"
 
 _ELECTRICAL_PAD_TYPES = frozenset({"smd", "thru_hole", "connect"})
 _POWER_PIN_TYPES = frozenset({"power_in", "power_out"})
@@ -127,6 +128,10 @@ _CACHE_SIZE = 1024
 MAX_PINS = 10_000
 MAX_UNITS = 256
 MAX_STYLES = 4
+# Footprint pads (every `(pad …)`, any type). The largest stock KiCad
+# BGAs are ~2,500; past this the footprint is `not-checkable`, so the
+# classification never runs on a pathological file.
+MAX_PADS = pin_pad_classify.MAX_GEOMETRY_PADS
 # Input caps, the same as the upload lane's (`storage.MAX_BYTES_BY_KIND`);
 # a stored file is already under them, this guards a direct caller.
 _MAX_SYMBOL_BYTES = 1024 * 1024
@@ -504,6 +509,13 @@ def check_bytes(symbol: bytes, footprint: bytes, connector: bool = False) -> Pin
         node = _parse_footprint(footprint)
     except Unreadable as exc:
         return _unreadable(REASON_FOOTPRINT_UNREADABLE, exc)
+    pad_count = sum(1 for c in node if isinstance(c, list) and sexpr.head(c) == "pad")
+    if pad_count > MAX_PADS:
+        return PinPadResult(
+            verdict=NOT_CHECKABLE,
+            reason=REASON_FOOTPRINT_TOO_COMPLEX,
+            detail=f"footprint exceeds the check's limit of {MAX_PADS} pads",
+        )
     return compare(
         pins, electrical_pads(node), pin_pad_classify.footprint_geometry(node), connector
     )

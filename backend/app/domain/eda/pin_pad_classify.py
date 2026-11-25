@@ -72,12 +72,16 @@ is the courtyard's bounding box, else the fab layer's, else the pads'.
 A symbol pin without a pad and a duplicate pin number are always
 `electrical`: there is no geometry on the symbol side to excuse them.
 
+Bounded work: pads are grouped by number once (`_Context.boxes`), and a
+footprint with more than `MAX_GEOMETRY_PADS` pads never reaches this
+module — `pin_pad.check_bytes` answers `not-checkable`
+(`footprint_too_complex`) first. The `oversized` guard below is the
+same cap for a direct caller.
+
 When the geometry cannot be trusted the geometric rules are skipped and
-every pad that is not excused by NAME is `electrical`: a footprint with
-more than `MAX_GEOMETRY_PADS` electrical pads (bounded work on the
-single worker — the classification would otherwise be pads × pads), a
-zero or non-finite median pad, a pad with zero area, or a size / position
-that is not a finite number.
+every pad that is not excused by NAME is `electrical`: a zero or
+non-finite median pad, a pad with zero area, or a size / position that
+is not a finite number.
 
 Pure: parsed footprint in, classes out. No I/O.
 """

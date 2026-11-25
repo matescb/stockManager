@@ -341,3 +341,31 @@ async def test_revoke_with_hashes_clears_only_that_stale_row(authed_client, full
     assert after["stale_acceptances"] == []
     assert after["verdict"] == "pass"
     assert _classified(after)["9"]["accepted"]["note"] == "new files"
+
+
+async def test_acceptance_applies_only_while_the_class_is_unchanged(
+    authed_client, full_token
+):
+    """Strict class match, the other direction too: an electrical finding
+    accepted with a note, which later reads `shell`, is not silently
+    carried over — the acceptance is stale and the finding counts again
+    (as a warning now)."""
+    part = await _part(authed_client, full_token, "rf_coax_1.kicad_sym", "rf_5pad_plain.kicad_mod")
+    async with mcp_session(full_token) as s:
+        await call(s, "create_category", name="Coax Connectors")
+    plain = _get(authed_client, part)
+    assert _classified(plain)["3"]["class"] == "electrical"
+    assert _accept(authed_client, part, "pad_without_pin", "3", note="GND").status_code == 200
+    assert "accepted" in _classified(_get(authed_client, part))["3"]
+
+    async with mcp_session(full_token) as s:
+        await call(
+            s, "set_part_category", part_id_or_mpn=part, category_id_or_name="Coax Connectors"
+        )
+    moved = _get(authed_client, part)
+    assert _classified(moved)["3"]["class"] == "shell"
+    assert "accepted" not in _classified(moved)["3"]
+    assert [(a["number"], a["class"]) for a in moved["stale_acceptances"]] == [
+        ("3", "electrical")
+    ]
+    assert moved["accepted_count"] == 0 and moved["warnings_count"] == 4

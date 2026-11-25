@@ -23,8 +23,8 @@ SM-008b adds two inputs, both read here so the pure check stays pure:
 * `pin_pad_acceptances` — a human's acceptance of a finding on THESE two
   files. An acceptance whose hashes match the current files sets that
   finding aside (it is shown with `accepted`, and no longer counts
-  toward the verdict); one recorded on other files — or recorded for a
-  non-electrical finding that now reads `electrical` — is listed under
+  toward the verdict); one recorded on other files — or for a finding
+  whose class has changed since — is listed under
   `stale_acceptances` and excuses nothing.
 """
 from __future__ import annotations
@@ -232,21 +232,19 @@ def _applicable(
 ) -> list[dict[str, Any]]:
     """Acceptances that still excuse their finding.
 
-    Both hashes must match the current files. And an acceptance given to
-    a NON-electrical finding never excuses it once it reads `electrical`
-    — the class can change on the same bytes (the part leaves a
-    connector category, or the rules change), and such an acceptance
-    was given without the note an electrical one requires.
+    Both hashes must match the current files AND the class recorded at
+    acceptance must equal the finding's CURRENT class. The class can
+    change on the same bytes (the part leaves a connector category, or
+    the rules change); a person accepted "a shell tab", not whatever the
+    pad reads as now — so any other acceptance is stale and the finding
+    counts normally.
     """
     files = (symbol.sha256, footprint.sha256)
     classes = {f.key: f.cls for f in result.classified}
     return [
         a for a in acceptances
         if (a["symbol_sha256"], a["footprint_sha256"]) == files
-        and not (
-            classes.get((a["finding_kind"], a["number"])) == pin_pad.ELECTRICAL
-            and a["class"] != pin_pad.ELECTRICAL
-        )
+        and classes.get((a["finding_kind"], a["number"])) == a["class"]
     ]
 
 

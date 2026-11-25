@@ -65,7 +65,8 @@ def check_pin_pad(caller: Caller, part_id_or_mpn: str) -> dict[str, Any]:
     (`symbol_missing`, `footprint_missing`, `symbol_external` /
     `footprint_external` for an entry in the user's local KiCad library,
     `symbol_unreadable`, `footprint_unreadable`, `symbol_derived`,
-    `body_styles_differ`, `symbol_too_complex`) and `detail`.
+    `body_styles_differ`, `symbol_too_complex`, `footprint_too_complex`)
+    and `detail`.
     `not-checkable` is NOT a pass: nothing about the part was verified.
 
     Also `symbol_sha256`, `footprint_sha256`, `symbol_ref`,

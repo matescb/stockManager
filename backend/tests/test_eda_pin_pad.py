@@ -492,13 +492,28 @@ def _smd(number: str, x: float, y: float, w: float = 1, h: float = 1, extra: str
     )
 
 
-def test_more_pads_than_the_geometry_cap_are_all_electrical_and_fast():
-    from app.domain.eda.pin_pad_classify import MAX_GEOMETRY_PADS
-
-    pads = [_smd(str(n), n % 100, n // 100) for n in range(1, MAX_GEOMETRY_PADS + 2)]
+def test_more_pads_than_the_cap_is_not_checkable_and_fast():
+    pads = [_smd(str(n), n % 100, n // 100) for n in range(1, pin_pad.MAX_PADS + 2)]
     result, elapsed = _timed_pair(_ONE_PIN, _pads(*pads))
-    assert result.verdict == pin_pad.FAIL
-    assert {f.cls for f in result.classified} == {"electrical"}
+    assert result.verdict == pin_pad.NOT_CHECKABLE
+    assert result.reason == pin_pad.REASON_FOOTPRINT_TOO_COMPLEX
+    assert elapsed < _TIME_LIMIT_S, f"{elapsed:.2f}s"
+
+
+def test_pathological_2mb_footprint_returns_quickly():
+    """The largest footprint the upload lane accepts, packed with tiny
+    distinct pads plus large central ones (the E3 containment scan): it
+    must be refused or classified in bounded time, never pads x pads."""
+    pads = [_smd("EP", 0, 0, 50, 50)] * 20
+    size, n = sum(len(p) + 1 for p in pads), 1
+    while size < pin_pad._MAX_FOOTPRINT_BYTES - 200:
+        pad = _smd(str(n), (n % 40) - 20, (n // 40) % 40 - 20, 0.1, 0.1)
+        pads.append(pad)
+        size, n = size + len(pad) + 1, n + 1
+    footprint = _pads(*pads)
+    assert len(footprint) <= pin_pad._MAX_FOOTPRINT_BYTES
+    result, elapsed = _timed_pair(_ONE_PIN, footprint)
+    assert result.verdict == pin_pad.NOT_CHECKABLE
     assert elapsed < _TIME_LIMIT_S, f"{elapsed:.2f}s"
 
 

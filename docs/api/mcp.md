@@ -879,12 +879,12 @@ answer is `electrical`):
   duplicate pin.
 
 The "median pad" is the median area of the pads the symbol does claim. When the
-geometry cannot be trusted — more than 5,000 electrical pads (the work is
-bounded), a zero or non-finite median, a zero-area pad, a non-numeric size or
-position — only the name rules apply and everything else is `electrical`.
-An acceptance given to a non-electrical finding stops applying (shows as stale)
-if that finding later reads `electrical` on the same files, e.g. after the part
-leaves a connector category.
+geometry cannot be trusted — a zero or non-finite median, a zero-area pad, a
+non-numeric size or position — only the name rules apply and everything else is
+`electrical`. An acceptance applies only while the finding still has the class
+it was accepted with; if the class changes on the same files (e.g. the part
+leaves a connector category) the acceptance shows as stale and the finding
+counts again.
 
 **Acceptances.** A workspace owner or admin can accept a finding in the app
 (CAD tab → Pin/pad check; REST in [EDA § Pin/pad check](eda.md#pinpad-check-and-accepted-findings)).
@@ -920,7 +920,8 @@ The base rules:
   `symbol_external` / `footprint_external` (the entry is in the user's local
   KiCad library, including a category default), `symbol_unreadable` /
   `footprint_unreadable`, `symbol_derived` (the symbol `extends` one that is
-  not stored), `body_styles_differ`, `symbol_too_complex` (over 10,000 pins,
+  not stored), `body_styles_differ`, `footprint_too_complex` (over 5,000 pads),
+  `symbol_too_complex` (over 10,000 pins,
   256 units or 4 body styles: the check's work is bounded).
 
 `list_pin_pad_issues(verdict="all"|"fail"|"not-checkable"|"warnings", cursor, page_size)`
