@@ -13,10 +13,17 @@ vi.mock("@/components/scanner/useKeyboardWedge", () => ({
     wedge.onScan = cb;
   },
 }));
-const camera = vi.hoisted(() => ({ onScan: null as null | ((r: { data: string; symbology: string }) => void) }));
+const camera = vi.hoisted(() => ({
+  onScan: null as null | ((r: { data: string; symbology: string }) => void),
+  symbologies: [] as ReadonlyArray<string>,
+}));
 vi.mock("@/components/scanner/Scanner", () => ({
-  default: ({ onScan }: { onScan: (r: { data: string; symbology: string }) => void }) => {
+  default: ({ onScan, symbologies }: {
+    onScan: (r: { data: string; symbology: string }) => void;
+    symbologies?: ReadonlyArray<string>;
+  }) => {
     camera.onScan = onScan;
+    camera.symbologies = symbologies ?? [];
     return <div data-testid="camera" />;
   },
 }));
@@ -256,6 +263,22 @@ describe("BoxIntake", () => {
           bag_signature: await bagSignature(RAW_NO_1P),
         }),
       ]);
+    });
+
+    it("turns on 1D codes for the camera while the prompt waits, and off again after", async () => {
+      mockResolve();
+      mount();
+      await screen.findByTestId("camera");
+      expect(camera.symbologies).toEqual(["DataMatrix", "QR"]);
+      scan(RAW_NO_1P);
+      await screen.findByTestId("follow-up-prompt");
+      expect(camera.symbologies).toEqual(expect.arrayContaining(["Code128", "Code39"]));
+
+      camera.onScan?.({ data: "GRM188R71H104KA93D", symbology: "Code128" });
+
+      expect(await screen.findByText("Added")).toBeTruthy();
+      expect(screen.queryByTestId("follow-up-prompt")).toBeNull();
+      expect(camera.symbologies).toEqual(["DataMatrix", "QR"]);
     });
 
     it("cancels with the button and with Esc; the bag keeps its inline MPN box", async () => {

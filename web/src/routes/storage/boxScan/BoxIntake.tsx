@@ -258,7 +258,7 @@ export default function BoxIntake() {
 
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-      <ScanPanel boxId={storageId} mode="intake" onBag={onBag} onManual={onManual} />
+      <ScanPanel boxId={storageId} mode="intake" onBag={onBag} onManual={onManual} awaitingAnswer={followUp !== null} />
       <div className="space-y-3">
         {followUp && <FollowUpPrompt followUp={followUp} onAnswer={t => void answerFollowUp(t)} onCancel={cancelFollowUp} />}
         <div className="flex flex-wrap items-center justify-between gap-2">
