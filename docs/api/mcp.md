@@ -279,6 +279,12 @@ write, one candidate list per provider (never merged), `source` /
 quota](#provider-quota) with `quota` per provider, one attempt with no
 transport retries.
 
+Price and stock in search results are **indicative**. DigiKey states that
+keyword-search data may be up to 24 hours old, so DigiKey candidates carry
+`price_stock_freshness: "indicative_up_to_24h"`; Mouser states no figure and
+its candidates carry no such field. Call `catalog_lookup` for real-time price
+and availability before ordering.
+
 ```json
 {
   "keywords": "100nF 0603 C0G", "limit": 2, "offset": 0,
@@ -291,7 +297,8 @@ transport retries.
      "key_parameters": {"Capacitance": "0.1 µF", "Voltage - Rated": "50V"},
      "stock": 41230, "unit_price_qty1": "9.4100 CZK",
      "datasheet_url": "…", "product_url": "https://www.digikey.cz/…",
-     "retrieved_at": "2026-11-24T10:02:11+00:00"}
+     "retrieved_at": "2026-11-24T10:02:11+00:00",
+     "price_stock_freshness": "indicative_up_to_24h"}
   ],
   "facets": {
     "source": "digikey",

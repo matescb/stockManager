@@ -15,6 +15,12 @@ the canonical record.
 
 ## Unreleased
 
+- **`catalog_search` says its price and stock are indicative (SM-002).**
+  DigiKey's keyword-search data may be up to 24 h old, so DigiKey candidates
+  now carry `price_stock_freshness: "indicative_up_to_24h"` and the tool
+  description sends agents to `catalog_lookup` for real-time price and
+  availability before ordering. Mouser states no figure, so its candidates
+  carry no field.
 - **Pin/pad findings are classified, and can be accepted per part (SM-008b).**
   The first real pin/pad run (276 parts) failed 12, all on pads without a pin
   that a human would wave through: exposed / thermal pads, NC package pins the

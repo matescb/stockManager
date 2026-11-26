@@ -179,6 +179,24 @@ async def test_both_providers_side_by_side_never_merged(token, digikey, mouser, 
     assert out["applied_sort"]["digikey"]["source"] == "default"
 
 
+async def test_digikey_candidates_say_price_and_stock_are_indicative(
+        token, digikey, mouser, clock):
+    async with mcp_session(token) as s:
+        out = await call(s, "catalog_search", keywords="100nF 0603 C0G", limit=2,
+                         in_stock=True)
+    by_source = {c["source"]: c for c in out["candidates"]}
+    assert by_source["digikey"]["price_stock_freshness"] == "indicative_up_to_24h"
+    # Mouser states no figure: left out rather than guessed.
+    assert "price_stock_freshness" not in by_source["mouser"]
+
+
+async def test_description_tells_agents_to_confirm_with_catalog_lookup(token):
+    async with mcp_session(token) as s:
+        tools = {t.name: t for t in (await s.list_tools()).tools}
+    text = tools["catalog_search"].description
+    assert "indicative" in text and "24 h" in text and "catalog_lookup" in text
+
+
 async def test_an_explicit_sort_is_sent_as_asked_and_reported(token, digikey, clock):
     async with mcp_session(token) as s:
         out = await call(s, "catalog_search", keywords="100nF 0603 C0G", sort="price")
