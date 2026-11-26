@@ -46,7 +46,7 @@ from app.domain.parts.services.provider_refresh_failures import looks_like_quota
 from app.domain.provider_errors import ProviderError, ProviderSuspendedError
 from app.domain.sourcing.providers._retry_transport import retries_disabled
 
-__all__ = ["MAX_LIMIT", "SORTS", "catalog_search"]
+__all__ = ["MAX_LIMIT", "PRICE_STOCK_FRESHNESS", "SORTS", "catalog_search"]
 
 MAX_LIMIT = 50
 DEFAULT_LIMIT = 20
@@ -55,6 +55,11 @@ SORTS: tuple[str, ...] = tuple(
 )
 #: `applied_sort` for a provider that takes no sort (Mouser): its own order.
 _PROVIDER_ORDER: dict[str, Any] = {"sort": None, "source": "provider"}
+#: Per provider: how current a candidate's price and stock are, as the
+#: provider itself states it. DigiKey's FAQ: keyword-search data "may be up
+#: to 24 hours stale; use ProductDetails for real time pricing and
+#: availability". A provider with no stated figure is left out, not guessed.
+PRICE_STOCK_FRESHNESS: dict[str, str] = {"digikey": "indicative_up_to_24h"}
 _RESPONSE_TTL_SEC = 600.0
 _CATEGORIES_TTL_SEC = 86_400.0
 
@@ -308,7 +313,11 @@ def _response(q: SearchQuery, answers: list[_Answer]) -> dict[str, Any]:
     for a in answered:
         stamp = a.retrieved_at.isoformat() if hasattr(a.retrieved_at, "isoformat") else None
         for row in a.result.get("candidates") or []:
-            candidates.append({"source": a.provider, **row, "retrieved_at": stamp})
+            candidate = {"source": a.provider, **row, "retrieved_at": stamp}
+            freshness = PRICE_STOCK_FRESHNESS.get(a.provider)
+            if freshness:
+                candidate["price_stock_freshness"] = freshness
+            candidates.append(candidate)
     out: dict[str, Any] = {
         "keywords": q.keywords,
         "limit": q.limit,

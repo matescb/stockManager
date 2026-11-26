@@ -50,7 +50,9 @@ def catalog_search(
     """Search the distributor catalogues (DigiKey, Mouser) for candidate parts.
 
     For part research ("0603 C0G 100nF 50V, active, in stock"). Nothing is
-    written. Narrow in steps: search by keywords, then re-query with ids
+    written. Price and stock here are indicative: DigiKey's keyword-search
+    data may be up to 24 h old, so call catalog_lookup for real-time price
+    and availability before ordering. Narrow in steps: search by keywords, then re-query with ids
     taken from the returned `facets` — never invent ids.
 
     DigiKey fills facets sparsely: a broad search returns manufacturers
@@ -92,7 +94,8 @@ def catalog_search(
     Returns `candidates` (each with `source`, the provider's own
     `product_url`, `retrieved_at`, `mpn`, `manufacturer`, `description`,
     `status`, `key_parameters`, `stock`, `unit_price_qty1`,
-    `datasheet_url`) — per provider, never merged — plus `total` per
+    `datasheet_url`; DigiKey candidates also carry
+    `price_stock_freshness: "indicative_up_to_24h"`) — per provider, never merged — plus `total` per
     provider, DigiKey's `facets` (categories, manufacturers, status,
     parametric_filters with ids, names and counts; `categories_from` is
     "candidates" when DigiKey sent no category facet and the list was
