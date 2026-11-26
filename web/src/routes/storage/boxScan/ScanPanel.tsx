@@ -14,7 +14,12 @@ import { isScanSoundMuted, playScanSound, primeScanAudio, setScanSoundMuted } fr
 import { api, ApiError } from "@/lib/api";
 import { classifyScan, type ScanSource, type ScannedBag } from "./scanCode";
 
-const SYMBOLOGIES = ["DataMatrix", "QR"] as const;
+// 2D only by default: a bag carries several 1D codes (MPN, quantity, order
+// number) beside its DataMatrix, and the camera would read whichever it saw
+// first as a new bag. While a follow-up asks for one field, the 1D codes are
+// exactly what the operator aims at, so they are turned on for that time.
+const SYMBOLOGIES_2D = ["DataMatrix", "QR"] as const;
+const SYMBOLOGIES_WITH_1D = ["DataMatrix", "QR", "Code128", "Code39"] as const;
 const CAMERA_PREF = "boxScan:camera";
 
 function readCameraPref(): boolean {
@@ -31,9 +36,11 @@ type Props = {
   onBag: (bag: ScannedBag) => void;
   /** Present only where adding by MPN makes sense. */
   onManual?: (mpn: string, quantity: number) => void;
+  /** A follow-up prompt is waiting for one field: the camera also reads 1D. */
+  awaitingAnswer?: boolean;
 };
 
-export default function ScanPanel({ boxId, mode, onBag, onManual }: Props) {
+export default function ScanPanel({ boxId, mode, onBag, onManual, awaitingAnswer = false }: Props) {
   const navigate = useNavigate();
   const [camera, setCamera] = useState(readCameraPref);
   const [muted, setMuted] = useState(isScanSoundMuted);
@@ -130,7 +137,16 @@ export default function ScanPanel({ boxId, mode, onBag, onManual }: Props) {
           </button>
         </div>
       </div>
-      {camera && <Scanner onScan={onCamera} symbologies={SYMBOLOGIES} className="flex flex-col h-[40vh]" />}
+      {camera && (
+        // Both backends read symbologies when the camera starts, so the key
+        // remounts the scanner when the set changes.
+        <Scanner
+          key={awaitingAnswer ? "with-1d" : "2d"}
+          onScan={onCamera}
+          symbologies={awaitingAnswer ? SYMBOLOGIES_WITH_1D : SYMBOLOGIES_2D}
+          className="flex flex-col h-[40vh]"
+        />
+      )}
       <form className="flex gap-2" onSubmit={submitCode}>
         <label className="sr-only" htmlFor="box-scan-code">Bag code</label>
         <input

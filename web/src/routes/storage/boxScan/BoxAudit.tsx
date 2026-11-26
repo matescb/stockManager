@@ -271,7 +271,7 @@ export default function BoxAudit() {
 
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-      <ScanPanel boxId={storageId} mode="audit" onBag={s => void onBag(s)} />
+      <ScanPanel boxId={storageId} mode="audit" onBag={s => void onBag(s)} awaitingAnswer={followUp !== null} />
       <div className="space-y-4">
         {followUp && <FollowUpPrompt followUp={followUp} onAnswer={answerFollowUp} onCancel={cancelFollowUp} />}
         <div className="flex flex-wrap items-center justify-between gap-2">

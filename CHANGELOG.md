@@ -15,6 +15,12 @@ the canonical record.
 
 ## Unreleased
 
+- **Box intake / audit: the camera reads 1D barcodes while a follow-up
+  prompt waits.** The camera decoded DataMatrix and QR only, so "Scan the
+  Mfr. Part No barcode" could be answered by a USB reader but not by the
+  camera. While a prompt waits, Code128 and Code39 are on; otherwise the
+  camera stays 2D-only, so the bag's other 1D codes (quantity, order) are
+  never read as new bags.
 - **`catalog_search` says its price and stock are indicative (SM-002).**
   DigiKey's keyword-search data may be up to 24 h old, so DigiKey candidates
   now carry `price_stock_freshness: "indicative_up_to_24h"` and the tool
