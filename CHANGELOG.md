@@ -15,6 +15,12 @@ the canonical record.
 
 ## Unreleased
 
+- **Box intake / audit: pick which 1D code answers the follow-up.** A bag
+  label prints several 1D codes (MPN, quantity, Mouser P/N, order), and the
+  camera took whichever it decoded first. While a prompt waits, every 1D
+  code the camera reads is now listed under the preview and nothing is used
+  until the operator taps one. The ZXing scanner reports every code in a
+  frame, each debounced on its own, instead of only the first.
 - **Box intake / audit: the camera reads 1D barcodes while a follow-up
   prompt waits.** The camera decoded DataMatrix and QR only, so "Scan the
   Mfr. Part No barcode" could be answered by a USB reader but not by the

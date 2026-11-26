@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { apiGet, apiPost, FakeApiError, RAW_A, RAW_NO_1P } from "./mocks";
@@ -265,7 +265,7 @@ describe("BoxIntake", () => {
       ]);
     });
 
-    it("turns on 1D codes for the camera while the prompt waits, and off again after", async () => {
+    it("reads 1D codes while the prompt waits, lists them, and uses the one tapped", async () => {
       mockResolve();
       mount();
       await screen.findByTestId("camera");
@@ -274,9 +274,23 @@ describe("BoxIntake", () => {
       await screen.findByTestId("follow-up-prompt");
       expect(camera.symbologies).toEqual(expect.arrayContaining(["Code128", "Code39"]));
 
-      camera.onScan?.({ data: "GRM188R71H104KA93D", symbology: "Code128" });
+      // A label prints several 1D codes: each is offered, none is taken.
+      act(() => {
+        camera.onScan?.({ data: "100", symbology: "Code128" });
+        camera.onScan?.({ data: "81-GRM188R71H104KA3D", symbology: "Code128" });
+        camera.onScan?.({ data: "GRM188R71H104KA93D", symbology: "Code128" });
+        camera.onScan?.({ data: "100", symbology: "Code128" });
+      });
+      const picker = screen.getByTestId("code-candidates");
+      expect(within(picker).getAllByRole("button").map(b => b.textContent)).toEqual([
+        "100", "81-GRM188R71H104KA3D", "GRM188R71H104KA93D",
+      ]);
+      expect(screen.getByTestId("follow-up-prompt")).toBeTruthy();
+
+      fireEvent.click(within(picker).getByRole("button", { name: "GRM188R71H104KA93D" }));
 
       expect(await screen.findByText("Added")).toBeTruthy();
+      expect(screen.queryByTestId("code-candidates")).toBeNull();
       expect(screen.queryByTestId("follow-up-prompt")).toBeNull();
       expect(camera.symbologies).toEqual(["DataMatrix", "QR"]);
     });
