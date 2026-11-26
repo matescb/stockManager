@@ -20,6 +20,9 @@ import { classifyScan, type ScanSource, type ScannedBag } from "./scanCode";
 // exactly what the operator aims at, so they are turned on for that time.
 const SYMBOLOGIES_2D = ["DataMatrix", "QR"] as const;
 const SYMBOLOGIES_WITH_1D = ["DataMatrix", "QR", "Code128", "Code39"] as const;
+const LINEAR = new Set(["Code128", "Code39"]);
+/** Most codes one bag label carries; older ones drop off the list. */
+const MAX_CANDIDATES = 8;
 const CAMERA_PREF = "boxScan:camera";
 
 function readCameraPref(): boolean {
@@ -36,7 +39,10 @@ type Props = {
   onBag: (bag: ScannedBag) => void;
   /** Present only where adding by MPN makes sense. */
   onManual?: (mpn: string, quantity: number) => void;
-  /** A follow-up prompt is waiting for one field: the camera also reads 1D. */
+  /** A follow-up prompt is waiting for one field: the camera also reads 1D,
+   *  and lists each 1D code it sees for the operator to pick — a bag label
+   *  prints several (MPN, quantity, order), and the camera cannot tell
+   *  which one the prompt wants. */
   awaitingAnswer?: boolean;
 };
 
@@ -86,7 +92,23 @@ export default function ScanPanel({ boxId, mode, onBag, onManual, awaitingAnswer
 
   const onWedge = useCallback((raw: string) => void handle(raw, "wedge"), [handle]);
   useKeyboardWedge(onWedge);
-  const onCamera = useCallback((s: ScanResult) => void handle(s.data, "camera"), [handle]);
+  const [candidates, setCandidates] = useState<string[]>([]);
+  useEffect(() => {
+    if (!awaitingAnswer) setCandidates([]);
+  }, [awaitingAnswer]);
+  const onCamera = useCallback(
+    (s: ScanResult) => {
+      const data = s.data.trim();
+      if (awaitingAnswer && LINEAR.has(s.symbology) && data) {
+        setCandidates(prev =>
+          prev.includes(data) ? prev : [...prev, data].slice(-MAX_CANDIDATES),
+        );
+        return;
+      }
+      void handle(s.data, "camera");
+    },
+    [awaitingAnswer, handle],
+  );
 
   function toggleCamera() {
     const next = !camera;
@@ -146,6 +168,29 @@ export default function ScanPanel({ boxId, mode, onBag, onManual, awaitingAnswer
           symbologies={awaitingAnswer ? SYMBOLOGIES_WITH_1D : SYMBOLOGIES_2D}
           className="flex flex-col h-[40vh]"
         />
+      )}
+      {camera && awaitingAnswer && (
+        <div data-testid="code-candidates" className="space-y-1.5">
+          <div className="text-xs text-muted">
+            {candidates.length
+              ? "Codes the camera sees — tap the one to use:"
+              : "Point the camera at the barcodes; each one it reads is listed here."}
+          </div>
+          {candidates.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {candidates.map(c => (
+                <button
+                  key={c}
+                  type="button"
+                  className="btn btn-sm font-mono break-all text-left"
+                  onClick={() => void handle(c, "camera")}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
       <form className="flex gap-2" onSubmit={submitCode}>
         <label className="sr-only" htmlFor="box-scan-code">Bag code</label>

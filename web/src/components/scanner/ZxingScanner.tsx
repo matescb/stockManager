@@ -18,7 +18,7 @@ import { playScanBeep } from "./scanSounds";
  *      ▼
  *   readBarcodes(imageData, { formats: [...] })
  *      │
- *      ▼ debounced 1.2s against the previous payload
+ *      ▼ every code in the frame, each debounced 1.2s against itself
  *   onScan({ data, symbology })
  *
  * Why we render the video ourselves (Scandit's SDK does this internally):
@@ -78,7 +78,10 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
   const { workspaceId } = useAuth();
   const devicePrefKey = scannerDevicePreferenceKey(workspaceId);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const lastHitRef = useRef<{ data: string; t: number } | null>(null);
+  // Last time each payload was reported. Per payload, not just the last one:
+  // a frame can hold several codes (a bag label prints four 1D codes), and
+  // every one of them is reported so a caller can offer the choice.
+  const lastHitsRef = useRef<Map<string, number>>(new Map());
   const trackRef = useRef<MediaStreamTrack | null>(null);
   // Refs the decoder loop reads each tick — state setters wouldn't reach the
   // closure that was captured when the camera effect first ran.
@@ -275,17 +278,17 @@ export default function ZxingScanner({ onScan, className, symbologies }: Props) 
               tryRotate: true,
               tryInvert: true,
             });
-            const hit = results?.find(r => r.text);
-            if (hit && hit.text) {
-              const now = Date.now();
-              const last = lastHitRef.current;
-              const isDup = last && last.data === hit.text && now - last.t < DUPLICATE_WINDOW_MS;
-              if (!isDup) {
-                lastHitRef.current = { data: hit.text, t: now };
-                const sym = PUBLIC_NAME_BY_ZXING[hit.format] ?? hit.format ?? "?";
-                playScanBeep();
-                onScanRef.current({ data: hit.text, symbology: sym });
-              }
+            const now = Date.now();
+            const seen = lastHitsRef.current;
+            for (const [data, t] of seen) {
+              if (now - t >= DUPLICATE_WINDOW_MS) seen.delete(data);
+            }
+            const fresh = (results ?? []).filter(r => r.text && !seen.has(r.text));
+            for (const hit of fresh) seen.set(hit.text, now);
+            if (fresh.length) playScanBeep();
+            for (const hit of fresh) {
+              const sym = PUBLIC_NAME_BY_ZXING[hit.format] ?? hit.format ?? "?";
+              onScanRef.current({ data: hit.text, symbology: sym });
             }
           } catch {
             // Decoder errors are routine (unreadable frame, occlusion). Just
