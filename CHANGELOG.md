@@ -15,6 +15,13 @@ the canonical record.
 
 ## Unreleased
 
+- **Hosted footprint size on `GET /api/parts/{id}/eda` (edaflow SM-019).** `courtyard_mm: {w, h, source}` (F.CrtYd bounding box, else the pads') and `footprint_file_url` for the `.kicad_mod`; null when the footprint is not hosted. Read from stored bytes.
+- **`prices` and `curated_specs` on the parts REST record (edaflow SM-017, SM-018).** `GET /api/parts` and `GET /api/parts/{id}` carry the stored price ladders as numbers (`prices`, `[]` when none) and the curated specs (`curated_specs`, `{}` when none). Stored rows only; no provider call.
+- **`package_spec` on the parts REST record (edaflow SM-016).** `GET /api/parts`
+  rows and `GET /api/parts/{id}` carry `package_spec: {package, case}` from
+  the stored specs, null when absent, one batched query per page and no
+  provider call. netsch compares the case size with the footprint and reads
+  parts over REST, which had no specs.
 - **Box intake / audit: pick which 1D code answers the follow-up.** A bag
   label prints several 1D codes (MPN, quantity, Mouser P/N, order), and the
   camera took whichever it decoded first. While a prompt waits, every 1D

@@ -20,6 +20,7 @@ will render, and must not be loosened to let these through.
 from __future__ import annotations
 
 import os
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import (
@@ -34,6 +35,7 @@ from fastapi import (
 )
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
+from sqlalchemy import select
 
 from app.api.routes._eda_shared import audit as _audit
 from app.api.routes._eda_shared import patch_comment as _patch_comment
@@ -44,7 +46,16 @@ from app.core.deps import CurrentUser, CurrentWorkspace, DbSession
 from app.core.errors import ErrorCodes, raise_http
 from app.core.ratelimit import limiter, workspace_key
 from app.core.responses import Envelope, ok
-from app.domain.eda import kicad_library, kicad_refs, pcm, render, spice_binding_read, storage
+from app.domain.eda import (
+    kicad_library,
+    kicad_refs,
+    model_fit,
+    model_placement,
+    pcm,
+    render,
+    spice_binding_read,
+    storage,
+)
 from app.domain.eda import service as eda_service
 from app.domain.eda.models import EdaDatafile, EdaFootprint, EdaSymbol
 from app.domain.eda.schemas import (
@@ -952,6 +963,24 @@ def _part_eda_out(db, ws, part, config) -> PartEdaOut:
     out.spice_binding = spice_binding_read.binding_payload(
         db, ws=ws, config=config, part_id=part.id
     )
+    if config.footprint_id is not None:
+        footprint = db.execute(
+            select(EdaFootprint).where(
+                EdaFootprint.workspace_id == ws.id,
+                EdaFootprint.id == config.footprint_id,
+            )
+        ).scalar_one_or_none()
+        if footprint is not None:
+            # Stored bytes only: no KiCad, no network (edaflow SM-019).
+            node = model_placement.read_footprint(ws.id, footprint)
+            if node is not None:
+                out.courtyard_mm = model_fit.footprint_size(node)
+                ext = storage.EXT_BY_KIND[storage.FOOTPRINT_KIND]
+                out.footprint_file_url = (
+                    f"/api/eda/files/{ws.id}/{footprint.sha256}.{ext}"
+                    # `?name=` is capped at 120 chars by the file route.
+                    f"?name={quote(footprint.name[:100])}"
+                )
     return out
 
 

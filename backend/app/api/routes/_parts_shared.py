@@ -26,15 +26,21 @@ from app.domain.categories.service import CategoryIndex, category_name_paths
 from app.domain.custom_fields.models import CustomField
 from app.domain.parts import lifecycle_compliance
 from app.domain.parts.models import Part, PartProviderLink
+from app.domain.parts.provider_fields import (
+    is_provider_namespaced_key,
+    is_provider_reserved_custom_field_key,
+)
 from app.domain.parts.provider_links import serialize_link
 
 # Re-export request schemas from the canonical domain location (CQ-006).
 # Kept importable here for back-compat with split files (#118 step 2-4).
 from app.domain.parts.schemas import BulkDeleteIn, PartIn, PartPatch  # noqa: F401
 from app.domain.parts.services.spec_columns import specs_for_parts
+from app.domain.parts.services.stored_prices import stored_prices_for_parts
 from app.domain.parts.spec_schema import (
     all_canonical_keys,
     category_slug_for,
+    is_catalog_key,
     missing_mandatory,
 )
 from app.domain.stock.service import bulk_current_quantities
@@ -120,6 +126,67 @@ def missing_specs_for_parts(
     }
 
 
+#: The spec keys `package_spec` carries (edaflow SM-016). `package` is the
+#: canonical key every provider's "Package / Case" lands in (ADR-0034);
+#: `case` is read too so a hand-entered one is not lost.
+PACKAGE_SPEC_KEYS: tuple[str, ...] = ("package", "case")
+
+
+def package_specs_for_parts(db, ws_id, part_ids: Sequence) -> dict:
+    """`part_id -> {"package": str|None, "case": str|None}` in ONE query.
+
+    Stored values only: nothing here calls a provider. Every key is
+    present on every part, null when the part has no row.
+    """
+    found = specs_for_parts(db, ws_id=ws_id, part_ids=part_ids, keys=PACKAGE_SPEC_KEYS)
+    return {
+        pid: {key: found[pid][key]["value"] for key in PACKAGE_SPEC_KEYS}
+        for pid in part_ids
+    }
+
+
+def is_curated_spec_key(key: str) -> bool:
+    """A key `curated_specs` carries (edaflow SM-018).
+
+    What MCP `get_part` lists under `specs`, minus provider-namespaced keys
+    (`digikey:…`, `mouser:…`) and catalog metadata (`Unit price (10+)`,
+    stock, lead time, RoHS — `spec_schema.is_catalog_key`): those are
+    distributor data, and prices already come structured in `prices`.
+    """
+    return not (
+        is_provider_reserved_custom_field_key(key)
+        or is_provider_namespaced_key(key)
+        or is_catalog_key(key)
+    )
+
+
+def curated_specs_for_parts(db, ws_id, part_ids: Sequence) -> dict:
+    """`part_id -> {key: value}` in ONE query; `{}` for a part with none.
+
+    Stored rows only, no provider call. Keys are returned as stored: the
+    canonical snake_case keys (`tolerance`, `dielectric`, ADR-0034) and,
+    on parts `spec-normalize` has not reached, upstream display keys such
+    as `Tolerance` too.
+    """
+    out: dict = {pid: {} for pid in part_ids}
+    if not part_ids:
+        return out
+    rows = db.execute(
+        select(CustomField.object_id, CustomField.key, CustomField.value)
+        .where(
+            CustomField.workspace_id == ws_id,
+            CustomField.object_type == "part",
+            CustomField.object_id.in_(part_ids),
+            CustomField.archived_at.is_(None),
+        )
+        .order_by(CustomField.key)
+    ).all()
+    for row in rows:
+        if row.object_id in out and is_curated_spec_key(row.key):
+            out[row.object_id][row.key] = row.value
+    return out
+
+
 def serialize_part(
     p: Part,
     *,
@@ -131,6 +198,9 @@ def serialize_part(
     missing_specs: list[str] | None = None,
     specs: dict[str, dict[str, str | None]] | None = None,
     lifecycle: dict | None = None,
+    package_spec: dict[str, str | None] | None = None,
+    prices: list[dict] | None = None,
+    curated_specs: dict[str, str | None] | None = None,
 ) -> dict:
     """Serialize a Part for API responses.
 
@@ -148,6 +218,19 @@ def serialize_part(
     `lifecycle` is one entry of `lifecycle_compliance.for_parts`
     (`{"lifecycle": …, "compliance": …}`) and emits both keys, in exactly
     the shape MCP `get_part` returns (SM-004). Absent when not loaded.
+
+    `package_spec` is `{"package", "case"}` from `package_specs_for_parts`
+    (edaflow SM-016) — its own key, because `specs` already means the requested
+    `?spec_columns=`. Absent when not loaded; its values are null when the
+    part has none.
+
+    `prices` is the part's entry from `stored_prices_for_parts`
+    (edaflow SM-017): the stored price ladders as numbers, `[]` when the
+    part has none. Absent when not loaded.
+
+    `curated_specs` is `{key: value}` from `curated_specs_for_parts`
+    (edaflow SM-018), `{}` when the part has none. Not `specs` for the
+    same reason as `package_spec`. Absent when not loaded.
     """
     if reserved is None:
         reserved = 0
@@ -212,6 +295,12 @@ def serialize_part(
     if lifecycle is not None:
         out["lifecycle"] = lifecycle["lifecycle"]
         out["compliance"] = lifecycle["compliance"]
+    if package_spec is not None:
+        out["package_spec"] = package_spec
+    if prices is not None:
+        out["prices"] = prices
+    if curated_specs is not None:
+        out["curated_specs"] = curated_specs
     return out
 
 
@@ -296,6 +385,9 @@ def serialize_part_rows(
     life_map = (
         lifecycle_compliance.for_parts(db, ws, part_ids) if ws is not None else {}
     )
+    package_map = package_specs_for_parts(db, ws_id, part_ids)
+    price_map = stored_prices_for_parts(db, ws_id, part_ids)
+    curated_map = curated_specs_for_parts(db, ws_id, part_ids)
     return [
         serialize_part(
             p,
@@ -306,6 +398,9 @@ def serialize_part_rows(
             missing_specs=missing_map.get(p.id, []),
             specs=specs_map.get(p.id) if spec_keys else None,
             lifecycle=life_map.get(p.id),
+            package_spec=package_map.get(p.id),
+            prices=price_map.get(p.id, []),
+            curated_specs=curated_map.get(p.id, {}),
         )
         for p in parts
     ]

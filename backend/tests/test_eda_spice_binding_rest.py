@@ -47,7 +47,8 @@ async def test_rest_part_eda_reports_unbound_then_bound(authed_client):
     }
     assert put.json()["data"]["spice_binding"] == unbound
     assert got["spice_binding"] == unbound
-    assert set(got) == _EXISTING_KEYS | {"spice_binding"}
+    # SM-019 added `courtyard_mm` and `footprint_file_url`, also additive.
+    assert set(got) == _EXISTING_KEYS | {"spice_binding", "courtyard_mm", "footprint_file_url"}
     assert authed_client.get(f"/api/parts/{unconfigured}/eda").json()["data"] is None
 
     async with mcp_session(_mint(authed_client)["token"]) as s:
