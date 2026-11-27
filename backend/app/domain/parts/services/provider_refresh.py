@@ -24,6 +24,7 @@ for. `provider_name=None` still means "the workspace's primary".
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 from app.core.secrets import decrypt
@@ -40,7 +41,7 @@ from app.domain.parts.provider_links import upsert_link
 from app.domain.parts.providers import PartsProvider, make_provider
 from app.domain.parts.services.assets import fetch_provider_asset
 from app.domain.parts.services.documents import queue_media_links
-from app.domain.parts.services.provider_cache import lookup_fresh
+from app.domain.parts.services.provider_cache import lookup_fresh, peek_workspace_cached
 from app.domain.parts.services.spec_reconcile import (
     CategoryOutcome,
     ReconcileReport,
@@ -99,6 +100,10 @@ class UnknownProviderError(RefreshError):
 
 class ProviderNotConfiguredError(RefreshError):
     """No credentials for the named tier. 400 on the route."""
+
+
+class NoStoredAnswerError(RefreshError):
+    """`stored_answer_only` and no cached answer to apply. 409 on the route."""
 
 
 @dataclass(frozen=True)
@@ -219,6 +224,7 @@ def refresh_part(
     require_exact_mpn: bool = False,
     claim_unowned: bool = False,
     fetch_assets: bool = True,
+    stored_answer_only: bool = False,
 ) -> RefreshOutcome:
     """Re-run this part's MPN against one provider and write what came back.
 
@@ -249,6 +255,14 @@ def refresh_part(
     them, because there the vendor IS the source of those columns; here
     whoever typed them never asked a vendor to replace their words.
 
+    `stored_answer_only` (edaflow SM-017 follow-up) applies the answer this
+    workspace already holds — the one MCP `catalog_lookup` cached for the
+    part's MPN, kept 24 h in process — instead of asking upstream. No
+    request leaves the process: no lookup, no asset download (the
+    datasheet cron fetches later). It implies `require_exact_mpn`, and
+    the part's and link's `last_refresh_at` are the answer's own fetch
+    time, not now. No stored answer raises `NoStoredAnswerError`.
+
     Caller owns the transaction. Nothing here commits.
     """
     mpn = ensure_refreshable(part)
@@ -260,7 +274,20 @@ def refresh_part(
     # `lookup_fresh`, not `lookup_with_cache` — a refresh is somebody
     # explicitly asking for what upstream says now. The fresh result is
     # written back to the cache so later cached readers see it.
-    out = lookup_fresh(client, mpn)
+    fetched_at = None
+    if stored_answer_only:
+        entry = peek_workspace_cached(ws.id, client.name, mpn)
+        if entry is None:
+            raise NoStoredAnswerError(
+                f"no stored {client.name} answer for this MPN; run catalog_lookup "
+                "first, or refresh without stored_answer",
+                provider=client.name,
+            )
+        out, fetched_at = entry
+        require_exact_mpn = True
+        fetch_assets = False
+    else:
+        out = lookup_fresh(client, mpn)
     result = out.get("result")
     if not out.get("found") or not result:
         return _miss(client.name, is_primary, out.get("message") or "no match")
@@ -281,6 +308,7 @@ def refresh_part(
             provider_name=client.name,
             user_id=user_id,
             fill_only=claim_unowned,
+            refreshed_at=fetched_at,
         )
         extra_fields, assets, would_fetch = _asset_fields(
             result, ws, fetch=fetch_assets
@@ -344,7 +372,7 @@ def refresh_part(
         provider=client.name,
         external_id=result.get("mpn"),
         source_url=str(result["source_url"]) if result.get("source_url") else None,
-        last_refresh_at=part.last_refresh_at if is_primary else None,
+        last_refresh_at=part.last_refresh_at if is_primary else fetched_at,
     )
 
     return RefreshOutcome(
@@ -398,6 +426,7 @@ def _apply_primary_columns(
     provider_name: str,
     user_id: UUID | None,
     fill_only: bool = False,
+    refreshed_at: datetime | None = None,
 ) -> None:
     """Drive the columns the PRIMARY tier owns.
 
@@ -442,7 +471,7 @@ def _apply_primary_columns(
             part.description = new_description
     part.linked_provider = provider_name
     part.linked_external_id = result.get("mpn") or part.linked_external_id
-    part.last_refresh_at = utcnow()
+    part.last_refresh_at = refreshed_at or utcnow()
     part.updated_by = user_id
 
 

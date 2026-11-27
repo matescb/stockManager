@@ -279,6 +279,10 @@ class ErrorCodes:
     # Refusing to unlink the primary through the secondary-link route —
     # that's `PATCH /api/parts/{id}` with unlink_provider=true.
     PART_PROVIDER_LINK_IS_PRIMARY = "part.provider_link_is_primary"
+    # `?stored_answer=true` and this workspace holds no cached lookup answer
+    # for the part's MPN from that provider (expired after 24 h, or the
+    # process restarted). Nothing was called; a plain refresh would.
+    PART_PROVIDER_NO_STORED_ANSWER = "part.provider_no_stored_answer"
     PART_ASSET_NOT_FOUND = "part.asset_not_found"
     PART_ASSET_INVALID_FILENAME = "part.asset_invalid_filename"
     # Replace-in-projects: source and replacement resolve to the same part.

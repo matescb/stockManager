@@ -542,6 +542,7 @@ Re-run an MPN lookup against this part, normalise the payload onto the per-categ
 | Param | Meaning |
 |-------|---------|
 | `provider` | Which configured provider to refresh from. Omitted, or naming the workspace's own `parts_provider`, runs the PRIMARY flow. Any other known provider runs as a SECONDARY. |
+| `stored_answer` | `true` applies the answer this workspace's MCP `catalog_lookup` already fetched for the part's MPN (held in process for 24 h) instead of calling the provider (edaflow SM-017 follow-up): no metered call, no asset download (the datasheet cron fetches later), exact MPN match only, and `last_refresh_at` is the answer's fetch time. `409 part.provider_no_stored_answer` when there is none — expired, or the service restarted since. Pinned by `backend/tests/test_refresh_from_stored_answer.py`. |
 
 The two tiers differ in what they may write — see ADR-0031.
 
