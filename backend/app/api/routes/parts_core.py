@@ -22,6 +22,10 @@ from app.api.routes._parts_shared import (
     audit_fields_comment as _audit_fields_comment,
 )
 from app.api.routes._parts_shared import (
+    curated_specs_for_parts,
+    package_specs_for_parts,
+)
+from app.api.routes._parts_shared import (
     get_part as _get_part,
 )
 from app.api.routes._parts_shared import (
@@ -69,6 +73,8 @@ from app.domain.parts.services import spec_columns as _spec_columns
 from app.domain.parts.services.create_part import (
     create_part as _create_part,
 )
+from app.domain.parts.services.documents import list_part_documents
+from app.domain.parts.services.stored_prices import stored_prices_for_parts
 from app.domain.stock.models import StockEntry
 from app.domain.stock.service import (
     reserved_quantity,
@@ -264,6 +270,15 @@ def get_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
             # Same helper, same dict as MCP `get_part` (SM-004): netsch
             # reads parts over REST and must see what an agent sees.
             lifecycle=lifecycle_compliance.for_parts(db, ws, [p.id])[p.id],
+            # edaflow SM-016: netsch compares the case size with the footprint.
+            package_spec=package_specs_for_parts(db, ws.id, [p.id])[p.id],
+            # edaflow SM-017: stored price ladders, no provider call.
+            prices=stored_prices_for_parts(db, ws.id, [p.id])[p.id],
+            # edaflow SM-018: value, tolerance, dielectric, voltage for passives.
+            curated_specs=curated_specs_for_parts(db, ws.id, [p.id])[p.id],
+            # edaflow SM-020: stored PDFs, as MCP `list_part_documents`.
+            # Reading never fetches; the hourly cron does the downloads.
+            documents=list_part_documents(db, ws=ws, part=p),
         )
     )
 

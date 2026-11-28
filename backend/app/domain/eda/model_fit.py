@@ -242,8 +242,9 @@ def _apply4(m: Matrix, p: Vec) -> Vec:
 # ---------------------------------------------------------------------
 
 
-def footprint_target(node: sexpr.Node) -> Target:
-    """The box a model should cover, from a parsed `.kicad_mod`."""
+def _outline(node: sexpr.Node) -> tuple[list[tuple[float, float]], str, bool]:
+    """`(points, source, smd)`: the F.CrtYd points when the footprint draws a
+    courtyard, else its pad corners; `source` says which."""
     pads: list[tuple[float, float]] = []
     courtyard: list[tuple[float, float]] = []
     smd_pads = tht_pads = 0
@@ -263,14 +264,37 @@ def footprint_target(node: sexpr.Node) -> Target:
             layer = _find(child, "layer")
             if layer and len(layer) > 1 and str(layer[1]) == "F.CrtYd":
                 courtyard += _graphic_points(child)
-    points = courtyard if len(courtyard) >= 2 else pads
+    smd = attr == "smd" if attr in ("smd", "through_hole") else smd_pads >= tht_pads
+    if len(courtyard) >= 2:
+        return courtyard, "courtyard", smd
+    return pads, "pads", smd
+
+
+def footprint_target(node: sexpr.Node) -> Target:
+    """The box a model should cover, from a parsed `.kicad_mod`."""
+    points, _source, smd = _outline(node)
     if not points:
         raise FitError("footprint has no pads or courtyard")
     xs = [p[0] for p in points]
     ys = [p[1] for p in points]
-    smd = attr == "smd" if attr in ("smd", "through_hole") else smd_pads >= tht_pads
     # Footprint Y points down; the 3D frame's points up.
     return Target(box=(min(xs), -max(ys), max(xs), -min(ys)), smd=smd)
+
+
+def footprint_size(node: sexpr.Node) -> dict[str, Any] | None:
+    """`{w, h, source}` in mm — the courtyard's bounding box, else the pads'
+    (`source`: `courtyard` | `pads`). None for a footprint with neither.
+    Same points `footprint_target` fits a 3D model to (edaflow SM-019)."""
+    points, source, _smd = _outline(node)
+    if not points:
+        return None
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    return {
+        "w": _round(max(xs) - min(xs)),
+        "h": _round(max(ys) - min(ys)),
+        "source": source,
+    }
 
 
 def _find(node: list, head: str) -> list | None:

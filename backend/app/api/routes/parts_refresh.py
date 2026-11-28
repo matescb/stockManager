@@ -51,6 +51,7 @@ from app.domain.parts.provider_links import (
 from app.domain.parts.providers.base import ProviderUpstreamError
 from app.domain.parts.services.provider_refresh import (
     MissingMpnError,
+    NoStoredAnswerError,
     ProviderNotConfiguredError,
     UnknownProviderError,
     ensure_refreshable,
@@ -70,8 +71,15 @@ def refresh_from_provider(
     ws: CurrentWorkspace,
     user: CurrentUser,
     provider: str | None = Query(default=None, max_length=40),
+    stored_answer: bool = Query(default=False),
 ):
     """Re-run an MPN lookup against this part's stored MPN.
+
+    `?stored_answer=true` applies the answer this workspace's MCP
+    `catalog_lookup` already fetched for the MPN (kept 24 h) instead of
+    calling the provider: no metered call, no asset download, exact MPN
+    match only, `last_refresh_at` = when that answer was fetched. 409
+    `part.provider_no_stored_answer` when there is none.
 
     `?provider=` selects which configured provider to refresh from.
     Omitted — or naming the workspace's own `parts_provider` — runs the
@@ -109,6 +117,14 @@ def refresh_from_provider(
             user_id=user.id,
             request_id=getattr(request.state, "request_id", None),
             category_index=categories,
+            stored_answer_only=stored_answer,
+        )
+    except NoStoredAnswerError as exc:
+        raise_http(
+            409,
+            code=ErrorCodes.PART_PROVIDER_NO_STORED_ANSWER,
+            message=exc.message,
+            provider=exc.provider,
         )
     except MissingMpnError as exc:
         raise_http(

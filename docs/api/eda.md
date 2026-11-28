@@ -206,6 +206,16 @@ attached and nothing bound; carries `spice_datafile_id` and `spice_name`) or
 field is read-only: `PUT` neither takes nor needs it, and bindings are written
 by the MCP tool `set_spice_binding` ([mcp.md](./mcp.md#spice-pin-binding)).
 
+`courtyard_mm` and `footprint_file_url` (edaflow SM-019, additive) answer "how
+big is this part on the board" without KiCad. For a hosted footprint
+(`footprint_id`), `courtyard_mm` is `{w, h, source}` in mm: the bounding box of
+the `F.CrtYd` graphics, or of the pads when the footprint draws no courtyard
+(`source`: `courtyard` | `pads`), measured from the stored `.kicad_mod` by
+`domain/eda/model_fit.py::footprint_size` — the same points the 3D-model fit
+uses. `footprint_file_url` is the `GET /api/eda/files/...` link to that file.
+Both are null for an external or missing footprint, or an unreadable file.
+Pinned by `backend/tests/test_part_eda_courtyard.py`.
+
 ### `PUT /api/parts/{part_id}/eda`
 
 Replace the configuration, creating it if absent.

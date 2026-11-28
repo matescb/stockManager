@@ -257,3 +257,10 @@ class PartEdaOut(BaseModel):
     # `get_part_eda` reports (`spice_binding_read.binding_payload`), always
     # present with a `state` on a configured part. Filled by the route.
     spice_binding: dict[str, Any] | None = None
+    # edaflow SM-019, additive: the hosted footprint's outline size,
+    # `{w, h, source}` in mm (`source`: `courtyard` | `pads`), and the URL
+    # of its `.kicad_mod`. Null when the footprint is not hosted here (none,
+    # or a `footprint_ref_external`) or its file cannot be read. Filled by
+    # the route.
+    courtyard_mm: dict[str, Any] | None = None
+    footprint_file_url: str | None = None
