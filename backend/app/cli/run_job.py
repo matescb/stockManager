@@ -717,6 +717,10 @@ def _options_for(
     )
 
 
+#: Libraries whose INFO lines carry request URLs (and so credentials).
+QUIET_LOGGERS: tuple[str, ...] = ("httpx", "httpcore", "urllib3")
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -728,6 +732,12 @@ def main(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    # httpx logs every request URL at INFO, and the Mouser API key rides in
+    # the query string — `provider-refresh` printed it on every call. The
+    # web app silences these in `core/logging.py`; the job runner sets up
+    # its own logging and has to do the same (CLAUDE.md: never log URLs).
+    for noisy in QUIET_LOGGERS:
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     try:
         args = _parse_args(argv)
     except SystemExit as exc:

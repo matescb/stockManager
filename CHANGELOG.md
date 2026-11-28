@@ -15,6 +15,7 @@ the canonical record.
 
 ## Unreleased
 
+- **Operator and cron jobs no longer log request URLs.** `run_job` set up its own logging at INFO and left httpx at INFO, so `provider-refresh` printed every Mouser request URL, API key included. httpx, httpcore and urllib3 now log at WARNING there too, as in the web app.
 - **`provider-refresh --only-unlinked`.** Visits only the parts no provider has ever been linked to, so the local parts can be linked without re-refreshing every linked part.
 - **Box intake / audit: pick which 1D code answers the follow-up.** A bag
   label prints several 1D codes (MPN, quantity, Mouser P/N, order), and the
