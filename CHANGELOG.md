@@ -15,6 +15,7 @@ the canonical record.
 
 ## Unreleased
 
+- **`provider-refresh --only-unlinked`.** Visits only the parts no provider has ever been linked to, so the local parts can be linked without re-refreshing every linked part.
 - **Box intake / audit: pick which 1D code answers the follow-up.** A bag
   label prints several 1D codes (MPN, quantity, Mouser P/N, order), and the
   camera took whichever it decoded first. While a prompt waits, every 1D

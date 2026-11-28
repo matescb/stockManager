@@ -224,6 +224,7 @@ def refresh_linked_parts(
     only_uncategorized: bool = False,
     link_missing_providers: bool = False,
     include_unlinked: bool = False,
+    only_unlinked: bool = False,
     sleep_ms: int = DEFAULT_SLEEP_MS,
     batch_size: int = DEFAULT_BATCH_SIZE,
     lock_held: bool = False,
@@ -242,6 +243,9 @@ def refresh_linked_parts(
     the columns it left empty. It is also the only way a part with NO
     MPN reaches this function, and such a part gets one `skipped` line
     naming the reason rather than being left out of the report.
+
+    `only_unlinked` (implies `include_unlinked`) visits ONLY those parts —
+    linking the local parts without re-refreshing every linked one.
 
     Caller owns the session. On apply this commits per batch, so it takes
     a SESSION-level advisory lock rather than relying on `run_job`'s
@@ -268,6 +272,7 @@ def refresh_linked_parts(
             only_uncategorized=only_uncategorized,
             link_missing_providers=link_missing_providers,
             include_unlinked=include_unlinked,
+            only_unlinked=only_unlinked,
             sleep_ms=sleep_ms,
             batch_size=batch_size,
         )
@@ -283,6 +288,7 @@ def _run_guarded(
     only_uncategorized: bool,
     link_missing_providers: bool,
     include_unlinked: bool,
+    only_unlinked: bool,
     sleep_ms: int,
     batch_size: int,
 ) -> SweepOutcome:
@@ -297,6 +303,7 @@ def _run_guarded(
             only_uncategorized=only_uncategorized,
             link_missing_providers=link_missing_providers,
             include_unlinked=include_unlinked,
+            only_unlinked=only_unlinked,
             sleep_ms=sleep_ms,
             batch_size=batch_size,
         )
@@ -361,6 +368,7 @@ def _run(
     only_uncategorized: bool,
     link_missing_providers: bool,
     include_unlinked: bool,
+    only_unlinked: bool,
     sleep_ms: int,
     batch_size: int,
 ) -> SweepOutcome:
@@ -383,6 +391,7 @@ def _run(
             only_uncategorized=only_uncategorized,
             limit=remaining,
             include_unlinked=include_unlinked,
+            only_unlinked=only_unlinked,
         )
         if remaining is not None:
             remaining -= len(part_ids)

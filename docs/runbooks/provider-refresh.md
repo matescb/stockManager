@@ -146,6 +146,7 @@ minutes, and `--link-missing-providers` roughly doubles that.
 | `--only-uncategorized` | Restrict the sweep to parts with no category — the cheapest way to file them without spending calls on parts that are already filed. |
 | `--link-missing-providers` | Also ask every SECONDARY provider the workspace has credentials for that the part is not linked to, and link it on an exact-MPN hit. One extra call per part per provider. It does NOT widen the set of parts (a part nothing has ever linked stays out of scope) and it never adds the workspace's PRIMARY — see below. |
 | `--include-unlinked` | Also visit active parts that no provider has ever been linked to, asking the PRIMARY first and then every secondary with credentials. On a hit the provider links the part; the primary may claim it and fills only what the part left empty. See [Linking local parts](#linking-local-parts). One call per part per provider. |
+| `--only-unlinked` | Visit ONLY the parts no provider has ever been linked to (implies `--include-unlinked`). The way to link local parts without re-refreshing — and spending calls on — every linked part. |
 | `--sleep-ms MS` | Milliseconds between provider calls, default 750. `0` turns the throttle off; only do that against a provider you know has headroom. |
 
 ## Two rules worth knowing before you run it
