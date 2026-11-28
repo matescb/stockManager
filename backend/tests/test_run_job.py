@@ -596,3 +596,17 @@ def test_print_job_reconcile_runs_even_when_print_host_is_empty(
     assert affected == 3
     assert calls == [session]
     assert (tmp_path / "print-job-reconcile").exists()
+
+
+def test_the_job_runner_never_logs_request_urls(monkeypatch):
+    """httpx logs each request URL at INFO and Mouser's key is in the query
+    string; `main` must leave those loggers at WARNING or above."""
+    import logging
+
+    from app.cli import run_job
+
+    for name in run_job.QUIET_LOGGERS:
+        logging.getLogger(name).setLevel(logging.NOTSET)
+    run_job.main(["--help"])
+    for name in run_job.QUIET_LOGGERS:
+        assert logging.getLogger(name).getEffectiveLevel() >= logging.WARNING, name
