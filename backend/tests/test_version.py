@@ -34,7 +34,8 @@ def test_version_returns_the_envelope(authed_client):
     body = r.json()
     assert set(body.keys()) == {"data", "status"}
     assert body["status"]["category"] == "ok"
-    assert set(body["data"].keys()) == {"build"}
+    assert set(body["data"].keys()) == {"build", "capabilities"}
+    assert "part_create_links_provider" in body["data"]["capabilities"]
 
 
 def test_version_reports_sentry_release(authed_client, monkeypatch):

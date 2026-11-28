@@ -15,6 +15,7 @@ the canonical record.
 
 ## Unreleased
 
+- **A part created with an MPN is linked to Mouser/DigiKey, or refused.** `POST /api/parts` and MCP `create_part` link the new part to every distributor selling that exact MPN (reusing a cached `catalog_lookup` answer) and fill specs, prices and datasheet; an MPN nobody sells is refused with 422 `part.not_available_from_providers`, and a distributor that could not answer gives a 503. Parts without an MPN stay local. The web create form no longer runs a second refresh when the create already linked.
 - **Stored documents on `GET /api/parts/{id}` (edaflow SM-020).** `documents` and `documents_pending`, the same objects MCP `list_part_documents` returns, owner uploads included. Detail only; reading never fetches.
 - **Link a part from the lookup answer already held (edaflow SM-017 follow-up).** `POST /api/parts/{id}/refresh-from-provider?stored_answer=true` applies this workspace's cached `catalog_lookup` answer (24 h, in process) without a provider call or asset download, so a part created after a lookup gets that answer's specs and price breaks, stamped with the answer's fetch time. 409 `part.provider_no_stored_answer` when none is held.
 - **Hosted footprint size on `GET /api/parts/{id}/eda` (edaflow SM-019).** `courtyard_mm: {w, h, source}` (F.CrtYd bounding box, else the pads') and `footprint_file_url` for the `.kicad_mod`; null when the footprint is not hosted. Read from stored bytes.

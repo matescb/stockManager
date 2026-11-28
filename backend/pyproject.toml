@@ -81,6 +81,7 @@ testpaths = ["tests"]
 markers = [
     "slow: long-running test (excluded by default; run with `-m slow`)",
     "real_db: test needs independent committed DB connections instead of savepoint isolation",
+    "link_on_create: run the provider link a part create does (no-op in every other test)",
 ]
 addopts = "-m 'not slow'"
 

@@ -283,6 +283,9 @@ class ErrorCodes:
     # for the part's MPN from that provider (expired after 24 h, or the
     # process restarted). Nothing was called; a plain refresh would.
     PART_PROVIDER_NO_STORED_ANSWER = "part.provider_no_stored_answer"
+    # Create with an MPN no configured distributor sells under that exact
+    # MPN. The owner keeps only parts he can buy (`link_on_create`).
+    PART_NOT_AVAILABLE_FROM_PROVIDERS = "part.not_available_from_providers"
     PART_ASSET_NOT_FOUND = "part.asset_not_found"
     PART_ASSET_INVALID_FILENAME = "part.asset_invalid_filename"
     # Replace-in-projects: source and replacement resolve to the same part.

@@ -6,6 +6,7 @@ import re
 import sys
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
+from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -835,8 +836,18 @@ def health():
     )
 
 
+#: Behaviours a client may switch on by (`GET /api/version` →
+#: `capabilities`). Add a name when a change alters what an existing call
+#: does, so a tool can follow the deploy instead of guessing it.
+CAPABILITIES: tuple[str, ...] = (
+    # `POST /api/parts` / MCP `create_part` with an MPN links the part to
+    # the distributors or refuses it (`services/link_on_create.py`).
+    "part_create_links_provider",
+)
+
+
 @app.get("/api/version")
-def version(_user: CurrentUser) -> Envelope[dict[str, str | None]]:
+def version(_user: CurrentUser) -> Envelope[dict[str, Any]]:
     """Which commit this backend was built from.
 
     `SENTRY_RELEASE` is the 12-character git short SHA the deploy exports
@@ -863,5 +874,11 @@ def version(_user: CurrentUser) -> Envelope[dict[str, str | None]]:
     token) and is not workspace-scoped: the build id is a property of the
     server, identical for every tenant, so there is nothing to isolate
     and no mutation to write to `audit_log`.
+
+    `capabilities` names behaviour changes a client can switch on by
+    (`CAPABILITIES`), e.g. `part_create_links_provider`.
     """
-    return ok({"build": settings().SENTRY_RELEASE or None})
+    return ok({
+        "build": settings().SENTRY_RELEASE or None,
+        "capabilities": list(CAPABILITIES),
+    })

@@ -119,6 +119,16 @@ def create_part(
       as complete (datasheet, symbol, footprint, …) — the same list
       `part_policy_status` gives.
 
+    With an `mpn`, the part is linked to every distributor that sells
+    that EXACT mpn — the answer of an earlier `catalog_lookup` is reused,
+    so look it up first — and arrives with specs, price breaks and a
+    queued datasheet; the distributor's values never overwrite what you
+    passed. An mpn no distributor sells raises
+    `part.not_available_from_providers` and nothing is created: the
+    owner keeps only parts he can buy. A distributor that could not be
+    asked (quota, pacing, outage) raises a retryable provider error,
+    also creating nothing. Without an `mpn` the part is created local.
+
     Stock is not set here; call `add_stock` afterwards.
     """
     payload = build_part_in(
