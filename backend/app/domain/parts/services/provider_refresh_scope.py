@@ -118,6 +118,7 @@ def part_ids_in_scope(
     only_uncategorized: bool,
     limit: int | None,
     include_unlinked: bool = False,
+    only_unlinked: bool = False,
 ) -> list[UUID]:
     """Active parts with an MPN that some provider already knows.
 
@@ -131,7 +132,8 @@ def part_ids_in_scope(
     reason rather than being silently absent from a run whose whole
     purpose was to find it; a LINKED part with a blank MPN stays out,
     because it is already in a provider's hands and there is nothing new
-    to learn about it here.
+    to learn about it here. `only_unlinked` returns those parts and
+    nothing else.
 
     Archived parts are excluded — unlike `spec-normalize`, which
     re-keys rows in place and has no reason to leave a hidden part on
@@ -153,10 +155,12 @@ def part_ids_in_scope(
         linked_row.exists(),
     )
     has_mpn = func.btrim(func.coalesce(Part.mpn, "")) != ""
-    reachable = (
-        or_(and_(known, has_mpn), not_(known)) if include_unlinked
-        else and_(known, has_mpn)
-    )
+    if only_unlinked:
+        reachable = not_(known)
+    elif include_unlinked:
+        reachable = or_(and_(known, has_mpn), not_(known))
+    else:
+        reachable = and_(known, has_mpn)
     stmt = (
         select(Part.id)
         .where(Part.workspace_id == ws_id)

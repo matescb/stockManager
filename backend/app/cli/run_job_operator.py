@@ -135,7 +135,8 @@ def run_provider_refresh_job(db: Session, options: JobOptions) -> int:
                     limit=options.limit,
                     only_uncategorized=options.only_uncategorized,
                     link_missing_providers=options.link_missing_providers,
-                    include_unlinked=options.include_unlinked,
+                    include_unlinked=options.include_unlinked or options.only_unlinked,
+                    only_unlinked=options.only_unlinked,
                     sleep_ms=(
                         options.sleep_ms
                         if options.sleep_ms is not None
@@ -170,6 +171,7 @@ EXTRA_FLAGS: Mapping[str, object] = {
     "only_uncategorized": False,
     "link_missing_providers": False,
     "include_unlinked": False,
+    "only_unlinked": False,
     "sleep_ms": None,
 }
 
@@ -228,6 +230,15 @@ def add_operator_arguments(parser: argparse.ArgumentParser) -> None:
             "and then every secondary with credentials. On a hit the "
             "primary claims the part, filling only the columns it left "
             "empty. Costs one call per part per provider."
+        ),
+    )
+    parser.add_argument(
+        "--only-unlinked",
+        action="store_true",
+        help=(
+            "provider-refresh only: visit ONLY the parts no provider has "
+            "ever been linked to (implies --include-unlinked), so linking "
+            "local parts does not re-refresh every linked one."
         ),
     )
     parser.add_argument(

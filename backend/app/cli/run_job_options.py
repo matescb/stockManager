@@ -73,6 +73,8 @@ class JobOptions:
     only_uncategorized: bool = False
     link_missing_providers: bool = False
     include_unlinked: bool = False
+    #: Narrows the sweep to exactly the parts `include_unlinked` adds.
+    only_unlinked: bool = False
     sleep_ms: int | None = None
 
 

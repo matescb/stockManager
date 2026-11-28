@@ -940,6 +940,33 @@ def test_include_unlinked_lets_the_primary_claim_a_local_part(
     assert row["category_after"] == "Resistors"
 
 
+def test_only_unlinked_visits_the_local_parts_and_nothing_else(
+    client: TestClient, db, tmp_path: Path, providers
+) -> None:
+    """`--only-unlinked`: link the local parts without re-refreshing every
+    linked one — the linked part is not asked about, so no call is spent
+    on it and nothing of it is rewritten."""
+    ws_id = _signup(client)
+    _set_primary(db, ws_id, "mouser")
+    other = "RC0603FR-0710KL"
+    providers["mouser"] = StubProvider(
+        "mouser",
+        {MPN: _record(MPN, manufacturer="Yageo"), other: _record(other, manufacturer="Yageo")},
+    )
+    local_id = _local_part(client, db)
+    linked_id = _part(client, db, other, linked_provider="mouser", links=("mouser",))
+    db.commit()
+    report = tmp_path / "apply.csv"
+
+    _sweep(db, report, apply=True, include_unlinked=True, only_unlinked=True)
+
+    db.expire_all()
+    assert db.get(Part, local_id).linked_provider == "mouser"
+    visited = {row["part_id"] for row in _report_rows(report)}
+    assert visited == {str(local_id)}
+    assert str(linked_id) not in visited
+
+
 def test_include_unlinked_keeps_a_description_somebody_typed(
     client: TestClient, db, tmp_path: Path, providers
 ) -> None:

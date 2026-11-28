@@ -368,6 +368,7 @@ JOBS: dict[str, JobSpec] = {
             "only_uncategorized",
             "link_missing_providers",
             "include_unlinked",
+            "only_unlinked",
             "sleep_ms",
         ),
     ),
