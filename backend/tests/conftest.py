@@ -243,6 +243,21 @@ def authed_client(db):
 
 
 @pytest.fixture(autouse=True)
+def _link_on_create_only_when_asked(request, monkeypatch):
+    """A part create with an MPN links it to the distributors or refuses it
+    (`services/link_on_create.py`). Hundreds of tests configure a fake
+    provider for their own purpose and then create parts with MPNs; they
+    are not about that rule, so it is a no-op unless a test carries
+    `@pytest.mark.link_on_create`. Test-only: no setting turns it off in
+    production."""
+    if request.node.get_closest_marker("link_on_create") is None:
+        monkeypatch.setattr(
+            "app.domain.parts.services.link_on_create.link_new_part",
+            lambda *a, **k: [],
+        )
+
+
+@pytest.fixture(autouse=True)
 def _mock_hibp(monkeypatch):
     """Stub the HIBP k-anonymity check for all tests so no outbound HTTP
     calls are made during the test suite run (SEC2-014).

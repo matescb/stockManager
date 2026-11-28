@@ -433,6 +433,13 @@ Arguments and refusals for these three are in [Required arguments and
 refusals](#required-arguments-and-refusals); what follows is the part of the
 contract a table cannot carry.
 
+**An MPN is linked to the distributors, or refused.** `create_part` with an
+`mpn` links the part to every distributor selling that exact MPN (reusing the
+`catalog_lookup` answer, so look it up first) — same rule as
+[`POST /api/parts`](./parts.md#post-apiparts). An MPN no distributor sells is
+refused with `part.not_available_from_providers`; a distributor that could not
+be asked gives a retryable provider error. Nothing is created in either case.
+
 **A duplicate MPN is a success, not an error.** `POST /api/parts` answers 409
 with `existing_id`; `create_part` answers `{"found_existing": true, "part":
 {…}}` and writes nothing. An MPN names one part, so finding it is the right

@@ -25,6 +25,10 @@ rules and must not drift on any of them:
   after the MPN check, so an MPN that already exists is still reported
   as the existing part (which the MCP tool turns into a success) rather
   than as a policy failure of a part nobody needs to create.
+* **a part with an MPN is linked or refused** — after the row exists,
+  `link_on_create.link_new_part` links it to every distributor with an
+  exact match, or raises 422 `part.not_available_from_providers` / 503
+  when a distributor could not be asked (owner's rule, 2026-11-28).
 
 What this does NOT do is write the audit row or commit. Both belong to
 the caller: the route has a `request_id` off `request.state` and the MCP
@@ -154,4 +158,10 @@ def create_part(
             if existing is not None:
                 raise_mpn_conflict(existing)
         raise
+    # A part with an MPN is linked to the distributors that sell it, or
+    # not created (owner's rule; `link_on_create`). Imported here: the
+    # refresh service imports this package's siblings at module level.
+    from app.domain.parts.services.link_on_create import link_new_part
+
+    link_new_part(db, ws=ws, part=part, user_id=user_id)
     return part

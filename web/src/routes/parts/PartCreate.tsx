@@ -86,7 +86,9 @@ export default function PartCreate() {
       // linked-type with an MPN, re-run the lookup against the new
       // part to populate provider data with proper source='provider'
       // tagging + last_refresh_at + linked_provider.
-      if (hasLookup && form.part_type === "linked" && form.mpn.trim()) {
+      // Since the create links a part with an MPN itself (server-side,
+      // reusing the lookup), only refresh when it came back unlinked.
+      if (hasLookup && form.part_type === "linked" && form.mpn.trim() && !res.linked_provider) {
         try {
           await api.post(`/parts/${res.id}/refresh-from-provider`);
         } catch {

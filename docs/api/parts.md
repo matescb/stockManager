@@ -163,6 +163,19 @@ returned page:
 
 Create a new part.
 
+**A part with an MPN is linked or refused** (owner's rule, 2026-11-28 —
+`domain/parts/services/link_on_create.py`). After the row is written, the MPN
+goes through `catalog_lookup` (reusing this workspace's cached answer; quota
+reserve and pacing as for agents), and every distributor with an EXACT match is
+applied with `refresh_part(stored_answer_only=True)`: the primary claims the
+part (filling only fields the request left empty), a secondary adds its link.
+No exact match anywhere → `422 part.not_available_from_providers` with
+`providers: [{provider, answer}]`; a distributor that could not answer and no
+match → `503` with its code (`provider.pacing`, `rate_limited`, …). Either way
+nothing is created. No MPN, or no distributor configured in the workspace →
+created `local` as before. Pinned by
+`backend/tests/test_create_part_links_provider.py`.
+
 **Request** — `PartIn`. Notable fields:
 
 | Field | Type | Required | Notes |
