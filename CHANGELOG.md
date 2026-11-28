@@ -15,6 +15,7 @@ the canonical record.
 
 ## Unreleased
 
+- **Stored documents on `GET /api/parts/{id}` (edaflow SM-020).** `documents` and `documents_pending`, the same objects MCP `list_part_documents` returns, owner uploads included. Detail only; reading never fetches.
 - **Link a part from the lookup answer already held (edaflow SM-017 follow-up).** `POST /api/parts/{id}/refresh-from-provider?stored_answer=true` applies this workspace's cached `catalog_lookup` answer (24 h, in process) without a provider call or asset download, so a part created after a lookup gets that answer's specs and price breaks, stamped with the answer's fetch time. 409 `part.provider_no_stored_answer` when none is held.
 - **Hosted footprint size on `GET /api/parts/{id}/eda` (edaflow SM-019).** `courtyard_mm: {w, h, source}` (F.CrtYd bounding box, else the pads') and `footprint_file_url` for the `.kicad_mod`; null when the footprint is not hosted. Read from stored bytes.
 - **`prices` and `curated_specs` on the parts REST record (edaflow SM-017, SM-018).** `GET /api/parts` and `GET /api/parts/{id}` carry the stored price ladders as numbers (`prices`, `[]` when none) and the curated specs (`curated_specs`, `{}` when none). Stored rows only; no provider call.

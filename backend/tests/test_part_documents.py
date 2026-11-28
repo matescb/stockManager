@@ -660,3 +660,45 @@ def test_document_candidates_are_fair_across_workspaces(authed_client, db, monke
     # The quiet workspace's only row is served in the first round, even
     # though the noisy one queued earlier.
     assert quiet_ws in {ws for ws, _p, _r in picked[:2]}
+
+
+# ---------------------------------------------------------------------------
+# edaflow SM-020 — the same documents on the REST part record
+# ---------------------------------------------------------------------------
+
+
+async def test_rest_part_detail_carries_the_documents_mcp_lists(
+    authed_client, db, monkeypatch
+):
+    part_id = create_part(authed_client, "REST doc", mpn="REST-DOC-1")
+    upload = authed_client.post(
+        "/api/attachments",
+        data={"object_type": "part", "object_id": part_id},
+        files={"file": ("ds.pdf", b"%PDF-1.4\nowner-datasheet", "application/pdf")},
+    )
+    assert upload.status_code == 201, upload.text
+    _queue(db, part_id, "https://media.digikey.com/pdf/PCNs/y.pdf", kind="pcn")
+    bare = create_part(authed_client, "No docs", mpn="REST-DOC-2")
+
+    import httpx
+
+    def refuse(*a, **k):
+        raise AssertionError("reading documents must not fetch")
+    monkeypatch.setattr(httpx.Client, "send", refuse)
+
+    token = _mint(authed_client, read_only=True)["token"]
+    async with mcp_session(token) as s:
+        mcp = await call(s, "list_part_documents", part_id_or_mpn="REST-DOC-1")
+
+    rest = authed_client.get(f"/api/parts/{part_id}").json()["data"]
+    assert rest["documents"] == mcp["documents"]
+    assert rest["documents_pending"] == mcp["pending"]
+    [doc] = rest["documents"]
+    assert doc["kind"] == "other" and len(doc["sha256"]) == 64
+    assert doc["download_url"].endswith(f"/api/attachments/{doc['id']}/download")
+
+    empty = authed_client.get(f"/api/parts/{bare}").json()["data"]
+    assert empty["documents"] == [] and empty["documents_pending"] == []
+    # Detail only: list rows stay one query per extra.
+    row = authed_client.get("/api/parts", params={"mpn": "REST-DOC-1"}).json()["data"][0]
+    assert "documents" not in row

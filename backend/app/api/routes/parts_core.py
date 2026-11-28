@@ -73,6 +73,7 @@ from app.domain.parts.services import spec_columns as _spec_columns
 from app.domain.parts.services.create_part import (
     create_part as _create_part,
 )
+from app.domain.parts.services.documents import list_part_documents
 from app.domain.parts.services.stored_prices import stored_prices_for_parts
 from app.domain.stock.models import StockEntry
 from app.domain.stock.service import (
@@ -275,6 +276,9 @@ def get_part(part_id: UUID, db: DbSession, ws: CurrentWorkspace):
             prices=stored_prices_for_parts(db, ws.id, [p.id])[p.id],
             # edaflow SM-018: value, tolerance, dielectric, voltage for passives.
             curated_specs=curated_specs_for_parts(db, ws.id, [p.id])[p.id],
+            # edaflow SM-020: stored PDFs, as MCP `list_part_documents`.
+            # Reading never fetches; the hourly cron does the downloads.
+            documents=list_part_documents(db, ws=ws, part=p),
         )
     )
 

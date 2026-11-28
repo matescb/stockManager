@@ -201,6 +201,7 @@ def serialize_part(
     package_spec: dict[str, str | None] | None = None,
     prices: list[dict] | None = None,
     curated_specs: dict[str, str | None] | None = None,
+    documents: dict[str, list] | None = None,
 ) -> dict:
     """Serialize a Part for API responses.
 
@@ -231,6 +232,11 @@ def serialize_part(
     `curated_specs` is `{key: value}` from `curated_specs_for_parts`
     (edaflow SM-018), `{}` when the part has none. Not `specs` for the
     same reason as `package_spec`. Absent when not loaded.
+
+    `documents` is `domain/parts/services/documents.list_part_documents`
+    (edaflow SM-020) — the same object MCP `list_part_documents` returns —
+    emitted as `documents` (stored PDFs) and `documents_pending` (recorded,
+    not downloaded). Detail only: it can hash a file, so not per list row.
     """
     if reserved is None:
         reserved = 0
@@ -301,6 +307,9 @@ def serialize_part(
         out["prices"] = prices
     if curated_specs is not None:
         out["curated_specs"] = curated_specs
+    if documents is not None:
+        out["documents"] = documents["documents"]
+        out["documents_pending"] = documents["pending"]
     return out
 
 
